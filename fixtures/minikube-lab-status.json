@@ -1,0 +1,11 @@
+{
+  "profile": "infosec-harness",
+  "minikube_version": "v1.38.1",
+  "cluster_running": false,
+  "namespace_ready": false,
+  "default_deny_enforced": false,
+  "observer_healthy": false,
+  "observer_mode": "unavailable",
+  "synthetic_oracle_healthy": false,
+  "collected_at": "2026-08-09T12:00:00Z"
+}

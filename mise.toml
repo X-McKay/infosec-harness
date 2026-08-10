@@ -1,0 +1,7 @@
+[tools]
+python = "3.12.4"
+kubectl = "1.35.1"
+minikube = "1.38.1"
+
+[env]
+_.python.venv = { path = ".venv", create = true }

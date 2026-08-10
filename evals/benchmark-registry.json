@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "tasks": [
+    {
+      "task_id": "harness-fixture-sarif-v1",
+      "lane": "regression",
+      "target_digest": "sha256:be4d28211cfb1b4b4afc4b10413c9d222bf17fc0c9ae8c5d2b5e7e7816fdacba",
+      "task_manifest_digest": "sha256:0443aeeb19288b5166aaf374c53012fedf66bd72003885c04d3441f9bee767d2",
+      "harness_revision": "local-fixture-v1",
+      "rights_state": "approved_internal_eval",
+      "oracle_self_test": true,
+      "clean_control": true,
+      "network_profile": "deny",
+      "expires_at": "2099-01-01T00:00:00Z",
+      "owner": "harness-engineering"
+    }
+  ]
+}

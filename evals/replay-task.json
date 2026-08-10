@@ -1,0 +1,8 @@
+{
+  "task_id": "harness-fixture-sarif-v1",
+  "authorization_hash": "fixture-authorization-hash",
+  "input_artifact_hashes": ["sha256:fixture-sarif-artifact"],
+  "allowed_actions": ["submit_disposition", "abstain"],
+  "budget": {"max_input_tokens": 4000, "max_output_tokens": 1000, "max_cost_usd": 1.0, "max_tool_calls": 2},
+  "classification": "synthetic"
+}

@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "owner": "harness-engineering",
+  "allowlist": [
+    {"name": "pydantic", "purpose": "typed domain validation", "runtime": true},
+    {"name": "openai", "purpose": "optional direct provider adapter", "runtime": false},
+    {"name": "anthropic", "purpose": "optional direct provider adapter", "runtime": false}
+  ],
+  "prohibited": ["dynamic package installation", "plugin discovery", "provider gateways", "agent frameworks"]
+}

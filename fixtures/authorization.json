@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "engagement_id": "fixture-sarif-triage-001",
+  "target_repository": "sample-repo",
+  "revision": "fixture-revision-001",
+  "paths": ["src/"],
+  "allowed_actions": ["read", "search", "list_tree"],
+  "expires_at": "2099-01-01T00:00:00Z",
+  "requested_by": "appsec-fixture@example.invalid",
+  "signature": "9052aaf4100c39a9075931eee2cf55c883491fb0eb7b4bd5fb2815f5d8f74153"
+}
