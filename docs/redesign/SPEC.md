@@ -55,7 +55,7 @@ Verified against PyPI on 2026-09-24: `pydantic-ai 2.49.0`, `pydantic-ai-harness 
 | Large tool output | `pydantic_ai_harness.tool_output_limits` | No |
 | Prompt-injection defence (repo content is untrusted) | `pydantic_ai_harness.prompt_injection_defender`, `guardrails` | Configuration only |
 | Budgets | `UsageLimits` per run + `pydantic_ai_harness.spend` | No |
-| Model portability/fallback | `pydantic_ai` model strings, `FallbackModel`, and OpenAI-compatible providers for self-hosted models (Ollama/vLLM) **[D9]** | No |
+| Inference backends | `BedrockConverseModel` + `BedrockProvider(profile_name=…, region_name=…)` for AWS Bedrock with SSO; `OpenAIChatModel` + `OpenAIProvider(base_url=…, api_key=…)` for any OpenAI-spec endpoint; `FallbackModel` **[D9]** | A ~50-line model factory (§6.1) |
 | Multi-step orchestration | `pydantic_graph` (`GraphBuilder` / nodes) | Graph definition |
 | Durable execution | `pydantic_ai.durable_exec.temporal` (`TemporalAgent`, `PydanticAIPlugin`, `PydanticAIWorkflow`) | Workflow + activities |
 | Deterministic unit tests of agents | `TestModel`, `FunctionModel`, `Agent.override` | No |
@@ -169,10 +169,49 @@ skills/
   build-maven/SKILL.md  build-uv/SKILL.md  build-cpanm/SKILL.md  build-npm/SKILL.md …
 ```
 
-An agent's configuration is `(model, instructions hash, skill set hash, toolset
+An agent's configuration is `(model ref, instructions hash, skill set hash, toolset
 signature)`. It is recorded on every invocation and can be overridden per run for
 experiments. For example: `--override probe_author.model=anthropic:claude-sonnet-5
 --override probe_author.skills+=test-junit5-v2`.
+
+### 6.1 Inference backends [D9]
+
+Exactly two backend kinds are supported. A deployment picks one, and any agent can override
+it (e.g. for experiments that compare backends):
+
+```yaml
+# config/models.yaml  (no secrets in here)
+backends:
+  bedrock:
+    kind: bedrock
+    region: us-east-1
+    aws_profile: infosec-harness-sso   # an AWS IAM Identity Center (SSO) profile
+  gateway:
+    kind: openai_compatible
+    base_url: https://llm-gateway.internal/v1
+    api_key_env: HARNESS_OPENAI_API_KEY   # read from the environment or a secret
+    prices: {input_per_mtok: 3.0, output_per_mtok: 15.0}  # used when genai-prices doesn't know the model
+default_backend: bedrock
+agents:
+  probe_author: {backend: bedrock, model: <bedrock-model-id>}
+  intake:       {backend: gateway, model: <model-name>}
+```
+
+- A small factory turns a `ModelRef(backend, model)` into a pydantic-ai `Model`. No
+  wrappers, and no custom client code.
+- **Bedrock auth.** Locally, run `aws sso login --profile …` on the host and mount
+  `~/.aws` read-only into the `worker` container; botocore refreshes credentials from the
+  SSO token cache. In Kubernetes, SSO is not a workload identity, so the same code path
+  uses **IRSA / EKS Pod Identity** (the default boto3 credential chain, with the profile
+  unset). Credentials never enter agent context or sandboxes.
+- **OpenAI-spec auth.** An API key from an env var (compose `.env`) or a k8s Secret. This
+  also covers self-hosted servers (vLLM, Ollama) and internal LLM gateways, with no extra
+  code.
+- Temporal: the model is resolved on the **worker** inside the model activity, so
+  credentials are never serialized into workflow history. `TemporalAgent` gets named
+  models registered at worker startup.
+- Cost: `genai-prices` for known models. Otherwise the backend's configured `prices`
+  apply, and costs are recorded as `estimated` when neither is available.
 
 ## 7. Sandbox & execution
 
@@ -184,12 +223,21 @@ is the main safety boundary.
   is a `RuntimeClass`. One model covers both environments.
 - **Local:** one container per prepared image. Network is allowed only during the
   dependency-install build stage, through an egress proxy with an allowlist of package
-  registries, and set to `none` at probe time. The container runs as a non-root user,
+  registries (see *Package registries* below), and set to `none` at probe time. The container runs as a non-root user,
   with a read-only root filesystem except the probe workdir, cpu/mem/pids limits, and a
   wall-clock timeout.
 - **Kubernetes:** each `ExecuteProbe` becomes a short-lived Job/Pod in a dedicated
   namespace with a default-deny NetworkPolicy, `runtimeClassName: gvisor`, and no
   service-account token. Images are built with BuildKit (rootless) in that namespace.
+- **Package registries [D14].** Each target repository specifies its own registries in
+  its normal config (`settings.xml`/`.mvn`, `gradle.properties`, `pip.conf`/`uv.toml`/
+  `pyproject` indexes, `.npmrc`/`.yarnrc.yml`, cpanm `--mirror`). A registry can be public
+  or an internal Artifactory. `DetectStack` (deterministic) parses these files into
+  `StackFingerprint.registries`, and that list becomes the build-stage egress allowlist.
+  Agents cannot add hosts. Artifactory credentials, when needed, are mounted as
+  **BuildKit secrets** (`--secret`) for the install step only, so they are never baked
+  into image layers or shown to agents. When a repository names no registry, the
+  ecosystem's public default is used.
 - Agents never get a host shell. The `Shell` capability, where used (P5 only), runs its
   commands **inside** the target sandbox through a small adapter, which is our only
   custom tool plumbing. Most agents only get read-only `FileSystem`.
@@ -289,8 +337,10 @@ A small **smoke subset** of each source (~20–50 cases) runs in CI through reco
 
 - **Local:** `docker compose up` starts `postgres`, `temporal` + `temporal-ui`, `worker`,
   `sandbox-worker` (the task queue for build/probe activities), `api` (FastAPI), `web`
-  (UI), `minio`, `otel-collector` + a trace UI **[D4]**, and optionally `ollama` (compose
-  profile `local-models`) **[D9]**. The host needs the gVisor `runsc` runtime installed.
+  (React UI), `minio`, `otel-collector` + a trace UI **[D4]**, and the build egress proxy
+  (§7). Model access goes to Bedrock or the configured OpenAI-spec endpoint **[D9]**; an
+  optional `vllm`/`ollama` compose profile serves as a local OpenAI-spec endpoint for
+  offline development. The host needs the gVisor `runsc` runtime installed.
 - **Kubernetes (later):** Helm chart or Kustomize (the repo already has Kustomize) with
   Temporal via its official Helm chart or Temporal Cloud, managed Postgres, workers as a
   Deployment, and sandbox Jobs in an isolated namespace. KEDA or Temporal worker
@@ -302,13 +352,31 @@ A small **smoke subset** of each source (~20–50 cases) runs in CI through reco
   `harness eval compare`.
 - **REST API (FastAPI):** submit batches (generic JSON / ADO query / free text), fetch
   results, post reviews, and list experiments. The CLI and the UI both use it.
-- **Web UI:** a triage queue sorted by priority, a finding detail view (context, probe
-  source, execution logs, verdict, trace link), review/override, and an experiment
-  comparison dashboard.
-- **ADO write-back:** a Temporal activity at the end of `FindingTriageWorkflow` posts the
-  verdict, priority, and evidence summary to the source work item as a comment plus
-  fields/tags. It is idempotent via `ado_sync`, controlled by a feature flag, and uses a
-  scoped PAT.
+- **Web UI [D12]:** a full React app built with **shadcn/ui**.
+  - Stack: Vite + React + TypeScript, shadcn/ui (Radix + Tailwind), TanStack Router,
+    TanStack Query, and TanStack Table (via shadcn's data-table). Charts use shadcn charts
+    (Recharts). The API client is **generated from FastAPI's OpenAPI schema**
+    (`openapi-typescript` + `openapi-fetch`), so front-end types track the Pydantic models.
+  - Views:
+    - **Triage queue:** a sortable, filterable data table by priority, verdict,
+      confidence, CWE, and repo.
+    - **Finding detail:** source finding, code context with highlighted lines, probe plan
+      and oracle, probe source (diff across repair iterations), execution logs, verdict
+      rationale, per-agent cost/latency timeline, and a trace link.
+    - **Review:** confirm or override, with a reason.
+    - **Batches/runs:** live progress, polled from Temporal via the API.
+    - **Experiments:** pick a baseline and a candidate, then compare per-agent and E2E
+      accuracy, confusion matrices, $/finding, and p50/p95 latency.
+    - **Configuration:** a read-only view of the active agent configs, models, and skill
+      versions.
+  - Auth: OIDC in front of the API, which is out of scope for phase 1. Locally it is
+    single-user.
+- **ADO write-back [D13]: comment only.** A Temporal activity at the end of
+  `FindingTriageWorkflow` posts **one comment** to the source work item with the verdict,
+  priority, confidence, a short evidence summary, and a link to the finding in the UI.
+  It never changes state, fields, or tags. Re-runs update the same comment (the comment
+  ID is stored in `ado_sync`) instead of posting a new one. It is behind a feature flag
+  and uses a PAT scoped to *Work Items (Read & Write)*.
 
 ### Proposed repo layout
 ```
@@ -354,18 +422,18 @@ eval-corpus/        # labelled cases (or git submodules / fetch scripts)
 | D6 | Build effort | Aggressive: long repair loops plus partial-build fallback, under hard $ and time caps |
 | D7 | Eval corpus | OWASP Benchmark + real CVE datasets + historical internal triage/overrides |
 | D8 | Human in the loop | Asynchronous verdict review; overrides become eval cases |
-| D9 | Models | Any provider via pydantic-ai, including self-hosted (Ollama/vLLM) |
+| D9 | Models | Switchable: AWS Bedrock (SSO profile locally, IRSA/Pod Identity in k8s) **or** any OpenAI-spec endpoint with an API key (which also covers self-hosted). Selected per deployment and overridable per agent |
 | D10 | v1 code | Delete v1 `src/`, `tests/`, fixtures, and the abox/minikube lab; keep `research/` and design docs as background (done in phase 1) |
 | D11 | Interfaces | CLI, REST API, Web UI, and ADO write-back |
+| D12 | Web UI | Full React app (Vite + TS) with shadcn/ui, and a client generated from OpenAPI |
+| D13 | ADO write-back | One comment per work item, updated in place. No state, field, or tag changes |
+| D14 | Package registries | Taken from each repo's own config (public or internal Artifactory); the egress allowlist is derived deterministically; credentials go in as BuildKit secrets |
 
 ## 13. Open questions
 
-- **Q12** Web UI stack: server-rendered (FastAPI + HTMX) vs a React SPA.
-- **Q13** ADO write-back scope: comment only, or also set state/tags/fields? Which fields
-  map to verdict and priority?
-- **Q14** Self-hosted model serving for local development: Ollama (simple) vs vLLM
-  (throughput, GPU).
-- **Q15** Default models per agent for the baseline experiment (e.g. a small model for
-  intake/diagnosis and a large one for probe authoring/verdict).
-- **Q16** Build egress: which package registries/mirrors are allowed during dependency
-  install (public registries vs an internal Artifactory/Nexus mirror)?
+- **Q15** Default models per agent for the baseline experiment. The proposal: the same
+  mid-tier model for every agent as baseline v0, so later experiments change one variable
+  at a time. The first planned experiments are a larger model for `ProbeAuthorAgent` and
+  `VerdictAgent`, and a smaller model for `IntakeAgent` and `ProbeDiagnosisAgent`.
+- **Q17** Which Bedrock model IDs and regions (or cross-region inference profiles) your
+  AWS account has enabled, and the OpenAI-spec endpoint(s) you plan to use.
