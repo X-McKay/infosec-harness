@@ -1,0 +1,36 @@
+# Model backends and tiers (spec §6.1, D9/D15/D16). No secrets in this file.
+#
+# Every agent.yaml names a tier (`model: sonnet`); the worker resolves it here.
+# Switch the whole deployment with `default_backend`, or one agent via `agents.<name>.backend`.
+# HARNESS_MODEL_BACKEND overrides `default_backend` at runtime.
+backends:
+  bedrock:
+    kind: bedrock
+    region: us-east-1
+    # Local: `aws sso login --profile infosec-harness-sso` on the host; ~/.aws is mounted
+    # read-only into the worker. In Kubernetes leave AWS_PROFILE unset (IRSA/Pod Identity).
+    aws_profile: infosec-harness-sso
+  gateway:
+    kind: openai_compatible
+    base_url: https://llm-gateway.internal/v1
+    api_key_env: HARNESS_OPENAI_API_KEY
+    # Used only when genai-prices doesn't know the model (e.g. gateway aliases).
+    prices:
+      claude-opus-5: {input_per_mtok: 5.0, output_per_mtok: 25.0}
+      claude-sonnet-5: {input_per_mtok: 2.0, output_per_mtok: 10.0}
+      claude-haiku-4-5: {input_per_mtok: 1.0, output_per_mtok: 5.0}
+
+default_backend: bedrock
+
+# Tier -> concrete model id per backend (D16). If the AWS account routes through
+# cross-region inference profiles, prefix the Bedrock ids (e.g. `us.` / `global.`).
+model_catalog:
+  opus:   {bedrock: anthropic.claude-opus-5,    gateway: claude-opus-5}
+  sonnet: {bedrock: anthropic.claude-sonnet-5,  gateway: claude-sonnet-5}
+  haiku:  {bedrock: anthropic.claude-haiku-4-5, gateway: claude-haiku-4-5}
+
+default_model: sonnet   # baseline v0 (D15)
+
+# Per-agent backend overrides, e.g. `intake: {backend: gateway}`. The tier itself lives in
+# each agent.yaml (and in experiment overlays).
+agents: {}
