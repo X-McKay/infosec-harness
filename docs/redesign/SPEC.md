@@ -192,10 +192,17 @@ backends:
     api_key_env: HARNESS_OPENAI_API_KEY   # read from the environment or a secret
     prices: {input_per_mtok: 3.0, output_per_mtok: 15.0}  # used when genai-prices doesn't know the model
 default_backend: bedrock
-agents:
-  probe_author: {backend: bedrock, model: <bedrock-model-id>}
-  intake:       {backend: gateway, model: <model-name>}
+model_catalog:            # the allowed tiers [D16]; experiments pick from these
+  opus:   {bedrock: anthropic.claude-opus-5,   gateway: claude-opus-5}
+  sonnet: {bedrock: anthropic.claude-sonnet-5, gateway: claude-sonnet-5}
+  haiku:  {bedrock: anthropic.claude-haiku-4-5, gateway: claude-haiku-4-5}
+default_model: sonnet     # baseline v0 [D15]
+agents: {}                # per-agent overrides, e.g. probe_author: {model: opus}
 ```
+
+The Bedrock IDs are configuration, not code. If the account routes through cross-region
+inference profiles, the IDs take the account's profile prefix (e.g. `us.` or `global.`).
+Check this against the account's enabled models during phase 1.
 
 - A small factory turns a `ModelRef(backend, model)` into a pydantic-ai `Model`. No
   wrappers, and no custom client code.
@@ -427,13 +434,26 @@ eval-corpus/        # labelled cases (or git submodules / fetch scripts)
 | D11 | Interfaces | CLI, REST API, Web UI, and ADO write-back |
 | D12 | Web UI | Full React app (Vite + TS) with shadcn/ui, and a client generated from OpenAPI |
 | D13 | ADO write-back | One comment per work item, updated in place. No state, field, or tag changes |
+| D15 | Baseline model | Every agent starts on **Sonnet**. The per-agent eval process then picks the best-fit tier for each agent, based on accuracy, cost, and latency |
+| D16 | Model catalog | Opus, Sonnet, and Haiku (currently `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5`), available through both backends |
 | D14 | Package registries | Taken from each repo's own config (public or internal Artifactory); the egress allowlist is derived deterministically; credentials go in as BuildKit secrets |
 
 ## 13. Open questions
 
-- **Q15** Default models per agent for the baseline experiment. The proposal: the same
-  mid-tier model for every agent as baseline v0, so later experiments change one variable
-  at a time. The first planned experiments are a larger model for `ProbeAuthorAgent` and
-  `VerdictAgent`, and a smaller model for `IntakeAgent` and `ProbeDiagnosisAgent`.
-- **Q17** Which Bedrock model IDs and regions (or cross-region inference profiles) your
-  AWS account has enabled, and the OpenAI-spec endpoint(s) you plan to use.
+None blocking. Items to confirm during phase 1:
+- The exact Bedrock model/inference-profile IDs enabled in the target AWS account.
+- Bedrock pricing. Partner pricing differs from Anthropic's first-party rates, so it goes
+  in the backend `prices` table if `genai-prices` doesn't cover it.
+
+### Model-selection experiment plan (follows D15)
+1. **Baseline v0:** all agents on Sonnet, 3 repetitions over each agent's dataset and the
+   E2E smoke corpus.
+2. **Per-agent tier sweep:** for each agent, swap *only that agent* to Haiku and then to
+   Opus, keeping everything else fixed. Record the Δaccuracy, Δ$/finding, and Δp95
+   latency against the baseline.
+3. **Selection rule** (the default, which can be revised): choose the cheapest tier whose
+   accuracy is within the baseline's CI. For `VerdictAgent` and `ProbeAuthorAgent`, the
+   rule is instead tightened to *no increase in the false-negative rate on exploitable
+   cases*.
+4. Combine the winners into baseline v1, confirm it E2E, and freeze it. Repeat whenever
+   prompts, skills, or tools change materially.
