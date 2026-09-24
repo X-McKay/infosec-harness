@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -360,3 +360,30 @@ class TriageResult(_Model):
     priority: PriorityBand
     environment_scope: Literal["full", "partial", "none"] = "none"
     early_exit: str | None = None
+
+
+class AgentOutcome(_Model):
+    """One agent call plus the accounting the harness records (§9, §10)."""
+
+    output: Any
+    agent: str
+    model_name: str = ""
+    config_hash: str = ""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    cost_usd: float | None = None
+    cost_estimated: bool = True
+    latency_s: float = 0.0
+    retries: int = 0
+
+
+class TriageRunOutput(_Model):
+    """Everything one FindingTriageWorkflow produces, for persistence and reporting."""
+
+    finding: Finding
+    result: TriageResult
+    prepared_status: str
+    invocations: list[AgentOutcome] = Field(default_factory=list)
+    needs_info: bool = False

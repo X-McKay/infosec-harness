@@ -185,6 +185,15 @@ def agent_config_hashes() -> dict[str, str]:
     return {name: config_hash(name, load_spec(name)) for name in AGENT_BINDINGS}
 
 
+@lru_cache
+def resolved_model_names() -> dict[str, str]:
+    """Precomputed name per agent, so workflows avoid disk/config I/O at run time."""
+    return {
+        name: model_factory.resolved_model_name(name, load_spec(name).model or "sonnet")
+        for name in AGENT_BINDINGS
+    }
+
+
 def spec_names_on_disk() -> set[str]:
     return {p.parent.name for p in get_settings().agents_dir.glob("*/agent.yaml")}
 

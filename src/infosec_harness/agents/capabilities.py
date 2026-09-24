@@ -99,12 +99,19 @@ def search_code(ctx: RunContext[AgentDeps], regex: str, file_glob: str = "*") ->
     return "\n".join(hits) or "(no matches)"
 
 
+# Built once so the instance is stable across runs. Skills is a dynamic capability, so
+# pydantic-ai re-collects capability toolsets each run and compares them by identity to the
+# construction-time set; a fresh toolset per call would be rejected as a runtime addition
+# under Temporal.
+_REPO_RO_TOOLSET = FunctionToolset([list_files, read_file, search_code], id="repo_ro")
+
+
 @dataclass
 class RepoReadOnly(AbstractCapability[AgentDeps]):
     """Read-only, path-confined access to the repository snapshot."""
 
     def get_toolset(self):
-        return FunctionToolset([list_files, read_file, search_code], id="repo_ro")
+        return _REPO_RO_TOOLSET
 
 
 async def run_in_sandbox(ctx: RunContext[AgentDeps], command: str) -> str:
@@ -122,12 +129,15 @@ async def run_in_sandbox(ctx: RunContext[AgentDeps], command: str) -> str:
     )
 
 
+_SANDBOX_SHELL_TOOLSET = FunctionToolset([run_in_sandbox], id="sandbox_shell")
+
+
 @dataclass
 class SandboxShell(AbstractCapability[AgentDeps]):
     """Command execution routed into a gVisor container, never on the worker host."""
 
     def get_toolset(self):
-        return FunctionToolset([run_in_sandbox], id="sandbox_shell")
+        return _SANDBOX_SHELL_TOOLSET
 
 
 CUSTOM_CAPABILITIES: tuple[type[AbstractCapability], ...] = (RepoReadOnly, SandboxShell)
