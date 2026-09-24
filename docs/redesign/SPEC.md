@@ -69,11 +69,11 @@ Verified against PyPI on 2026-09-24: `pydantic-ai 2.49.0`, `pydantic-ai-harness 
                ┌──────────────┐   submit   ┌─────────────────────────────────────────┐
   findings ───►│ API/CLI/ADO  │──────────► │ Temporal: TriageBatchWorkflow           │
   (JSON/ADO/   └──────────────┘            │   └─ child: FindingTriageWorkflow × N   │
-                     │                     │        runs pydantic_graph of agents    │
+   text)            │                     │        runs pydantic_graph of agents    │
                      ▼                     └──────────┬───────────────┬──────────────┘
                ┌──────────────┐    activities         │               │  TemporalAgent
                │  Postgres    │◄──────────────────────┘               ▼  model/tool activities
-  text)        │ runs/findings│                              ┌──────────────────┐
+               │ runs/findings│                              ┌──────────────────┐
                │ evals/costs  │                              │ LLM providers    │
                └──────────────┘                              └──────────────────┘
                      ▲                  ┌───────────────────────────────────────┐
