@@ -36,5 +36,4 @@ capabilities:
       include: [build-python, build-maven, build-gradle, build-npm, build-cpanm,
                 lang-python, lang-java, lang-javascript, lang-perl]
   - RepoReadOnly: {}
-  - RepairToolArguments: {}
   - WarnOnCacheBusts: {}

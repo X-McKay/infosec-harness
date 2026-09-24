@@ -62,9 +62,13 @@ AGENT_BINDINGS: dict[str, type[BaseModel]] = {
 }
 
 # Only these capability types may be named in a spec (cf. pydantic-ai #5473/#8426).
-# Harness capabilities that aren't Temporal-safe yet (ToolOutputLimits) or need extra
-# dependencies (PromptInjectionDefender) are intentionally absent.
-ALLOWED_CAPABILITIES = (*CUSTOM_CAPABILITIES, Skills, WarnOnCacheBusts, RepairToolArguments, ClearToolResults)
+# Skills and WarnOnCacheBusts are directly-decorated dataclasses, so the spec loader
+# accepts them as custom types. RepairToolArguments and ClearToolResults inherit their
+# dataclass fields (the loader's stricter check rejects them) and carry no accuracy-
+# relevant config, so they are attached in code below rather than named in YAML.
+# ToolOutputLimits (not Temporal-safe yet) and PromptInjectionDefender (needs an extra
+# dependency) are intentionally absent.
+ALLOWED_CAPABILITIES = (*CUSTOM_CAPABILITIES, Skills, WarnOnCacheBusts)
 
 # Model calls can be slow; tool calls are fast except the sandbox shell.
 MODEL_ACTIVITY = ActivityConfig(start_to_close_timeout=timedelta(minutes=10))
@@ -147,6 +151,12 @@ def build_agent(name: str, overlay: Mapping[str, Any] | None = None, *, durable:
         raise KeyError(f"Unknown agent {name!r}")
     spec = _absolutize_skill_dirs(load_spec(name, overlay))
     capabilities: list[Any] = [ResolveModelId(lambda ctx, model_id, _n=name: model_factory.resolve(_n, model_id))]
+    # Cross-cutting robustness, attached in code (see ALLOWED_CAPABILITIES note).
+    if any(cap.name in {"RepoReadOnly", "SandboxShell"} for cap in spec.capabilities):
+        capabilities.append(RepairToolArguments())
+    metadata = spec.metadata or {}
+    if metadata.get("clear_tool_results"):
+        capabilities.append(ClearToolResults(max_tokens=metadata.get("clear_tool_tokens", 40_000)))
     if durable:
         capabilities.append(TemporalDurability(model_activity_config=MODEL_ACTIVITY,
                                                toolset_activity_config=TOOL_ACTIVITY))

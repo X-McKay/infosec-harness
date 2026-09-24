@@ -30,5 +30,4 @@ capabilities:
       directories: skills
       include: [lang-python, lang-java, lang-javascript, lang-perl]
   - RepoReadOnly: {}
-  - RepairToolArguments: {}
   - WarnOnCacheBusts: {}
