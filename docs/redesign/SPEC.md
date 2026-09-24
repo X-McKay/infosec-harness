@@ -1,12 +1,12 @@
 # Infosec Harness v2 — Exploitability Triage Spec (DRAFT)
 
-Status: **draft for design review** · Open decisions are marked **[Q#]** and collected in
-[§12](#12-open-questions).
+Status: **draft for design review**. Decisions made in design review are marked **[D#]** and
+recorded in [§12](#12-decisions-log). Remaining open items are in [§13](#13-open-questions).
 
 ## 1. Purpose
 
-Take vulnerability findings that an **external process already produced** (SAST, SCA,
-pentest notes, bug bounty, etc.) and, for each one:
+Take vulnerability findings that an **external process already produced** and delivered as
+generic JSON, Azure DevOps work items, or free-text reports **[D1]**, and, for each one:
 
 1. understand the target codebase (any language: Java, Python, Perl, JS/React, …),
 2. work out how to build and run it (dependencies, toolchain, test runner),
@@ -55,31 +55,31 @@ Verified against PyPI on 2026-09-24: `pydantic-ai 2.49.0`, `pydantic-ai-harness 
 | Large tool output | `pydantic_ai_harness.tool_output_limits` | No |
 | Prompt-injection defence (repo content is untrusted) | `pydantic_ai_harness.prompt_injection_defender`, `guardrails` | Configuration only |
 | Budgets | `UsageLimits` per run + `pydantic_ai_harness.spend` | No |
-| Model portability/fallback | `pydantic_ai` model strings, `FallbackModel` | No |
+| Model portability/fallback | `pydantic_ai` model strings, `FallbackModel`, and OpenAI-compatible providers for self-hosted models (Ollama/vLLM) **[D9]** | No |
 | Multi-step orchestration | `pydantic_graph` (`GraphBuilder` / nodes) | Graph definition |
 | Durable execution | `pydantic_ai.durable_exec.temporal` (`TemporalAgent`, `PydanticAIPlugin`, `PydanticAIWorkflow`) | Workflow + activities |
 | Deterministic unit tests of agents | `TestModel`, `FunctionModel`, `Agent.override` | No |
 | Evaluation | `pydantic_evals` `Dataset`/`Case`, `EqualsExpected`, `IsInstance`, `HasMatchingSpan`, `ToolCorrectness`, `TrajectoryMatch`, `MaxToolCalls`, `ConfusionMatrixEvaluator`, `PrecisionRecallEvaluator`, `LLMJudge` (last resort) | Datasets + a few domain evaluators |
 | Cost | `RunUsage` + `genai-prices` | No |
-| Tracing/latency | OpenTelemetry instrumentation built into pydantic-ai (Logfire or any OTLP backend) **[Q4]** | No |
+| Tracing/latency | OpenTelemetry instrumentation built into pydantic-ai, exported over OTLP to a self-hosted collector and trace UI **[D4]** | No |
 
 ## 4. Architecture overview
 
 ```
                ┌──────────────┐   submit   ┌─────────────────────────────────────────┐
-  findings ───►│ API / CLI    │──────────► │ Temporal: TriageBatchWorkflow           │
-  (SARIF/JSON) └──────────────┘            │   └─ child: FindingTriageWorkflow × N   │
+  findings ───►│ API/CLI/ADO  │──────────► │ Temporal: TriageBatchWorkflow           │
+  (JSON/ADO/   └──────────────┘            │   └─ child: FindingTriageWorkflow × N   │
                      │                     │        runs pydantic_graph of agents    │
                      ▼                     └──────────┬───────────────┬──────────────┘
                ┌──────────────┐    activities         │               │  TemporalAgent
                │  Postgres    │◄──────────────────────┘               ▼  model/tool activities
-               │ runs/findings│                              ┌──────────────────┐
+  text)        │ runs/findings│                              ┌──────────────────┐
                │ evals/costs  │                              │ LLM providers    │
                └──────────────┘                              └──────────────────┘
                      ▲                  ┌───────────────────────────────────────┐
                      └──────────────────│ Sandbox runner (per-target container, │
-                        artifacts       │ no egress after dependency install)   │
-                        (blob store)    └───────────────────────────────────────┘
+                        artifacts       │ gVisor, no egress at probe time)      │
+                        (MinIO/S3)      └───────────────────────────────────────┘
 ```
 
 Workflows are split in two levels:
@@ -102,17 +102,30 @@ Legend: 🤖 = LLM agent (`TemporalAgent`), ⚙️ = deterministic activity.
 | P2 | `ReconAgent` | 🤖 | Describe the application: components, entry points, frameworks, test layout | FileSystem (ro), Skills: `lang-*` | `RepoProfile` |
 | P3 | `EnvPlannerAgent` | 🤖 | Produce a build spec: base image, system packages, dependency install, test command | FileSystem (ro), Skills: `build-*` (maven, gradle, pip/uv/poetry, cpanm, npm/pnpm/yarn…) | `EnvironmentSpec` |
 | P4 | `BuildEnvironment` | ⚙️ | Render a Dockerfile from `EnvironmentSpec` and build it | — | `BuildResult` |
-| P5 | `BuildRepairAgent` | 🤖 | On a build failure, read the logs and patch the `EnvironmentSpec` (bounded loop, max *k*) **[Q6]** | Shell (in sandbox), Skills: `build-*` | `EnvironmentSpec` |
+| P5 | `BuildRepairAgent` | 🤖 | On a build failure, read the logs and patch the `EnvironmentSpec`. The loop is aggressive but has hard caps **[D6]** | Shell (in sandbox), Skills: `build-*` | `EnvironmentSpec` |
+| P5b | `PartialBuildAgent` | 🤖 | Fallback when a full build fails: find the **smallest buildable unit** that contains the finding (a single module, a subproject, or the target package with unrelated dependencies stubbed) and produce a reduced `EnvironmentSpec` | FileSystem (ro), Shell (in sandbox), Skills: `build-*`, `partial-build` | `EnvironmentSpec` (scope=`partial`) |
 | P6 | `SmokeTest` | ⚙️ | Run a trivial test in the built image to prove the test harness works | — | `SmokeResult` |
 
-If preparation fails after *k* repair attempts, every finding in the repo is marked
-`inconclusive` with reason `environment_unbuildable`. This is still useful triage signal.
+**Build effort [D6] (aggressive).** The defaults below are configuration, and evals tune them:
+
+- Full build: up to 6 `BuildRepairAgent` iterations.
+- Then up to 4 `PartialBuildAgent` / repair iterations per finding-bearing module.
+- A per-repo spend cap (`pydantic_ai_harness.spend`) and a wall-clock cap apply to the
+  whole preparation.
+- Environments record `scope = full | partial`. A partial environment is cached per
+  (repo, module) and reused by every finding in that module. Verdicts from a partial
+  environment are tagged, so evals can compare accuracy on partial vs full environments.
+
+If both paths are exhausted, the repo's findings are marked `inconclusive` with reason
+`environment_unbuildable`. This is still useful triage signal.
 
 ### 5.2 Finding triage (per finding)
 
 | # | Node | Type | Single duty | Tools / skills | Output type |
 |---|---|---|---|---|---|
-| F0 | `NormalizeFinding` | ⚙️ | Convert an external finding into the canonical `Finding` (CWE, location, flow, severity, source tool) **[Q1]** | — | `Finding` |
+| F0a | `IntakeAdapter` | ⚙️ | Map a source into a partial `Finding` deterministically: generic JSON (our published schema, validated directly) or ADO work-item structured fields (repo, file, line, CWE, severity; the field mapping is config) **[D1]** | ADO REST client (read) | `FindingDraft` |
+| F0b | `IntakeAgent` | 🤖 | Fill gaps from prose (ADO description, free-text reports): extract the vulnerable location, CWE, attack preconditions, and claimed impact. Each field carries a citation into the source text | Skills: `cwe-*` | `Finding` + per-field confidence |
+| F0c | `ResolveLocation` | ⚙️ | Check the extracted file/symbol exists at the revision; fuzzy-match symbol → file:line. If it can't be resolved or confidence is low, the finding goes to `needs_info` instead of a guess | — | `Finding` \| `needs_info` |
 | F1 | `PreFilter` | ⚙️ | Apply cheap deterministic filters: file is missing, code is test-only or vendored, a duplicate fingerprint exists, the rule is in a denylist | — | `continue` \| early verdict |
 | F2 | `ContextAgent` | 🤖 | Gather the code slice: source→sink path, the called functions, how untrusted input reaches the sink, sanitizers seen | FileSystem (ro), Skills: `cwe-*`, `lang-*` | `FindingContext` |
 | F3 | `ProbePlannerAgent` | 🤖 | Decide *what* a test must show and define an **oracle**: the observable signal that means exploitable (exception, canary file, tainted value reaching sink, output match) | Skills: `cwe-*` (per-CWE probe patterns and oracles) | `ProbePlan` |
@@ -166,13 +179,17 @@ experiments. For example: `--override probe_author.model=anthropic:claude-sonnet
 Probes execute untrusted, LLM-generated code against untrusted repository code, so this
 is the main safety boundary.
 
+- **Isolation [D2]: Docker + gVisor (`runsc`).** Every build and probe container runs
+  under the gVisor runtime. Locally, `runsc` is registered as a Docker runtime; in k8s it
+  is a `RuntimeClass`. One model covers both environments.
 - **Local:** one container per prepared image. Network is allowed only during the
-  dependency-install build stage and set to `none` at probe time. The container runs as a
-  non-root user, with a read-only root filesystem except the probe workdir, cpu/mem/pids
-  limits, and a wall-clock timeout. **[Q2]** decides the isolation technology.
+  dependency-install build stage, through an egress proxy with an allowlist of package
+  registries, and set to `none` at probe time. The container runs as a non-root user,
+  with a read-only root filesystem except the probe workdir, cpu/mem/pids limits, and a
+  wall-clock timeout.
 - **Kubernetes:** each `ExecuteProbe` becomes a short-lived Job/Pod in a dedicated
-  namespace with a default-deny NetworkPolicy, `runtimeClassName` (gVisor/Kata) per
-  **[Q2]**, and no service-account token.
+  namespace with a default-deny NetworkPolicy, `runtimeClassName: gvisor`, and no
+  service-account token. Images are built with BuildKit (rootless) in that namespace.
 - Agents never get a host shell. The `Shell` capability, where used (P5 only), runs its
   commands **inside** the target sandbox through a small adapter, which is our only
   custom tool plumbing. Most agents only get read-only `FileSystem`.
@@ -188,11 +205,15 @@ is the main safety boundary.
   stays deterministic.
 - The pydantic-graph run executes **inside** the workflow. Nodes call `TemporalAgent.run`
   or `workflow.execute_activity`. We do not use pydantic-graph's own persistence, because
-  Temporal's history is the source of truth for resumption. **[Q3]**
+  Temporal's history is the source of truth for resumption. **[D3]** The graph can also
+  run outside Temporal (plain `Agent`s + `TestModel`) for unit tests and per-agent evals.
 - Idempotency: workflow ID = `triage:{finding_fingerprint}:{repo_revision}:{config_hash}`,
   so re-submitting the same finding with the same configuration is de-duplicated.
-- Human-in-the-loop hooks use Temporal signals/updates, e.g. approve probe execution or
-  override a verdict. **[Q8]**
+- **Human-in-the-loop [D8]: asynchronous verdict review.** Runs are fully automated.
+  Analysts review, confirm, or override verdicts in the UI/API afterwards. Every override
+  is stored with the analyst's reason and **becomes a labelled eval case**: overrides
+  feed the "historical triage" corpus (§10.2). There is no blocking approval gate. The
+  Temporal update handler (`override_verdict`) is kept, so a gate can be added later.
 
 ## 9. Persistence (Postgres)
 
@@ -207,7 +228,9 @@ The Temporal server uses its own Postgres database/schema. The application schem
 | `triage_runs` | One per (finding × config). Temporal workflow ID, status, verdict, confidence, priority, timings |
 | `agent_invocations` | One per agent call: agent name, model, instructions/skills/tools hashes, input/output (JSONB), tokens, cost USD, latency, retries, trace ID |
 | `probe_executions` | Probe source ref, exit code, oracle signals, duration, sandbox profile |
-| `artifacts` | Content-addressed blobs (probe files, logs, Dockerfiles). Bytes live on a local volume or in S3/MinIO **[Q5]** |
+| `artifacts` | Content-addressed blob refs (sha256, size, media type). The bytes live in S3-compatible object storage: MinIO locally, S3 or an equivalent in k8s **[D5]** |
+| `verdict_reviews` | Analyst confirm/override, reason, reviewer, timestamp. Exported to eval datasets |
+| `ado_sync` | Source work-item ID/rev, write-back status and payload hash (idempotent write-back) |
 | `eval_experiments`, `eval_case_results` | See §10 |
 
 Pydantic models are the single source of truth. JSONB columns store `model_dump()`
@@ -237,7 +260,18 @@ the deterministic scores.
 The full graph runs on a labelled corpus of (repo, finding, ground-truth verdict).
 Headline metrics: per-class precision/recall, the **false-negative rate on truly
 exploitable findings** (the costliest error), the `inconclusive` rate, $/finding, and
-p50/p95 latency/finding. **[Q7]** decides the corpus.
+p50/p95 latency/finding.
+
+**Corpus [D7]:**
+
+| Source | Use | Notes |
+|---|---|---|
+| OWASP Benchmark (Java v1.2, Python) | Large labelled TP/FP set for filtering precision/recall | One app per language, so builds are cheap and cached. Findings are generated from its expected-results CSV in our generic JSON format |
+| Real CVE datasets (e.g. Vul4J for Java, BugsInPy/CVEfixes-derived for Python, plus curated JS/Perl CVEs) | Realism: vulnerable commit = exploitable, fixed commit = not exploitable (a paired design) | Slow and brittle builds, so it also serves as the benchmark for **build-agent** success rate |
+| Historical internal triage + analyst overrides (D8) | The most representative of production traffic | Needs an export and a labelling pass. It stays private and never goes into the repo; it is loaded from Postgres/MinIO |
+
+Datasets are versioned (`dataset_id@version`) and every experiment records the version.
+A small **smoke subset** of each source (~20–50 cases) runs in CI through recorded responses.
 
 ### 10.3 Experiment tracking
 - An **experiment** = dataset version × config (models, instructions hashes, skills
@@ -253,20 +287,35 @@ p50/p95 latency/finding. **[Q7]** decides the corpus.
 
 ## 11. Deployment
 
-- **Local:** `docker compose up` starts `postgres`, `temporal` (auto-setup) +
-  `temporal-ui`, `worker`, `api` (FastAPI), an OTel collector/trace UI **[Q4]**, the
-  sandbox runtime (§7), and optionally `minio`.
+- **Local:** `docker compose up` starts `postgres`, `temporal` + `temporal-ui`, `worker`,
+  `sandbox-worker` (the task queue for build/probe activities), `api` (FastAPI), `web`
+  (UI), `minio`, `otel-collector` + a trace UI **[D4]**, and optionally `ollama` (compose
+  profile `local-models`) **[D9]**. The host needs the gVisor `runsc` runtime installed.
 - **Kubernetes (later):** Helm chart or Kustomize (the repo already has Kustomize) with
   Temporal via its official Helm chart or Temporal Cloud, managed Postgres, workers as a
   Deployment, and sandbox Jobs in an isolated namespace. KEDA or Temporal worker
   autoscaling is out of scope for v2.0.
 - The project uses `uv`, Python 3.12, ruff, and pytest. `just` recipes stay.
 
+### Interfaces [D11]
+- **CLI:** `harness submit`, `harness status`, `harness report`, `harness eval run`, and
+  `harness eval compare`.
+- **REST API (FastAPI):** submit batches (generic JSON / ADO query / free text), fetch
+  results, post reviews, and list experiments. The CLI and the UI both use it.
+- **Web UI:** a triage queue sorted by priority, a finding detail view (context, probe
+  source, execution logs, verdict, trace link), review/override, and an experiment
+  comparison dashboard.
+- **ADO write-back:** a Temporal activity at the end of `FindingTriageWorkflow` posts the
+  verdict, priority, and evidence summary to the source work item as a comment plus
+  fields/tags. It is idempotent via `ado_sync`, controlled by a feature flag, and uses a
+  scoped PAT.
+
 ### Proposed repo layout
 ```
 src/infosec_harness/
   domain/           # Pydantic models: Finding, RepoProfile, EnvironmentSpec, ProbePlan, Verdict…
-  intake/           # finding adapters (SARIF, generic JSON, …)
+  intake/           # generic JSON schema, ADO adapter, free-text entry
+  integrations/ado/ # ADO read + write-back
   agents/<name>/    # agent.py + instructions.md + evals/dataset.yaml
   graph/            # pydantic_graph definitions for prep + triage
   workflows/        # Temporal workflows + activities + worker entrypoint
@@ -274,34 +323,49 @@ src/infosec_harness/
   persistence/      # SQLAlchemy models, Alembic migrations, repositories
   evals/            # shared evaluators, experiment runner, compare CLI
   api/ cli/
+web/                # UI
 skills/             # SKILL.md libraries (lang-*, build-*, test-*, cwe-*)
 deploy/compose/  deploy/k8s/
 eval-corpus/        # labelled cases (or git submodules / fetch scripts)
 ```
 
 ### Phased delivery (proposal)
-1. **Skeleton:** compose stack, domain models, Postgres schema, a Temporal workflow with
+1. **Skeleton:** delete v1 code (D10), compose stack, domain models, Postgres schema, a Temporal workflow with
    stub agents (`TestModel`), and a CLI submit/report path.
-2. **Python-only vertical slice:** all agents real for pytest + 3 CWEs, with per-agent
-   eval datasets and a baseline experiment.
+2. **Python-only vertical slice:** generic JSON + ADO intake, all agents real for pytest
+   + 3 CWEs, per-agent eval datasets, the OWASP Benchmark (Python) subset, and a baseline
+   experiment.
 3. **Evals and experiment comparison tooling:** the compare CLI, recorded-response CI
    evals, and the E2E corpus v1.
 4. **Language breadth:** Java (Maven/Gradle + JUnit), JS/React (npm + Jest/RTL), and Perl
    (cpanm + Test::More) as **skills plus eval cases**, with no new agents.
-5. **K8s manifests and hardened sandbox runtime.**
+5. **Web UI review queue + ADO write-back**, then **K8s manifests** (gVisor RuntimeClass,
+   isolated sandbox namespace).
 
-## 12. Open questions
-Each question is asked with multiple-choice options. Answers will be folded back into
-this document.
+## 12. Decisions log
 
-- **Q1** Input formats for pre-identified findings.
-- **Q2** Sandbox isolation technology (local and k8s).
-- **Q3** How pydantic-graph and Temporal divide responsibility.
-- **Q4** Observability/tracing backend.
-- **Q5** Artifact storage.
-- **Q6** Repair budgets and build strategy.
-- **Q7** Ground-truth evaluation corpus.
-- **Q8** Human-in-the-loop points.
-- **Q9** Model providers.
-- **Q10** What to do with the existing v1 code.
-- **Q11** Primary interface (CLI / API / UI).
+| # | Topic | Decision |
+|---|---|---|
+| D1 | Finding inputs | Generic JSON schema, Azure DevOps work items (structured fields + prose), and free-text reports. **SARIF is not in scope for v2.0.** |
+| D2 | Sandbox | Docker + gVisor (`runsc`) locally, and a gVisor RuntimeClass in k8s |
+| D3 | Orchestration | The pydantic-graph topology runs inside Temporal workflows. Agents are `TemporalAgent`s |
+| D4 | Tracing | Self-hosted OpenTelemetry (collector + trace UI in compose). Nothing leaves the network |
+| D5 | Artifacts | S3-compatible (MinIO locally), with refs and hashes in Postgres |
+| D6 | Build effort | Aggressive: long repair loops plus partial-build fallback, under hard $ and time caps |
+| D7 | Eval corpus | OWASP Benchmark + real CVE datasets + historical internal triage/overrides |
+| D8 | Human in the loop | Asynchronous verdict review; overrides become eval cases |
+| D9 | Models | Any provider via pydantic-ai, including self-hosted (Ollama/vLLM) |
+| D10 | v1 code | Delete v1 `src/`, `tests/`, fixtures, and the abox/minikube lab; keep `research/` and design docs as background (done in phase 1) |
+| D11 | Interfaces | CLI, REST API, Web UI, and ADO write-back |
+
+## 13. Open questions
+
+- **Q12** Web UI stack: server-rendered (FastAPI + HTMX) vs a React SPA.
+- **Q13** ADO write-back scope: comment only, or also set state/tags/fields? Which fields
+  map to verdict and priority?
+- **Q14** Self-hosted model serving for local development: Ollama (simple) vs vLLM
+  (throughput, GPU).
+- **Q15** Default models per agent for the baseline experiment (e.g. a small model for
+  intake/diagnosis and a large one for probe authoring/verdict).
+- **Q16** Build egress: which package registries/mirrors are allowed during dependency
+  install (public registries vs an internal Artifactory/Nexus mirror)?
