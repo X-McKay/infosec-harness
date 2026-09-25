@@ -146,3 +146,51 @@ async def compare_experiments(baseline: str, candidate: str) -> None:
         print(f"  {key:18} {delta(key)}")
     print(f"  baseline confusion: {b.metrics.get('confusion')}")
     print(f"  candidate confusion: {c.metrics.get('confusion')}")
+
+
+async def score_corpus(*, language: str = "python", sandbox: bool | None = None) -> dict:
+    """Run the seeded corpus end-to-end and score verdicts against ground truth (§10.2).
+
+    Headline metrics: per-class precision/recall and the false-negative rate on truly
+    exploitable cases (the costliest error). With stub models the verdicts are not
+    meaningful (the stub is not a judge) — this is the harness that lights up under a live
+    model. `sandbox=None` auto-detects the gVisor runtime.
+    """
+    from infosec_harness.domain.models import Finding
+    from infosec_harness.evals.corpus import load_corpus
+    from infosec_harness.graph.local import triage_batch_local
+
+    cases = load_corpus(language)
+    if sandbox is None:
+        from infosec_harness.sandbox import docker
+        sandbox = await docker.docker_available() and await docker.runtime_available()
+    outputs = await triage_batch_local([c.finding for c in cases], sandbox=sandbox)
+    by_fp = {o.finding.fingerprint: o for o in outputs}
+
+    rows, confusion = [], {}
+    correct = fn = exploitable = 0
+    for c in cases:
+        out = by_fp[Finding.compute_fingerprint(c.finding)]
+        actual = out.result.verdict.label.value
+        ok = actual == c.expected_verdict
+        correct += int(ok)
+        confusion[(c.expected_verdict, actual)] = confusion.get((c.expected_verdict, actual), 0) + 1
+        if c.expected_verdict == "potentially_exploitable":
+            exploitable += 1
+            if actual != "potentially_exploitable":
+                fn += 1  # missed a real vulnerability — the costliest error
+        rows.append({"case": c.name, "expected": c.expected_verdict, "actual": actual,
+                     "ok": ok, "early_exit": out.result.early_exit,
+                     "priority": out.result.priority.value})
+    metrics = {
+        "n": len(cases), "accuracy": round(correct / len(cases), 4) if cases else 0.0,
+        "false_negative_rate_on_exploitable": round(fn / exploitable, 4) if exploitable else 0.0,
+        "sandbox": sandbox,
+        "confusion": {f"{k[0]}->{k[1]}": v for k, v in sorted(confusion.items())},
+    }
+    for r in rows:
+        mark = "OK " if r["ok"] else "XX "
+        print(f"  {mark}{r['case']:26} {r['expected']:24} -> {r['actual']:24} {r['early_exit'] or ''}")
+    print(f"accuracy={metrics['accuracy']:.0%}  FN-on-exploitable={metrics['false_negative_rate_on_exploitable']:.0%}  "
+          f"sandbox={'on' if sandbox else 'off (verdicts not meaningful)'}")
+    return metrics

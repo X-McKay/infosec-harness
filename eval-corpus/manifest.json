@@ -1,0 +1,238 @@
+{
+  "version": "1",
+  "language": "python",
+  "note": "Paired seeded corpus. Vulnerable variants should be potentially_exploitable; fixed variants likely_not_exploitable. Ground truth is for scoring, not shown to agents.",
+  "cases": [
+    {
+      "name": "sqli-vulnerable",
+      "finding": {
+        "title": "SQL injection in get_user",
+        "repo_url": "eval-corpus/python/sqli/vulnerable",
+        "revision": "HEAD",
+        "file_path": "app.py",
+        "start_line": 13,
+        "symbol": "get_user",
+        "cwe": "CWE-89",
+        "severity": "high",
+        "source_tool": "seed-corpus",
+        "description": "`name` is concatenated into the SQL passed to cursor.execute in get_user."
+      },
+      "truth": {
+        "expected_verdict": "potentially_exploitable",
+        "reachability": "reachable",
+        "sink_file": "app.py",
+        "sink_line": 16,
+        "source": "name parameter",
+        "target_callable": "get_user"
+      }
+    },
+    {
+      "name": "sqli-fixed",
+      "finding": {
+        "title": "SQL injection in get_user",
+        "repo_url": "eval-corpus/python/sqli/fixed",
+        "revision": "HEAD",
+        "file_path": "app.py",
+        "start_line": 13,
+        "symbol": "get_user",
+        "cwe": "CWE-89",
+        "severity": "high",
+        "source_tool": "seed-corpus",
+        "description": "`name` reaches cursor.execute in get_user."
+      },
+      "truth": {
+        "expected_verdict": "likely_not_exploitable",
+        "reachability": "reachable",
+        "sink_file": "app.py",
+        "sink_line": 16,
+        "source": "name parameter",
+        "target_callable": "get_user"
+      }
+    },
+    {
+      "name": "cmdi-vulnerable",
+      "finding": {
+        "title": "OS command injection in count_lines",
+        "repo_url": "eval-corpus/python/cmdi/vulnerable",
+        "revision": "HEAD",
+        "file_path": "app.py",
+        "start_line": 4,
+        "symbol": "count_lines",
+        "cwe": "CWE-78",
+        "severity": "critical",
+        "source_tool": "seed-corpus",
+        "description": "`path` is concatenated into a shell command (shell=True)."
+      },
+      "truth": {
+        "expected_verdict": "potentially_exploitable",
+        "reachability": "reachable",
+        "sink_file": "app.py",
+        "sink_line": 6,
+        "source": "path parameter",
+        "target_callable": "count_lines"
+      }
+    },
+    {
+      "name": "cmdi-fixed",
+      "finding": {
+        "title": "OS command injection in count_lines",
+        "repo_url": "eval-corpus/python/cmdi/fixed",
+        "revision": "HEAD",
+        "file_path": "app.py",
+        "start_line": 4,
+        "symbol": "count_lines",
+        "cwe": "CWE-78",
+        "severity": "critical",
+        "source_tool": "seed-corpus",
+        "description": "`path` reaches subprocess.run in count_lines."
+      },
+      "truth": {
+        "expected_verdict": "likely_not_exploitable",
+        "reachability": "reachable",
+        "sink_file": "app.py",
+        "sink_line": 6,
+        "source": "path parameter",
+        "target_callable": "count_lines"
+      }
+    },
+    {
+      "name": "pathtraversal-vulnerable",
+      "finding": {
+        "title": "Path traversal in read_doc",
+        "repo_url": "eval-corpus/python/pathtraversal/vulnerable",
+        "revision": "HEAD",
+        "file_path": "app.py",
+        "start_line": 6,
+        "symbol": "read_doc",
+        "cwe": "CWE-22",
+        "severity": "high",
+        "source_tool": "seed-corpus",
+        "description": "`name` is joined onto BASE without a containment check."
+      },
+      "truth": {
+        "expected_verdict": "potentially_exploitable",
+        "reachability": "reachable",
+        "sink_file": "app.py",
+        "sink_line": 8,
+        "source": "name parameter",
+        "target_callable": "read_doc"
+      }
+    },
+    {
+      "name": "pathtraversal-fixed",
+      "finding": {
+        "title": "Path traversal in read_doc",
+        "repo_url": "eval-corpus/python/pathtraversal/fixed",
+        "revision": "HEAD",
+        "file_path": "app.py",
+        "start_line": 6,
+        "symbol": "read_doc",
+        "cwe": "CWE-22",
+        "severity": "high",
+        "source_tool": "seed-corpus",
+        "description": "`name` reaches open() in read_doc."
+      },
+      "truth": {
+        "expected_verdict": "likely_not_exploitable",
+        "reachability": "reachable",
+        "sink_file": "app.py",
+        "sink_line": 11,
+        "source": "name parameter",
+        "target_callable": "read_doc"
+      }
+    },
+    {
+      "name": "xss-vulnerable",
+      "finding": {
+        "title": "Reflected XSS in render_comment",
+        "repo_url": "eval-corpus/python/xss/vulnerable",
+        "revision": "HEAD",
+        "file_path": "app.py",
+        "start_line": 1,
+        "symbol": "render_comment",
+        "cwe": "CWE-79",
+        "severity": "medium",
+        "source_tool": "seed-corpus",
+        "description": "`text` is interpolated into HTML without encoding."
+      },
+      "truth": {
+        "expected_verdict": "potentially_exploitable",
+        "reachability": "reachable",
+        "sink_file": "app.py",
+        "sink_line": 3,
+        "source": "text parameter",
+        "target_callable": "render_comment"
+      }
+    },
+    {
+      "name": "xss-fixed",
+      "finding": {
+        "title": "Reflected XSS in render_comment",
+        "repo_url": "eval-corpus/python/xss/fixed",
+        "revision": "HEAD",
+        "file_path": "app.py",
+        "start_line": 4,
+        "symbol": "render_comment",
+        "cwe": "CWE-79",
+        "severity": "medium",
+        "source_tool": "seed-corpus",
+        "description": "`text` is rendered into HTML in render_comment."
+      },
+      "truth": {
+        "expected_verdict": "likely_not_exploitable",
+        "reachability": "reachable",
+        "sink_file": "app.py",
+        "sink_line": 6,
+        "source": "text parameter",
+        "target_callable": "render_comment"
+      }
+    },
+    {
+      "name": "unreachable",
+      "finding": {
+        "title": "SQL execution in healthcheck",
+        "repo_url": "eval-corpus/python/unreachable/vulnerable",
+        "revision": "HEAD",
+        "file_path": "app.py",
+        "start_line": 15,
+        "symbol": "healthcheck",
+        "cwe": "CWE-89",
+        "severity": "medium",
+        "source_tool": "seed-corpus",
+        "description": "healthcheck runs a query; a scanner flagged the execute sink."
+      },
+      "truth": {
+        "expected_verdict": "likely_not_exploitable",
+        "reachability": "unreachable",
+        "sink_file": "app.py",
+        "sink_line": 12,
+        "source": "none (constant query)",
+        "target_callable": "healthcheck"
+      }
+    },
+    {
+      "name": "testonly",
+      "finding": {
+        "title": "SQL string built in test helper",
+        "repo_url": "eval-corpus/python/testonly/vulnerable",
+        "revision": "HEAD",
+        "file_path": "tests/test_helpers.py",
+        "start_line": 4,
+        "symbol": "build_query",
+        "cwe": "CWE-89",
+        "severity": "low",
+        "source_tool": "seed-corpus",
+        "description": "Query string built by concatenation in a test helper."
+      },
+      "truth": {
+        "expected_verdict": "likely_not_exploitable",
+        "reachability": "unknown",
+        "sink_file": "tests/test_helpers.py",
+        "sink_line": 6,
+        "source": "name parameter",
+        "target_callable": "build_query",
+        "early_exit": "test_or_vendored"
+      }
+    }
+  ]
+}

@@ -132,6 +132,14 @@ def eval_run(
     typer.echo(f"EXPERIMENT_ID={exp_id}")
 
 
+@eval_app.command("corpus")
+def eval_corpus(language: str = "python", sandbox: bool = typer.Option(None, help="Force sandbox on/off")):
+    """Run the seeded ground-truth corpus end-to-end and score verdicts against truth."""
+    from infosec_harness.evals.run import score_corpus
+
+    asyncio.run(score_corpus(language=language, sandbox=sandbox))
+
+
 @eval_app.command("compare")
 def eval_compare(baseline: str, candidate: str):
     """Compare two experiments on accuracy, cost, and latency."""
