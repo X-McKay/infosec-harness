@@ -170,13 +170,35 @@ async def score_corpus(*, language: str = "python", sandbox: bool | None = None)
     if sandbox is None:
         from infosec_harness.sandbox import docker
         sandbox = await docker.docker_available() and await docker.runtime_available()
-    outputs = await triage_batch_local([c.finding for c in cases], sandbox=sandbox)
+    prepare_sink: dict[tuple[str, str], list] = {}
+    outputs = await triage_batch_local([c.finding for c in cases], sandbox=sandbox,
+                                       prepare_sink=prepare_sink)
     by_fp = {o.finding.fingerprint: o for o in outputs}
 
     rows, confusion = [], {}
     correct = fn = exploitable = 0
     # Trajectory scoring: did the tool-using agents evoke the expected tools/skills?
     traj_totals: dict[str, dict[str, int]] = {}
+
+    def _score_trajectory(agent: str, tools_called, skills_loaded, cwe: str | None = None) -> None:
+        base = AGENT_EXPECTATIONS.get(agent)
+        if base is None:
+            return
+        skill_prefixes = base.skill_prefixes
+        if agent == "context" and (p := cwe_skill_prefix(cwe)):
+            skill_prefixes = (p,)  # require the *matching* CWE skill, not just any
+        exp = TrajectoryExpectation(tool_groups=base.tool_groups, skill_prefixes=skill_prefixes)
+        res = check_expectations(tools_called, skills_loaded, exp)
+        t = traj_totals.setdefault(agent, {"n": 0, "tools_ok": 0, "skills_ok": 0})
+        t["n"] += 1
+        t["tools_ok"] += int(res.tools_ok)
+        t["skills_ok"] += int(res.skills_ok)
+
+    # Prepare-phase agents (recon, env_planner, build repair) run once per repo.
+    for invs in prepare_sink.values():
+        for inv in invs:
+            _score_trajectory(inv.agent, inv.tools_called, inv.skills_loaded)
+
     for c in cases:
         out = by_fp[Finding.compute_fingerprint(c.finding)]
         actual = out.result.verdict.label.value
@@ -190,20 +212,9 @@ async def score_corpus(*, language: str = "python", sandbox: bool | None = None)
         rows.append({"case": c.name, "expected": c.expected_verdict, "actual": actual,
                      "ok": ok, "early_exit": out.result.early_exit,
                      "priority": out.result.priority.value})
-        # Per-agent trajectory expectations for this case (CWE-specific skill for context).
+        # Per-finding triage agents (context, probe_author, ...).
         for inv in out.invocations:
-            base = AGENT_EXPECTATIONS.get(inv.agent)
-            if base is None:
-                continue
-            skill_prefixes = base.skill_prefixes
-            if inv.agent == "context" and (p := cwe_skill_prefix(c.finding.cwe)):
-                skill_prefixes = (p,)  # require the *matching* CWE skill, not just any
-            exp = TrajectoryExpectation(tool_groups=base.tool_groups, skill_prefixes=skill_prefixes)
-            res = check_expectations(inv.tools_called, inv.skills_loaded, exp)
-            t = traj_totals.setdefault(inv.agent, {"n": 0, "tools_ok": 0, "skills_ok": 0})
-            t["n"] += 1
-            t["tools_ok"] += int(res.tools_ok)
-            t["skills_ok"] += int(res.skills_ok)
+            _score_trajectory(inv.agent, inv.tools_called, inv.skills_loaded, c.finding.cwe)
 
     trajectory = {a: {"n": v["n"],
                       "tool_use_rate": round(v["tools_ok"] / v["n"], 3) if v["n"] else 0.0,

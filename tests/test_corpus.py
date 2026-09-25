@@ -89,3 +89,16 @@ async def test_score_corpus_runs_offline():
     metrics = await score_corpus(language="python", sandbox=False)
     assert metrics["n"] == len(load_corpus("python"))
     assert 0.0 <= metrics["accuracy"] <= 1.0
+
+
+async def test_trajectory_report_includes_prepare_agents():
+    """The trajectory report covers prepare-phase agents (recon, env_planner), not just
+    per-finding agents — proving prepare invocations are wired in."""
+    from infosec_harness.evals.run import score_corpus
+
+    metrics = await score_corpus(language="python", sandbox=False)
+    traj = metrics["trajectory"]
+    assert {"recon", "env_planner"} <= set(traj), "prepare-phase agents missing from trajectory"
+    assert {"context", "probe_author"} <= set(traj), "per-finding agents missing from trajectory"
+    # recon/env_planner run once per repo (10 python cases -> 10 repos).
+    assert traj["recon"]["n"] == len(load_corpus("python"))
