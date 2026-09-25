@@ -19,6 +19,7 @@ import yaml
 from infosec_harness.agents.deps import AgentDeps
 from infosec_harness.agents.render import render_prompt
 from infosec_harness.domain.models import VerdictFacts
+from infosec_harness.evals.trajectory import scores_skills
 from infosec_harness.settings import get_settings
 
 # Per-agent adapter: (case) -> (task_text, payload, deps, predicted_label_fn, expected)
@@ -39,6 +40,81 @@ def _diagnosis_adapter(case: dict):
 
 
 ADAPTERS: dict[str, Adapter] = {"verdict": _verdict_adapter, "probe_diagnosis": _diagnosis_adapter}
+
+
+def _spread(values: list[float]) -> str:
+    """`mean` when one sample, `mean [min-max]` when several — so noise is visible."""
+    mean = sum(values) / len(values)
+    if len(values) == 1:
+        return f"{mean:.0%}"
+    return f"{mean:.0%} [{min(values):.0%}-{max(values):.0%}]"
+
+
+async def score_corpus(*, language: str = "python", sandbox: bool | None = None,
+                       repeat: int = 1) -> dict:
+    """Run the seeded corpus end-to-end and score verdicts against ground truth (§10.2).
+
+    Headline metrics: per-class recall and the false-negative rate on truly exploitable
+    cases (the costliest error). With stub models the verdicts are not meaningful (the stub
+    is not a judge) — this is the harness that lights up under a live model.
+    `sandbox=None` auto-detects the gVisor runtime.
+
+    `language="all"` sweeps every language in the corpus. `repeat` runs the whole thing
+    more than once and reports the spread: the corpus is small and the model is stochastic,
+    so a single pass has enough run-to-run variance (measured: one agent's skill-evocation
+    rate moved between 0% and 44% with no change at all) that comparing two one-pass runs
+    cannot separate a real effect from noise. Repeat both sides of an A/B.
+    """
+    from infosec_harness.evals.corpus import languages as corpus_languages
+
+    langs = corpus_languages() if language == "all" else [language]
+    runs: list[dict] = []
+    for rep in range(repeat):
+        for lang in langs:
+            if len(langs) > 1 or repeat > 1:
+                print(f"--- {lang}" + (f" (pass {rep + 1}/{repeat})" if repeat > 1 else ""))
+            runs.append({"language": lang, **await _score_corpus_once(language=lang, sandbox=sandbox)})
+    if len(runs) == 1:
+        return runs[0]
+
+    agents = sorted({a for r in runs for a in r["trajectory"]})
+    summary = {
+        "runs": runs,
+        "languages": langs,
+        "repeat": repeat,
+        "n": sum(r["n"] for r in runs),
+        "accuracy_mean": round(sum(r["accuracy"] for r in runs) / len(runs), 4),
+        "accuracy_min": min(r["accuracy"] for r in runs),
+        "accuracy_max": max(r["accuracy"] for r in runs),
+        "trajectory": {
+            a: {
+                "n": sum(r["trajectory"][a]["n"] for r in runs if a in r["trajectory"]),
+                "tool_use_rate_mean": round(_mean_rate(runs, a, "tool_use_rate"), 3),
+                "skill_use_rate_mean": round(_mean_rate(runs, a, "skill_use_rate"), 3),
+            }
+            for a in agents
+        },
+    }
+    print("\n=== aggregate over "
+          f"{len(runs)} run(s): {', '.join(langs)}"
+          + (f" x{repeat}" if repeat > 1 else "") + " ===")
+    print(f"accuracy {_spread([r['accuracy'] for r in runs])}  "
+          f"FN-on-exploitable {_spread([r['false_negative_rate_on_exploitable'] for r in runs])}")
+    print("tool/skill evocation:")
+    for a in agents:
+        tools = [r["trajectory"][a]["tool_use_rate"] for r in runs if a in r["trajectory"]]
+        skills = [r["trajectory"][a]["skill_use_rate"] for r in runs if a in r["trajectory"]]
+        skill_col = _spread(skills) if scores_skills(a) else "n/a (no expectation)"
+        print(f"  {a:14} tools {_spread(tools):18} skills {skill_col}")
+    return summary
+
+
+def _mean_rate(runs: list[dict], agent: str, key: str) -> float:
+    """Weight each run's rate by the cases it saw, so languages don't count equally."""
+    num = sum(r["trajectory"][agent][key] * r["trajectory"][agent]["n"]
+              for r in runs if agent in r["trajectory"])
+    den = sum(r["trajectory"][agent]["n"] for r in runs if agent in r["trajectory"])
+    return num / den if den else 0.0
 
 
 def _git_sha() -> str:
@@ -148,14 +224,8 @@ async def compare_experiments(baseline: str, candidate: str) -> None:
     print(f"  candidate confusion: {c.metrics.get('confusion')}")
 
 
-async def score_corpus(*, language: str = "python", sandbox: bool | None = None) -> dict:
-    """Run the seeded corpus end-to-end and score verdicts against ground truth (§10.2).
-
-    Headline metrics: per-class precision/recall and the false-negative rate on truly
-    exploitable cases (the costliest error). With stub models the verdicts are not
-    meaningful (the stub is not a judge) — this is the harness that lights up under a live
-    model. `sandbox=None` auto-detects the gVisor runtime.
-    """
+async def _score_corpus_once(*, language: str, sandbox: bool | None) -> dict:
+    """One pass over the corpus. See :func:`score_corpus`."""
     from infosec_harness.domain.models import Finding
     from infosec_harness.evals.corpus import load_corpus
     from infosec_harness.evals.trajectory import (
@@ -234,5 +304,6 @@ async def score_corpus(*, language: str = "python", sandbox: bool | None = None)
           f"sandbox={'on' if sandbox else 'off (verdicts not meaningful)'}")
     print("tool/skill evocation (per agent, rate across cases):")
     for agent, t in trajectory.items():
-        print(f"  {agent:14} tools {t['tool_use_rate']:.0%}  skills {t['skill_use_rate']:.0%}  (n={t['n']})")
+        skills = f"{t['skill_use_rate']:.0%}" if scores_skills(agent) else "n/a"
+        print(f"  {agent:14} tools {t['tool_use_rate']:.0%}  skills {skills}  (n={t['n']})")
     return metrics

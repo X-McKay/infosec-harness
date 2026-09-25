@@ -114,6 +114,16 @@ AGENT_EXPECTATIONS: dict[str, TrajectoryExpectation] = {
 }
 
 
+def scores_skills(agent: str) -> bool:
+    """Whether this agent is actually checked on skill evocation.
+
+    An agent with no ``skill_prefixes`` trivially satisfies the skill check, so reporting it
+    as 100% claims a pass that was never tested. Callers use this to print "n/a" instead.
+    """
+    exp = AGENT_EXPECTATIONS.get(agent)
+    return bool(exp and exp.skill_prefixes)
+
+
 def cwe_skill_prefix(cwe: str | None) -> str | None:
     """Map CWE-89 -> the 'cwe-89' skill prefix so we can check the *matching* skill loaded."""
     if not cwe:

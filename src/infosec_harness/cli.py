@@ -133,11 +133,15 @@ def eval_run(
 
 
 @eval_app.command("corpus")
-def eval_corpus(language: str = "python", sandbox: bool = typer.Option(None, help="Force sandbox on/off")):
+def eval_corpus(
+    language: str = typer.Option("python", help="Corpus language, or 'all' to sweep every one"),
+    sandbox: bool = typer.Option(None, help="Force sandbox on/off"),
+    repeat: int = typer.Option(1, help="Passes over the corpus (LLM variance); prints the spread"),
+):
     """Run the seeded ground-truth corpus end-to-end and score verdicts against truth."""
     from infosec_harness.evals.run import score_corpus
 
-    asyncio.run(score_corpus(language=language, sandbox=sandbox))
+    asyncio.run(score_corpus(language=language, sandbox=sandbox, repeat=repeat))
 
 
 @eval_app.command("compare")
