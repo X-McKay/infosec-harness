@@ -35,6 +35,10 @@ class BackendConfig(BaseModel):
     base_url: str | None = None
     api_key_env: str | None = None
     prices: dict[str, Prices] = Field(default_factory=dict)
+    # A self-hosted endpoint can drop requests under load (502 upstream_unreachable). The
+    # OpenAI client's default of 2 retries is not enough to ride that out, and without
+    # Temporal (e.g. `harness eval corpus`) one 502 kills a whole batch.
+    max_retries: int = 6
     # Many self-hosted OpenAI-spec servers (vLLM/TGI with a single-system chat template)
     # reject a request carrying more than one system message. pydantic-ai emits one per
     # instruction block, and the Skills capability adds its own, so every skill-bearing
@@ -149,9 +153,13 @@ def _build_live(backend_name: str, model_id: str) -> Model:
     # Some gateways (e.g. an internal LLM proxy) require no key. Fall back to a placeholder
     # so the OpenAI client still constructs; if the endpoint enforces auth it returns 401.
     api_key = os.environ.get(backend.api_key_env or "", "") or "no-key"
+    from openai import AsyncOpenAI
+
+    client = AsyncOpenAI(base_url=backend.base_url, api_key=api_key,
+                         max_retries=backend.max_retries)
     return _CompatOpenAIChatModel(
         model_id,
-        provider=OpenAIProvider(base_url=backend.base_url, api_key=api_key),
+        provider=OpenAIProvider(openai_client=client),
         merge_system=backend.merge_system_messages,
         min_max_tokens=backend.min_max_tokens,
     )

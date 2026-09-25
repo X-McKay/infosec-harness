@@ -93,3 +93,13 @@ def test_gateway_catalog_only_names_ids_the_endpoint_serves():
     cfg = load_models_config()
     for tier, per_backend in cfg.model_catalog.items():
         assert per_backend.get("gateway"), f"tier {tier} has no gateway model id"
+
+
+def test_openai_backends_ride_out_transient_upstream_failures():
+    """One 502 from a self-hosted endpoint must not kill a whole batch run."""
+    from infosec_harness.agents.models import load_models_config
+
+    cfg = load_models_config()
+    for name, backend in cfg.backends.items():
+        if backend.kind == "openai_compatible":
+            assert backend.max_retries >= 3, f"{name} retries too few times to be useful"
