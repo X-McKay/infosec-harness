@@ -9,13 +9,51 @@ from __future__ import annotations
 import hashlib
 import json
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+def _nested_model_fields(cls: type[BaseModel]) -> set[str]:
+    """Names of fields whose annotation is a nested model (optionally ``| None``)."""
+    names: set[str] = set()
+    for name, info in cls.model_fields.items():
+        candidates = get_args(info.annotation) or (info.annotation,)
+        if any(isinstance(c, type) and issubclass(c, BaseModel) for c in candidates):
+            names.add(name)
+    return names
 
 
 class _Model(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _decode_double_encoded_objects(cls, data: Any) -> Any:
+        """Accept a nested object that arrived as a JSON *string*.
+
+        Models routinely double-encode a single nested object in a tool call — emitting
+        ``"sink": "{\"file_path\": ...}"`` while getting the sibling ``list[CodeRef]``
+        right — which fails validation and burns the agent's output retries. Only a string
+        in a slot that wants an object is touched, and only when it parses to one, so this
+        widens acceptance of input that would otherwise always fail and changes nothing
+        else.
+        """
+        if not isinstance(data, dict):
+            return data
+        decoded = None
+        for name in _nested_model_fields(cls):
+            value = data.get(name)
+            if not isinstance(value, str):
+                continue
+            try:
+                parsed = json.loads(value)
+            except (ValueError, TypeError):
+                continue
+            if isinstance(parsed, dict):
+                decoded = decoded if decoded is not None else dict(data)
+                decoded[name] = parsed
+        return decoded if decoded is not None else data
 
 
 def canonical_json(model: BaseModel | dict | list) -> str:

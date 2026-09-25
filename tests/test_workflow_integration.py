@@ -36,7 +36,7 @@ async def _fake_build(snapshot_path, spec, tag):
     return ProcResult(exit_code=0, stdout="built", stderr="", timed_out=False, duration_s=0.1)
 
 
-async def _fake_probe(image, test_file_path, content, test_command, nonce):
+async def _fake_probe(image, test_file_path, content, test_command, nonce, module_path=""):
     from infosec_harness.sandbox.docker import PRECONDITION_PREFIX, ProcResult
 
     return ProcResult(exit_code=0, stdout=f"{PRECONDITION_PREFIX}{nonce}\n", stderr="",

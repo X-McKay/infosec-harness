@@ -13,6 +13,12 @@ SINK_PATTERN = {
     "CWE-22": re.compile(r"open\("),
     "CWE-79": re.compile(r"<div"),
 }
+DEFINITION_PATTERN = {  # language -> regex (with a {name} slot) for "this callable is defined here"
+    "python": r"def\s+{name}\s*\(",
+    "perl": r"sub\s+{name}\b",
+    "javascript": r"(?:function\s+{name}\s*\(|\b{name}\s*[:=]\s*(?:async\s*)?(?:function\b|\())",
+    "java": r"\b{name}\s*\(",  # methods carry a return type/modifiers, not a keyword
+}
 EXPECTED_STACK = {  # language -> (detected language alternatives, build system, test framework)
     "python": ({"python"}, "pip", "pytest"),
     "java": ({"java"}, "maven", "junit5"),
@@ -40,10 +46,10 @@ def test_finding_points_at_real_code(case):
     lines = target.read_text().splitlines()
     assert 1 <= case.finding.start_line <= len(lines)
     assert 1 <= case.sink_line <= len(lines)
-    kw = "sub" if case.language == "perl" else ("function" if case.language == "javascript" else "def")
-    # the target callable is defined somewhere in the file (method/sub/function/def)
-    assert any(re.search(rf"\b{re.escape(case.target_callable)}\b", l) for l in lines)
-    _ = kw
+    # the target callable is defined somewhere in the file (def/sub/function, or a Java method)
+    definition = DEFINITION_PATTERN[case.language].format(name=re.escape(case.target_callable))
+    assert any(re.search(definition, line) for line in lines), \
+        f"{case.name}: no definition of {case.target_callable} in {case.finding.file_path}"
 
 
 @pytest.mark.parametrize("case", [c for c in CASES if c.finding.cwe in SINK_PATTERN and c.reachability != "unknown"],

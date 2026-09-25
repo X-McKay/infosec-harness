@@ -12,6 +12,7 @@ from datetime import timedelta
 
 from pydantic_ai.messages import UserContent
 from temporalio import workflow
+from temporalio.common import RetryPolicy
 
 from infosec_harness.agents.deps import AgentDeps
 from infosec_harness.domain.models import (
@@ -30,6 +31,14 @@ with workflow.unsafe.imports_passed_through():
     from infosec_harness.agents.registry import agent_config_hashes, resolved_model_names
     from infosec_harness.evals.trajectory import inspect_messages
     from infosec_harness.workflows import activities
+
+
+# Temporal's default retry policy is *unlimited* attempts. A deterministic programming
+# error in one of these activities (a bad signature, a validation failure) would then retry
+# forever and the workflow would hang rather than fail — silently holding a worker slot.
+# Bound the attempts and never retry the error classes that cannot succeed on a retry.
+_NON_RETRYABLE = ["TypeError", "ValueError", "AttributeError", "KeyError", "ValidationError"]
+_RETRY = RetryPolicy(maximum_attempts=3, non_retryable_error_types=_NON_RETRYABLE)
 
 
 class TemporalOps:
@@ -59,7 +68,8 @@ class TemporalOps:
 
     async def new_nonce(self) -> str:
         return await workflow.execute_activity(
-            activities.new_nonce_activity, start_to_close_timeout=timedelta(seconds=10)
+            activities.new_nonce_activity, start_to_close_timeout=timedelta(seconds=10),
+            retry_policy=_RETRY,
         )
 
     async def build_environment(self, snapshot: RepoSnapshot, spec: EnvironmentSpec) -> BuildResult:
@@ -67,11 +77,13 @@ class TemporalOps:
             activities.build_environment_activity,
             {"snapshot": snapshot.model_dump(), "spec": spec.model_dump()},
             start_to_close_timeout=timedelta(minutes=40),
+            retry_policy=_RETRY,
         )
 
     async def smoke_test(self, image_tag: str) -> SmokeResult:
         return await workflow.execute_activity(
-            activities.smoke_test_activity, image_tag, start_to_close_timeout=timedelta(minutes=3)
+            activities.smoke_test_activity, image_tag, start_to_close_timeout=timedelta(minutes=3),
+            retry_policy=_RETRY,
         )
 
     async def execute_probe(
@@ -82,4 +94,5 @@ class TemporalOps:
             {"image_tag": image_tag, "probe": probe.model_dump(), "spec": spec.model_dump(),
              "nonce": nonce, "attempt": attempt},
             start_to_close_timeout=timedelta(minutes=10),
+            retry_policy=_RETRY,
         )

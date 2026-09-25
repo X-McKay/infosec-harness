@@ -16,20 +16,31 @@ backends:
     # / a different base_url for an internal gateway.
     base_url: https://llm.almckay.io/v1
     api_key_env: HARNESS_OPENAI_API_KEY   # optional; unset is fine for the test endpoint
+    # The test endpoint serves a reasoning model whose thinking is billed against
+    # `max_tokens`. The agent specs are budgeted for Anthropic's separate thinking budget,
+    # so raise the floor here rather than inflating every spec. Set to 0 for an endpoint
+    # that reports reasoning separately.
+    min_max_tokens: 16000
     # Used only when genai-prices doesn't know the model (e.g. gateway aliases).
     prices:
       claude-opus-5: {input_per_mtok: 5.0, output_per_mtok: 25.0}
       claude-sonnet-5: {input_per_mtok: 2.0, output_per_mtok: 10.0}
       claude-haiku-4-5: {input_per_mtok: 1.0, output_per_mtok: 5.0}
+      # Self-hosted vLLM: no per-token billing. Zero keeps cost accounting honest
+      # rather than silently reporting an unknown cost as None.
+      Qwen3.6-35B-A3B-NVFP4: {input_per_mtok: 0.0, output_per_mtok: 0.0}
 
 default_backend: bedrock
 
 # Tier -> concrete model id per backend (D16). If the AWS account routes through
 # cross-region inference profiles, prefix the Bedrock ids (e.g. `us.` / `global.`).
+# The `gateway:` column must name ids the configured base_url actually serves
+# (`curl $base_url/models`). The llm.almckay.io test endpoint serves exactly one model, so
+# all three tiers map to it there: tier differences are not exercised against that endpoint.
 model_catalog:
-  opus:   {bedrock: anthropic.claude-opus-5,    gateway: claude-opus-5}
-  sonnet: {bedrock: anthropic.claude-sonnet-5,  gateway: claude-sonnet-5}
-  haiku:  {bedrock: anthropic.claude-haiku-4-5, gateway: claude-haiku-4-5}
+  opus:   {bedrock: anthropic.claude-opus-5,    gateway: Qwen3.6-35B-A3B-NVFP4}
+  sonnet: {bedrock: anthropic.claude-sonnet-5,  gateway: Qwen3.6-35B-A3B-NVFP4}
+  haiku:  {bedrock: anthropic.claude-haiku-4-5, gateway: Qwen3.6-35B-A3B-NVFP4}
 
 default_model: sonnet   # baseline v0 (D15)
 

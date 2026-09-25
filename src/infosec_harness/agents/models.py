@@ -16,6 +16,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, Field
 from pydantic_ai.models import Model
+from pydantic_ai.models.openai import OpenAIChatModel as OpenAIChatModelBase
 
 from infosec_harness.settings import get_settings
 
@@ -34,6 +35,19 @@ class BackendConfig(BaseModel):
     base_url: str | None = None
     api_key_env: str | None = None
     prices: dict[str, Prices] = Field(default_factory=dict)
+    # Many self-hosted OpenAI-spec servers (vLLM/TGI with a single-system chat template)
+    # reject a request carrying more than one system message. pydantic-ai emits one per
+    # instruction block, and the Skills capability adds its own, so every skill-bearing
+    # agent would 400. Merging the leading run of system messages into one is semantically
+    # neutral and keeps the cache prefix stable. See :class:`_SingleSystemOpenAIChatModel`.
+    merge_system_messages: bool = True
+    # Reasoning models served over the chat-completions API spend their thinking inside
+    # `max_tokens`, unlike Bedrock/Anthropic where thinking has its own budget. The agent
+    # specs are budgeted for the latter, so a small per-agent `max_tokens` (e.g. 3000) is
+    # exhausted by reasoning and the run dies with "token limit exceeded before any
+    # response was generated". This raises the floor for one backend without touching the
+    # specs — set it to 0 to disable.
+    min_max_tokens: int = 0
 
 
 class ModelsConfig(BaseModel):
@@ -64,6 +78,60 @@ def load_models_config(path: Path | None = None) -> ModelsConfig:
     return ModelsConfig.model_validate(yaml.safe_load(Path(path).read_text()))
 
 
+def _merge_leading_system_messages(messages: list[Any]) -> list[Any]:
+    """Collapse the leading run of system messages into a single one.
+
+    Order is preserved and the blocks are joined with a blank line, so the resulting prefix
+    is byte-stable across runs — prompt caching still sees the same stable head.
+    """
+    lead = 0
+    while lead < len(messages) and messages[lead].get("role") == "system":
+        lead += 1
+    if lead < 2:
+        return messages
+    merged = "\n\n".join(str(m.get("content") or "") for m in messages[:lead])
+    return [{"role": "system", "content": merged}, *messages[lead:]]
+
+
+def _apply_max_tokens_floor(settings: Any, floor: int) -> Any:
+    """Raise ``max_tokens`` to ``floor``, never lower it. A zero floor is a no-op."""
+    if not floor or settings is None:
+        return settings
+    if settings.get("max_tokens", 0) >= floor:
+        return settings
+    return {**settings, "max_tokens": floor}
+
+
+class _CompatOpenAIChatModel(OpenAIChatModelBase):  # type: ignore[misc,valid-type]
+    """An OpenAI-spec model that works around two common self-hosted-endpoint quirks.
+
+    1. *One system message.* Endpoints whose chat template allows a single leading system
+       message (common for self-hosted vLLM builds) answer 400 "System message must be at
+       the beginning." to the multi-block layout pydantic-ai produces for instructions +
+       deferred capabilities.
+    2. *Thinking inside ``max_tokens``.* Reasoning models on this API spend their thinking
+       against the same budget as the answer, so the specs' Anthropic-shaped budgets can be
+       exhausted before a single output token is produced.
+
+    Both are properties of the endpoint, not of an agent, so they are configured per
+    backend and applied here rather than by editing the agent specs.
+    """
+
+    def __init__(self, *args: Any, merge_system: bool = True, min_max_tokens: int = 0,
+                 **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._merge_system = merge_system
+        self._min_max_tokens = min_max_tokens
+
+    def prepare_request(self, model_settings: Any, model_request_parameters: Any) -> Any:
+        settings, params = super().prepare_request(model_settings, model_request_parameters)
+        return _apply_max_tokens_floor(settings, self._min_max_tokens), params
+
+    async def _map_messages(self, *args: Any, **kwargs: Any) -> list[Any]:
+        mapped = await super()._map_messages(*args, **kwargs)
+        return _merge_leading_system_messages(mapped) if self._merge_system else mapped
+
+
 @lru_cache(maxsize=64)
 def _build_live(backend_name: str, model_id: str) -> Model:
     cfg = load_models_config()
@@ -76,13 +144,17 @@ def _build_live(backend_name: str, model_id: str) -> Model:
         profile = os.environ.get("AWS_PROFILE") or backend.aws_profile
         provider = BedrockProvider(region_name=backend.region, profile_name=profile or None)
         return BedrockConverseModel(model_id, provider=provider)
-    from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
     # Some gateways (e.g. an internal LLM proxy) require no key. Fall back to a placeholder
     # so the OpenAI client still constructs; if the endpoint enforces auth it returns 401.
     api_key = os.environ.get(backend.api_key_env or "", "") or "no-key"
-    return OpenAIChatModel(model_id, provider=OpenAIProvider(base_url=backend.base_url, api_key=api_key))
+    return _CompatOpenAIChatModel(
+        model_id,
+        provider=OpenAIProvider(base_url=backend.base_url, api_key=api_key),
+        merge_system=backend.merge_system_messages,
+        min_max_tokens=backend.min_max_tokens,
+    )
 
 
 def resolve(agent_name: str, tier: str) -> Model:
