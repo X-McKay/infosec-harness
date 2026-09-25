@@ -627,7 +627,7 @@ eval-corpus/        # labelled cases (or git submodules / fetch scripts)
 | # | Topic | Decision |
 |---|---|---|
 | D1 | Finding inputs | Generic JSON schema, Azure DevOps work items (structured fields + prose), and free-text reports. **SARIF is not in scope for v2.0.** |
-| D2 | Sandbox | Docker + gVisor (`runsc`) locally, and a gVisor RuntimeClass in k8s |
+| D2 | Sandbox | Docker + gVisor (`runsc`) locally, gVisor RuntimeClass in k8s. Read-only root (repo staged at /opt, copied to a /work tmpfs), fail-closed if gVisor absent, base-image allowlist, buildx builder so untrusted installs are gVisor-contained, and image-cache GC |
 | D3 | Orchestration | The pydantic-graph topology runs inside Temporal workflows. Agents are `TemporalAgent`s |
 | D4 | Tracing | Self-hosted OpenTelemetry (collector + trace UI in compose). Nothing leaves the network |
 | D5 | Artifacts | S3-compatible (MinIO locally), with refs and hashes in Postgres |

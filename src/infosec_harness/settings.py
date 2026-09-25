@@ -50,6 +50,28 @@ class Settings(BaseSettings):
     sandbox_memory: str = "2g"
     sandbox_cpus: str = "2"
     sandbox_pids_limit: int = 512
+    sandbox_read_only_root: bool = True  # read-only root fs; the probe workdir is a tmpfs (D2)
+    # Fail closed: refuse to build/probe when the gVisor runtime is unavailable. Set true
+    # only for local development on a host without runsc (weaker isolation).
+    allow_insecure_runtime: bool = False
+    # Build isolation (D2): a dedicated buildx builder whose buildkit runs under the sandbox
+    # runtime, so untrusted install scripts are gVisor-contained like probes.
+    buildx_builder: str = "harness-gvisor"
+    use_buildx: bool = True
+    # Build egress allowlist (D14): the egress proxy the build is pinned to, and the base
+    # ecosystem registries allowed in addition to whatever the repo declares.
+    build_egress_proxy: str = ""  # e.g. http://egress-proxy:3128; empty = no proxy wired
+    default_registry_allowlist: list[str] = [
+        "pypi.org", "files.pythonhosted.org",           # pip
+        "registry.npmjs.org",                            # npm
+        "repo.maven.apache.org", "repo1.maven.org",      # maven central
+        "www.cpan.org", "cpan.metacpan.org", "cpan.org", # cpan
+        "deb.debian.org", "security.debian.org",         # apt (debian base images)
+    ]
+    # Base-image allowlist (registries an EnvironmentSpec.base_image may be pulled from).
+    allowed_base_registries: list[str] = ["docker.io/library", "docker.io", "public.ecr.aws"]
+    # Image garbage collection: keep at most N cached target images, evicting oldest.
+    image_cache_max: int = 50
 
     # Budgets (D6)
     max_build_repairs: int = 6

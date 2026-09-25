@@ -57,6 +57,9 @@ async def test_batch_workflow_end_to_end(fixture_repo, monkeypatch):
     monkeypatch.setattr(docker, "build_image", _fake_build, raising=True)
     monkeypatch.setattr(docker, "run_probe", _fake_probe, raising=True)
     monkeypatch.setattr(docker, "run_shell", _fake_shell, raising=True)
+    async def _rt(runtime=None):
+        return True
+    monkeypatch.setattr(docker, "runtime_available", _rt, raising=True)
 
     from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
     from temporalio.client import Client

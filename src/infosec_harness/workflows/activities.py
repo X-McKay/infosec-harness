@@ -52,17 +52,38 @@ async def detect_stack_activity(snapshot: RepoSnapshot) -> StackFingerprint:
 
 @activity.defn
 async def build_environment_activity(args: dict) -> BuildResult:
-    """Render a Dockerfile from the spec and build it (cached by repo hash + spec)."""
+    """Render a Dockerfile from the spec and build it (cached by repo hash + spec).
+
+    Fails closed if the gVisor runtime is unavailable, validates the base image against the
+    allowlist, and pins build egress to the repo-derived allowlist (D2/D14)."""
+    from infosec_harness.repo.detect import detect_stack
+    from infosec_harness.sandbox.policy import (
+        DisallowedBaseImage,
+        SandboxUnavailable,
+        build_egress_allowlist,
+        ensure_runtime_available,
+    )
+
     snapshot = RepoSnapshot.model_validate(args["snapshot"])
     spec = EnvironmentSpec.model_validate(args["spec"])
     tag = docker.image_tag_for(snapshot.content_hash, spec)
     store = get_store()
     if await docker.image_exists(tag):
         return BuildResult(ok=True, image_tag=tag, spec=spec, duration_s=0.0)
+    try:
+        await ensure_runtime_available("build the target environment")
+    except SandboxUnavailable as e:
+        return BuildResult(ok=False, spec=spec, error_excerpt=str(e))
+    egress = build_egress_allowlist(detect_stack(snapshot.path))
     start = time.monotonic()
-    res = await docker.build_image(snapshot.path, spec, tag)
+    try:
+        res = await docker.build_image(snapshot.path, spec, tag, egress_hosts=egress)
+    except DisallowedBaseImage as e:
+        return BuildResult(ok=False, spec=spec, error_excerpt=str(e))
     log_ref = store.put_text(res.stdout + "\n" + res.stderr, media_type="text/plain")
     ok = res.exit_code == 0 and not res.timed_out
+    if ok:
+        await docker.prune_images()  # evict oldest cached images beyond the cap
     return BuildResult(
         ok=ok, image_tag=tag if ok else None, spec=spec, log_artifact=log_ref,
         error_excerpt="" if ok else docker.tail(res.stderr or res.stdout, 3000),
@@ -87,7 +108,15 @@ async def execute_probe_activity(args: dict) -> ProbeExecution:
     nonce = args["nonce"]
     attempt = args["attempt"]
     store = get_store()
-    res = await docker.run_probe(image_tag, probe.test_file_path, probe.content, spec.test_command, nonce)
+    from infosec_harness.sandbox.policy import SandboxUnavailable, ensure_runtime_available
+
+    try:
+        await ensure_runtime_available("execute a probe")
+    except SandboxUnavailable as e:
+        return ProbeExecution(attempt=attempt, exit_code=None, oracle_fired=False,
+                              precondition_reached=False, stderr_tail=str(e))
+    res = await docker.run_probe(image_tag, probe.test_file_path, probe.content,
+                                 spec.test_command, nonce, module_path=spec.module_path or "")
     combined = res.stdout + "\n" + res.stderr
     oracle_fired, precondition = docker.oracle_signals(combined, nonce)
     return ProbeExecution(

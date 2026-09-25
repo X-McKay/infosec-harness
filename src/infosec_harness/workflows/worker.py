@@ -34,6 +34,11 @@ async def connect() -> Client:
 
 async def run_worker() -> None:
     s = get_settings()
+    from infosec_harness.sandbox import docker
+    try:
+        await docker.ensure_builder()  # best-effort; builds still work without buildx
+    except Exception as e:  # noqa: BLE001
+        print(f"buildx builder setup skipped: {e}")
     client = await connect()
     worker = Worker(client, task_queue=s.task_queue, workflows=WORKFLOWS, activities=ALL_ACTIVITIES)
     print(f"worker listening on task queue {s.task_queue!r} at {s.temporal_address}")

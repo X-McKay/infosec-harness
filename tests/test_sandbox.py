@@ -16,7 +16,7 @@ def test_dockerfile_is_deterministic_and_nonroot():
 
 def test_partial_scope_sets_module_workdir():
     df = docker.render_dockerfile(_spec(scope="partial", module_path="services/api"))
-    assert "WORKDIR /work/repo/services/api" in df
+    assert "WORKDIR /opt/repo/services/api" in df
 
 
 def test_oracle_signals_match_nonce():

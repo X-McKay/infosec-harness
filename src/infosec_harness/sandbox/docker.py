@@ -2,7 +2,11 @@
 
 Every container runs with the configured OCI runtime (``runsc`` = gVisor by default),
 as a non-root user, with all capabilities dropped, no new privileges, pid/memory/cpu
-limits, and a wall-clock timeout. Probe containers have **no network**.
+limits, a read-only root filesystem, and a wall-clock timeout. Probe containers have **no
+network**. Builds fail closed when gVisor is unavailable (unless explicitly overridden),
+validate the base image against an allowlist, and pin egress to the repo-derived registry
+allowlist via the proxy (D14). Untrusted install steps run on a buildx builder so they are
+gVisor-contained like probes.
 
 The worker drives the Docker daemon through its socket. In Kubernetes this module is
 replaced by a Job-based runner (phase 5) behind the same functions.
@@ -27,6 +31,13 @@ PRECONDITION_PREFIX = "HARNESS_PRECONDITION::"
 CANARY_PREFIX = "HARNESS_CANARY_PRESENT::"
 SANDBOX_USER = "10001:10001"
 MAX_CAPTURE = 64_000
+# The repo is baked in read-only at /opt/repo (with HOME at /opt/home); at probe time it is
+# copied to a writable /work tmpfs so the root filesystem can be mounted read-only.
+REPO_STAGE = "/opt/repo"
+HOME_STAGE = "/opt/home"
+WORK = "/work/repo"
+WORK_HOME = "/work/home"
+IMAGE_LABEL = "harness.image=target"
 
 
 @dataclass
@@ -62,7 +73,7 @@ async def _run(argv: list[str], *, stdin: bytes | None = None, timeout: float) -
     )
 
 
-def _hardening_args(*, network: bool) -> list[str]:
+def _hardening_args(*, network: bool, read_only: bool = False) -> list[str]:
     s = get_settings()
     args = [
         "--rm",
@@ -74,6 +85,8 @@ def _hardening_args(*, network: bool) -> list[str]:
         f"--pids-limit={s.sandbox_pids_limit}",
         f"--user={SANDBOX_USER}",
     ]
+    if read_only:
+        args.append("--read-only")
     if not network:
         args.append("--network=none")
     return args
@@ -82,8 +95,7 @@ def _hardening_args(*, network: bool) -> list[str]:
 def render_dockerfile(spec: EnvironmentSpec) -> str:
     """Deterministic Dockerfile for an EnvironmentSpec. Dependencies are installed at build
     time (network allowed, D14); probes later run with no network."""
-    lines = [f"FROM {spec.base_image}"]
-    lines.append("USER root")
+    lines = [f"FROM {spec.base_image}", f"LABEL {IMAGE_LABEL}", "USER root"]
     if spec.system_packages:
         pkgs = " ".join(shlex.quote(p) for p in sorted(set(spec.system_packages)))
         lines.append(
@@ -95,16 +107,22 @@ def render_dockerfile(spec: EnvironmentSpec) -> str:
         )
     for key, value in sorted(spec.env.items()):
         lines.append(f"ENV {key}={shlex.quote(value)}")
-    lines.append("WORKDIR /work/repo")
-    lines.append(f"COPY --chown={SANDBOX_USER} . /work/repo")
-    lines.append(f"RUN mkdir -p /work/home && chown {SANDBOX_USER} /work/home")
-    lines.append("ENV HOME=/work/home")
+    # Stage the repo read-only at /opt/repo with HOME at /opt/home; installs run here.
+    lines.append(f"COPY --chown={SANDBOX_USER} . {REPO_STAGE}")
+    lines.append(f"RUN mkdir -p {HOME_STAGE} && chown {SANDBOX_USER} {HOME_STAGE}")
+    lines.append(f"ENV HOME={HOME_STAGE}")
     lines.append(f"USER {SANDBOX_USER}")
-    workdir = "/work/repo" + (f"/{spec.module_path.strip('/')}" if spec.scope == "partial" and spec.module_path else "")
-    lines.append(f"WORKDIR {workdir}")
+    build_workdir = REPO_STAGE + module_suffix(spec)
+    lines.append(f"WORKDIR {build_workdir}")
     for cmd in spec.install_commands:
         lines.append(f"RUN {cmd}")
     return "\n".join(lines) + "\n"
+
+
+def module_suffix(spec: EnvironmentSpec) -> str:
+    if spec.scope == "partial" and spec.module_path:
+        return "/" + spec.module_path.strip("/")
+    return ""
 
 
 def image_tag_for(repo_hash: str, spec: EnvironmentSpec) -> str:
@@ -118,17 +136,76 @@ async def image_exists(tag: str) -> bool:
     return res.exit_code == 0
 
 
-async def build_image(snapshot_path: str, spec: EnvironmentSpec, tag: str) -> ProcResult:
+def build_argv(dockerfile: str, tag: str, context: str, egress_hosts: list[str] | None) -> list[str]:
+    """Construct the build command. Uses a dedicated buildx builder (whose buildkit runs
+    under the sandbox runtime, so untrusted install scripts are gVisor-contained, D2) and
+    pins build egress through the allowlisting proxy (D14). Pure so it can be unit-tested."""
+    s = get_settings()
+    proxy_args: list[str] = []
+    if s.build_egress_proxy:
+        # Route ALL build egress through the allowlisting proxy; only loopback bypasses it.
+        # The proxy enforces which hosts are reachable (its allowlist is seeded from the
+        # ecosystem defaults + configured internal registries; egress_hosts is the
+        # repo-derived set to add). NO_PROXY must stay minimal or it becomes a bypass.
+        for var in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+            proxy_args += ["--build-arg", f"{var}={s.build_egress_proxy}"]
+        proxy_args += ["--build-arg", "NO_PROXY=localhost,127.0.0.1",
+                       "--build-arg", "no_proxy=localhost,127.0.0.1"]
+    if s.use_buildx:
+        return ["docker", "buildx", "build", "--builder", s.buildx_builder, "--load",
+                "-f", dockerfile, "-t", tag, "--progress=plain", *proxy_args, context]
+    return ["docker", "build", "-f", dockerfile, "-t", tag, "--progress=plain", *proxy_args, context]
+
+
+async def build_image(snapshot_path: str, spec: EnvironmentSpec, tag: str,
+                      egress_hosts: list[str] | None = None) -> ProcResult:
     """Build ``tag`` from the snapshot with a Dockerfile we render outside the repo, so the
     repository can supply neither its own Dockerfile nor its own ``.dockerignore``
-    (a Dockerfile-specific ignore file takes precedence over the context's)."""
+    (a Dockerfile-specific ignore file takes precedence over the context's).
+
+    The base image is validated against the allowlist first (raises DisallowedBaseImage),
+    and build egress is pinned to the proxy/allowlist (D14)."""
+    from infosec_harness.sandbox.policy import validate_base_image
+
+    validate_base_image(spec.base_image)
     s = get_settings()
     with tempfile.TemporaryDirectory(prefix="harness-build-") as tmp:
         dockerfile = Path(tmp) / "Dockerfile"
         dockerfile.write_text(render_dockerfile(spec))
         Path(tmp, "Dockerfile.dockerignore").write_text(".git\n")
-        argv = ["docker", "build", "-f", str(dockerfile), "-t", tag, "--progress=plain", snapshot_path]
+        argv = build_argv(str(dockerfile), tag, snapshot_path, egress_hosts)
         return await _run(argv, timeout=s.sandbox_build_timeout_s)
+
+
+async def ensure_builder() -> None:
+    """Create the dedicated buildx builder if missing (idempotent). Its buildkit runs under
+    the daemon's runtime; for gVisor coverage of untrusted build steps the host must provide
+    gVisor (e.g. dockerd default-runtime=runsc, or a runsc-backed buildkitd). No-op unless
+    use_buildx is set."""
+    s = get_settings()
+    if not s.use_buildx:
+        return
+    exists = await _run(["docker", "buildx", "inspect", s.buildx_builder], timeout=30)
+    if exists.exit_code != 0:
+        await _run(["docker", "buildx", "create", "--name", s.buildx_builder,
+                    "--driver", "docker-container", "--bootstrap"], timeout=120)
+
+
+async def prune_images(keep: int | None = None) -> int:
+    """Evict oldest cached target images beyond ``keep`` (image cache GC). Returns count removed."""
+    keep = keep if keep is not None else get_settings().image_cache_max
+    res = await _run(["docker", "images", "--filter", f"label={IMAGE_LABEL}",
+                      "--format", "{{.ID}}\t{{.CreatedAt}}"], timeout=30)
+    if res.exit_code != 0:
+        return 0
+    rows = [line.split("\t") for line in res.stdout.splitlines() if "\t" in line]
+    # `docker images` lists newest first; keep the first `keep`, remove the rest.
+    stale = [r[0] for r in rows[keep:]]
+    removed = 0
+    for image_id in stale:
+        rm = await _run(["docker", "rmi", "-f", image_id], timeout=60)
+        removed += int(rm.exit_code == 0)
+    return removed
 
 
 async def run_shell(image: str, command: str, *, network: bool, timeout: float | None = None) -> ProcResult:
@@ -138,20 +215,33 @@ async def run_shell(image: str, command: str, *, network: bool, timeout: float |
     return await _run(argv, timeout=timeout or s.sandbox_probe_timeout_s)
 
 
-async def run_probe(image: str, test_file_path: str, content: str, test_command: str, nonce: str) -> ProcResult:
-    """Write the probe into the (ephemeral) container via stdin and run it, with no network."""
+async def run_probe(image: str, test_file_path: str, content: str, test_command: str, nonce: str,
+                    module_path: str = "") -> ProcResult:
+    """Write the probe into an ephemeral, no-network container and run it.
+
+    The container root is mounted read-only (D2); the repo is copied from the read-only
+    stage (/opt/repo) into a writable /work tmpfs, the probe file is written there, and the
+    test runs from that copy. The oracle/canary markers are detected deterministically.
+    """
     s = get_settings()
     rel = test_file_path.lstrip("/")
     if ".." in Path(rel).parts:
         raise ValueError("probe path must stay inside the repository")
     cmd = test_command.replace("{test_file}", shlex.quote(rel))
     canary = f"/tmp/harness_canary_{nonce}"
+    workdir = WORK + (("/" + module_path.strip("/")) if module_path else "")
     script = (
-        f"mkdir -p \"$(dirname {shlex.quote(rel)})\" && cat > {shlex.quote(rel)} && "
-        f"( {cmd} ); rc=$?; "
+        "set -e; "
+        f"cp -a {REPO_STAGE} {WORK}; "
+        f"if [ -d {HOME_STAGE} ]; then cp -a {HOME_STAGE} {WORK_HOME}; else mkdir -p {WORK_HOME}; fi; "
+        f"export HOME={WORK_HOME}; cd {shlex.quote(workdir)}; "
+        f"mkdir -p \"$(dirname {shlex.quote(rel)})\"; cat > {shlex.quote(rel)}; "
+        f"set +e; ( {cmd} ); rc=$?; "
         f"if [ -e {canary} ]; then echo '{CANARY_PREFIX}{nonce}'; fi; exit $rc"
     )
-    argv = ["docker", "run", "-i", *_hardening_args(network=False), "--tmpfs=/tmp:rw,size=64m",
+    argv = ["docker", "run", "-i", *_hardening_args(network=False, read_only=s.sandbox_read_only_root),
+            "--tmpfs=/tmp:rw,size=64m,mode=1777",
+            "--tmpfs=/work:rw,mode=1777",
             image, "sh", "-c", script]
     return await _run(argv, stdin=content.encode(), timeout=s.sandbox_probe_timeout_s)
 

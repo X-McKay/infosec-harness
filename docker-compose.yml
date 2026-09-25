@@ -22,6 +22,8 @@ x-backend-env: &backend-env
   HARNESS_SANDBOX_RUNTIME: ${HARNESS_SANDBOX_RUNTIME:-runsc}
   HARNESS_OPENAI_API_KEY: ${HARNESS_OPENAI_API_KEY:-}
   AWS_PROFILE: ${AWS_PROFILE:-}
+  HARNESS_BUILD_EGRESS_PROXY: ${HARNESS_BUILD_EGRESS_PROXY:-http://egress-proxy:3128}
+  HARNESS_ALLOW_INSECURE_RUNTIME: ${HARNESS_ALLOW_INSECURE_RUNTIME:-false}
 
 services:
   postgres:
@@ -106,6 +108,14 @@ services:
     build: ./web
     depends_on: [api]
     ports: ["8080:80"]
+
+  # Allowlisting forward proxy for build-time egress (D14). The build routes all network
+  # through this; it forwards only to allowlisted registry hosts and denies the rest.
+  # ACL seeded with the ecosystem defaults; add internal Artifactory/Nexus hosts here.
+  egress-proxy:
+    image: ubuntu/squid:latest
+    volumes: ["./deploy/squid-allowlist.conf:/etc/squid/conf.d/allowlist.conf:ro"]
+    expose: ["3128"]
 
 volumes:
   pgdata:
