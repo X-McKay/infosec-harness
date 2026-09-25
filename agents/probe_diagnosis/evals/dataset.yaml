@@ -1,4 +1,10 @@
-version: "1"
+version: "2"
+# The graph hands this agent probe_plan + probe_source + probe_execution (graph/triage.py).
+# v1 sent only probe_execution, so it never exercised the prompt shape that actually runs —
+# and the marker-only cases are easy in a way the real ones are not. The `*_with_source`
+# cases below carry the same execution records next to a plausible probe, which is where
+# the agent has to hold its nerve: a clean negative on a genuinely vulnerable-looking
+# target is still a clean negative, not a defective probe.
 cases:
   - name: positive
     payload:
@@ -13,3 +19,107 @@ cases:
       probe_execution: {attempt: 1, exit_code: 1, oracle_fired: false, precondition_reached: false,
                         stderr_tail: "ImportError: no module named foo"}
     expected: probe_defect
+
+  # --- Same records, now with the plan and probe source the graph really sends ---
+
+  - name: positive_with_source
+    payload:
+      probe_plan:
+        hypothesis: "A quote in `name` escapes the literal and changes the query's structure."
+        payload: "alice' OR '1'='1"
+        oracle: marker_output
+        oracle_condition: "a row the WHERE clause should have excluded is returned"
+        precondition_checkpoint: "immediately before calling get_user"
+        test_file_path: tests/test_sqli.py
+      probe_source:
+        test_file_path: tests/test_sqli.py
+        content: |
+          from app import get_user, init_db
+
+          def test_sqli():
+              conn = init_db()
+              print("HARNESS_PRECONDITION::" + NONCE)
+              rows = get_user(conn, "alice' OR '1'='1")
+              if any("TOP-SECRET" in str(r) for r in rows):
+                  print("HARNESS_ORACLE::" + NONCE)
+      probe_execution:
+        attempt: 1
+        exit_code: 0
+        oracle_fired: true
+        precondition_reached: true
+        stdout_tail: "HARNESS_PRECONDITION::n1\nHARNESS_ORACLE::n1\n1 passed"
+    expected: valid_positive
+
+  - name: negative_with_source
+    # The target is parameterized, so the payload is inert. The probe is fine; the code
+    # resisted it. Classifying this as probe_defect sends the graph into a repair loop on
+    # what is the *common* outcome in production — most findings are not exploitable.
+    payload:
+      probe_plan:
+        hypothesis: "A quote in `name` escapes the literal and changes the query's structure."
+        payload: "alice' OR '1'='1"
+        oracle: marker_output
+        oracle_condition: "a row the WHERE clause should have excluded is returned"
+        precondition_checkpoint: "immediately before calling get_user"
+        test_file_path: tests/test_sqli.py
+      probe_source:
+        test_file_path: tests/test_sqli.py
+        content: |
+          from app import get_user, init_db
+
+          def test_sqli():
+              conn = init_db()
+              print("HARNESS_PRECONDITION::" + NONCE)
+              rows = get_user(conn, "alice' OR '1'='1")
+              if any("TOP-SECRET" in str(r) for r in rows):
+                  print("HARNESS_ORACLE::" + NONCE)
+      probe_execution:
+        attempt: 1
+        exit_code: 0
+        oracle_fired: false
+        precondition_reached: true
+        stdout_tail: "HARNESS_PRECONDITION::n1\n1 passed"
+    expected: valid_negative
+
+  - name: defect_with_source
+    # The probe never reached the sink: it asserts before exercising it, so the run says
+    # nothing about the code under test.
+    payload:
+      probe_plan:
+        hypothesis: "A quote in `name` escapes the literal and changes the query's structure."
+        payload: "alice' OR '1'='1"
+        oracle: marker_output
+        oracle_condition: "a row the WHERE clause should have excluded is returned"
+        precondition_checkpoint: "immediately before calling get_user"
+        test_file_path: tests/test_sqli.py
+      probe_source:
+        test_file_path: tests/test_sqli.py
+        content: |
+          from app import get_user, init_db
+
+          def test_sqli():
+              conn = init_db()
+              assert get_user(conn, "alice") == []   # fails before the payload is ever sent
+              print("HARNESS_PRECONDITION::" + NONCE)
+              get_user(conn, "alice' OR '1'='1")
+      probe_execution:
+        attempt: 1
+        exit_code: 1
+        oracle_fired: false
+        precondition_reached: false
+        stderr_tail: "AssertionError: assert [(1, 'alice', 'public')] == []"
+    expected: probe_defect
+
+  - name: environment_issue_with_source
+    # Nothing here is about the code under test: the sandbox could not run the probe.
+    payload:
+      probe_source:
+        test_file_path: tests/test_sqli.py
+        content: "from app import get_user  # ...\n"
+      probe_execution:
+        attempt: 1
+        exit_code: null
+        oracle_fired: false
+        precondition_reached: false
+        stderr_tail: "sandbox disabled: probe not executed (running with --no-sandbox)"
+    expected: environment_issue
