@@ -1,0 +1,50 @@
+set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+
+# --- Local development (host) ---
+bootstrap:
+    uv sync --all-extras
+
+check:
+    uv run ruff check src tests
+    uv run python -m compileall -q src
+    HARNESS_MODEL_MODE=stub uv run harness agents validate
+
+test:
+    HARNESS_MODEL_MODE=stub uv run pytest
+
+lint-fix:
+    uv run ruff check src tests --fix
+
+# Regenerate the agent-spec JSON schema and the web OpenAPI client.
+agents-schema:
+    HARNESS_MODEL_MODE=stub uv run harness agents schema
+
+openapi:
+    HARNESS_MODEL_MODE=stub uv run python -c "import json,infosec_harness.api.app as a; open('web/openapi.json','w').write(json.dumps(a.app.openapi(),indent=2))"
+    cd web && npm run gen:api
+
+# --- Offline demo (no Temporal, no Docker): full pipeline with stub models ---
+demo findings="examples/findings.sample.json":
+    HARNESS_MODEL_MODE=stub HARNESS_DATABASE_URL="sqlite+aiosqlite:///.harness/demo.db" \
+      uv run harness submit {{findings}} --local --label demo
+
+# --- Evals ---
+eval-run agent="probe_diagnosis":
+    HARNESS_MODEL_MODE=stub HARNESS_DATABASE_URL="sqlite+aiosqlite:///.harness/demo.db" \
+      uv run harness eval run {{agent}}
+
+# --- Full stack ---
+up:
+    docker compose up --build
+
+down:
+    docker compose down -v
+
+worker:
+    uv run harness worker
+
+api:
+    uv run harness api
+
+web-build:
+    cd web && npm install && npm run build

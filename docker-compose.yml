@@ -1,0 +1,113 @@
+# Full local stack (D11). `docker compose up` runs Postgres, Temporal (+UI), MinIO, an
+# OpenTelemetry collector + Jaeger, the worker, the API, and the React web app.
+#
+# Model access: set HARNESS_MODEL_MODE=live plus a backend. For Bedrock, mount ~/.aws and
+# set AWS_PROFILE (run `aws sso login` on the host first). For an OpenAI-spec endpoint,
+# set HARNESS_MODEL_BACKEND=gateway and HARNESS_OPENAI_API_KEY. Default here is stub, so
+# the stack runs end-to-end with no credentials.
+#
+# Probe sandbox: the worker drives the host Docker daemon via the mounted socket. gVisor
+# (runsc) is the default runtime in production; set HARNESS_SANDBOX_RUNTIME=runc for a host
+# without gVisor installed.
+
+x-backend-env: &backend-env
+  HARNESS_DATABASE_URL: postgresql+asyncpg://harness:harness@postgres:5432/harness
+  HARNESS_TEMPORAL_ADDRESS: temporal:7233
+  HARNESS_S3_ENDPOINT: http://minio:9000
+  HARNESS_S3_ACCESS_KEY: harness
+  HARNESS_S3_SECRET_KEY: harness12345
+  HARNESS_OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+  HARNESS_MODEL_MODE: ${HARNESS_MODEL_MODE:-stub}
+  HARNESS_MODEL_BACKEND: ${HARNESS_MODEL_BACKEND:-bedrock}
+  HARNESS_SANDBOX_RUNTIME: ${HARNESS_SANDBOX_RUNTIME:-runsc}
+  HARNESS_OPENAI_API_KEY: ${HARNESS_OPENAI_API_KEY:-}
+  AWS_PROFILE: ${AWS_PROFILE:-}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: harness
+      POSTGRES_PASSWORD: harness
+      POSTGRES_MULTIPLE: harness,temporal
+    ports: ["5432:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./deploy/postgres-init.sh:/docker-entrypoint-initdb.d/init.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U harness"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  temporal:
+    image: temporalio/auto-setup:1.25.2
+    depends_on:
+      postgres: {condition: service_healthy}
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: harness
+      POSTGRES_PWD: harness
+      POSTGRES_SEEDS: postgres
+      DBNAME: temporal
+      VISIBILITY_DBNAME: temporal
+    ports: ["7233:7233"]
+
+  temporal-ui:
+    image: temporalio/ui:2.34.0
+    depends_on: [temporal]
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+    ports: ["8233:8080"]
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: harness
+      MINIO_ROOT_PASSWORD: harness12345
+    ports: ["9000:9000", "9001:9001"]
+    volumes: [miniodata:/data]
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.115.1
+    command: ["--config=/etc/otel/config.yaml"]
+    volumes: ["./deploy/otel-collector.yaml:/etc/otel/config.yaml:ro"]
+    depends_on: [jaeger]
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.63.0
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports: ["16686:16686"]
+
+  worker:
+    build: .
+    command: ["harness", "worker"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      temporal: {condition: service_started}
+    environment: *backend-env
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - workspace:/workspace
+      - ${HOME}/.aws:/root/.aws:ro
+
+  api:
+    build: .
+    command: ["sh", "-c", "harness init-db && harness api --host 0.0.0.0 --port 8000"]
+    depends_on:
+      postgres: {condition: service_healthy}
+    environment: *backend-env
+    ports: ["8000:8000"]
+
+  web:
+    build: ./web
+    depends_on: [api]
+    ports: ["8080:80"]
+
+volumes:
+  pgdata:
+  miniodata:
+  workspace:

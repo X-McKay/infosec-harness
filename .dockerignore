@@ -1,0 +1,10 @@
+.git
+.harness
+web/node_modules
+web/dist
+**/__pycache__
+.venv
+.ruff_cache
+.pytest_cache
+research
+docs
