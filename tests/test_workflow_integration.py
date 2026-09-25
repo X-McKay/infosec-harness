@@ -67,7 +67,15 @@ async def test_batch_workflow_end_to_end(fixture_repo, monkeypatch):
     from infosec_harness.workflows.activities import ALL_ACTIVITIES
     from infosec_harness.workflows.worker import WORKFLOWS
 
-    env = await WorkflowEnvironment.start_local(dev_server_existing_path=temporal_bin)
+    # The dev server occasionally misses its 5s startup window under load; retry.
+    env = None
+    for attempt in range(3):
+        try:
+            env = await WorkflowEnvironment.start_local(dev_server_existing_path=temporal_bin)
+            break
+        except RuntimeError:
+            if attempt == 2:
+                raise
     try:
         client = await Client.connect(env.client.service_client.config.target_host,
                                       plugins=[PydanticAIPlugin()])
