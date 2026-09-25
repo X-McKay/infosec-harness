@@ -92,6 +92,8 @@ class AgentInvocation(Base):
     cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     cost_estimated: Mapped[bool] = mapped_column(default=True)
     latency_s: Mapped[float] = mapped_column(Float, default=0.0)
+    tools_called: Mapped[list] = mapped_column(JSON, default=list)
+    skills_loaded: Mapped[list] = mapped_column(JSON, default=list)
     run: Mapped[TriageRun] = relationship(back_populates="invocations")
 
 

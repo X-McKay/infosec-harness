@@ -377,6 +377,8 @@ class AgentOutcome(_Model):
     cost_estimated: bool = True
     latency_s: float = 0.0
     retries: int = 0
+    tools_called: list[str] = Field(default_factory=list)
+    skills_loaded: list[str] = Field(default_factory=list)
 
 
 class TriageRunOutput(_Model):

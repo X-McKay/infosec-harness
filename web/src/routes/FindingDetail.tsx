@@ -85,7 +85,7 @@ export function FindingDetail() {
         <CardContent className="p-0">
           <table className="w-full text-sm">
             <thead className="text-muted-foreground border-b"><tr>
-              <th className="text-left p-2">Agent</th><th className="text-left p-2">Model</th>
+              <th className="text-left p-2">Agent</th><th className="text-left p-2">Model</th><th className="text-left p-2">Tools / skills</th>
               <th className="text-right p-2">In/Out</th><th className="text-right p-2">Cache</th>
               <th className="text-right p-2">Cost</th><th className="text-right p-2">Latency</th>
             </tr></thead>
@@ -94,6 +94,9 @@ export function FindingDetail() {
                 <tr key={n} className="border-b last:border-0">
                   <td className="p-2 font-medium">{String(i.agent)}</td>
                   <td className="p-2 font-mono text-xs">{String(i.model_name)}</td>
+                  <td className="p-2 text-xs text-muted-foreground">
+                    {[...((i.tools_called as string[]) || []), ...((i.skills_loaded as string[]) || [])].join(", ") || "—"}
+                  </td>
                   <td className="p-2 text-right font-mono text-xs">{String(i.input_tokens)}/{String(i.output_tokens)}</td>
                   <td className="p-2 text-right font-mono text-xs">{String(i.cache_read_tokens)}</td>
                   <td className="p-2 text-right font-mono text-xs">${Number(i.cost_usd || 0).toFixed(4)}</td>

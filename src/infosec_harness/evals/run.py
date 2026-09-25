@@ -158,6 +158,12 @@ async def score_corpus(*, language: str = "python", sandbox: bool | None = None)
     """
     from infosec_harness.domain.models import Finding
     from infosec_harness.evals.corpus import load_corpus
+    from infosec_harness.evals.trajectory import (
+        AGENT_EXPECTATIONS,
+        TrajectoryExpectation,
+        check_expectations,
+        cwe_skill_prefix,
+    )
     from infosec_harness.graph.local import triage_batch_local
 
     cases = load_corpus(language)
@@ -169,6 +175,8 @@ async def score_corpus(*, language: str = "python", sandbox: bool | None = None)
 
     rows, confusion = [], {}
     correct = fn = exploitable = 0
+    # Trajectory scoring: did the tool-using agents evoke the expected tools/skills?
+    traj_totals: dict[str, dict[str, int]] = {}
     for c in cases:
         out = by_fp[Finding.compute_fingerprint(c.finding)]
         actual = out.result.verdict.label.value
@@ -182,15 +190,38 @@ async def score_corpus(*, language: str = "python", sandbox: bool | None = None)
         rows.append({"case": c.name, "expected": c.expected_verdict, "actual": actual,
                      "ok": ok, "early_exit": out.result.early_exit,
                      "priority": out.result.priority.value})
+        # Per-agent trajectory expectations for this case (CWE-specific skill for context).
+        for inv in out.invocations:
+            base = AGENT_EXPECTATIONS.get(inv.agent)
+            if base is None:
+                continue
+            skill_prefixes = base.skill_prefixes
+            if inv.agent == "context" and (p := cwe_skill_prefix(c.finding.cwe)):
+                skill_prefixes = (p,)  # require the *matching* CWE skill, not just any
+            exp = TrajectoryExpectation(tool_groups=base.tool_groups, skill_prefixes=skill_prefixes)
+            res = check_expectations(inv.tools_called, inv.skills_loaded, exp)
+            t = traj_totals.setdefault(inv.agent, {"n": 0, "tools_ok": 0, "skills_ok": 0})
+            t["n"] += 1
+            t["tools_ok"] += int(res.tools_ok)
+            t["skills_ok"] += int(res.skills_ok)
+
+    trajectory = {a: {"n": v["n"],
+                      "tool_use_rate": round(v["tools_ok"] / v["n"], 3) if v["n"] else 0.0,
+                      "skill_use_rate": round(v["skills_ok"] / v["n"], 3) if v["n"] else 0.0}
+                  for a, v in sorted(traj_totals.items())}
     metrics = {
         "n": len(cases), "accuracy": round(correct / len(cases), 4) if cases else 0.0,
         "false_negative_rate_on_exploitable": round(fn / exploitable, 4) if exploitable else 0.0,
         "sandbox": sandbox,
         "confusion": {f"{k[0]}->{k[1]}": v for k, v in sorted(confusion.items())},
+        "trajectory": trajectory,
     }
     for r in rows:
         mark = "OK " if r["ok"] else "XX "
         print(f"  {mark}{r['case']:26} {r['expected']:24} -> {r['actual']:24} {r['early_exit'] or ''}")
     print(f"accuracy={metrics['accuracy']:.0%}  FN-on-exploitable={metrics['false_negative_rate_on_exploitable']:.0%}  "
           f"sandbox={'on' if sandbox else 'off (verdicts not meaningful)'}")
+    print("tool/skill evocation (per agent, rate across cases):")
+    for agent, t in trajectory.items():
+        print(f"  {agent:14} tools {t['tool_use_rate']:.0%}  skills {t['skill_use_rate']:.0%}  (n={t['n']})")
     return metrics

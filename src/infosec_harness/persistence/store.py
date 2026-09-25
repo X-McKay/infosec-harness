@@ -61,7 +61,8 @@ async def save_run_output(batch_id: str, out: TriageRunOutput) -> str:
                 run_id=run_id, seq=seq, agent=i.agent, model_name=i.model_name, config_hash=i.config_hash,
                 input_tokens=i.input_tokens, output_tokens=i.output_tokens,
                 cache_read_tokens=i.cache_read_tokens, cache_write_tokens=i.cache_write_tokens,
-                cost_usd=i.cost_usd, cost_estimated=i.cost_estimated, latency_s=i.latency_s))
+                cost_usd=i.cost_usd, cost_estimated=i.cost_estimated, latency_s=i.latency_s,
+                tools_called=i.tools_called, skills_loaded=i.skills_loaded))
         await s.commit()
     return run_id
 
@@ -105,6 +106,7 @@ async def get_run(run_id: str) -> dict | None:
             "input_tokens": i.input_tokens, "output_tokens": i.output_tokens,
             "cache_read_tokens": i.cache_read_tokens, "cache_write_tokens": i.cache_write_tokens,
             "cost_usd": i.cost_usd, "cost_estimated": i.cost_estimated, "latency_s": i.latency_s,
+            "tools_called": i.tools_called, "skills_loaded": i.skills_loaded,
         } for i in invs]
         detail["review"] = None if review is None else {
             "reviewer": review.reviewer, "decision": review.decision,

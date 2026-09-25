@@ -28,6 +28,7 @@ with workflow.unsafe.imports_passed_through():
     from infosec_harness.agents import models as model_factory
     from infosec_harness.agents.durable import AGENTS
     from infosec_harness.agents.registry import agent_config_hashes, resolved_model_names
+    from infosec_harness.evals.trajectory import inspect_messages
     from infosec_harness.workflows import activities
 
 
@@ -46,12 +47,14 @@ class TemporalOps:
         usage = result.usage
         model_name = self._models[name]
         cost, estimated = model_factory.estimate_cost(model_name, usage)
+        tools_called, skills_loaded = inspect_messages(result.all_messages())
         return AgentOutcome(
             output=result.output, agent=name, model_name=model_name, config_hash=self._hashes[name],
             input_tokens=usage.input_tokens, output_tokens=usage.output_tokens,
             cache_read_tokens=usage.cache_read_tokens or 0, cache_write_tokens=usage.cache_write_tokens or 0,
             cost_usd=cost, cost_estimated=estimated,
             latency_s=(workflow.now() - started).total_seconds(),
+            tools_called=tools_called, skills_loaded=skills_loaded,
         )
 
     async def new_nonce(self) -> str:
