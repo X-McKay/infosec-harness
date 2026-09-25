@@ -38,7 +38,7 @@ dev = [
 ]
 
 [project.scripts]
-harness = "infosec_harness.cli:app"
+harness = "infosec_harness.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/infosec_harness"]
@@ -51,6 +51,9 @@ extend-exclude = ["web"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/infosec_harness/cli.py" = ["B008"]  # Typer uses call-in-default by design
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

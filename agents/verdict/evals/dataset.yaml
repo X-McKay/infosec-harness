@@ -1,0 +1,31 @@
+# Verdict agent eval cases. Inputs are the structured evidence the agent reasons over
+# (repository content is untrusted data). `expected` is the ground-truth label.
+version: "1"
+cases:
+  - name: valid_positive_sqli
+    payload:
+      finding: {title: "SQLi in lookup", cwe: "CWE-89", severity: high}
+      finding_context: {summary: "name concatenated into SQL", reachability: reachable,
+                        reachability_rationale: "request param reaches execute"}
+      probe_execution: {attempt: 1, exit_code: 0, oracle_fired: true, precondition_reached: true}
+      diagnosis: {kind: valid_positive, explanation: "token altered query structure"}
+    facts: {environment_ready: true, oracle_fired: true, precondition_reached: true,
+            last_diagnosis: valid_positive, reachability: reachable}
+    expected: potentially_exploitable
+  - name: valid_negative_parameterized
+    payload:
+      finding: {title: "SQLi suspected", cwe: "CWE-89", severity: medium}
+      finding_context: {summary: "parameterized query", reachability: reachable,
+                        reachability_rationale: "bound parameter used"}
+      probe_execution: {attempt: 1, exit_code: 0, oracle_fired: false, precondition_reached: true}
+      diagnosis: {kind: valid_negative, explanation: "token stayed bound"}
+    facts: {environment_ready: true, oracle_fired: false, precondition_reached: true,
+            last_diagnosis: valid_negative, reachability: reachable}
+    expected: likely_not_exploitable
+  - name: inconclusive_env
+    payload:
+      finding: {title: "XXE", cwe: "CWE-611", severity: high}
+      finding_context: {summary: "unknown", reachability: unknown, reachability_rationale: "not analyzed"}
+      diagnosis: null
+    facts: {environment_ready: false, oracle_fired: false, precondition_reached: false}
+    expected: inconclusive

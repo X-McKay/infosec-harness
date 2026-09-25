@@ -1,0 +1,15 @@
+version: "1"
+cases:
+  - name: positive
+    payload:
+      probe_execution: {attempt: 1, exit_code: 0, oracle_fired: true, precondition_reached: true}
+    expected: valid_positive
+  - name: negative
+    payload:
+      probe_execution: {attempt: 1, exit_code: 0, oracle_fired: false, precondition_reached: true}
+    expected: valid_negative
+  - name: defect
+    payload:
+      probe_execution: {attempt: 1, exit_code: 1, oracle_fired: false, precondition_reached: false,
+                        stderr_tail: "ImportError: no module named foo"}
+    expected: probe_defect
