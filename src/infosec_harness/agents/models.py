@@ -79,9 +79,9 @@ def _build_live(backend_name: str, model_id: str) -> Model:
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
-    api_key = os.environ.get(backend.api_key_env or "", "")
-    if not api_key:
-        raise RuntimeError(f"Backend {backend_name!r}: env var {backend.api_key_env!r} is not set")
+    # Some gateways (e.g. an internal LLM proxy) require no key. Fall back to a placeholder
+    # so the OpenAI client still constructs; if the endpoint enforces auth it returns 401.
+    api_key = os.environ.get(backend.api_key_env or "", "") or "no-key"
     return OpenAIChatModel(model_id, provider=OpenAIProvider(base_url=backend.base_url, api_key=api_key))
 
 

@@ -12,8 +12,10 @@ backends:
     aws_profile: infosec-harness-sso
   gateway:
     kind: openai_compatible
-    base_url: https://llm-gateway.internal/v1
-    api_key_env: HARNESS_OPENAI_API_KEY
+    # Test endpoint (OpenAI-spec, no API key required). Override with HARNESS_MODEL_BACKEND
+    # / a different base_url for an internal gateway.
+    base_url: https://llm.almckay.io/v1
+    api_key_env: HARNESS_OPENAI_API_KEY   # optional; unset is fine for the test endpoint
     # Used only when genai-prices doesn't know the model (e.g. gateway aliases).
     prices:
       claude-opus-5: {input_per_mtok: 5.0, output_per_mtok: 25.0}
