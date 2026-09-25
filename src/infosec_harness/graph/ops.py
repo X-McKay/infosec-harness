@@ -90,13 +90,24 @@ class LocalOps:
 
         return await smoke_test_activity(image_tag)
 
+    # Mirrors the shape `execute_probe_activity` returns when the isolation runtime is
+    # missing, so the offline path stands in for the real one instead of contradicting it.
+    SANDBOX_DISABLED = "sandbox disabled: probe not executed (running with --no-sandbox)"
+
     async def execute_probe(self, image_tag, probe, spec, nonce, attempt) -> ProbeExecution:
         if not self._sandbox:
-            # Offline: don't touch Docker. Report the probe reached the checkpoint but the
-            # oracle did not fire, so downstream logic runs without claiming exploitability.
-            return ProbeExecution(attempt=attempt, exit_code=0, oracle_fired=False,
-                                  precondition_reached=True,
-                                  stdout_tail=f"HARNESS_PRECONDITION::{nonce} (sandbox disabled)")
+            # Offline: don't touch Docker. Report honestly that the probe never ran.
+            #
+            # Claiming `exit_code=0, precondition_reached=True` here would be a *clean run
+            # that found nothing*, which is a materially different thing: probe_diagnosis
+            # reads the probe source alongside those markers, decides the probe must be
+            # defective because a known-vulnerable target produced no oracle, and the graph
+            # enters its repair loop — on every case, to the repair limit. That made the
+            # documented Docker-free mode both far slower and unrepresentative, and it
+            # inflated probe_repair's share of the trajectory metrics.
+            return ProbeExecution(attempt=attempt, exit_code=None, oracle_fired=False,
+                                  precondition_reached=False,
+                                  stderr_tail=self.SANDBOX_DISABLED)
         from infosec_harness.workflows.activities import execute_probe_activity
 
         return await execute_probe_activity(
