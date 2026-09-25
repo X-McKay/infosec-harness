@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_graph import BaseNode, End, GraphBuilder, GraphRunContext
 
 from infosec_harness.agents.deps import AgentDeps
@@ -231,7 +232,20 @@ class Decide(BaseNode[TriageState, TriageDeps, TriageResult]):
              "probe_execution": last_exec, "diagnosis": diagnosis},
             stack=s.stack(), profile=s.profile(),
         )
-        outcome = await ctx.deps.ops.run_agent("verdict", prompt, s.deps(facts=facts))
+        try:
+            outcome = await ctx.deps.ops.run_agent("verdict", prompt, s.deps(facts=facts))
+        except UnexpectedModelBehavior as e:
+            # The judge could not produce a verdict the evidence contract accepts within its
+            # retry budget. `inconclusive` is precisely the answer the three-way contract
+            # reserves for "the evidence does not support a call", so return it rather than
+            # failing the finding — and, in a batch, every finding behind it.
+            verdict = Verdict(
+                label=VerdictLabel.inconclusive, confidence=0.0,
+                rationale=f"The verdict agent could not satisfy the evidence contract: {e}",
+                inconclusive_reason=InconclusiveReason.error,
+            )
+            s.early_exit = "verdict_contract_unsatisfied"
+            return End(_finalize(s, verdict, reachability))
         s.invocations.append(outcome)
         return End(_finalize(s, outcome.output, reachability))
 

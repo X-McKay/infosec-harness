@@ -123,3 +123,43 @@ async def test_no_sandbox_probe_matches_the_real_sandbox_unavailable_shape():
                                  precondition_reached=False, stderr_tail="runsc missing")
     for field in ("exit_code", "oracle_fired", "precondition_reached"):
         assert getattr(offline, field) == getattr(unavailable, field), field
+
+
+async def test_a_judge_that_cannot_satisfy_the_contract_yields_inconclusive(repo):
+    """The evidence contract must never be able to kill a finding.
+
+    The verdict agent can exhaust its output retries against the deterministic contract —
+    observed live, repeating an `inconclusive` verdict that omitted the required
+    `inconclusive_reason`. Raising from here fails the finding and, in a batch, every
+    finding behind it. `inconclusive` is exactly the answer the three-way contract reserves
+    for "the evidence does not support a call", so return that instead.
+    """
+    from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+    from infosec_harness.domain.models import InconclusiveReason
+
+    ops, prepared = await _prepared(repo)
+
+    async def fake_exec(image, probe, spec, nonce, attempt):
+        return ProbeExecution(attempt=attempt, exit_code=0, oracle_fired=False,
+                              precondition_reached=True, stdout_tail=f"HARNESS_PRECONDITION::{nonce}")
+
+    ops.execute_probe = fake_exec
+    real_run_agent = ops.run_agent
+
+    async def flaky_run_agent(name, prompt, deps):
+        if name == "verdict":
+            raise UnexpectedModelBehavior("Exceeded maximum output retries (4)")
+        return await real_run_agent(name, prompt, deps)
+
+    ops.run_agent = flaky_run_agent
+    finding = to_finding(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
+                                      start_line=2, cwe="CWE-89", severity="high"))
+    state = TriageState(finding=finding, prepared=prepared)
+    result = await TRIAGE_GRAPH.run(state=state, deps=TriageDeps(ops=ops), inputs=PreFilter())
+
+    assert result.verdict.label is VerdictLabel.inconclusive
+    assert result.verdict.inconclusive_reason is InconclusiveReason.error
+    assert result.early_exit == "verdict_contract_unsatisfied"
+    # It must never be mistaken for a judgement the evidence supported.
+    assert result.verdict.confidence == 0.0

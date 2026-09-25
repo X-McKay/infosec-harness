@@ -96,6 +96,11 @@ def _diagnosis(text: str) -> dict:
     execution = _tag(text, "probe_execution") or {}
     if execution.get("oracle_fired"):
         kind = "valid_positive"
+    elif execution.get("exit_code") is None:
+        # No exit status at all: the probe never ran, so nothing here is about the code
+        # under test. This is the shape execute_probe_activity returns when the isolation
+        # runtime is unavailable.
+        kind = "environment_issue"
     elif execution.get("exit_code") == 0:
         kind = "valid_negative"
     else:

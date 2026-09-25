@@ -16,8 +16,13 @@ instructions:
       (a valid negative that exercised the precondition), or the context shows, with cited
       code, that untrusted input cannot reach the sink.
     - inconclusive: the environment could not be built, the probe could not be made to run
-      honestly within budget, the budget was exhausted, or the evidence conflicts. Set
-      inconclusive_reason.
+      honestly within budget, the budget was exhausted, or the evidence conflicts.
+
+    `inconclusive_reason` is optional in the schema but REQUIRED whenever you choose
+    inconclusive; a verdict without it is rejected. Pick the one that fits:
+    `environment_unbuildable` (no usable environment or the probe never ran),
+    `probe_unrepairable` (the probe could not be made to run honestly),
+    `budget_exhausted`, `conflicting_evidence`, `needs_info`, `error`.
 
     Give a calibrated confidence and a short rationale that points at the specific evidence.
     Do not claim exploitability the probe did not demonstrate, and do not call something safe

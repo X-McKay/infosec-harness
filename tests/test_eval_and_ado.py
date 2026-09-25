@@ -1,3 +1,5 @@
+import yaml
+
 from infosec_harness.domain.models import (
     Finding,
     FindingSourceKind,
@@ -9,6 +11,7 @@ from infosec_harness.domain.models import (
 )
 from infosec_harness.evals.run import run_experiment
 from infosec_harness.integrations import ado
+from infosec_harness.settings import get_settings
 
 
 async def test_eval_probe_diagnosis_scores():
@@ -17,7 +20,12 @@ async def test_eval_probe_diagnosis_scores():
     async with db.session() as s:
         exp = await s.get(db.EvalExperiment, exp_id)
     assert exp.metrics["accuracy"] == 1.0  # stub reads exit code + oracle deterministically
-    assert exp.metrics["n"] == 3
+    # Every case in the dataset, including the ones carrying the plan and probe source the
+    # graph really sends. The stub decides from the execution record alone, so a new case
+    # failing here means the record itself is ambiguous.
+    assert exp.metrics["n"] == len(
+        yaml.safe_load((get_settings().agents_dir / "probe_diagnosis" / "evals" / "dataset.yaml")
+                       .read_text())["cases"])
 
 
 def test_ado_work_item_mapping():
