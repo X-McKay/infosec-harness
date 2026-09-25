@@ -1,0 +1,680 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "InfoSec Harness",
+    "version": "2.0.0"
+  },
+  "paths": {
+    "/api/batches": {
+      "get": {
+        "summary": "Batches",
+        "operationId": "batches_api_batches_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response Batches Api Batches Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Submit",
+        "operationId": "submit_api_batches_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Submit Api Batches Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/batches/ado": {
+      "post": {
+        "summary": "Submit Ado",
+        "operationId": "submit_ado_api_batches_ado_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitADORequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Submit Ado Api Batches Ado Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/batches/{batch_id}": {
+      "get": {
+        "summary": "Batch",
+        "operationId": "batch_api_batches__batch_id__get",
+        "parameters": [
+          {
+            "name": "batch_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Batch Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Batch Api Batches  Batch Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/runs": {
+      "get": {
+        "summary": "Runs",
+        "operationId": "runs_api_runs_get",
+        "parameters": [
+          {
+            "name": "batch_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Batch Id"
+            }
+          },
+          {
+            "name": "verdict",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Verdict"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 200,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response Runs Api Runs Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/runs/{run_id}": {
+      "get": {
+        "summary": "Run",
+        "operationId": "run_api_runs__run_id__get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Run Api Runs  Run Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/runs/{run_id}/review": {
+      "post": {
+        "summary": "Review",
+        "operationId": "review_api_runs__run_id__review_post",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Review Api Runs  Run Id  Review Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/experiments": {
+      "get": {
+        "summary": "Experiments",
+        "operationId": "experiments_api_experiments_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response Experiments Api Experiments Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/config": {
+      "get": {
+        "summary": "Config",
+        "operationId": "config_api_config_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Config Api Config Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/health": {
+      "get": {
+        "summary": "Health",
+        "operationId": "health_api_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Health Api Health Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "FindingInput": {
+        "properties": {
+          "external_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Id",
+            "description": "ID in the originating system"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "repo_url": {
+            "type": "string",
+            "title": "Repo Url",
+            "description": "Git URL or a local path visible to the worker"
+          },
+          "revision": {
+            "type": "string",
+            "title": "Revision",
+            "description": "Commit SHA, tag, or branch",
+            "default": "HEAD"
+          },
+          "file_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Path"
+          },
+          "start_line": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Line"
+          },
+          "end_line": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Line"
+          },
+          "symbol": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Symbol"
+          },
+          "cwe": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cwe",
+            "description": "e.g. CWE-89"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/Severity",
+            "default": "unknown"
+          },
+          "source_tool": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Tool"
+          },
+          "source_kind": {
+            "$ref": "#/components/schemas/FindingSourceKind",
+            "default": "generic_json"
+          },
+          "ado_work_item_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ado Work Item Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "title",
+          "repo_url"
+        ],
+        "title": "FindingInput",
+        "description": "The published generic JSON schema an external process submits (D1).\n\nOnly ``repo_url`` and ``title`` are required; anything missing is extracted from\n``description`` by the intake agent or the finding is parked as ``needs_info``."
+      },
+      "FindingSourceKind": {
+        "type": "string",
+        "enum": [
+          "generic_json",
+          "ado",
+          "free_text"
+        ],
+        "title": "FindingSourceKind"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "ReviewRequest": {
+        "properties": {
+          "reviewer": {
+            "type": "string",
+            "title": "Reviewer",
+            "default": ""
+          },
+          "decision": {
+            "type": "string",
+            "title": "Decision"
+          },
+          "override_label": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VerdictLabel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "decision"
+        ],
+        "title": "ReviewRequest"
+      },
+      "Severity": {
+        "type": "string",
+        "enum": [
+          "critical",
+          "high",
+          "medium",
+          "low",
+          "info",
+          "unknown"
+        ],
+        "title": "Severity"
+      },
+      "SubmitADORequest": {
+        "properties": {
+          "work_item_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Work Item Ids"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "work_item_ids"
+        ],
+        "title": "SubmitADORequest"
+      },
+      "SubmitRequest": {
+        "properties": {
+          "findings": {
+            "items": {
+              "$ref": "#/components/schemas/FindingInput"
+            },
+            "type": "array",
+            "title": "Findings"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label",
+            "default": ""
+          },
+          "mode": {
+            "type": "string",
+            "title": "Mode",
+            "default": "auto"
+          }
+        },
+        "type": "object",
+        "required": [
+          "findings"
+        ],
+        "title": "SubmitRequest"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "VerdictLabel": {
+        "type": "string",
+        "enum": [
+          "potentially_exploitable",
+          "likely_not_exploitable",
+          "inconclusive"
+        ],
+        "title": "VerdictLabel"
+      }
+    }
+  }
+}
