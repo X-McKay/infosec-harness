@@ -19,6 +19,7 @@ from infosec_harness.settings import REPO_ROOT
 @dataclass
 class CorpusCase:
     name: str
+    language: str
     finding: FindingInput
     expected_verdict: str
     reachability: str
@@ -36,18 +37,25 @@ def corpus_path() -> Path:
     return REPO_ROOT / "eval-corpus" / "manifest.json"
 
 
-def load_corpus(language: str = "python") -> list[CorpusCase]:
+def load_corpus(language: str | None = None) -> list[CorpusCase]:
+    """Load corpus cases. ``language=None`` returns all; otherwise filters by language."""
     manifest = json.loads(corpus_path().read_text())
-    if manifest.get("language") != language:
-        raise ValueError(f"corpus language {manifest.get('language')} != {language}")
     cases = []
     for c in manifest["cases"]:
+        if language is not None and c.get("language") != language:
+            continue
         # Resolve the repo path relative to the manifest so findings carry an absolute path.
         finding = FindingInput.model_validate(c["finding"])
         finding = finding.model_copy(update={"repo_url": str((REPO_ROOT / finding.repo_url).resolve())})
         t = c["truth"]
         cases.append(CorpusCase(
-            name=c["name"], finding=finding, expected_verdict=t["expected_verdict"],
-            reachability=t["reachability"], sink_file=t["sink_file"], sink_line=t["sink_line"],
+            name=c["name"], language=c.get("language", "python"), finding=finding,
+            expected_verdict=t["expected_verdict"], reachability=t["reachability"],
+            sink_file=t["sink_file"], sink_line=t["sink_line"],
             target_callable=t["target_callable"], early_exit=t.get("early_exit")))
     return cases
+
+
+def languages() -> list[str]:
+    manifest = json.loads(corpus_path().read_text())
+    return sorted({c.get("language", "python") for c in manifest["cases"]})

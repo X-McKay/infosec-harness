@@ -1,7 +1,7 @@
 # Ground-truth eval corpus (seeded starter set)
 
-Small, self-contained apps with a **paired** design: for each CWE, a `vulnerable` and a
-`fixed` variant of the same tiny app. The finding submitted for both variants is nearly
+Small, self-contained apps with a **paired** design, across **Python, Java, JavaScript, and
+Perl**: for each (language, CWE), a `vulnerable` and a `fixed` variant of the same tiny app. The finding submitted for both variants is nearly
 identical; only the code differs, so the expected verdicts differ for the right reason.
 This is the cleanest ground-truth signal for the whole pipeline and for per-agent evals.
 
@@ -9,16 +9,24 @@ This is the cleanest ground-truth signal for the whole pipeline and for per-agen
 scoring (expected verdict, reachability, sink file/line, target callable). Truth is never
 shown to the agents.
 
-## Cases (python/)
+## Cases (22 total)
 
-| Case | CWE | Expected verdict | Exercises |
-|---|---|---|---|
-| sqli-vulnerable / sqli-fixed | CWE-89 | exploitable / not | SQL injection; structure oracle |
-| cmdi-vulnerable / cmdi-fixed | CWE-78 | exploitable / not | command injection; canary-file oracle |
-| pathtraversal-vulnerable / -fixed | CWE-22 | exploitable / not | path traversal; sandbox-file oracle |
-| xss-vulnerable / xss-fixed | CWE-79 | exploitable / not | output-encoding oracle |
-| unreachable | CWE-89 | not exploitable | context marks the sink unreachable (constant query) |
-| testonly | CWE-89 | not exploitable | pre-filter early exit (finding is in tests/) |
+Each case name is `[<lang>-]<cwe>-<variant>` (Python cases are unprefixed).
+
+| Language (toolchain) | CWEs (paired vulnerable/fixed) |
+|---|---|
+| python (pip / pytest) | CWE-89 SQLi, CWE-78 cmdi, CWE-22 path traversal, CWE-79 XSS |
+| java (maven / junit5) | CWE-89 SQLi, CWE-78 cmdi |
+| javascript (npm / jest) | CWE-78 cmdi, CWE-79 XSS |
+| perl (cpanm / Test::More) | CWE-89 SQLi, CWE-78 cmdi |
+
+Plus two Python edge cases: `unreachable` (sink present but only ever called with a constant
+query — context should mark it unreachable) and `testonly` (the flagged pattern is under
+`tests/` — the pre-filter should early-exit).
+
+Every case's ground truth includes the exact sink file/line and target callable, and
+`test_corpus.py` asserts `detect_stack` identifies the right language, build system, and test
+framework for each.
 
 ## How it's used
 

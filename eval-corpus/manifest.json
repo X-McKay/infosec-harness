@@ -1,7 +1,5 @@
 {
   "version": "1",
-  "language": "python",
-  "note": "Paired seeded corpus. Vulnerable variants should be potentially_exploitable; fixed variants likely_not_exploitable. Ground truth is for scoring, not shown to agents.",
   "cases": [
     {
       "name": "sqli-vulnerable",
@@ -24,7 +22,8 @@
         "sink_line": 16,
         "source": "name parameter",
         "target_callable": "get_user"
-      }
+      },
+      "language": "python"
     },
     {
       "name": "sqli-fixed",
@@ -47,7 +46,8 @@
         "sink_line": 16,
         "source": "name parameter",
         "target_callable": "get_user"
-      }
+      },
+      "language": "python"
     },
     {
       "name": "cmdi-vulnerable",
@@ -70,7 +70,8 @@
         "sink_line": 6,
         "source": "path parameter",
         "target_callable": "count_lines"
-      }
+      },
+      "language": "python"
     },
     {
       "name": "cmdi-fixed",
@@ -93,7 +94,8 @@
         "sink_line": 6,
         "source": "path parameter",
         "target_callable": "count_lines"
-      }
+      },
+      "language": "python"
     },
     {
       "name": "pathtraversal-vulnerable",
@@ -116,7 +118,8 @@
         "sink_line": 8,
         "source": "name parameter",
         "target_callable": "read_doc"
-      }
+      },
+      "language": "python"
     },
     {
       "name": "pathtraversal-fixed",
@@ -139,7 +142,8 @@
         "sink_line": 11,
         "source": "name parameter",
         "target_callable": "read_doc"
-      }
+      },
+      "language": "python"
     },
     {
       "name": "xss-vulnerable",
@@ -162,7 +166,8 @@
         "sink_line": 3,
         "source": "text parameter",
         "target_callable": "render_comment"
-      }
+      },
+      "language": "python"
     },
     {
       "name": "xss-fixed",
@@ -185,7 +190,8 @@
         "sink_line": 6,
         "source": "text parameter",
         "target_callable": "render_comment"
-      }
+      },
+      "language": "python"
     },
     {
       "name": "unreachable",
@@ -208,7 +214,8 @@
         "sink_line": 12,
         "source": "none (constant query)",
         "target_callable": "healthcheck"
-      }
+      },
+      "language": "python"
     },
     {
       "name": "testonly",
@@ -232,7 +239,297 @@
         "source": "name parameter",
         "target_callable": "build_query",
         "early_exit": "test_or_vendored"
+      },
+      "language": "python"
+    },
+    {
+      "name": "java-sqli-vulnerable",
+      "language": "java",
+      "finding": {
+        "title": "SQL injection in getUser",
+        "repo_url": "eval-corpus/java/sqli/vulnerable",
+        "revision": "HEAD",
+        "file_path": "src/main/java/com/example/UserDao.java",
+        "start_line": 10,
+        "symbol": "getUser",
+        "cwe": "CWE-89",
+        "severity": "high",
+        "source_tool": "seed-corpus",
+        "description": "Untrusted name argument reaches the CWE-89 sink in getUser."
+      },
+      "truth": {
+        "expected_verdict": "potentially_exploitable",
+        "reachability": "reachable",
+        "sink_file": "src/main/java/com/example/UserDao.java",
+        "sink_line": 12,
+        "source": "name argument",
+        "target_callable": "getUser"
+      }
+    },
+    {
+      "name": "java-sqli-fixed",
+      "language": "java",
+      "finding": {
+        "title": "SQL injection in getUser",
+        "repo_url": "eval-corpus/java/sqli/fixed",
+        "revision": "HEAD",
+        "file_path": "src/main/java/com/example/UserDao.java",
+        "start_line": 10,
+        "symbol": "getUser",
+        "cwe": "CWE-89",
+        "severity": "high",
+        "source_tool": "seed-corpus",
+        "description": "Untrusted name argument reaches the CWE-89 sink in getUser."
+      },
+      "truth": {
+        "expected_verdict": "likely_not_exploitable",
+        "reachability": "reachable",
+        "sink_file": "src/main/java/com/example/UserDao.java",
+        "sink_line": 11,
+        "source": "name argument",
+        "target_callable": "getUser"
+      }
+    },
+    {
+      "name": "java-cmdi-vulnerable",
+      "language": "java",
+      "finding": {
+        "title": "OS command injection in run",
+        "repo_url": "eval-corpus/java/cmdi/vulnerable",
+        "revision": "HEAD",
+        "file_path": "src/main/java/com/example/Runner.java",
+        "start_line": 5,
+        "symbol": "run",
+        "cwe": "CWE-78",
+        "severity": "critical",
+        "source_tool": "seed-corpus",
+        "description": "Untrusted arg argument reaches the CWE-78 sink in run."
+      },
+      "truth": {
+        "expected_verdict": "potentially_exploitable",
+        "reachability": "reachable",
+        "sink_file": "src/main/java/com/example/Runner.java",
+        "sink_line": 6,
+        "source": "arg argument",
+        "target_callable": "run"
+      }
+    },
+    {
+      "name": "java-cmdi-fixed",
+      "language": "java",
+      "finding": {
+        "title": "OS command injection in run",
+        "repo_url": "eval-corpus/java/cmdi/fixed",
+        "revision": "HEAD",
+        "file_path": "src/main/java/com/example/Runner.java",
+        "start_line": 5,
+        "symbol": "run",
+        "cwe": "CWE-78",
+        "severity": "critical",
+        "source_tool": "seed-corpus",
+        "description": "Untrusted arg argument reaches the CWE-78 sink in run."
+      },
+      "truth": {
+        "expected_verdict": "likely_not_exploitable",
+        "reachability": "reachable",
+        "sink_file": "src/main/java/com/example/Runner.java",
+        "sink_line": 6,
+        "source": "arg argument",
+        "target_callable": "run"
+      }
+    },
+    {
+      "name": "javascript-cmdi-vulnerable",
+      "language": "javascript",
+      "finding": {
+        "title": "OS command injection in countLines",
+        "repo_url": "eval-corpus/javascript/cmdi/vulnerable",
+        "revision": "HEAD",
+        "file_path": "src/cmd.js",
+        "start_line": 4,
+        "symbol": "countLines",
+        "cwe": "CWE-78",
+        "severity": "critical",
+        "source_tool": "seed-corpus",
+        "description": "Untrusted path argument reaches the CWE-78 sink in countLines."
+      },
+      "truth": {
+        "expected_verdict": "potentially_exploitable",
+        "reachability": "reachable",
+        "sink_file": "src/cmd.js",
+        "sink_line": 5,
+        "source": "path argument",
+        "target_callable": "countLines"
+      }
+    },
+    {
+      "name": "javascript-cmdi-fixed",
+      "language": "javascript",
+      "finding": {
+        "title": "OS command injection in countLines",
+        "repo_url": "eval-corpus/javascript/cmdi/fixed",
+        "revision": "HEAD",
+        "file_path": "src/cmd.js",
+        "start_line": 4,
+        "symbol": "countLines",
+        "cwe": "CWE-78",
+        "severity": "critical",
+        "source_tool": "seed-corpus",
+        "description": "Untrusted path argument reaches the CWE-78 sink in countLines."
+      },
+      "truth": {
+        "expected_verdict": "likely_not_exploitable",
+        "reachability": "reachable",
+        "sink_file": "src/cmd.js",
+        "sink_line": 5,
+        "source": "path argument",
+        "target_callable": "countLines"
+      }
+    },
+    {
+      "name": "javascript-xss-vulnerable",
+      "language": "javascript",
+      "finding": {
+        "title": "Cross-site scripting in renderComment",
+        "repo_url": "eval-corpus/javascript/xss/vulnerable",
+        "revision": "HEAD",
+        "file_path": "src/render.js",
+        "start_line": 2,
+        "symbol": "renderComment",
+        "cwe": "CWE-79",
+        "severity": "medium",
+        "source_tool": "seed-corpus",
+        "description": "Untrusted text argument reaches the CWE-79 sink in renderComment."
+      },
+      "truth": {
+        "expected_verdict": "potentially_exploitable",
+        "reachability": "reachable",
+        "sink_file": "src/render.js",
+        "sink_line": 3,
+        "source": "text argument",
+        "target_callable": "renderComment"
+      }
+    },
+    {
+      "name": "javascript-xss-fixed",
+      "language": "javascript",
+      "finding": {
+        "title": "Cross-site scripting in renderComment",
+        "repo_url": "eval-corpus/javascript/xss/fixed",
+        "revision": "HEAD",
+        "file_path": "src/render.js",
+        "start_line": 6,
+        "symbol": "renderComment",
+        "cwe": "CWE-79",
+        "severity": "medium",
+        "source_tool": "seed-corpus",
+        "description": "Untrusted text argument reaches the CWE-79 sink in renderComment."
+      },
+      "truth": {
+        "expected_verdict": "likely_not_exploitable",
+        "reachability": "reachable",
+        "sink_file": "src/render.js",
+        "sink_line": 7,
+        "source": "text argument",
+        "target_callable": "renderComment"
+      }
+    },
+    {
+      "name": "perl-sqli-vulnerable",
+      "language": "perl",
+      "finding": {
+        "title": "SQL injection in get_user",
+        "repo_url": "eval-corpus/perl/sqli/vulnerable",
+        "revision": "HEAD",
+        "file_path": "lib/UserDao.pm",
+        "start_line": 6,
+        "symbol": "get_user",
+        "cwe": "CWE-89",
+        "severity": "high",
+        "source_tool": "seed-corpus",
+        "description": "Untrusted name argument reaches the CWE-89 sink in get_user."
+      },
+      "truth": {
+        "expected_verdict": "potentially_exploitable",
+        "reachability": "reachable",
+        "sink_file": "lib/UserDao.pm",
+        "sink_line": 8,
+        "source": "name argument",
+        "target_callable": "get_user"
+      }
+    },
+    {
+      "name": "perl-sqli-fixed",
+      "language": "perl",
+      "finding": {
+        "title": "SQL injection in get_user",
+        "repo_url": "eval-corpus/perl/sqli/fixed",
+        "revision": "HEAD",
+        "file_path": "lib/UserDao.pm",
+        "start_line": 6,
+        "symbol": "get_user",
+        "cwe": "CWE-89",
+        "severity": "high",
+        "source_tool": "seed-corpus",
+        "description": "Untrusted name argument reaches the CWE-89 sink in get_user."
+      },
+      "truth": {
+        "expected_verdict": "likely_not_exploitable",
+        "reachability": "reachable",
+        "sink_file": "lib/UserDao.pm",
+        "sink_line": 8,
+        "source": "name argument",
+        "target_callable": "get_user"
+      }
+    },
+    {
+      "name": "perl-cmdi-vulnerable",
+      "language": "perl",
+      "finding": {
+        "title": "OS command injection in run",
+        "repo_url": "eval-corpus/perl/cmdi/vulnerable",
+        "revision": "HEAD",
+        "file_path": "lib/Runner.pm",
+        "start_line": 6,
+        "symbol": "run",
+        "cwe": "CWE-78",
+        "severity": "critical",
+        "source_tool": "seed-corpus",
+        "description": "Untrusted arg argument reaches the CWE-78 sink in run."
+      },
+      "truth": {
+        "expected_verdict": "potentially_exploitable",
+        "reachability": "reachable",
+        "sink_file": "lib/Runner.pm",
+        "sink_line": 8,
+        "source": "arg argument",
+        "target_callable": "run"
+      }
+    },
+    {
+      "name": "perl-cmdi-fixed",
+      "language": "perl",
+      "finding": {
+        "title": "OS command injection in run",
+        "repo_url": "eval-corpus/perl/cmdi/fixed",
+        "revision": "HEAD",
+        "file_path": "lib/Runner.pm",
+        "start_line": 6,
+        "symbol": "run",
+        "cwe": "CWE-78",
+        "severity": "critical",
+        "source_tool": "seed-corpus",
+        "description": "Untrusted arg argument reaches the CWE-78 sink in run."
+      },
+      "truth": {
+        "expected_verdict": "likely_not_exploitable",
+        "reachability": "reachable",
+        "sink_file": "lib/Runner.pm",
+        "sink_line": 8,
+        "source": "arg argument",
+        "target_callable": "run"
       }
     }
-  ]
+  ],
+  "note": "Paired seeded corpus across languages. Each case carries its own `language`. Vulnerable variants -> potentially_exploitable; fixed -> likely_not_exploitable. Truth is for scoring only."
 }
