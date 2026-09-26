@@ -34,9 +34,15 @@ design and decision log.
 - **Prompt caching.** A stable→volatile prompt layout, pinned model/thinking per agent, and
   repo-grouped warm-then-fan-out scheduling keep the shared prefix served from cache; cache
   tokens are recorded per call.
-- **Evidence-based tuning.** Every agent has an eval dataset; `harness eval run` /
-  `eval compare` measure the accuracy, cost, and latency impact of any model/prompt/skill
-  change, one variable at a time.
+- **Evidence-based tuning.** Every agent has an eval dataset and an executable release
+  policy; `harness eval run` / `eval compare` measure the accuracy, cost, and latency impact
+  of any model/prompt/skill change, one variable at a time.
+- **Governed.** Each agent declares an owner, execution class, governance tier, data
+  classification, model policy, and an enforced per-run budget; each toolset declares its
+  effect on external state; each agent has a risk assessment whose tier its spec must match.
+  Construction fails if any of that is missing. `just conformance` checks the whole thing
+  against the Agent and Multi-Agent Playbooks — see
+  [`docs/PLAYBOOK_CONFORMANCE.md`](docs/PLAYBOOK_CONFORMANCE.md).
 
 ## Quick start (offline, no credentials)
 
@@ -89,14 +95,19 @@ harness agents validate | agents schema
 ## Layout
 
 ```
-agents/<name>/agent.yaml   # the 11 agent specs (+ evals/dataset.yaml)
+agents/<name>/agent.yaml   # the 11 agent specs (+ evals/dataset.yaml, evals/release-policy.yaml)
 skills/                    # SKILL.md libraries: probe-oracle-protocol, cwe-*, lang-*, build-*, test-*
+systems/triage-system/     # System Spec + delegation / data-flow / termination policies
+docs/risk-assessments/     # one per agent + the system; generated from scripts/risk_scenarios.py
+scripts/                   # generators for the governance artifacts, and the conformance check
 src/infosec_harness/
   domain/         # typed contracts (Finding, EnvironmentSpec, ProbePlan, Verdict, …)
   agents/         # loader, model factory, custom capabilities, stubs, validators
   graph/          # pydantic-graph triage flow, prepare orchestrator, Ops interface, scoring
   workflows/      # Temporal workflows, activities, TemporalOps, worker, runner
   sandbox/        # gVisor-capable Docker runner
+  tools/          # per-toolset tool.yaml: effect, retry safety, timeout, output bound
+  telemetry.py    # OTel resource attributes and agent-run spans
   persistence/    # SQLAlchemy models, store, artifact store (MinIO/filesystem)
   intake/ integrations/ado  # generic JSON + Azure DevOps intake and comment-only write-back
   evals/          # per-agent eval runner and compare

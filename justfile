@@ -15,6 +15,19 @@ test:
 lint-fix:
     uv run ruff check src tests --fix
 
+# Conformance against the Agent / Multi-Agent Playbooks, via agentctl.
+# Needs agentctl: `uv tool install ./tools/agentctl` from the playbooks repo, or
+# `just conformance AGENTCTL=/path/to/playbooks` to use a checkout.
+conformance agentctl="":
+    uv run python scripts/conformance.py {{ if agentctl != "" { "--agentctl " + agentctl } else { "" } }}
+
+# Regenerate every derived governance artifact from its source of truth.
+governance:
+    uv run python scripts/gen_risk_assessments.py
+    uv run python scripts/gen_release_policies.py
+    uv run python scripts/gen_system_spec.py
+    uv run python scripts/restructure_skills.py
+
 # Regenerate the agent-spec JSON schema and the web OpenAPI client.
 agents-schema:
     HARNESS_MODEL_MODE=stub uv run harness agents schema

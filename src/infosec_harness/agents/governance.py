@@ -131,7 +131,7 @@ def tier_matches_assessment(agent_name: str, metadata: dict[str, Any]) -> list[s
     if declared != metadata["risk_tier"]:
         return [f"metadata.risk_tier is {metadata['risk_tier']!r} but "
                 f"{path.name} records governance_tier {declared!r}"]
-    subject = assessment.get("agent") or assessment.get("subject", {}).get("name")
+    subject = (assessment.get("assessment") or {}).get("agent")
     if subject not in (None, agent_name):
         return [f"risk assessment {path.name} is for {subject!r}, not {agent_name!r}"]
     return []

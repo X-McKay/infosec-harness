@@ -18,7 +18,7 @@ from infosec_harness.agents.registry import AGENT_BINDINGS, agent_usage_limits, 
 def test_every_agent_declares_a_run_budget():
     for name in AGENT_BINDINGS:
         budget = run_budget(name, load_spec(name).metadata)
-        assert budget.max_model_requests > 0, name
+        assert budget.max_requests > 0, name
 
 
 def test_a_spec_without_a_budget_fails_loudly():
@@ -33,7 +33,7 @@ def test_a_spec_without_a_budget_fails_loudly():
 
 def test_a_zero_or_negative_ceiling_is_rejected():
     """A limit of zero is not a limit; it is a disabled agent, which is never intended."""
-    base = {"max_model_requests": 4, "max_tool_calls": 4, "max_input_tokens": 100,
+    base = {"max_requests": 4, "max_tool_calls": 4, "max_input_tokens": 100,
             "max_output_tokens": 100, "max_cost_usd": 0.1}
     for field in base:
         with pytest.raises(ValidationError):

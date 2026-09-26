@@ -1,0 +1,38 @@
+# Tool policy for the sandbox-shell toolset (agent-playbook §5).
+name: sandbox-shell
+owner: appsec
+toolset_id: sandbox_shell
+description: >-
+  Run a shell command inside a fresh, isolated container of the candidate base image so an
+  environment plan can be checked before the real build. The repository is deliberately not
+  mounted.
+# Creates a container and executes code. The effect is recoverable — the container is
+# ephemeral and nothing outside it is touched — but it is emphatically not `read`, and it is
+# why every agent enabling this toolset is `durable` and carries a critical governance tier.
+effect: write_reversible
+# Executing a command is a write, so it carries a stable key rather than being assumed free to
+# repeat: `<run_id>:<tool_call_id>:v1` names the container deterministically, so a retried
+# attempt is recognisably the same operation and an orphan from a crashed worker is findable by
+# name. See sandbox/docker.container_name.
+retry_safety: idempotency_key_required
+timeout_seconds: 200
+data_classification: confidential
+# Bounded so a large file or a chatty command cannot flood the context.
+# Enforced by stdout and stderr are each tailed to 3000 characters.
+max_output_bytes: 8000
+authorization_scopes: []
+tools:
+  - name: run_in_sandbox
+    effect: write_reversible
+    notes: >-
+      Fails closed when no isolation runtime is available unless the development override is
+      set. Non-root, all capabilities dropped, resource-capped, ephemeral.
+constraints:
+  - Commands never run on the worker host; execution is always inside a container.
+  - The repository is not mounted, so a command cannot read the source under triage.
+  - Build-time egress is limited to the registry allowlist; probe containers have none.
+  - The container is discarded after the call; no state carries to the next one.
+risks:
+  # The control this depends on has no runtime evidence yet; see the risk assessments.
+  - scenario: RISK-SEC-001
+    note: gVisor provides the isolation boundary and has never executed in this project.

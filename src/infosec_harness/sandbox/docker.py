@@ -15,6 +15,7 @@ replaced by a Job-based runner (phase 5) behind the same functions.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import re
 import shlex
@@ -208,11 +209,28 @@ async def prune_images(keep: int | None = None) -> int:
     return removed
 
 
-async def run_shell(image: str, command: str, *, network: bool, timeout: float | None = None) -> ProcResult:
-    """Run a shell command inside ``image`` (used by the sandbox shell tool)."""
+async def run_shell(image: str, command: str, *, network: bool, timeout: float | None = None,
+                    idempotency_key: str | None = None) -> ProcResult:
+    """Run a shell command inside ``image`` (used by the sandbox shell tool).
+
+    ``idempotency_key`` names the container deterministically. Executing a command is a
+    write, so the tool standard (agent-playbook §5/§6) requires a stable key rather than
+    assuming a retry is free: with one, a retried attempt is recognisably the same operation
+    rather than a second anonymous container, and an orphan left by a crashed worker can be
+    found and removed by name.
+    """
     s = get_settings()
-    argv = ["docker", "run", "-i", *_hardening_args(network=network), image, "sh", "-c", command]
+    argv = ["docker", "run", "-i", *_hardening_args(network=network)]
+    if idempotency_key:
+        argv += ["--name", container_name(idempotency_key)]
+    argv += [image, "sh", "-c", command]
     return await _run(argv, timeout=timeout or s.sandbox_probe_timeout_s)
+
+
+def container_name(idempotency_key: str) -> str:
+    """A stable, Docker-legal container name for one logical sandbox operation."""
+    digest = hashlib.sha256(idempotency_key.encode()).hexdigest()[:16]
+    return f"harness-shell-{digest}"
 
 
 async def run_probe(image: str, test_file_path: str, content: str, test_command: str, nonce: str,

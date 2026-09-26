@@ -3,8 +3,8 @@
 # they agree. See agent-playbook 13-risk-assessment.md for the method.
 schema_version: 1
 assessment:
-  agent: triage-system
-  agent_version: 1.0.0
+  system: triage-system
+  system_version: 1.0.0
   assessment_version: 1.0.0
   status: draft
   assessed_at: '2026-09-26'
@@ -86,6 +86,7 @@ classification:
     — no host available to this project provides runsc — so RISK-SEC-001 and RISK-SEC-004 retain
     a high residual tier on absent evidence rather than on a known weakness. Launch is conditional
     on that evidence.
+  maximum_member_tier: critical
 scenarios:
 - id: RISK-SEC-001
   title: Untrusted repository code escapes the build or probe sandbox
@@ -580,3 +581,84 @@ assumptions:
 open_questions:
 - Which jurisdictions and contractual terms apply to the configured model backend?
 - What false-negative rate is acceptable once measured with the sandbox enabled?
+member_assessments:
+- agent: intake
+  agent_version: 1.0.0
+  governance_tier: medium
+  assessment: docs/risk-assessments/intake.yaml
+- agent: recon
+  agent_version: 1.0.0
+  governance_tier: medium
+  assessment: docs/risk-assessments/recon.yaml
+- agent: env-planner
+  agent_version: 1.0.0
+  governance_tier: critical
+  assessment: docs/risk-assessments/env-planner.yaml
+- agent: build-repair
+  agent_version: 1.0.0
+  governance_tier: critical
+  assessment: docs/risk-assessments/build-repair.yaml
+- agent: partial-build
+  agent_version: 1.0.0
+  governance_tier: critical
+  assessment: docs/risk-assessments/partial-build.yaml
+- agent: context
+  agent_version: 1.0.0
+  governance_tier: high
+  assessment: docs/risk-assessments/context.yaml
+- agent: probe-planner
+  agent_version: 1.0.0
+  governance_tier: high
+  assessment: docs/risk-assessments/probe-planner.yaml
+- agent: probe-author
+  agent_version: 1.0.0
+  governance_tier: critical
+  assessment: docs/risk-assessments/probe-author.yaml
+- agent: probe-repair
+  agent_version: 1.0.0
+  governance_tier: critical
+  assessment: docs/risk-assessments/probe-repair.yaml
+- agent: probe-diagnosis
+  agent_version: 1.0.0
+  governance_tier: high
+  assessment: docs/risk-assessments/probe-diagnosis.yaml
+- agent: verdict
+  agent_version: 1.0.0
+  governance_tier: high
+  assessment: docs/risk-assessments/verdict.yaml
+monitoring:
+  owner: appsec
+  indicators:
+  - name: false_negative_rate_on_exploitable
+    source: harness eval corpus with the sandbox enabled
+    note: The headline quality signal. Cannot be measured until CONDITION-001 is met.
+  - name: unevidenced_exploitable_verdicts
+    source: the verdict evidence contract
+    note: Must be zero; a non-zero value means the deterministic contract was bypassed.
+  - name: sandbox_runtime_missing_count
+    source: sandbox.policy.ensure_runtime_available
+    note: Non-zero outside development means probes are failing closed, as intended.
+  - name: insecure_runtime_override_enabled
+    source: settings.allow_insecure_runtime
+    note: Must be false outside development; this disables the isolation boundary.
+  - name: budget_exhausted_count
+    source: UsageLimits breaches recorded per run
+    note: A rise means runs are being stopped rather than answered.
+  - name: average_cost_per_finding
+    source: per-invocation cost accounting
+    note: Catches a repair loop regressing into a storm.
+  alerts:
+  - any verdict of potentially_exploitable recorded without an oracle signal
+  - insecure_runtime_override_enabled true in a non-development environment
+  - false-negative rate above the release threshold on the corpus
+  - budget exhaustion on more than a small fraction of findings
+  reviews:
+    cadence: monthly while the governance tier is critical
+    owner: appsec
+    note: Reassess on any change to a model, skill, tool, or the sandbox runtime, and whenever a
+      hard gate fails.
+  runbooks:
+  - docs/runbooks/sandbox-isolation.md
+  - docs/runbooks/triage-quality.md
+  - docs/runbooks/cost-and-capacity.md
+  - docs/runbooks/data-handling.md

@@ -1,0 +1,30 @@
+# Tool policy for the repo-read-only toolset (agent-playbook §5).
+name: repo-read-only
+owner: appsec
+toolset_id: repo_ro
+description: Path-confined, read-only access to the repository snapshot under triage.
+# Observes without modifying external state, so it does not raise the execution-class floor.
+effect: read
+# Reading the same path twice returns the same bytes and changes nothing.
+retry_safety: safe
+timeout_seconds: 30
+# The snapshot is customer source, including the unfixed vulnerability under triage.
+data_classification: confidential
+# Bounded so a large file or a chatty command cannot flood the context.
+# Enforced by MAX_READ_LINES=400, MAX_LIST=300, MAX_MATCHES=60 in agents/capabilities.py.
+max_output_bytes: 120000
+authorization_scopes: []
+tools:
+  - name: list_files
+    effect: read
+    notes: Confined to the snapshot root; cannot traverse above it.
+  - name: read_file
+    effect: read
+    notes: Output is bounded so a large file cannot flood the context.
+  - name: search_code
+    effect: read
+    notes: Pattern search within the snapshot root only.
+constraints:
+  - The snapshot root is the only reachable path; traversal above it is rejected in code.
+  - No write, delete, move, or metadata-changing operation exists in this toolset.
+  - Returned content is untrusted data and is labelled as such in the prompt that carries it.

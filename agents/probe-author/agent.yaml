@@ -39,20 +39,21 @@ metadata:
   version: 1.0.0
   owner: appsec
   execution_class: durable
+  temporal_enabled: true
   risk_tier: critical
   risk_assessment: docs/risk-assessments/probe-author.yaml
+  threat_model: docs/threat-models/triage-system.md
   data_classification: confidential
   model_policy: balanced-v1
   evaluation_policy: agents/probe-author/evals/release-policy.yaml
   # A runtime brake, not an operating target: roughly 3-4x the maxima measured
   # against a live model (docs/LIVE_VALIDATION.md). Enforced via UsageLimits.
   budgets:
-    run:
-      max_model_requests: 16
-      max_tool_calls: 36
-      max_input_tokens: 60000
-      max_output_tokens: 48000
-      max_cost_usd: 0.8
+    max_requests: 16
+    max_tool_calls: 36
+    max_input_tokens: 60000
+    max_output_tokens: 48000
+    max_cost_usd: 0.8
   enabled_skills:
     - probe-oracle-protocol
     - test-pytest

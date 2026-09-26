@@ -6,7 +6,7 @@ repair storm measured in docs/LIVE_VALIDATION.md grew one agent's context from 8
 tokens over three turns before anyone noticed by eye. A budget turns that into a bounded,
 named failure.
 
-Budgets are read from ``metadata.budgets.run`` so they live with the rest of the agent's
+Budgets are read from ``metadata.budgets`` so they live with the rest of the agent's
 declarative contract and move with an overlay during experiments.
 """
 
@@ -20,9 +20,13 @@ from pydantic_ai.usage import UsageLimits
 
 
 class RunBudget(BaseModel):
-    """What one agent run may spend. Every field is a ceiling, never a target."""
+    """What one agent run may spend. Every field is a ceiling, never a target.
 
-    max_model_requests: int = Field(gt=0)
+    Field names are the playbook's (`max_requests`, not `max_model_requests`) so the spec's
+    budget block is the same document `agentctl validate` reads.
+    """
+
+    max_requests: int = Field(gt=0)
     max_tool_calls: int = Field(gt=0)
     max_input_tokens: int = Field(gt=0)
     max_output_tokens: int = Field(gt=0)
@@ -30,7 +34,7 @@ class RunBudget(BaseModel):
 
     def to_usage_limits(self) -> UsageLimits:
         return UsageLimits(
-            request_limit=self.max_model_requests,
+            request_limit=self.max_requests,
             tool_calls_limit=self.max_tool_calls,
             input_tokens_limit=self.max_input_tokens,
             output_tokens_limit=self.max_output_tokens,
@@ -48,11 +52,10 @@ class MissingBudget(ValueError):
 
 
 def run_budget(agent_name: str, metadata: dict[str, Any] | None) -> RunBudget:
-    budgets = (metadata or {}).get("budgets") or {}
-    run = budgets.get("run")
-    if not isinstance(run, dict):
-        raise MissingBudget(f"{agent_name}: metadata.budgets.run is required")
-    return RunBudget.model_validate(run)
+    budgets = (metadata or {}).get("budgets")
+    if not isinstance(budgets, dict) or not budgets:
+        raise MissingBudget(f"{agent_name}: metadata.budgets is required")
+    return RunBudget.model_validate(budgets)
 
 
 def usage_limits_for(agent_name: str, metadata: dict[str, Any] | None) -> UsageLimits:

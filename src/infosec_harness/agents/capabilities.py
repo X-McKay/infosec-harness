@@ -122,7 +122,12 @@ async def run_in_sandbox(ctx: RunContext[AgentDeps], command: str) -> str:
 
     if not ctx.deps.sandbox_image:
         raise ModelRetry("No sandbox image is configured for this run.")
-    res = await docker.run_shell(ctx.deps.sandbox_image, command, network=True, timeout=180)
+    # Executing a command is a write, so it carries a stable key rather than relying on a
+    # retry being free (agent-playbook §6). run_id is stable across a retry of the same
+    # logical call; tool_call_id distinguishes separate calls within one agent run.
+    key = f"{ctx.run_id}:{getattr(ctx, 'tool_call_id', '') or ''}:v1"
+    res = await docker.run_shell(ctx.deps.sandbox_image, command, network=True, timeout=180,
+                                 idempotency_key=key)
     return (
         f"[exit code: {res.exit_code}{' (timed out)' if res.timed_out else ''}]\n"
         f"[stdout]\n{docker.tail(res.stdout, 3000)}\n[stderr]\n{docker.tail(res.stderr, 3000)}"

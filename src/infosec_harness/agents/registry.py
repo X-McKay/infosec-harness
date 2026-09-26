@@ -31,6 +31,7 @@ from temporalio.workflow import ActivityConfig
 from infosec_harness.agents import models as model_factory
 from infosec_harness.agents.capabilities import CUSTOM_CAPABILITIES
 from infosec_harness.agents.deps import AgentDeps
+from infosec_harness.agents.governance import GovernanceError, assert_governed
 from infosec_harness.agents.validators import OUTPUT_VALIDATORS
 from infosec_harness.domain.models import (
     EnvironmentSpec,
@@ -174,10 +175,35 @@ def _absolutize_skill_dirs(spec: AgentSpec) -> AgentSpec:
     return AgentSpec.from_dict(data)
 
 
+def _assert_execution_class_covers_tools(name: str, metadata: Mapping[str, Any] | None) -> None:
+    """An agent's execution class must be at least what its most consequential tool requires.
+
+    This is the rule that makes an execution class mean something: `sandbox-shell` executes
+    code, so any agent enabling it is at least `durable`. Declaring a stronger class is fine;
+    declaring a weaker one is not.
+    """
+    from infosec_harness.tools.policies import EXECUTION_CLASS_ORDER, required_execution_class
+
+    meta = metadata or {}
+    declared = meta.get("execution_class")
+    required = required_execution_class(list(meta.get("enabled_toolsets") or []))
+    if EXECUTION_CLASS_ORDER.index(declared) < EXECUTION_CLASS_ORDER.index(required):
+        raise GovernanceError(
+            f"Agent {name!r} declares execution_class {declared!r} but its enabled toolsets "
+            f"require at least {required!r}"
+        )
+
+
 def build_agent(name: str, overlay: Mapping[str, Any] | None = None, *, durable: bool = True) -> Agent[AgentDeps, Any]:
     if name not in AGENT_BINDINGS:
         raise KeyError(f"Unknown agent {name!r}")
-    spec = _absolutize_skill_dirs(load_spec(name, overlay))
+    spec = load_spec(name, overlay)
+    # A spec that cannot be governed must not become a running agent: owner, execution class,
+    # risk tier, risk assessment, model policy, budget, skills, and toolsets are all required,
+    # and the spec's risk tier must match its assessment's governance tier (§3).
+    assert_governed(name, spec.metadata)
+    _assert_execution_class_covers_tools(name, spec.metadata)
+    spec = _absolutize_skill_dirs(spec)
     capabilities: list[Any] = [ResolveModelId(
         lambda ctx, model_id, _n=name, _d=durable: model_factory.resolve(_n, model_id, durable=_d))]
     # Cross-cutting robustness, attached in code (see ALLOWED_CAPABILITIES note).

@@ -157,13 +157,86 @@ def _acceptance(ids: list[str], classification: dict) -> dict:
     }
 
 
+def _member_assessments() -> list[dict]:
+    """Every member's governance tier and the artifact that establishes it.
+
+    The system tier must be at least the highest member's: composition raises assurance, it
+    never lowers it. Reading the members here rather than restating them keeps the two
+    artifacts from drifting.
+    """
+    import yaml as _yaml
+
+    members = []
+    for agent in AGENT_SCENARIOS:
+        spec = _yaml.safe_load((REPO / "agents" / agent / "agent.yaml").read_text())
+        members.append({
+            "agent": agent,
+            "agent_version": spec["metadata"]["version"],
+            "governance_tier": spec["metadata"]["risk_tier"],
+            "assessment": f"docs/risk-assessments/{agent}.yaml",
+        })
+    return members
+
+
+MONITORING = {
+    "owner": OWNER,
+    "indicators": [
+        {"name": "false_negative_rate_on_exploitable",
+         "source": "harness eval corpus with the sandbox enabled",
+         "note": "The headline quality signal. Cannot be measured until CONDITION-001 is met."},
+        {"name": "unevidenced_exploitable_verdicts",
+         "source": "the verdict evidence contract",
+         "note": "Must be zero; a non-zero value means the deterministic contract was bypassed."},
+        {"name": "sandbox_runtime_missing_count",
+         "source": "sandbox.policy.ensure_runtime_available",
+         "note": "Non-zero outside development means probes are failing closed, as intended."},
+        {"name": "insecure_runtime_override_enabled",
+         "source": "settings.allow_insecure_runtime",
+         "note": "Must be false outside development; this disables the isolation boundary."},
+        {"name": "budget_exhausted_count", "source": "UsageLimits breaches recorded per run",
+         "note": "A rise means runs are being stopped rather than answered."},
+        {"name": "average_cost_per_finding", "source": "per-invocation cost accounting",
+         "note": "Catches a repair loop regressing into a storm."},
+    ],
+    "alerts": [
+        "any verdict of potentially_exploitable recorded without an oracle signal",
+        "insecure_runtime_override_enabled true in a non-development environment",
+        "false-negative rate above the release threshold on the corpus",
+        "budget exhaustion on more than a small fraction of findings",
+    ],
+    "reviews": {
+        "cadence": "monthly while the governance tier is critical",
+        "owner": OWNER,
+        "note": ("Reassess on any change to a model, skill, tool, or the sandbox runtime, and "
+                 "whenever a hard gate fails."),
+    },
+    "runbooks": [
+        "docs/runbooks/sandbox-isolation.md",
+        "docs/runbooks/triage-quality.md",
+        "docs/runbooks/cost-and-capacity.md",
+        "docs/runbooks/data-handling.md",
+    ],
+}
+
+
 def build(subject: str, ids: list[str], *, is_system: bool) -> dict:
     classification = _classification(ids)
+    members = _member_assessments()
+    if is_system:
+        member_tier = max_tier([m["governance_tier"] for m in members])
+        # Composition raises assurance: the system is at least its strongest member.
+        classification["governance_tier"] = max_tier(
+            [classification["governance_tier"], member_tier])
+        classification["maximum_member_tier"] = member_tier
+        extra = {"member_assessments": members, "monitoring": MONITORING}
+        identity = {"system": subject, "system_version": AGENT_VERSION}
+    else:
+        extra = {}
+        identity = {"agent": subject, "agent_version": AGENT_VERSION}
     return {
         "schema_version": 1,
         "assessment": {
-            "agent": subject,
-            "agent_version": AGENT_VERSION,
+            **identity,
             "assessment_version": "1.0.0",
             "status": "draft",
             "assessed_at": ASSESSED_AT,
@@ -215,6 +288,7 @@ def build(subject: str, ids: list[str], *, is_system: bool) -> dict:
             "Which jurisdictions and contractual terms apply to the configured model backend?",
             "What false-negative rate is acceptable once measured with the sandbox enabled?",
         ],
+        **extra,
     }
 
 
