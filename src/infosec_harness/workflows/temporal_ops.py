@@ -28,7 +28,11 @@ from infosec_harness.graph.ops import AgentOutcome
 with workflow.unsafe.imports_passed_through():
     from infosec_harness.agents import models as model_factory
     from infosec_harness.agents.durable import AGENTS
-    from infosec_harness.agents.registry import agent_config_hashes, resolved_model_names
+    from infosec_harness.agents.registry import (
+        agent_config_hashes,
+        agent_usage_limits,
+        resolved_model_names,
+    )
     from infosec_harness.evals.trajectory import inspect_messages
     from infosec_harness.workflows import activities
 
@@ -48,11 +52,13 @@ class TemporalOps:
         self._agents = AGENTS
         self._hashes = agent_config_hashes()
         self._models = resolved_model_names()
+        # Precomputed on the host: reading a spec inside a workflow would be I/O.
+        self._limits = agent_usage_limits()
 
     async def run_agent(self, name: str, prompt: Sequence[UserContent], deps: AgentDeps) -> AgentOutcome:
         agent = self._agents[name]
         started = workflow.now()
-        result = await agent.run(list(prompt), deps=deps)
+        result = await agent.run(list(prompt), deps=deps, usage_limits=self._limits[name])
         usage = result.usage
         model_name = self._models[name]
         cost, estimated = model_factory.estimate_cost(model_name, usage)

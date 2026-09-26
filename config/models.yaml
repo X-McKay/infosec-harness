@@ -44,6 +44,16 @@ model_catalog:
 
 default_model: sonnet   # baseline v0 (D15)
 
+# Versioned logical model policies (agent-playbook §3). Agent specs name a policy in
+# `metadata.model_policy` rather than a provider model, so a routing change is a config
+# change here instead of an edit to 11 specs. Each policy resolves to a tier above, which
+# resolves to a concrete model per backend. Bump the version when a policy's intent
+# changes so eval results stay attributable.
+model_policies:
+  fast-v1: haiku          # low-latency, low-cost
+  balanced-v1: sonnet     # default production policy
+  reasoning-v1: opus      # high-complexity, stricter budget
+
 # Per-agent backend overrides, e.g. `intake: {backend: gateway}`. The tier itself lives in
 # each agent.yaml (and in experiment overlays).
 agents: {}

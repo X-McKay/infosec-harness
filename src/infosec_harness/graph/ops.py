@@ -51,6 +51,7 @@ class LocalOps:
 
         from infosec_harness import telemetry
         from infosec_harness.agents import models as model_factory
+        from infosec_harness.agents.budgets import usage_limits_for
         from infosec_harness.agents.registry import build_agent, config_hash, load_spec
         from infosec_harness.evals.trajectory import inspect_messages
 
@@ -60,7 +61,8 @@ class LocalOps:
         attrs = telemetry.agent_run_attributes(name, model_name, config_hash(name, spec))
         start = time.monotonic()
         with telemetry.agent_span(name, attrs) as span:
-            result = await agent.run(list(prompt), deps=deps)
+            result = await agent.run(list(prompt), deps=deps,
+                                     usage_limits=usage_limits_for(name, spec.metadata))
         usage = result.usage
         cost, estimated = model_factory.estimate_cost(model_name, usage)
         tools_called, skills_loaded = inspect_messages(result.all_messages())

@@ -24,7 +24,35 @@ model_settings:
 retries: {tools: 2, output: 3}
 tool_timeout: 30
 instrument: true
-metadata: {version: 1, owner: appsec}
+metadata:
+  contract_version: 1
+  version: 1.0.0
+  owner: appsec
+  execution_class: durable
+  risk_tier: medium
+  risk_assessment: docs/risk-assessments/intake.yaml
+  data_classification: confidential
+  model_policy: balanced-v1
+  evaluation_policy: agents/intake/evals/release-policy.yaml
+  # A runtime brake, not an operating target: roughly 3-4x the maxima measured
+  # against a live model (docs/LIVE_VALIDATION.md). Enforced via UsageLimits.
+  budgets:
+    run:
+      max_model_requests: 4
+      max_tool_calls: 6
+      max_input_tokens: 20000
+      max_output_tokens: 16000
+      max_cost_usd: 0.25
+  enabled_skills:
+    - cwe-22-path-traversal
+    - cwe-78-os-command-injection
+    - cwe-79-xss
+    - cwe-89-sql-injection
+    - cwe-94-code-injection
+    - cwe-502-deserialization
+    - cwe-611-xxe
+    - cwe-918-ssrf
+  enabled_toolsets: []
 capabilities:
   - Skills:
       directories: skills

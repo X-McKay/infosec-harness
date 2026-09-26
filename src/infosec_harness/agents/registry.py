@@ -210,6 +210,18 @@ def durable_agents() -> dict[str, Agent[AgentDeps, Any]]:
 
 
 @lru_cache
+def agent_usage_limits() -> dict[str, Any]:
+    """Each agent's run budget as UsageLimits, resolved once on the host.
+
+    TemporalOps needs these inside a workflow, where reading a spec from disk would be
+    nondeterministic I/O, so they are computed at import like the config hashes.
+    """
+    from infosec_harness.agents.budgets import usage_limits_for
+
+    return {name: usage_limits_for(name, load_spec(name).metadata) for name in AGENT_BINDINGS}
+
+
+@lru_cache
 def agent_config_hashes() -> dict[str, str]:
     return {name: config_hash(name, load_spec(name)) for name in AGENT_BINDINGS}
 
