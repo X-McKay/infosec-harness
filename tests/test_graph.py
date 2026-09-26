@@ -163,3 +163,46 @@ async def test_a_judge_that_cannot_satisfy_the_contract_yields_inconclusive(repo
     assert result.early_exit == "verdict_contract_unsatisfied"
     # It must never be mistaken for a judgement the evidence supported.
     assert result.verdict.confidence == 0.0
+
+
+async def test_one_failing_finding_does_not_sink_the_batch(repo):
+    """A batch shares a process here; in the durable path each finding is its own workflow.
+
+    An agent that exhausts a retry budget on one finding used to raise out of
+    triage_batch_local and discard every result in the run, including findings already
+    triaged. Observed live: `load_capability` exceeded its retries on one case and took the
+    whole all-language sweep with it.
+    """
+    from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+    from infosec_harness.domain.models import InconclusiveReason
+    from infosec_harness.graph import local
+
+    findings = [
+        FindingInput(title="SQLi", repo_url=repo, file_path="app.py", start_line=2,
+                     cwe="CWE-89", severity="high"),
+        FindingInput(title="Second", repo_url=repo, file_path="app.py", start_line=2,
+                     cwe="CWE-78", severity="low"),
+    ]
+    calls = {"n": 0}
+    real_triage_one = local.triage_one
+
+    async def flaky(ops, inp, prepared):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise UnexpectedModelBehavior("Tool 'load_capability' exceeded max retries count of 2")
+        return await real_triage_one(ops, inp, prepared)
+
+    local.triage_one = flaky
+    try:
+        outputs = await local.triage_batch_local(findings, sandbox=False)
+    finally:
+        local.triage_one = real_triage_one
+
+    assert len(outputs) == 2, "the surviving finding must still be reported"
+    failed = outputs[0]
+    assert failed.result.verdict.label is VerdictLabel.inconclusive
+    assert failed.result.verdict.inconclusive_reason is InconclusiveReason.error
+    assert "load_capability" in failed.result.verdict.rationale
+    # The second finding was triaged normally rather than discarded.
+    assert outputs[1].result.verdict.label in set(VerdictLabel)

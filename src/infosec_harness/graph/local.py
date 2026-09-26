@@ -82,5 +82,16 @@ async def triage_batch_local(findings: list[FindingInput], *, sandbox: bool = Tr
         if prepare_sink is not None:
             prepare_sink[(repo_url, revision)] = prep.invocations
         for f in group:
-            results[order[id(f)]] = await triage_one(ops, f, prep.prepared)
+            try:
+                results[order[id(f)]] = await triage_one(ops, f, prep.prepared)
+            except Exception as e:  # noqa: BLE001 - one finding must not sink the batch
+                # In the durable path each finding is its own child workflow, so a failure is
+                # already contained. Here the batch shares a process, and an agent that
+                # exhausts a retry budget on one finding used to discard every result in the
+                # run — including findings already triaged. Record it as inconclusive/error,
+                # which is what the three-way contract reserves for exactly this, and go on.
+                results[order[id(f)]] = _inconclusive(
+                    adapters.to_finding(f), InconclusiveReason.error,
+                    f"Triage failed for this finding: {type(e).__name__}: {e}",
+                    prep.prepared.status)
     return [results[i] for i in sorted(results)]

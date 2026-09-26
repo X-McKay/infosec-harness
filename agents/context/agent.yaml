@@ -14,6 +14,10 @@ instructions:
     memory. Load the matching lang-* skill too when the repository's language conventions
     bear on reachability.
 
+    Use the capability ids exactly as they are listed for you; do not shorten or guess one. If
+    the finding's CWE has no skill in that list, skip this step and analyse the code directly
+    rather than retrying a load that cannot succeed.
+
     Then, using the read-only file tools, starting at the reported location:
     1. Identify the sink (the dangerous operation) and read enough surrounding code to
        understand its inputs.
