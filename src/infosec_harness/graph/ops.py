@@ -106,12 +106,12 @@ class LocalOps:
             # Offline: don't touch Docker. Report honestly that the probe never ran.
             #
             # Claiming `exit_code=0, precondition_reached=True` here would be a *clean run
-            # that found nothing*, which is a materially different thing: probe_diagnosis
+            # that found nothing*, which is a materially different thing: probe-diagnosis
             # reads the probe source alongside those markers, decides the probe must be
             # defective because a known-vulnerable target produced no oracle, and the graph
             # enters its repair loop — on every case, to the repair limit. That made the
             # documented Docker-free mode both far slower and unrepresentative, and it
-            # inflated probe_repair's share of the trajectory metrics.
+            # inflated probe-repair's share of the trajectory metrics.
             return ProbeExecution(attempt=attempt, exit_code=None, oracle_fired=False,
                                   precondition_reached=False,
                                   stderr_tail=self.SANDBOX_DISABLED)

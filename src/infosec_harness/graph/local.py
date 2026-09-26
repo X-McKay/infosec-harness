@@ -66,7 +66,7 @@ async def triage_one(ops: LocalOps, inp: FindingInput, prepared) -> TriageRunOut
 async def triage_batch_local(findings: list[FindingInput], *, sandbox: bool = True,
                              prepare_sink: dict[tuple[str, str], list] | None = None) -> list[TriageRunOutput]:
     """Run the pipeline in-process. If ``prepare_sink`` is given, each repo's prepare-phase
-    agent invocations (recon, env_planner, build repair) are recorded there keyed by
+    agent invocations (recon, env-planner, build repair) are recorded there keyed by
     (repo_url, revision) — once per repo, since preparation is shared across a repo's
     findings and must not be double-counted per finding."""
     ops = LocalOps(sandbox=sandbox)

@@ -41,7 +41,7 @@ def test_a_zero_or_negative_ceiling_is_rejected():
 
 
 def test_budgets_reach_pydantic_ai_as_usage_limits():
-    limits = usage_limits_for("probe_author", load_spec("probe_author").metadata)
+    limits = usage_limits_for("probe-author", load_spec("probe-author").metadata)
     assert limits.request_limit == 16
     assert limits.tool_calls_limit == 36
     assert limits.input_tokens_limit == 60_000
@@ -68,8 +68,8 @@ def test_a_budget_leaves_room_for_the_measured_worst_case():
 
     The maxima are from the live-model corpus runs recorded in docs/LIVE_VALIDATION.md.
     """
-    observed_max_input = {"context": 3438, "env_planner": 6019, "probe_author": 9695,
-                          "probe_diagnosis": 3718, "probe_planner": 6886, "recon": 2300,
+    observed_max_input = {"context": 3438, "env-planner": 6019, "probe-author": 9695,
+                          "probe-diagnosis": 3718, "probe-planner": 6886, "recon": 2300,
                           "verdict": 6830}
     for name, observed in observed_max_input.items():
         budget = run_budget(name, load_spec(name).metadata)

@@ -75,6 +75,6 @@ def validate_probe(ctx: RunContext[AgentDeps], output: ProbeSource) -> ProbeSour
 
 OUTPUT_VALIDATORS: dict[str, tuple[Callable[[RunContext[AgentDeps], Any], Any], ...]] = {
     "verdict": (validate_verdict,),
-    "probe_author": (validate_probe,),
-    "probe_repair": (validate_probe,),
+    "probe-author": (validate_probe,),
+    "probe-repair": (validate_probe,),
 }

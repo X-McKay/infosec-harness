@@ -51,14 +51,14 @@ os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
 AGENT_BINDINGS: dict[str, type[BaseModel]] = {
     "intake": ExtractedFinding,
     "recon": RepoProfile,
-    "env_planner": EnvironmentSpec,
-    "build_repair": EnvironmentSpec,
-    "partial_build": EnvironmentSpec,
+    "env-planner": EnvironmentSpec,
+    "build-repair": EnvironmentSpec,
+    "partial-build": EnvironmentSpec,
     "context": FindingContext,
-    "probe_planner": ProbePlan,
-    "probe_author": ProbeSource,
-    "probe_diagnosis": ProbeDiagnosis,
-    "probe_repair": ProbeSource,
+    "probe-planner": ProbePlan,
+    "probe-author": ProbeSource,
+    "probe-diagnosis": ProbeDiagnosis,
+    "probe-repair": ProbeSource,
     "verdict": Verdict,
 }
 

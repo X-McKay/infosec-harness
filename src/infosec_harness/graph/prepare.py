@@ -50,7 +50,7 @@ async def run_prepare(ops: Ops, snapshot: RepoSnapshot, stack: StackFingerprint)
 
     # P3 env planner
     planned = await ops.run_agent(
-        "env_planner",
+        "env-planner",
         render_prompt("Design a container environment that can run one unit test of this repo.",
                       {}, stack=stack, profile=profile),
         deps,
@@ -66,7 +66,7 @@ async def run_prepare(ops: Ops, snapshot: RepoSnapshot, stack: StackFingerprint)
     while not build.ok and attempts < s.max_build_repairs:
         attempts += 1
         repair = await ops.run_agent(
-            "build_repair",
+            "build-repair",
             render_prompt(
                 "The build failed; diagnose the log and return a revised EnvironmentSpec.",
                 {"failed_spec": build.spec, "build_error": build.error_excerpt,
@@ -85,7 +85,7 @@ async def run_prepare(ops: Ops, snapshot: RepoSnapshot, stack: StackFingerprint)
     while not build.ok and partial_attempts < s.max_partial_build_attempts:
         partial_attempts += 1
         partial = await ops.run_agent(
-            "partial_build",
+            "partial-build",
             render_prompt(
                 "The full build failed; plan the smallest buildable unit containing the code and "
                 "return a partial EnvironmentSpec.",

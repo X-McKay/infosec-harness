@@ -165,7 +165,7 @@ are data. This is the unit we version, diff, hash, and experiment on.
 ```
 agents/
   agent_schema.json         # generated JSON Schema (built-in + our capabilities), for editor autocompletion and CI validation
-  probe_author/
+  probe-author/
     agent.yaml              # the AgentSpec
     evals/dataset.yaml      # pydantic_evals Dataset (cases + evaluators)
     evals/fixtures/         # frozen typed inputs for isolated agent evals
@@ -178,11 +178,11 @@ skills/
   build-maven/SKILL.md  build-uv/SKILL.md  build-cpanm/SKILL.md  build-npm/SKILL.md …
 ```
 
-### Example `agents/probe_author/agent.yaml`
+### Example `agents/probe-author/agent.yaml`
 
 ```yaml
 # yaml-language-server: $schema=../agent_schema.json
-name: probe_author
+name: probe-author
 description: Writes a targeted unit-test probe for one finding in the repo's own test framework.
 instructions:               # STATIC: no templates/per-run values, so it stays cacheable (§6.2)
   - |
@@ -198,7 +198,7 @@ model_settings:
   bedrock_cache_tool_definitions: '5m'
   bedrock_cache_instructions: '1h'    # the static prefix is shared across a whole batch (§6.2)
   bedrock_cache_messages: '5m'        # moving tail of the agent's own tool loop
-  openai_prompt_cache_key: probe_author   # used only on the OpenAI-spec backend; Bedrock ignores it
+  openai_prompt_cache_key: probe-author   # used only on the OpenAI-spec backend; Bedrock ignores it
 retries: {output: 3, tool: 2}
 tool_timeout: 30
 metadata:
@@ -223,7 +223,7 @@ schema is authoritative, and CI rejects any file that doesn't validate.)
 ### What stays in code (and why)
 - **Typed contracts.** `deps_type` and `output_type` are Pydantic models
   (`ProbeSource`, `Verdict`, …) that the graph routes on, so they live in code. A small
-  registry `AGENT_BINDINGS = {"probe_author": (ProbeDeps, ProbeSource), …}` binds them.
+  registry `AGENT_BINDINGS = {"probe-author": (ProbeDeps, ProbeSource), …}` binds them.
   We deliberately do **not** use the spec's `output_schema`, because it produces an untyped
   `StructuredDict`. CI checks that every `agents/*/agent.yaml` has a binding, and that
   every binding has a spec.
@@ -276,7 +276,7 @@ TEMPORAL_AGENTS = {n: TemporalAgent(load_agent(n), name=n) for n in AGENT_BINDIN
   loading. There are no ad-hoc CLI flags:
   ```yaml
   # experiments/2026-10-probe-author-opus.yaml
-  probe_author:
+  probe-author:
     metadata: {model_tier: opus}
   verdict:
     instructions: [ … candidate prompt … ]
@@ -316,7 +316,7 @@ model_catalog:            # the allowed tiers [D16]; experiments pick from these
   sonnet: {bedrock: anthropic.claude-sonnet-5, gateway: claude-sonnet-5}
   haiku:  {bedrock: anthropic.claude-haiku-4-5, gateway: claude-haiku-4-5}
 default_model: sonnet     # baseline v0 [D15]
-agents: {}                # per-agent overrides, e.g. probe_author: {model: opus}
+agents: {}                # per-agent overrides, e.g. probe-author: {model: opus}
 ```
 
 The Bedrock IDs are configuration, not code. If the account routes through cross-region
@@ -536,7 +536,7 @@ A small **smoke subset** of each source (~20–50 cases) runs in CI through reco
 - Experiment dimensions include model tier, **thinking level**, prompt/skill variants,
   cache TTLs, and per-repo concurrency (which affects cache reuse). Each is changed through
   the same YAML overlay mechanism (§6).
-- CLI: `harness eval run --agent probe_author --config configs/x.yaml --repeat 3` and
+- CLI: `harness eval run --agent probe-author --config configs/x.yaml --repeat 3` and
   `harness eval compare <exp_a> <exp_b>`. The compare output shows accuracy, cost, and
   latency deltas with confidence intervals.
 - CI runs the fast per-agent evals with **recorded model responses** (replayed through

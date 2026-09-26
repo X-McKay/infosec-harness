@@ -15,7 +15,7 @@ from infosec_harness.settings import get_settings
 
 
 async def test_eval_probe_diagnosis_scores():
-    exp_id = await run_experiment("probe_diagnosis")
+    exp_id = await run_experiment("probe-diagnosis")
     from infosec_harness.persistence import db
     async with db.session() as s:
         exp = await s.get(db.EvalExperiment, exp_id)
@@ -24,7 +24,7 @@ async def test_eval_probe_diagnosis_scores():
     # graph really sends. The stub decides from the execution record alone, so a new case
     # failing here means the record itself is ambiguous.
     assert exp.metrics["n"] == len(
-        yaml.safe_load((get_settings().agents_dir / "probe_diagnosis" / "evals" / "dataset.yaml")
+        yaml.safe_load((get_settings().agents_dir / "probe-diagnosis" / "evals" / "dataset.yaml")
                        .read_text())["cases"])
 
 

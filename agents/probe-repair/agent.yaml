@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=../agent_schema.json
-name: probe_repair
+name: probe-repair
 description: Fixes a probe that failed for a mechanical reason, without changing what it tests.
 model: sonnet
 instructions:
@@ -24,7 +24,7 @@ model_settings:
   bedrock_cache_tool_definitions: '5m'
   bedrock_cache_instructions: '1h'
   bedrock_cache_messages: '5m'
-  openai_prompt_cache_key: probe_repair
+  openai_prompt_cache_key: probe-repair
 retries: {tools: 2, output: 3}
 tool_timeout: 30
 instrument: true
@@ -33,11 +33,11 @@ metadata:
   version: 1.0.0
   owner: appsec
   execution_class: durable
-  risk_tier: high
-  risk_assessment: docs/risk-assessments/probe_repair.yaml
+  risk_tier: critical
+  risk_assessment: docs/risk-assessments/probe-repair.yaml
   data_classification: confidential
   model_policy: balanced-v1
-  evaluation_policy: agents/probe_repair/evals/release-policy.yaml
+  evaluation_policy: agents/probe-repair/evals/release-policy.yaml
   # A runtime brake, not an operating target: roughly 3-4x the maxima measured
   # against a live model (docs/LIVE_VALIDATION.md). Enforced via UsageLimits.
   budgets:

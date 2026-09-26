@@ -61,7 +61,7 @@ uv run harness eval corpus                 # real verdicts + tool/skill evocatio
 uv run harness eval corpus --no-sandbox    # agents only, no Docker needed
 # or a single agent's dataset:
 uv run harness eval run verdict
-uv run harness eval run probe_diagnosis
+uv run harness eval run probe-diagnosis
 ```
 
 Results from this run, and the problems it exposed, are written up in
@@ -69,8 +69,8 @@ Results from this run, and the problems it exposed, are written up in
 
 Under a live model these produce real numbers where stub mode shows placeholders:
 per-class accuracy, the false-negative rate on truly-exploitable cases, and — from the
-trajectory evaluators — the rate at which `context` / `probe_author` / `recon` /
-`env_planner` actually call the expected tools and load the matching skill.
+trajectory evaluators — the rate at which `context` / `probe-author` / `recon` /
+`env-planner` actually call the expected tools and load the matching skill.
 
 > If a model tier resolves to a name the endpoint doesn't serve, edit `model_catalog` in
 > `config/models.yaml` (the `gateway:` column) to the model ids `llm.almckay.io` exposes,

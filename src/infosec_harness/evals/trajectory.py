@@ -108,9 +108,9 @@ def check_expectations(tools_called: Iterable[str], skills_loaded: Iterable[str]
 READ_TOOLS = frozenset({"read_file", "search_code", "list_files"})
 AGENT_EXPECTATIONS: dict[str, TrajectoryExpectation] = {
     "recon": TrajectoryExpectation(tool_groups=(READ_TOOLS,)),
-    "env_planner": TrajectoryExpectation(tool_groups=(READ_TOOLS,)),
+    "env-planner": TrajectoryExpectation(tool_groups=(READ_TOOLS,)),
     "context": TrajectoryExpectation(tool_groups=(READ_TOOLS,), skill_prefixes=("cwe-",)),
-    "probe_author": TrajectoryExpectation(tool_groups=(READ_TOOLS,), skill_prefixes=("probe-oracle-protocol",)),
+    "probe-author": TrajectoryExpectation(tool_groups=(READ_TOOLS,), skill_prefixes=("probe-oracle-protocol",)),
 }
 
 

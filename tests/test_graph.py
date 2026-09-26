@@ -55,7 +55,7 @@ async def test_triage_full_path(repo):
     result = await TRIAGE_GRAPH.run(state=state, deps=TriageDeps(ops=ops), inputs=PreFilter())
     assert result.verdict.label in set(VerdictLabel)
     assert [i.agent for i in state.invocations] == [
-        "context", "probe_planner", "probe_author", "probe_diagnosis", "verdict"]
+        "context", "probe-planner", "probe-author", "probe-diagnosis", "verdict"]
 
 
 async def test_triage_prefilter_missing_file(repo):
@@ -95,7 +95,7 @@ async def test_no_sandbox_probe_reports_that_it_never_ran():
     """`--no-sandbox` must not fabricate a clean execution.
 
     Reporting exit_code=0 / precondition_reached=True describes a probe that ran and found
-    nothing. probe_diagnosis then reads the probe source next to those markers, concludes
+    nothing. probe-diagnosis then reads the probe source next to those markers, concludes
     the probe must be defective, and the graph repairs it — every case, to the repair
     limit. The honest shape is the one the real activity returns when the isolation runtime
     is missing.

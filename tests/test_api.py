@@ -21,7 +21,7 @@ async def test_health(client):
 async def test_config_lists_agents(client):
     cfg = (await client.get("/api/config")).json()
     names = {a["name"] for a in cfg["agents"]}
-    assert {"verdict", "context", "probe_author"} <= names
+    assert {"verdict", "context", "probe-author"} <= names
     assert cfg["model_mode"] == "stub"
 
 

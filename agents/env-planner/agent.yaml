@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=../agent_schema.json
-name: env_planner
+name: env-planner
 description: Plans a container environment that installs the repository's dependencies and can run one unit test.
 model: sonnet
 instructions:
@@ -26,7 +26,7 @@ model_settings:
   bedrock_cache_tool_definitions: '5m'
   bedrock_cache_instructions: '1h'
   bedrock_cache_messages: '5m'
-  openai_prompt_cache_key: env_planner
+  openai_prompt_cache_key: env-planner
 retries: {tools: 2, output: 3}
 tool_timeout: 30
 instrument: true
@@ -35,11 +35,11 @@ metadata:
   version: 1.0.0
   owner: appsec
   execution_class: durable
-  risk_tier: high
-  risk_assessment: docs/risk-assessments/env_planner.yaml
+  risk_tier: critical
+  risk_assessment: docs/risk-assessments/env-planner.yaml
   data_classification: confidential
   model_policy: balanced-v1
-  evaluation_policy: agents/env_planner/evals/release-policy.yaml
+  evaluation_policy: agents/env-planner/evals/release-policy.yaml
   # A runtime brake, not an operating target: roughly 3-4x the maxima measured
   # against a live model (docs/LIVE_VALIDATION.md). Enforced via UsageLimits.
   budgets:

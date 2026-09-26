@@ -38,7 +38,7 @@ were about **unbounded or uncontained failure**:
   signature, which is what that looks like from outside: the test did not flake in the cloud,
   it hangs forever anywhere. Both fixed; the test now passes locally in seconds.
 - `--no-sandbox` reported `exit_code=0, precondition_reached=True` — *a probe that ran and
-  found nothing*. `probe_diagnosis` reads the probe source next to those markers, concludes a
+  found nothing*. `probe-diagnosis` reads the probe source next to those markers, concludes a
   known-vulnerable target producing no oracle means the probe is defective, and the graph
   repairs it — every case, to the repair limit. Those repair turns dominated the run: context
   grew 8.8k → 24k tokens over three turns with 6–7k-token outputs at ~100s each. The stub now
@@ -77,11 +77,11 @@ via the `unreachable_by_context` early exit; one was `test_or_vendored`.
 | agent | tools | skills |
 | --- | --- | --- |
 | `recon` | 100% | *not checked* |
-| `env_planner` | 100% | *not checked* |
+| `env-planner` | 100% | *not checked* |
 | `context` | 100% | 100% (was **19%**) |
-| `probe_author` | 100% | 100% |
+| `probe-author` | 100% | 100% |
 
-`recon` and `env_planner` previously reported "skills 100%" — but neither has any
+`recon` and `env-planner` previously reported "skills 100%" — but neither has any
 `skill_prefixes`, so the check passed trivially and nothing was ever asserted. They now report
 `n/a`. Giving them real expectations (`lang-`, `build-`) is the obvious next step; until then
 their skill behaviour is unmeasured.
@@ -123,9 +123,9 @@ sink."* `cwe-89` presented "capture the SQL handed to the driver via a fake/stub
 as its **preferred** oracle — the more specific skill telling the author to break the general
 contract, so that is the advice that won.
 
-Observed live: `probe_author` wrapped the sqlite cursor in a `_LogCursor`/`_LogConnection`
+Observed live: `probe-author` wrapped the sqlite cursor in a `_LogCursor`/`_LogConnection`
 pair to read `cur.last_sql`, the wrapper was not the object `get_user` actually used, the
-oracle could never fire, and `probe_diagnosis` correctly called the probe defective. **A
+oracle could never fire, and `probe-diagnosis` correctly called the probe defective. **A
 silent false negative dressed as a clean run** — the costliest failure this system can have.
 
 `cwe-89` now prefers the result oracle (seed a row the intended `WHERE` excludes, call the
@@ -136,7 +136,7 @@ cannot use the real sink, since the sandbox has no egress — but now names the 
 says to verify the target actually uses the injected client.
 `tests/test_skills_consistency.py` holds the invariant so the two cannot silently diverge.
 
-Where no such conflict existed, `probe_author` was consistently good: its command-injection
+Where no such conflict existed, `probe-author` was consistently good: its command-injection
 probes call the real sink with an injected payload and check for the canary, which is exactly
 what the protocol asks.
 
@@ -145,9 +145,9 @@ what the protocol asks.
 | agent | cases | runs | accuracy |
 | --- | --- | --- | --- |
 | `verdict` | 3 | 27 | 96% (26/27) |
-| `probe_diagnosis` | 7 | 21 | **100%** |
+| `probe-diagnosis` | 7 | 21 | **100%** |
 
-`probe_diagnosis`'s dataset previously sent only `probe_execution`, while the graph sends
+`probe-diagnosis`'s dataset previously sent only `probe_execution`, while the graph sends
 `probe_plan` + `probe_source` + `probe_execution` — so the eval scored a prompt shape that
 never runs, and the marker-only cases are easy in a way the real ones are not. Four cases now
 carry the plan and source the graph really sends, including the one that matters most in
@@ -198,14 +198,14 @@ exercise those toolchains through the buildx path. Only that run can produce a r
 
 ## Other things worth doing
 
-- **Give `recon` and `env_planner` real skill expectations.** Their skill behaviour is
+- **Give `recon` and `env-planner` real skill expectations.** Their skill behaviour is
   currently unmeasured, and `recon`'s prompt has the same passive phrasing that cost `context`
   80 points of evocation ("The lang-\* skills describe conventions per ecosystem").
 - **`eval run` loses completed work on a transport failure.** It catches only
   `UnexpectedModelBehavior`, and writes to the database after the loop, so an endpoint blip
   late in a `--repeat 6` run discards every case already scored. Persisting incrementally
   would have saved two runs during this exercise.
-- **Only `verdict` and `probe_diagnosis` have eval adapters,** so `harness eval run <agent>
+- **Only `verdict` and `probe-diagnosis` have eval adapters,** so `harness eval run <agent>
   --overlay` — the documented way to test one variable — does not work for the other nine.
   `context` is the one most worth adding, since it produces the only accuracy signal available
   without a sandbox.

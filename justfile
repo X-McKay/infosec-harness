@@ -29,7 +29,7 @@ demo findings="examples/findings.sample.json":
       uv run harness submit {{findings}} --local --label demo
 
 # --- Evals ---
-eval-run agent="probe_diagnosis":
+eval-run agent="probe-diagnosis":
     HARNESS_MODEL_MODE=stub HARNESS_DATABASE_URL="sqlite+aiosqlite:///.harness/demo.db" \
       uv run harness eval run {{agent}}
 

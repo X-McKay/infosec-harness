@@ -118,16 +118,16 @@ def test_agents_without_a_skill_expectation_are_not_reported_as_passing():
     """An empty skill_prefixes trivially satisfies the check.
 
     Printing that as 100% claims a pass that was never tested — which is how recon and
-    env_planner appeared to be loading their skills perfectly while nothing was asserted.
+    env-planner appeared to be loading their skills perfectly while nothing was asserted.
     """
     from infosec_harness.evals.trajectory import AGENT_EXPECTATIONS, scores_skills
 
     for agent, exp in AGENT_EXPECTATIONS.items():
         assert scores_skills(agent) is bool(exp.skill_prefixes), agent
     assert scores_skills("recon") is False
-    assert scores_skills("env_planner") is False
+    assert scores_skills("env-planner") is False
     assert scores_skills("context") is True
-    assert scores_skills("probe_author") is True
+    assert scores_skills("probe-author") is True
     assert scores_skills("no_such_agent") is False
 
 

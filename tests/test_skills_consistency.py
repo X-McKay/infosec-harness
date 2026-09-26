@@ -7,9 +7,9 @@ therefore tells the author to break the contract — and because the per-CWE ski
 specific one, that is the advice that wins.
 
 This is not hypothetical: `cwe-89` used to present "capture the SQL via a fake/stub
-connection" as its *preferred* oracle. Against the live model probe_author duly wrapped the
+connection" as its *preferred* oracle. Against the live model probe-author duly wrapped the
 sqlite cursor, the wrapper was not the object `get_user` actually used, the oracle could
-never fire, and probe_diagnosis correctly called the probe defective — a silent false
+never fire, and probe-diagnosis correctly called the probe defective — a silent false
 negative dressed up as a clean run.
 """
 

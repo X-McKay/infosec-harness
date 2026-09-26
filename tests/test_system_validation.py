@@ -38,14 +38,14 @@ REPO = {"load_capability", "list_files", "read_file", "search_code"}
 EXPECTED_TOOLS = {
     "intake": {"load_capability"},
     "recon": REPO,
-    "env_planner": REPO,
-    "build_repair": REPO | {"run_in_sandbox"},
-    "partial_build": REPO | {"run_in_sandbox"},
+    "env-planner": REPO,
+    "build-repair": REPO | {"run_in_sandbox"},
+    "partial-build": REPO | {"run_in_sandbox"},
     "context": REPO,
-    "probe_planner": {"load_capability"},
-    "probe_author": REPO,
-    "probe_diagnosis": {"load_capability"},
-    "probe_repair": REPO,
+    "probe-planner": {"load_capability"},
+    "probe-author": REPO,
+    "probe-diagnosis": {"load_capability"},
+    "probe-repair": REPO,
     "verdict": set(),
 }
 
@@ -113,7 +113,7 @@ def test_skills_load_with_real_content():
 async def test_agent_emits_typed_contract(name):
     stack = StackFingerprint(languages={"python": 3}, test_frameworks=["pytest"], manifests=["requirements.txt"])
     payload = {"oracle_nonce": "testnonce"}
-    if name == "probe_diagnosis":
+    if name == "probe-diagnosis":
         payload = {"probe_execution": ProbeExecution(
             attempt=1, exit_code=0, oracle_fired=True, precondition_reached=True).model_dump()}
     facts = None

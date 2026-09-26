@@ -130,7 +130,7 @@ class PlanProbe(BaseNode[TriageState, TriageDeps, TriageResult]):
             "Plan a targeted unit-test probe and define its deterministic oracle.",
             {"finding": s.finding, "finding_context": s.context}, stack=s.stack(), profile=s.profile(),
         )
-        outcome = await ctx.deps.ops.run_agent("probe_planner", prompt, s.deps())
+        outcome = await ctx.deps.ops.run_agent("probe-planner", prompt, s.deps())
         s.invocations.append(outcome)
         s.plan = outcome.output
         return AuthorProbe()
@@ -148,7 +148,7 @@ class AuthorProbe(BaseNode[TriageState, TriageDeps, TriageResult]):
             {"finding": s.finding, "finding_context": s.context, "probe_plan": s.plan,
              "oracle_nonce": s.nonce}, stack=s.stack(), profile=s.profile(),
         )
-        outcome = await ctx.deps.ops.run_agent("probe_author", prompt, s.deps())
+        outcome = await ctx.deps.ops.run_agent("probe-author", prompt, s.deps())
         s.invocations.append(outcome)
         s.probe = outcome.output
         return ExecuteProbe()
@@ -175,7 +175,7 @@ class DiagnoseProbe(BaseNode[TriageState, TriageDeps, TriageResult]):
             {"probe_plan": s.plan, "probe_source": s.probe, "probe_execution": execution},
             stack=s.stack(), profile=s.profile(),
         )
-        outcome = await ctx.deps.ops.run_agent("probe_diagnosis", prompt, s.deps())
+        outcome = await ctx.deps.ops.run_agent("probe-diagnosis", prompt, s.deps())
         s.invocations.append(outcome)
         s.last_diagnosis = outcome.output
         if s.last_diagnosis.kind == DiagnosisKind.probe_defect and s.attempt <= ctx.deps.max_probe_repairs:
@@ -194,7 +194,7 @@ class RepairProbe(BaseNode[TriageState, TriageDeps, TriageResult]):
              "probe_execution": s.executions[-1], "diagnosis": s.last_diagnosis,
              "oracle_nonce": s.nonce}, stack=s.stack(), profile=s.profile(),
         )
-        outcome = await ctx.deps.ops.run_agent("probe_repair", prompt, s.deps())
+        outcome = await ctx.deps.ops.run_agent("probe-repair", prompt, s.deps())
         s.invocations.append(outcome)
         s.probe = outcome.output
         return ExecuteProbe()

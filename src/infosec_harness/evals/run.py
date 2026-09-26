@@ -39,7 +39,7 @@ def _diagnosis_adapter(case: dict):
             lambda o: o.kind.value, case["expected"])
 
 
-ADAPTERS: dict[str, Adapter] = {"verdict": _verdict_adapter, "probe_diagnosis": _diagnosis_adapter}
+ADAPTERS: dict[str, Adapter] = {"verdict": _verdict_adapter, "probe-diagnosis": _diagnosis_adapter}
 
 
 def _spread(values: list[float]) -> str:
@@ -264,7 +264,7 @@ async def _score_corpus_once(*, language: str, sandbox: bool | None) -> dict:
         t["tools_ok"] += int(res.tools_ok)
         t["skills_ok"] += int(res.skills_ok)
 
-    # Prepare-phase agents (recon, env_planner, build repair) run once per repo.
+    # Prepare-phase agents (recon, env-planner, build repair) run once per repo.
     for invs in prepare_sink.values():
         for inv in invs:
             _score_trajectory(inv.agent, inv.tools_called, inv.skills_loaded)
@@ -282,7 +282,7 @@ async def _score_corpus_once(*, language: str, sandbox: bool | None) -> dict:
         rows.append({"case": c.name, "expected": c.expected_verdict, "actual": actual,
                      "ok": ok, "early_exit": out.result.early_exit,
                      "priority": out.result.priority.value})
-        # Per-finding triage agents (context, probe_author, ...).
+        # Per-finding triage agents (context, probe-author, ...).
         for inv in out.invocations:
             _score_trajectory(inv.agent, inv.tools_called, inv.skills_loaded, c.finding.cwe)
 
