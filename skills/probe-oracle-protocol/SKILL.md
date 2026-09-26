@@ -1,15 +1,23 @@
 ---
 name: probe-oracle-protocol
-description: "The deterministic marker protocol every probe uses to report exploitability. Read before planning or writing any probe."
+description: The deterministic marker protocol every probe uses to report exploitability. Use this
+  before planning or writing any probe, whatever the weakness class or test framework.
+metadata:
+  owner: appsec
+  version: 1.0.0
 ---
 
 # Probe oracle protocol
 
-A probe is a unit test whose job is to answer one question about a pre-identified finding:
-**was the exploit condition observed when we drove untrusted input to the sink, in a
-sandbox?** The answer must come from an explicit, observable signal, never from whether the
-test "passed". This makes triage deterministic and lets the harness distinguish
-*not exploitable* from *never reached the code*.
+## Use this skill when
+
+- You are about to plan, write, or repair a probe.
+- You need to decide what an oracle for this finding would observe.
+- You are judging whether a probe execution means anything.
+
+## Do not use this skill when
+
+- You are profiling a repository or planning a build environment; no markers are involved yet.
 
 ## The two markers
 
@@ -70,3 +78,13 @@ if exploit_condition_holds(result):          # e.g. marker survived unescaped
 
 The `test-*` skills show this shape in each framework; the `cwe-*` skills define
 `build_input` and `exploit_condition_holds` for each weakness class.
+
+## Safety constraints
+
+- The test must run to completion and print its markers whether or not the exploit condition holds. Never let an assertion failure be the signal.
+- Confine every effect to the sandbox temp dir. The probe has no network.
+- Do not mock, stub, or reimplement the sink: call the smallest real callable that owns it.
+
+## Completion criteria
+
+- Both markers are emitted at the right moments, and the oracle fires only on the real exploit condition.
