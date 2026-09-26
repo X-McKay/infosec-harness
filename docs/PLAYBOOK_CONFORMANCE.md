@@ -55,6 +55,30 @@ upstream.
 boundaries are system-level: the same untrusted repository reaches all of them, and the same
 sandbox contains the code. Eleven near-identical documents would be worse, not better.
 
+## The release gates, run live
+
+Measured against the live model with budgets enforced (`harness eval run <agent> --report`,
+then `agentctl release check`):
+
+| agent | task success | schema validity | budget breaches | unevidenced safety | gate |
+| --- | --- | --- | --- | --- | --- |
+| `context` | 100% (7/7) | 1.0 | 0 | 0 | **pass** |
+| `probe-diagnosis` | 100% (7/7) | 1.0 | 0 | 0 | **pass** |
+| `verdict` | 67% (2/3) | 0.67 | 0 | 0 | **fail** |
+
+Two things worth reading off that table.
+
+No run hit its budget, so the ceilings brake runaway execution without constraining healthy
+work — which is what a budget is for. And `unevidenced_safe_verdicts` is 0 everywhere: no agent
+claimed safety on evidence that could not support it.
+
+`verdict` fails its own gate, and should. Its `inconclusive_env` case still omits the
+contract-required `inconclusive_reason` about a third of the time, exhausts its retries, and
+returns no valid output — the residual issue recorded in `LIVE_VALIDATION.md`. The gate catching
+it is the point: this is a real defect being blocked, not a threshold set to flatter. In
+production the graph fallback turns it into an `inconclusive` verdict rather than a lost
+finding, so the failure is contained; it is still a failure.
+
 ## What conformance does and does not establish
 
 It establishes that the contracts are complete and internally consistent: every agent has an
