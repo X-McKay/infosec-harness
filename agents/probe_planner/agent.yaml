@@ -37,6 +37,8 @@ model_settings:
   bedrock_cache_instructions: '1h'
   openai_prompt_cache_key: probe_planner
 retries: {tools: 2, output: 3}
+tool_timeout: 30
+instrument: true
 metadata: {version: 1, owner: appsec}
 capabilities:
   - Skills:

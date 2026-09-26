@@ -49,25 +49,30 @@ class LocalOps:
     async def run_agent(self, name: str, prompt, deps: AgentDeps) -> AgentOutcome:
         import time
 
+        from infosec_harness import telemetry
         from infosec_harness.agents import models as model_factory
         from infosec_harness.agents.registry import build_agent, config_hash, load_spec
         from infosec_harness.evals.trajectory import inspect_messages
 
         agent = build_agent(name, durable=False)
-        start = time.monotonic()
-        result = await agent.run(list(prompt), deps=deps)
-        usage = result.usage
         spec = load_spec(name)
         model_name = model_factory.resolved_model_name(name, spec.model or "sonnet")
+        attrs = telemetry.agent_run_attributes(name, model_name, config_hash(name, spec))
+        start = time.monotonic()
+        with telemetry.agent_span(name, attrs) as span:
+            result = await agent.run(list(prompt), deps=deps)
+        usage = result.usage
         cost, estimated = model_factory.estimate_cost(model_name, usage)
         tools_called, skills_loaded = inspect_messages(result.all_messages())
-        return AgentOutcome(
+        outcome = AgentOutcome(
             output=result.output, agent=name, model_name=model_name, config_hash=config_hash(name, spec),
             input_tokens=usage.input_tokens, output_tokens=usage.output_tokens,
             cache_read_tokens=usage.cache_read_tokens or 0, cache_write_tokens=usage.cache_write_tokens or 0,
             cost_usd=cost, cost_estimated=estimated, latency_s=time.monotonic() - start,
             tools_called=tools_called, skills_loaded=skills_loaded,
         )
+        span.set_attributes(telemetry.outcome_attributes(outcome))
+        return outcome
 
     async def new_nonce(self) -> str:
         import secrets

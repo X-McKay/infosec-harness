@@ -25,6 +25,7 @@ from pydantic_ai_harness.compaction import ClearToolResults
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
 from pydantic_ai_harness.skills import Skills
 from pydantic_ai_harness.warn_on_cache_busts import WarnOnCacheBusts
+from temporalio.common import RetryPolicy
 from temporalio.workflow import ActivityConfig
 
 from infosec_harness.agents import models as model_factory
@@ -70,9 +71,36 @@ AGENT_BINDINGS: dict[str, type[BaseModel]] = {
 # dependency) are intentionally absent.
 ALLOWED_CAPABILITIES = (*CUSTOM_CAPABILITIES, Skills, WarnOnCacheBusts)
 
+# Retries exist at four layers and their product is what actually runs (agent-playbook
+# §6 "Retry ownership": every layer MUST have a calculated combined upper bound).
+#
+#   1. pydantic-ai semantic correction   -> spec `retries` (output 3-4, tools 2)
+#   2. provider transport                -> BackendConfig.max_retries, reduced to
+#                                           max_retries_under_temporal when durable
+#   3. Temporal activity                 -> the policies below
+#   4. workflow business retries         -> max_probe_repairs, handled in the graph
+#
+# Layers 1-3 for one durable agent run are bounded at
+# ACTIVITY_MAX_ATTEMPTS * (max_retries_under_temporal + 1) * (spec output retries + 1).
+# With the committed values that is 3 * 2 * 5 = 30 provider calls worst case. Leaving
+# layer 3 unset — as this did — means Temporal's *default* policy, which is unlimited
+# attempts: a deterministic failure then retries forever and the workflow hangs.
+ACTIVITY_MAX_ATTEMPTS = 3
+# Retrying these cannot change the outcome: permanent provider rejections, a semantic
+# failure pydantic-ai has already exhausted its own retries on, and programming errors.
+NON_RETRYABLE_ERRORS = [
+    "AuthenticationError", "PermissionDeniedError", "BadRequestError", "NotFoundError",
+    "UnprocessableEntityError", "UnexpectedModelBehavior",
+    "ValidationError", "TypeError", "ValueError", "KeyError", "AttributeError",
+]
+ACTIVITY_RETRY = RetryPolicy(maximum_attempts=ACTIVITY_MAX_ATTEMPTS,
+                             non_retryable_error_types=NON_RETRYABLE_ERRORS)
+
 # Model calls can be slow; tool calls are fast except the sandbox shell.
-MODEL_ACTIVITY = ActivityConfig(start_to_close_timeout=timedelta(minutes=10))
-TOOL_ACTIVITY = {"sandbox_shell": ActivityConfig(start_to_close_timeout=timedelta(minutes=5))}
+MODEL_ACTIVITY = ActivityConfig(start_to_close_timeout=timedelta(minutes=10),
+                                retry_policy=ACTIVITY_RETRY)
+TOOL_ACTIVITY = {"sandbox_shell": ActivityConfig(start_to_close_timeout=timedelta(minutes=5),
+                                                 retry_policy=ACTIVITY_RETRY)}
 
 
 def spec_path(name: str) -> Path:
@@ -150,7 +178,8 @@ def build_agent(name: str, overlay: Mapping[str, Any] | None = None, *, durable:
     if name not in AGENT_BINDINGS:
         raise KeyError(f"Unknown agent {name!r}")
     spec = _absolutize_skill_dirs(load_spec(name, overlay))
-    capabilities: list[Any] = [ResolveModelId(lambda ctx, model_id, _n=name: model_factory.resolve(_n, model_id))]
+    capabilities: list[Any] = [ResolveModelId(
+        lambda ctx, model_id, _n=name, _d=durable: model_factory.resolve(_n, model_id, durable=_d))]
     # Cross-cutting robustness, attached in code (see ALLOWED_CAPABILITIES note).
     if any(cap.name in {"RepoReadOnly", "SandboxShell"} for cap in spec.capabilities):
         capabilities.append(RepairToolArguments())

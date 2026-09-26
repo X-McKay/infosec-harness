@@ -39,6 +39,10 @@ class BackendConfig(BaseModel):
     # OpenAI client's default of 2 retries is not enough to ride that out, and without
     # Temporal (e.g. `harness eval corpus`) one 502 kills a whole batch.
     max_retries: int = 6
+    # Under Temporal the activity layer owns transient infrastructure retries, so provider
+    # transport retries are minimized rather than stacked on top of them (agent-playbook
+    # §6). See registry.ACTIVITY_RETRY for the combined bound this participates in.
+    max_retries_under_temporal: int = 1
     # Many self-hosted OpenAI-spec servers (vLLM/TGI with a single-system chat template)
     # reject a request carrying more than one system message. pydantic-ai emits one per
     # instruction block, and the Skills capability adds its own, so every skill-bearing
@@ -137,7 +141,7 @@ class _CompatOpenAIChatModel(OpenAIChatModelBase):  # type: ignore[misc,valid-ty
 
 
 @lru_cache(maxsize=64)
-def _build_live(backend_name: str, model_id: str) -> Model:
+def _build_live(backend_name: str, model_id: str, durable: bool = False) -> Model:
     cfg = load_models_config()
     backend = cfg.backends[backend_name]
     if backend.kind == "bedrock":
@@ -155,8 +159,8 @@ def _build_live(backend_name: str, model_id: str) -> Model:
     api_key = os.environ.get(backend.api_key_env or "", "") or "no-key"
     from openai import AsyncOpenAI
 
-    client = AsyncOpenAI(base_url=backend.base_url, api_key=api_key,
-                         max_retries=backend.max_retries)
+    retries = backend.max_retries_under_temporal if durable else backend.max_retries
+    client = AsyncOpenAI(base_url=backend.base_url, api_key=api_key, max_retries=retries)
     return _CompatOpenAIChatModel(
         model_id,
         provider=OpenAIProvider(openai_client=client),
@@ -165,15 +169,20 @@ def _build_live(backend_name: str, model_id: str) -> Model:
     )
 
 
-def resolve(agent_name: str, tier: str) -> Model:
-    """Resolve an agent's model tier to a concrete model on the worker."""
+def resolve(agent_name: str, tier: str, *, durable: bool = False) -> Model:
+    """Resolve an agent's model tier to a concrete model on the worker.
+
+    ``durable`` says the agent runs inside a Temporal workflow, where the activity layer
+    owns transient retries and provider transport retries are minimized instead of
+    multiplying with them.
+    """
     if get_settings().model_mode == "stub":
         from infosec_harness.agents.stubs import stub_model
 
         return stub_model(agent_name, tier)
     cfg = load_models_config()
     backend = cfg.backend_for(agent_name)
-    return _build_live(backend, cfg.model_id(tier, backend))
+    return _build_live(backend, cfg.model_id(tier, backend), durable)
 
 
 def resolved_model_name(agent_name: str, tier: str) -> str:

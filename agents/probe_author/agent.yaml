@@ -33,6 +33,7 @@ model_settings:
   openai_prompt_cache_key: probe_author
 retries: {tools: 2, output: 3}
 tool_timeout: 30
+instrument: true
 metadata: {version: 1, owner: appsec}
 capabilities:
   - Skills:

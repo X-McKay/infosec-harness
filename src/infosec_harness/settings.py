@@ -95,9 +95,14 @@ class Settings(BaseSettings):
 
     ui_base_url: str = "http://localhost:8080"
 
-    # Observability (D4)
+    # Observability (D4). The resource attributes the agent-playbook §8 requires on every
+    # span: service identity, environment, and the build the span came from.
     otel_exporter_otlp_endpoint: str = ""
     service_name: str = "infosec-harness"
+    environment: str = "local"
+    # Set these in the image/deployment; they make a trace attributable to a build.
+    git_commit_sha: str = ""
+    worker_build_id: str = ""
 
 
 @lru_cache

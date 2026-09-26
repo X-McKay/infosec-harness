@@ -34,6 +34,13 @@ async def connect() -> Client:
 
 async def run_worker() -> None:
     s = get_settings()
+    from infosec_harness import telemetry
+
+    # Installs the tracer provider and turns on the agents' `instrument: true`. The
+    # workflow itself must not touch a tracer (nondeterministic under replay); Temporal
+    # emits workflow/activity spans, and the model/tool activities run in this process.
+    if telemetry.configure("worker"):
+        print(f"tracing to {s.otel_exporter_otlp_endpoint}")
     from infosec_harness.sandbox import docker
     try:
         await docker.ensure_builder()  # best-effort; builds still work without buildx

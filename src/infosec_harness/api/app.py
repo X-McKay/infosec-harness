@@ -37,6 +37,9 @@ class ReviewRequest(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from infosec_harness import telemetry
+
+    telemetry.configure("api")
     await db.create_all()
     yield
 
