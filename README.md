@@ -43,13 +43,15 @@ design and decision log.
 ```bash
 just bootstrap          # uv sync
 just check              # ruff + compile + validate all agent specs
-just test               # 31 tests, stub models, SQLite (no Temporal/Docker needed)
+just test               # full suite, stub models, SQLite (Temporal test needs the `temporal` CLI)
 just demo               # run the full pipeline in-process on examples/findings.sample.json
 ```
 
 `just demo` prints a verdict and priority per finding. In `stub` mode verdicts are
 deliberately `inconclusive` (the stub is not a real judge) — it exercises the plumbing, not
-accuracy.
+accuracy. What a *live* model does — per-class accuracy, tool/skill evocation, and the
+endpoint-compatibility problems stubs cannot show — is in
+[`docs/LIVE_VALIDATION.md`](docs/LIVE_VALIDATION.md).
 
 ## Full stack
 
@@ -77,7 +79,8 @@ Jaeger (:16686), the worker, the API (:8000, docs at `/docs`), and the web app (
 harness submit findings.json [--local]   # triage a batch (JSON: one finding, a list, or {findings:[...]})
 harness runs [--verdict … --batch-id …]  # list runs, highest priority first
 harness report <run-id>                  # full triage report as JSON
-harness eval run <agent> [--overlay …]   # run an agent's eval dataset
+harness eval run <agent> [--overlay … --repeat N]   # run an agent's eval dataset
+harness eval corpus [--language all --repeat N --no-sandbox]  # score the ground-truth corpus
 harness eval compare <exp-a> <exp-b>     # accuracy / cost / latency deltas
 harness worker | harness api | harness init-db
 harness agents validate | agents schema

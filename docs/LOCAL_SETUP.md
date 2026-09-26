@@ -29,12 +29,17 @@ just demo               # run the pipeline in-process on examples/findings.sampl
 ```
 
 `just test` should be all green. The Temporal integration test
-(`tests/test_workflow_integration.py`) was flaky *in the cloud sandbox* only because the
-Temporal dev server was slow to start; on a normal machine it passes:
+(`tests/test_workflow_integration.py`) needs the `temporal` CLI on PATH and skips without it:
 
 ```bash
 uv run pytest tests/test_workflow_integration.py
 ```
+
+It was previously believed to flake in the cloud because the dev server was slow to start.
+That was wrong: its `run_probe` double had a stale signature, the activity raised `TypeError`,
+and — because `TemporalOps` set no retry policy and so inherited Temporal's *unlimited*
+retries — it retried forever. The test hung on any machine, indefinitely. Both the double and
+the retry policy are fixed; it now passes in seconds.
 
 ## 2. Live-model run against the test endpoint
 
@@ -58,6 +63,9 @@ uv run harness eval corpus --no-sandbox    # agents only, no Docker needed
 uv run harness eval run verdict
 uv run harness eval run probe_diagnosis
 ```
+
+Results from this run, and the problems it exposed, are written up in
+[`LIVE_VALIDATION.md`](LIVE_VALIDATION.md).
 
 Under a live model these produce real numbers where stub mode shows placeholders:
 per-class accuracy, the false-negative rate on truly-exploitable cases, and — from the
@@ -106,7 +114,11 @@ docker info --format '{{json .Runtimes}}'   # must list "runsc"
   registry allowlist via the `egress-proxy` service in compose.
 - Kubernetes manifests for the isolated probe namespace are under `deploy/k8s/`.
 
-**Validation pass to do once locally** (couldn't be done in the cloud sandbox — no runsc):
-run `uv run harness eval corpus` with the sandbox on and confirm the Python vulnerable
-cases build, the probe fires its oracle, and the fixed variants do not. Then repeat for a
-Java/JS/Perl case to confirm those toolchains build under the buildx/gVisor path.
+**Validation pass still outstanding — needs a Linux host with `runsc`.** gVisor cannot run on
+macOS (it needs a Linux host kernel), so the sandboxed build/probe path has never executed:
+run `uv run harness eval corpus` with the sandbox on and confirm the Python vulnerable cases
+build, the probe fires its oracle, and the fixed variants do not. Then repeat for a
+Java/JS/Perl case to confirm those toolchains build under the buildx/gVisor path. Only that
+run can produce a real `potentially_exploitable` verdict, and therefore a real
+false-negative rate — see [`LIVE_VALIDATION.md`](LIVE_VALIDATION.md). The corpus's own ground
+truth *is* verified, in-process, by `tests/test_corpus_oracle.py`.
