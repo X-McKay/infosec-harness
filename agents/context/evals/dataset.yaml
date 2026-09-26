@@ -1,0 +1,55 @@
+version: "1"
+# Scored on `reachability`, because that is the call the graph routes on: `unreachable` with
+# cited evidence early-exits the finding without ever building a probe.
+#
+# The pairs come from the seeded corpus, whose ground truth tests/test_corpus_oracle.py
+# verifies by driving each variant with a reference probe. So `unreachable` here is not an
+# opinion: the fixed variant demonstrably resists the payload, and the vulnerable one does
+# not. Each fixed variant is neutralized by a construct its cwe-* skill names verbatim,
+# which is what makes this dataset sensitive to whether the skill was loaded at all.
+cases:
+  - name: sqli-vulnerable
+    repo: eval-corpus/python/sqli/vulnerable
+    payload:
+      finding: {title: "SQL injection in get_user", cwe: "CWE-89", severity: high,
+                file_path: app.py, start_line: 16}
+    expected: reachable
+  - name: sqli-fixed
+    repo: eval-corpus/python/sqli/fixed
+    payload:
+      finding: {title: "SQL injection in get_user", cwe: "CWE-89", severity: high,
+                file_path: app.py, start_line: 16}
+    expected: unreachable
+  - name: cmdi-vulnerable
+    repo: eval-corpus/python/cmdi/vulnerable
+    payload:
+      finding: {title: "Command injection in count_lines", cwe: "CWE-78", severity: high,
+                file_path: app.py, start_line: 6}
+    expected: reachable
+  - name: cmdi-fixed
+    # Neutralized by the argument-vector form, which cwe-78 names explicitly.
+    repo: eval-corpus/python/cmdi/fixed
+    payload:
+      finding: {title: "Command injection in count_lines", cwe: "CWE-78", severity: high,
+                file_path: app.py, start_line: 6}
+    expected: unreachable
+  - name: xss-vulnerable
+    repo: eval-corpus/python/xss/vulnerable
+    payload:
+      finding: {title: "Reflected XSS in render_comment", cwe: "CWE-79", severity: medium,
+                file_path: app.py, start_line: 3}
+    expected: reachable
+  - name: xss-fixed
+    # Neutralized by html.escape, which cwe-79 names as the encoding control.
+    repo: eval-corpus/python/xss/fixed
+    payload:
+      finding: {title: "Reflected XSS in render_comment", cwe: "CWE-79", severity: medium,
+                file_path: app.py, start_line: 3}
+    expected: unreachable
+  - name: pathtraversal-fixed
+    # Neutralized by a realpath containment check.
+    repo: eval-corpus/python/pathtraversal/fixed
+    payload:
+      finding: {title: "Path traversal in read_doc", cwe: "CWE-22", severity: high,
+                file_path: app.py, start_line: 8}
+    expected: unreachable

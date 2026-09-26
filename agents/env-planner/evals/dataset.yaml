@@ -1,0 +1,17 @@
+version: "1"
+# Scored on (base-image family / test runner). Those two choices decide whether the build can
+# produce a runnable test at all; the rest of the spec is detail the build loop can repair.
+# The stack fingerprint is derived from the repo by detect_stack, as the graph does it.
+cases:
+  - name: python-pip-pytest
+    repo: eval-corpus/python/sqli/vulnerable
+    payload:
+      repo_profile: {summary: "small python app", primary_language: python,
+                     test_framework: pytest, test_layout: "tests/"}
+    expected: python/pytest
+  - name: javascript-npm-jest
+    repo: eval-corpus/javascript/xss/vulnerable
+    payload:
+      repo_profile: {summary: "small node app", primary_language: javascript,
+                     test_framework: jest, test_layout: "test/"}
+    expected: node/jest

@@ -1,0 +1,40 @@
+version: "1"
+# Scored on `oracle`, the decision that determines whether the probe can observe anything.
+# Command injection's effect is a side effect the test cannot read from a return value, so it
+# needs `canary_file`; SQL injection and XSS both hand back a value the test can inspect, so
+# they need `marker_output`. Choosing the other one is not a style difference — a probe that
+# watches a return value for an injected `touch` will never see it.
+cases:
+  - name: cmdi-needs-a-canary
+    repo: eval-corpus/python/cmdi/vulnerable
+    payload:
+      finding: {title: "Command injection in count_lines", cwe: "CWE-78", severity: high,
+                file_path: app.py, start_line: 6}
+      finding_context:
+        summary: "path is concatenated into a shell command run with shell=True"
+        reachability: reachable
+        reachability_rationale: "count_lines passes caller input straight to the shell"
+        target_callable: count_lines
+    expected: canary_file
+  - name: sqli-can-inspect-the-result
+    repo: eval-corpus/python/sqli/vulnerable
+    payload:
+      finding: {title: "SQL injection in get_user", cwe: "CWE-89", severity: high,
+                file_path: app.py, start_line: 16}
+      finding_context:
+        summary: "name is %-formatted into the SQL text passed to cursor.execute"
+        reachability: reachable
+        reachability_rationale: "get_user interpolates caller input into the query"
+        target_callable: get_user
+    expected: marker_output
+  - name: xss-can-inspect-the-result
+    repo: eval-corpus/python/xss/vulnerable
+    payload:
+      finding: {title: "Reflected XSS in render_comment", cwe: "CWE-79", severity: medium,
+                file_path: app.py, start_line: 3}
+      finding_context:
+        summary: "text is concatenated into HTML with no encoding"
+        reachability: reachable
+        reachability_rationale: "render_comment returns caller input inside a div"
+        target_callable: render_comment
+    expected: marker_output

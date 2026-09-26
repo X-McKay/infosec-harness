@@ -124,11 +124,12 @@ def eval_run(
     agent: str = typer.Argument(..., help="Agent name, or 'e2e' for the end-to-end corpus"),
     overlay: Path = typer.Option(None, help="Experiment overlay YAML"),
     repeat: int = typer.Option(1, help="Repetitions (LLM variance)"),
+    report: Path = typer.Option(None, help="Write an agentctl-compatible release report here"),
 ):
     """Run an agent's eval dataset (or the e2e corpus) and persist the experiment."""
     from infosec_harness.evals.run import run_experiment
 
-    exp_id = asyncio.run(run_experiment(agent, overlay=overlay, repeat=repeat))
+    exp_id = asyncio.run(run_experiment(agent, overlay=overlay, repeat=repeat, report=report))
     typer.echo(f"EXPERIMENT_ID={exp_id}")
 
 

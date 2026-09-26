@@ -1,0 +1,32 @@
+version: "1"
+# Scored on whether the repaired spec actually mentions the thing the log says is missing.
+# Deliberately not "does the build now pass" — that needs a sandbox; this asks whether the
+# agent read the failure or guessed.
+cases:
+  - name: missing-system-library
+    repo: eval-corpus/python/sqli/vulnerable
+    expect_mentions: libpq
+    payload:
+      failed_spec: {base_image: "python:3.12-slim", system_packages: [],
+                    install_commands: ["python -m pip install -r requirements.txt"],
+                    test_command: "python -m pytest -q {test_file}"}
+      build_result:
+        ok: false
+        log_tail: |
+          Building wheel for psycopg2 (setup.py): finished with status 'error'
+          Error: pg_config executable not found.
+          You need to install postgresql-server-dev or libpq-dev.
+    expected: addressed
+  - name: missing-compiler-toolchain
+    repo: eval-corpus/python/sqli/vulnerable
+    expect_mentions: gcc
+    payload:
+      failed_spec: {base_image: "python:3.12-slim", system_packages: [],
+                    install_commands: ["python -m pip install -r requirements.txt"],
+                    test_command: "python -m pytest -q {test_file}"}
+      build_result:
+        ok: false
+        log_tail: |
+          error: command 'gcc' failed: No such file or directory
+          note: This error originates from a subprocess.
+    expected: addressed

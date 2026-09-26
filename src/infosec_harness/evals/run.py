@@ -8,38 +8,21 @@ model/prompt/skill change with an evidence-based, one-variable-at-a-time method.
 from __future__ import annotations
 
 import hashlib
+import json
 import subprocess
 import uuid
-from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 import yaml
 
-from infosec_harness.agents.deps import AgentDeps
 from infosec_harness.agents.render import render_prompt
-from infosec_harness.domain.models import VerdictFacts
+from infosec_harness.evals.adapters import (
+    ADAPTERS,
+    UNEVIDENCED_SAFETY_AGENTS,
+    is_unevidenced_safe,
+)
 from infosec_harness.evals.trajectory import scores_skills
 from infosec_harness.settings import get_settings
-
-# Per-agent adapter: (case) -> (task_text, payload, deps, predicted_label_fn, expected)
-Adapter = Callable[[dict], tuple[str, dict, AgentDeps, Callable[[Any], str], str]]
-
-
-def _verdict_adapter(case: dict):
-    facts = VerdictFacts.model_validate(case.get("facts", {}))
-    deps = AgentDeps(repo_path="/nonexistent", facts=facts)
-    return ("Decide the three-way exploitability verdict from the evidence.",
-            case["payload"], deps, lambda o: o.label.value, case["expected"])
-
-
-def _diagnosis_adapter(case: dict):
-    deps = AgentDeps(repo_path="/nonexistent")
-    return ("Classify this probe execution.", case["payload"], deps,
-            lambda o: o.kind.value, case["expected"])
-
-
-ADAPTERS: dict[str, Adapter] = {"verdict": _verdict_adapter, "probe-diagnosis": _diagnosis_adapter}
 
 
 def _spread(values: list[float]) -> str:
@@ -124,7 +107,8 @@ def _git_sha() -> str:
         return ""
 
 
-async def run_experiment(agent: str, *, overlay: Path | None = None, repeat: int = 1) -> str:
+async def run_experiment(agent: str, *, overlay: Path | None = None, repeat: int = 1,
+                         report: Path | None = None) -> str:
     if agent not in ADAPTERS:
         raise SystemExit(f"No eval adapter for agent {agent!r}. Available: {sorted(ADAPTERS)}")
     from infosec_harness.agents.registry import build_agent, config_hash, load_spec
@@ -148,12 +132,13 @@ async def run_experiment(agent: str, *, overlay: Path | None = None, repeat: int
     exp_id = "exp-" + hashlib.sha256(
         f"{agent}:{version}:{cfg_hash}:{overlay}:{uuid.uuid4()}".encode()).hexdigest()[:16]
 
-    total = passed = 0
+    total = passed = invalid_output = budget_exhausted = unevidenced_safe = 0
     cost = cache_read = tokens = 0.0
     case_rows = []
+    model_requests: list[int] = []
     confusion: dict[tuple[str, str], int] = {}
 
-    from pydantic_ai.exceptions import UnexpectedModelBehavior
+    from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
 
     for case in cases:
         task_text, payload, deps, predict, expected = ADAPTERS[agent](case)
@@ -162,13 +147,23 @@ async def run_experiment(agent: str, *, overlay: Path | None = None, repeat: int
             try:
                 result = await built.run(prompt, deps=deps)
                 predicted = predict(result.output)
+                model_requests.append(result.usage.requests)
                 c, _ = model_factory.estimate_cost(model_name, result.usage)
                 tokens += result.usage.input_tokens + result.usage.output_tokens
                 cache_read += result.usage.cache_read_tokens or 0
+            except UsageLimitExceeded:
+                # The run hit its declared budget: it was stopped, not answered. This is a
+                # hard gate, so it is counted separately from a wrong answer.
+                predicted, c = "budget_exhausted", 0.0
+                budget_exhausted += 1
             except UnexpectedModelBehavior:
                 # The model could not produce a valid output within its retry budget
-                # (e.g. it kept violating an output contract). That is a failed case.
+                # (e.g. it kept violating an output contract). That is a failed case, and an
+                # output that does not validate is no answer rather than a wrong one.
                 predicted, c = "invalid_output", 0.0
+                invalid_output += 1
+            if is_unevidenced_safe(agent, case, predicted):
+                unevidenced_safe += 1
             ok = predicted == expected
             total += 1
             passed += int(ok)
@@ -185,6 +180,14 @@ async def run_experiment(agent: str, *, overlay: Path | None = None, repeat: int
         "avg_tokens": round(tokens / total, 1) if total else 0.0,
         "cache_hit_ratio": round(cache_read / tokens, 4) if tokens else 0.0,
         "confusion": {f"{k[0]}->{k[1]}": v for k, v in sorted(confusion.items())},
+        # Named to match the release policy's gates and thresholds so the contract is
+        # executable rather than aspirational (agent-playbook §7).
+        "task_success_rate": round(passed / total, 4) if total else 0.0,
+        "schema_validity_rate": round((total - invalid_output) / total, 4) if total else 0.0,
+        "budget_exhausted_count": budget_exhausted,
+        "average_cost_usd": round(cost / total, 6) if total else 0.0,
+        "p95_model_requests": _p95(model_requests),
+        "unevidenced_safe_verdicts": unevidenced_safe,
     }
 
     await db.create_all()
@@ -200,7 +203,57 @@ async def run_experiment(agent: str, *, overlay: Path | None = None, repeat: int
     print(f"experiment {exp_id}: accuracy={metrics['accuracy']:.2%} "
           f"cost/case=${metrics['cost_usd_per_case']:.4f} cache_hit={metrics['cache_hit_ratio']:.2%} "
           f"(config {cfg_hash})")
+    if report is not None:
+        write_release_report(
+            report, agent=agent, metrics=metrics, cfg_hash=cfg_hash, model_name=model_name,
+            dataset_version=version,
+            agent_version=str((spec.metadata or {}).get("version", "0.0.0")),
+            extra_gates=({"unevidenced_safe_verdicts": metrics["unevidenced_safe_verdicts"]}
+                         if agent in UNEVIDENCED_SAFETY_AGENTS else None),
+        )
+        print(f"release report written to {report}")
     return exp_id
+
+
+def _p95(values: list[int]) -> int:
+    """The 95th percentile, or 0 when nothing ran. Nearest-rank on a small sample."""
+    if not values:
+        return 0
+    ordered = sorted(values)
+    index = min(len(ordered) - 1, int(round(0.95 * (len(ordered) - 1))))
+    return ordered[index]
+
+
+def write_release_report(path: Path, *, agent: str, metrics: dict, cfg_hash: str,
+                         model_name: str, dataset_version: str, agent_version: str,
+                         extra_gates: dict | None = None) -> None:
+    """Write the report `agentctl release` compares against the agent's release policy.
+
+    The gate and threshold names here are the policy's names; provenance is what makes a pass
+    reproducible rather than a claim.
+    """
+    gates = {
+        "schema_validity_rate": metrics["schema_validity_rate"],
+        "budget_exhausted_count": metrics["budget_exhausted_count"],
+        **(extra_gates or {}),
+    }
+    report = {
+        "schema_version": 1,
+        "subject": {"kind": "agent", "name": agent},
+        "agent": agent,
+        "hard_gates": gates,
+        "metrics": {k: metrics[k] for k in
+                    ("task_success_rate", "average_cost_usd", "p95_model_requests")},
+        "provenance": {
+            "git_commit": _git_sha(),
+            "agent_version": agent_version,
+            "config_hash": cfg_hash,
+            "model": model_name,
+            "dataset_version": dataset_version,
+        },
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(report, indent=2) + "\n")
 
 
 async def compare_experiments(baseline: str, candidate: str) -> None:

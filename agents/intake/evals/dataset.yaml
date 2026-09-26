@@ -1,0 +1,34 @@
+version: "1"
+# Scored on the extracted CWE: it selects the skill every later agent loads, so getting it
+# wrong misdirects the whole run. Reports are written the way scanners and humans actually
+# write them — prose, no structured fields.
+cases:
+  - name: sql-injection-from-prose
+    payload:
+      report: |
+        The user lookup endpoint builds its query by string formatting. Passing a quote in
+        the `name` parameter changes the query and returns rows the filter should exclude.
+        See app.py around line 16.
+      known: {title: "user lookup issue", severity: high}
+    expected: CWE-89
+  - name: command-injection-from-prose
+    payload:
+      report: |
+        count_lines() in app.py hands its argument to the shell with shell=True, so a
+        semicolon in the path runs a second command.
+      known: {title: "shell usage", severity: high}
+    expected: CWE-78
+  - name: path-traversal-from-prose
+    payload:
+      report: |
+        read_doc() joins the caller's name onto the document root with no containment check,
+        so ../ sequences read files outside it.
+      known: {title: "file read", severity: high}
+    expected: CWE-22
+  - name: xss-from-prose
+    payload:
+      report: |
+        render_comment() concatenates the comment text into a div without HTML-encoding it,
+        so markup in a comment reaches the page.
+      known: {title: "comment rendering", severity: medium}
+    expected: CWE-79

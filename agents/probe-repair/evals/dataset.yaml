@@ -1,0 +1,83 @@
+version: "1"
+# Each case hands the agent a probe with one specific defect diagnosed, and expects a repair
+# that still satisfies the protocol. The defects are the ones seen in real runs: a probe that
+# asserts before reaching the sink, and a probe that instruments an object the target never
+# uses — the failure mode that produced a silent false negative.
+cases:
+  - name: asserts-before-reaching-the-sink
+    repo: eval-corpus/python/sqli/vulnerable
+    target_callable: get_user
+    payload:
+      probe_plan:
+        hypothesis: "A quote in name changes the query's structure."
+        payload: "alice' OR '1'='1"
+        oracle: marker_output
+        oracle_condition: "a row the WHERE clause should have excluded is returned"
+        precondition_checkpoint: "immediately before calling get_user"
+        test_file_path: tests/test_sqli_probe.py
+      probe_source:
+        test_file_path: tests/test_sqli_probe.py
+        content: |
+          from app import get_user, init_db
+
+          def test_sqli():
+              conn = init_db()
+              assert get_user(conn, "alice") == []   # fails before the payload is sent
+              print("HARNESS_PRECONDITION::" + NONCE)
+              get_user(conn, "alice' OR '1'='1")
+      probe_execution:
+        attempt: 1
+        exit_code: 1
+        oracle_fired: false
+        precondition_reached: false
+        stderr_tail: "AssertionError: assert [(1, 'alice', 'public')] == []"
+      diagnosis:
+        kind: probe_defect
+        explanation: "The test failed before exercising the sink, so it says nothing about the code."
+        fix_hint: "Remove the pre-assertion and print the precondition marker before the payload call."
+      oracle_nonce: "b93e2c17a08d4f65"
+    expected: conformant
+  - name: instruments-an-object-the-target-never-uses
+    repo: eval-corpus/python/sqli/vulnerable
+    target_callable: get_user
+    payload:
+      probe_plan:
+        hypothesis: "A quote in name changes the query's structure."
+        payload: "alice' OR '1'='1"
+        oracle: marker_output
+        oracle_condition: "a row the WHERE clause should have excluded is returned"
+        precondition_checkpoint: "immediately before calling get_user"
+        test_file_path: tests/test_sqli_probe.py
+      probe_source:
+        test_file_path: tests/test_sqli_probe.py
+        content: |
+          import sqlite3
+          from app import get_user, init_db
+
+          class _LogCursor:
+              def __init__(self, real): self._real, self.last_sql = real, None
+              def execute(self, sql, *a, **k):
+                  self.last_sql = sql
+                  return self._real.execute(sql, *a, **k)
+
+          def test_sqli():
+              conn = init_db()
+              print("HARNESS_PRECONDITION::" + NONCE)
+              get_user(conn, "alice' OR '1'='1")
+              cur = _LogCursor(conn.cursor())      # created after the call; never used by it
+              if cur.last_sql and NONCE in cur.last_sql:
+                  print("HARNESS_ORACLE::" + NONCE)
+      probe_execution:
+        attempt: 1
+        exit_code: 0
+        oracle_fired: false
+        precondition_reached: true
+        stdout_tail: "HARNESS_PRECONDITION::n1\n1 passed"
+      diagnosis:
+        kind: probe_defect
+        explanation: >-
+          The wrapper is constructed after get_user has already run and is not the cursor the
+          target used, so last_sql is always None and the oracle can never fire.
+        fix_hint: "Observe the effect of the real call instead of wrapping the driver."
+      oracle_nonce: "5f0a8d3b16c7e924"
+    expected: conformant

@@ -1,0 +1,22 @@
+version: "1"
+# Scored on `primary_language/test_framework`, the two fields every later stage builds on: the
+# environment plan picks a base image from the language and a test command from the framework.
+# One case per corpus ecosystem, so a regression that only affects one toolchain is visible.
+# The stack fingerprint is derived from the repo by detect_stack, exactly as the graph does it.
+cases:
+  - name: python-pytest
+    repo: eval-corpus/python/sqli/vulnerable
+    payload: {}
+    expected: python/pytest
+  - name: java-junit5
+    repo: eval-corpus/java/sqli/vulnerable
+    payload: {}
+    expected: java/junit5
+  - name: javascript-jest
+    repo: eval-corpus/javascript/xss/vulnerable
+    payload: {}
+    expected: javascript/jest
+  - name: perl-test-more
+    repo: eval-corpus/perl/sqli/vulnerable
+    payload: {}
+    expected: perl/test::more

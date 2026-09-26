@@ -1,0 +1,21 @@
+version: "1"
+# Scored on `scope`: after the full build has failed its repair budget, the correct move is to
+# narrow to the module the finding needs, not to retry everything again.
+cases:
+  - name: narrow-after-repeated-full-build-failure
+    repo: eval-corpus/python/sqli/vulnerable
+    payload:
+      failed_spec: {base_image: "python:3.12-slim", system_packages: [],
+                    install_commands: ["python -m pip install -r requirements.txt"],
+                    test_command: "python -m pytest -q {test_file}"}
+      build_result:
+        ok: false
+        log_tail: |
+          ERROR: Could not build wheels for pyarrow, grpcio, which is required to install
+          pyproject.toml-based projects. (attempt 6 of 6)
+      finding: {title: "SQL injection in get_user", cwe: "CWE-89", severity: high,
+                file_path: app.py, start_line: 16}
+      finding_context: {summary: "name is %-formatted into the query", reachability: reachable,
+                        reachability_rationale: "caller input reaches cursor.execute",
+                        target_callable: get_user}
+    expected: partial
