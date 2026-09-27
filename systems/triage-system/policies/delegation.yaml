@@ -46,7 +46,7 @@ interactions:
     budget:
       max_requests: 12
       max_tool_calls: 30
-      max_input_tokens: 40000
+      max_input_tokens: 60000
       max_output_tokens: 24000
       max_cost_usd: 0.4
     retry:
@@ -72,9 +72,9 @@ interactions:
     budget:
       max_requests: 12
       max_tool_calls: 30
-      max_input_tokens: 40000
+      max_input_tokens: 80000
       max_output_tokens: 24000
-      max_cost_usd: 0.4
+      max_cost_usd: 0.5
     retry:
       maximum_attempts: 3
       retryable_failures:
@@ -96,11 +96,11 @@ interactions:
     authorization_scopes_max: []
     data_classification_max: confidential
     budget:
-      max_requests: 10
-      max_tool_calls: 24
-      max_input_tokens: 50000
-      max_output_tokens: 32000
-      max_cost_usd: 0.5
+      max_requests: 16
+      max_tool_calls: 40
+      max_input_tokens: 250000
+      max_output_tokens: 60000
+      max_cost_usd: 1.5
     retry:
       maximum_attempts: 3
       retryable_failures:
@@ -122,11 +122,11 @@ interactions:
     authorization_scopes_max: []
     data_classification_max: confidential
     budget:
-      max_requests: 10
-      max_tool_calls: 24
-      max_input_tokens: 50000
-      max_output_tokens: 32000
-      max_cost_usd: 0.5
+      max_requests: 16
+      max_tool_calls: 40
+      max_input_tokens: 250000
+      max_output_tokens: 60000
+      max_cost_usd: 1.5
     retry:
       maximum_attempts: 3
       retryable_failures:
@@ -150,7 +150,7 @@ interactions:
     budget:
       max_requests: 10
       max_tool_calls: 24
-      max_input_tokens: 40000
+      max_input_tokens: 60000
       max_output_tokens: 32000
       max_cost_usd: 0.5
     retry:
@@ -202,9 +202,9 @@ interactions:
     budget:
       max_requests: 16
       max_tool_calls: 36
-      max_input_tokens: 60000
+      max_input_tokens: 120000
       max_output_tokens: 48000
-      max_cost_usd: 0.8
+      max_cost_usd: 1.0
     retry:
       maximum_attempts: 3
       retryable_failures:
@@ -228,9 +228,9 @@ interactions:
     budget:
       max_requests: 16
       max_tool_calls: 36
-      max_input_tokens: 60000
+      max_input_tokens: 120000
       max_output_tokens: 48000
-      max_cost_usd: 0.8
+      max_cost_usd: 1.0
     retry:
       maximum_attempts: 3
       retryable_failures:

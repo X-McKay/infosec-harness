@@ -42,14 +42,16 @@ metadata:
   data_classification: confidential
   model_policy: balanced-v1
   evaluation_policy: agents/env-planner/evals/release-policy.yaml
-  # A runtime brake, not an operating target: roughly 3-4x the maxima measured
-  # against a live model (docs/LIVE_VALIDATION.md). Enforced via UsageLimits.
+  # A runtime brake, not an operating target. For tool-using agents the meaningful
+  # limits are max_requests and max_tool_calls: cumulative input grows with every
+  # turn, so the token ceiling only needs to not fire in normal work. Calibrated
+  # against sandboxed runs (docs/LIVE_VALIDATION.md). Enforced via UsageLimits.
   budgets:
     max_requests: 12
     max_tool_calls: 30
-    max_input_tokens: 40000
+    max_input_tokens: 80000
     max_output_tokens: 24000
-    max_cost_usd: 0.4
+    max_cost_usd: 0.5
   enabled_skills:
     - build-python
     - build-maven

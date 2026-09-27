@@ -78,7 +78,19 @@ async def triage_batch_local(findings: list[FindingInput], *, sandbox: bool = Tr
     for (repo_url, revision), group in groups.items():
         snapshot = await checkout(RepoRef(repo_url=repo_url, revision=revision))
         stack = detect_stack(snapshot.path)
-        prep = await run_prepare(ops, snapshot, stack)
+        try:
+            prep = await run_prepare(ops, snapshot, stack)
+        except Exception as e:  # noqa: BLE001 - one repo must not sink the batch either
+            # Preparation is shared by a repo's findings, so a failure here decides all of
+            # them — but only theirs. Observed live: build-repair exhausted its token budget
+            # on real build logs and the exception left this loop, discarding every finding in
+            # the run including repos already triaged. `environment_unbuildable` is what the
+            # contract reserves for "no usable environment", which is exactly the situation.
+            for f in group:
+                results[order[id(f)]] = _inconclusive(
+                    adapters.to_finding(f), InconclusiveReason.environment_unbuildable,
+                    f"Preparing {repo_url} failed: {type(e).__name__}: {e}", "failed")
+            continue
         if prepare_sink is not None:
             prepare_sink[(repo_url, revision)] = prep.invocations
         for f in group:

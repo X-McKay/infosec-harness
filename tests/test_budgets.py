@@ -44,8 +44,8 @@ def test_budgets_reach_pydantic_ai_as_usage_limits():
     limits = usage_limits_for("probe-author", load_spec("probe-author").metadata)
     assert limits.request_limit == 16
     assert limits.tool_calls_limit == 36
-    assert limits.input_tokens_limit == 60_000
-    assert float(limits.cost_limit) == pytest.approx(0.8)
+    assert limits.input_tokens_limit == 120_000
+    assert float(limits.cost_limit) == pytest.approx(1.0)
 
 
 def test_cost_ceiling_is_decimal_so_it_is_exact():

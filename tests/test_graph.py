@@ -1,4 +1,5 @@
 """The prepare orchestrator and triage graph run standalone (LocalOps, stub models)."""
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -205,4 +206,46 @@ async def test_one_failing_finding_does_not_sink_the_batch(repo):
     assert failed.result.verdict.inconclusive_reason is InconclusiveReason.error
     assert "load_capability" in failed.result.verdict.rationale
     # The second finding was triaged normally rather than discarded.
+    assert outputs[1].result.verdict.label in set(VerdictLabel)
+
+
+async def test_a_repo_that_cannot_be_prepared_does_not_sink_the_batch(repo, monkeypatch):
+    """Preparation is shared by a repo's findings, so its failure decides those and no others.
+
+    Observed live with the sandbox enabled: build-repair exhausted its token budget on real
+    build logs, and because run_prepare sat outside the per-finding guard the exception left
+    the batch loop and discarded every finding in the run — including repos already triaged.
+    """
+    from infosec_harness.domain.models import InconclusiveReason
+    from infosec_harness.graph import local
+
+    good = FindingInput(title="SQLi", repo_url=repo, file_path="app.py", start_line=2,
+                        cwe="CWE-89", severity="high")
+    bad_repo = tempfile.mkdtemp(prefix="harness-bad-")
+    Path(bad_repo, "app.py").write_text("def f(): pass\n")
+    Path(bad_repo, "requirements.txt").write_text("")
+    bad = FindingInput(title="Other", repo_url=bad_repo, file_path="app.py", start_line=1,
+                       cwe="CWE-78", severity="low")
+
+    real_prepare = local.run_prepare
+
+    async def flaky_prepare(ops, snapshot, stack):
+        # keyed on repo_url: checkout() relocates the tree, so `path` is not the input path
+        if snapshot.repo_url == bad_repo:
+            from pydantic_ai.exceptions import UsageLimitExceeded
+            raise UsageLimitExceeded("Exceeded the input_tokens_limit of 250000")
+        return await real_prepare(ops, snapshot, stack)
+
+    local.run_prepare = flaky_prepare
+    try:
+        outputs = await local.triage_batch_local([bad, good], sandbox=False)
+    finally:
+        local.run_prepare = real_prepare
+        shutil.rmtree(bad_repo, ignore_errors=True)
+
+    assert len(outputs) == 2, "the healthy repo's finding must still be reported"
+    failed = outputs[0]
+    assert failed.result.verdict.label is VerdictLabel.inconclusive
+    assert failed.result.verdict.inconclusive_reason is InconclusiveReason.environment_unbuildable
+    assert "input_tokens_limit" in failed.result.verdict.rationale
     assert outputs[1].result.verdict.label in set(VerdictLabel)
