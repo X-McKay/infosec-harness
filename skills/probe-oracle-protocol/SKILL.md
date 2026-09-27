@@ -9,6 +9,8 @@ metadata:
 
 # Probe oracle protocol
 
+<!-- generated: activation criteria (scripts/restructure_skills.py) -->
+
 ## Use this skill when
 
 - You are about to plan, write, or repair a probe.
@@ -18,6 +20,14 @@ metadata:
 ## Do not use this skill when
 
 - You are profiling a repository or planning a build environment; no markers are involved yet.
+
+<!-- /generated: activation criteria -->
+
+A probe is a unit test whose job is to answer one question about a pre-identified finding:
+**was the exploit condition observed when we drove untrusted input to the sink, in a
+sandbox?** The answer must come from an explicit, observable signal, never from whether the
+test "passed". This makes triage deterministic and lets the harness distinguish
+*not exploitable* from *never reached the code*.
 
 ## The two markers
 
@@ -79,6 +89,8 @@ if exploit_condition_holds(result):          # e.g. marker survived unescaped
 The `test-*` skills show this shape in each framework; the `cwe-*` skills define
 `build_input` and `exploit_condition_holds` for each weakness class.
 
+<!-- generated: constraints (scripts/restructure_skills.py) -->
+
 ## Safety constraints
 
 - The test must run to completion and print its markers whether or not the exploit condition holds. Never let an assertion failure be the signal.
@@ -88,3 +100,5 @@ The `test-*` skills show this shape in each framework; the `cwe-*` skills define
 ## Completion criteria
 
 - Both markers are emitted at the right moments, and the oracle fires only on the real exploit condition.
+
+<!-- /generated: constraints -->

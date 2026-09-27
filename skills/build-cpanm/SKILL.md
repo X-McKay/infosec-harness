@@ -9,6 +9,8 @@ metadata:
 
 # Building Perl targets
 
+<!-- generated: activation criteria (scripts/restructure_skills.py) -->
+
 ## Use this skill when
 
 - You are producing or repairing an EnvironmentSpec for a Perl repository.
@@ -18,7 +20,16 @@ metadata:
 
 - The repository is not Perl.
 
+<!-- /generated: activation criteria -->
 
+- **Base image:** `perl:5.40` (or the repo's pinned major).
+- **Install:** `cpanm --notest --installdeps .` (reads `cpanfile`/`Makefile.PL`). Add
+  `--mirror <url>` only to a mirror the repo declares. `cpanm App::prove` if `prove` is absent.
+  For native deps, add the matching `-dev` system packages.
+- **test_command:** `prove -v {test_file}` (`-v` so probe markers appear on stdout).
+- **Partial builds:** install deps for and test a single module directory.
+
+<!-- generated: constraints (scripts/restructure_skills.py) -->
 
 ## Safety constraints
 
@@ -32,3 +43,5 @@ metadata:
 - Install commands come from the repository's own manifests.
 - `test_command` contains the `{test_file}` placeholder and runs a single test file.
 - The test runner itself is installed, not merely assumed present.
+
+<!-- /generated: constraints -->

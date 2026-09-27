@@ -9,6 +9,8 @@ metadata:
 
 # Building Node targets
 
+<!-- generated: activation criteria (scripts/restructure_skills.py) -->
+
 ## Use this skill when
 
 - You are producing or repairing an EnvironmentSpec for a Node project.
@@ -18,7 +20,21 @@ metadata:
 
 - The repository is not a Node project.
 
+<!-- /generated: activation criteria -->
 
+- **Base image:** `node:22-slim` (match `engines.node` when pinned).
+- **Install (use the lockfile's tool):**
+  - `package-lock.json` -> `npm ci` (or `npm install` when no lockfile)
+  - `pnpm-lock.yaml` -> `corepack enable && pnpm install --frozen-lockfile`
+  - `yarn.lock` -> `corepack enable && yarn install --frozen-lockfile`
+  - TypeScript projects: ensure `ts-jest`/`ts-node` or a build step so the probe can import.
+- **test_command:** `npx jest --runTestsByPath {test_file}` (or `npx vitest run {test_file}`).
+  Add `--silent=false` equivalents so probe stdout survives.
+- **Registries:** honor `.npmrc`/`.yarnrc.yml` registries and scopes the repo declares; pass
+  auth tokens as BuildKit secrets.
+- **Partial builds:** install and test within one workspace package dir.
+
+<!-- generated: constraints (scripts/restructure_skills.py) -->
 
 ## Safety constraints
 
@@ -32,3 +48,5 @@ metadata:
 - Install commands come from the repository's own manifests.
 - `test_command` contains the `{test_file}` placeholder and runs a single test file.
 - The test runner itself is installed, not merely assumed present.
+
+<!-- /generated: constraints -->

@@ -9,6 +9,8 @@ metadata:
 
 # Building Maven targets
 
+<!-- generated: activation criteria (scripts/restructure_skills.py) -->
+
 ## Use this skill when
 
 - You are producing or repairing an EnvironmentSpec for a Maven project.
@@ -19,7 +21,19 @@ metadata:
 - The project builds with Gradle — use `build-gradle`.
 - The repository is not a JVM project.
 
+<!-- /generated: activation criteria -->
 
+- **Base image:** `maven:3.9-eclipse-temurin-21` (drop to `-17` if the project targets 17).
+- **Install / compile:** `mvn -q -B -DskipTests test-compile` to pull dependencies and compile
+  main + test sources. Use `-s <settings.xml>` when the repo ships one (private registries,
+  mirrors); pass registry credentials as BuildKit secrets, never in the image.
+- **test_command:** run one test class: `mvn -q -B -o test -Dtest=<ProbeClassName>`
+  (`-o` offline so the probe run needs no network; everything is already resolved at build).
+  Match `<ProbeClassName>` to the probe's class (see test-junit5).
+- **Partial builds:** `mvn -q -B -pl <module> -am -DskipTests test-compile`, then
+  `-pl <module>` on the test command (see partial-build).
+
+<!-- generated: constraints (scripts/restructure_skills.py) -->
 
 ## Safety constraints
 
@@ -33,3 +47,5 @@ metadata:
 - Install commands come from the repository's own manifests.
 - `test_command` contains the `{test_file}` placeholder and runs a single test file.
 - The test runner itself is installed, not merely assumed present.
+
+<!-- /generated: constraints -->

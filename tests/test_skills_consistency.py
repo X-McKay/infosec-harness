@@ -130,3 +130,77 @@ def test_the_structure_is_regenerable():
         "skills are out of date with scripts/skill_specs.py — run "
         "`uv run python scripts/restructure_skills.py`"
     )
+
+
+# --- The generated structure must not eat the skill's content ----------------------------
+
+GENERATED_MARKERS = ("<!-- generated: activation criteria",
+                     "<!-- generated: constraints")
+
+
+@pytest.mark.parametrize("skill", _all_skills(), ids=lambda p: p.parent.name)
+def test_a_skill_has_a_procedure_and_not_only_generated_sections(skill):
+    """Structure is added around the content, never instead of it.
+
+    An earlier generator inferred its regions from heading positions, and on a second run it
+    deleted the body of every skill whose procedure had no `## ` heading of its own — all 23
+    of them to some degree, and the build-*, lang-* and test-* skills entirely. Nothing
+    failed: the tests checked that the required sections were present, which they were.
+    """
+    text = skill.read_text()
+    body = text.split("---\n", 2)[2]
+    # Strip the generated regions and the title; whatever remains is the skill's own content.
+    for begin, end in (("<!-- generated: activation criteria", "<!-- /generated: activation criteria -->"),
+                       ("<!-- generated: constraints", "<!-- /generated: constraints -->")):
+        while begin in body and end in body:
+            head, rest = body.split(begin, 1)
+            body = head + rest.split(end, 1)[1]
+    remaining = [ln for ln in body.splitlines()
+                 if ln.strip() and not ln.strip().startswith("# ")]
+    assert len(remaining) >= 4, (
+        f"{skill.parent.name} has almost no content of its own outside the generated "
+        f"sections ({len(remaining)} lines) — the procedure was probably eaten"
+    )
+
+
+@pytest.mark.parametrize("skill", _all_skills(), ids=lambda p: p.parent.name)
+def test_generated_regions_are_delimited_exactly_once(skill):
+    """Unbalanced markers mean the next run will strip the wrong span."""
+    text = skill.read_text()
+    for marker in GENERATED_MARKERS:
+        assert text.count(marker) == 1, f"{skill.parent.name}: {marker!r} appears != once"
+
+
+def test_python_build_and_test_skills_still_mandate_unbuffered_output():
+    """`pytest -s` is load-bearing, not a style preference.
+
+    Without it pytest captures stdout, the probe's oracle markers never reach the runner, and
+    every Python probe reports `precondition_reached=false` while exiting 0 — which
+    probe_diagnosis correctly calls a probe defect and probe_repair cannot fix, because the
+    fault is in the EnvironmentSpec's test_command rather than the probe. Observed live: it
+    cost a whole sandboxed corpus run.
+    """
+    for name in ("build-python", "test-pytest"):
+        text = (SKILLS / name / "SKILL.md").read_text()
+        assert "-s" in text and "pytest" in text, f"{name} lost its unbuffered-output guidance"
+    build = (SKILLS / "build-python" / "SKILL.md").read_text()
+    assert "pytest -q -s" in build, (
+        "build-python must show the -s flag in the test_command it recommends"
+    )
+
+
+def test_each_skill_family_kept_its_substantive_guidance():
+    """Spot-check one load-bearing fact per family, so a silent content loss is caught."""
+    expectations = {
+        "cwe-89-sql-injection": "bound parameter",
+        "cwe-78-os-command-injection": "shell=False",
+        "build-maven": "mvn",
+        "build-npm": "package.json",
+        "lang-python": "pyproject.toml",
+        "test-junit5": "System.out",
+        "partial-build": "conftest",
+        "probe-oracle-protocol": "HARNESS_PRECONDITION",
+    }
+    for name, needle in expectations.items():
+        text = (SKILLS / name / "SKILL.md").read_text()
+        assert needle in text, f"{name} no longer mentions {needle!r}"

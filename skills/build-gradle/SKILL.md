@@ -9,6 +9,8 @@ metadata:
 
 # Building Gradle targets
 
+<!-- generated: activation criteria (scripts/restructure_skills.py) -->
+
 ## Use this skill when
 
 - You are producing or repairing an EnvironmentSpec for a Gradle project.
@@ -19,7 +21,18 @@ metadata:
 - The project builds with Maven — use `build-maven`.
 - The repository is not a JVM project.
 
+<!-- /generated: activation criteria -->
 
+- **Base image:** `gradle:8-jdk21` or an Eclipse Temurin image plus the repo's `./gradlew`.
+- **Install / compile:** prefer the wrapper: `./gradlew --no-daemon testClasses` to resolve
+  dependencies and compile test sources. Use `--offline` on the probe run.
+- **test_command:** `./gradlew --no-daemon --offline test --tests '<fqcn>'` targeting the
+  probe's fully-qualified class.
+- **Registries:** honor `settings.gradle`/`init.gradle` repositories the project declares;
+  supply credentials via BuildKit secrets.
+- **Partial builds:** target a subproject: `./gradlew :<subproject>:test --tests '<fqcn>'`.
+
+<!-- generated: constraints (scripts/restructure_skills.py) -->
 
 ## Safety constraints
 
@@ -33,3 +46,5 @@ metadata:
 - Install commands come from the repository's own manifests.
 - `test_command` contains the `{test_file}` placeholder and runs a single test file.
 - The test runner itself is installed, not merely assumed present.
+
+<!-- /generated: constraints -->
