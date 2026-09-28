@@ -41,7 +41,11 @@ def _report(*, model: str, cost: float = 0.0, metrics: dict | None = None,
         "schema_version": 1,
         "subject": {"kind": "agent", "name": "context"},
         "agent": "context",
+        # Mirrors what `write_release_report` really writes. A gate the report omits is
+        # correctly audited as inert, so this fixture has to keep up with the writer --
+        # which is how the missing entry here was found.
         "hard_gates": {"schema_validity_rate": 1.0, "budget_exhausted_count": 0,
+                       "uncovered_material_scenarios": 0,
                        **(gates or {})},
         "metrics": {"task_success_rate": 0.9, "average_cost_usd": cost,
                     "p95_model_requests": 4, **(metrics or {})},
