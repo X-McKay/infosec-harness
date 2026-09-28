@@ -371,7 +371,7 @@ limits:
   max_parallel_agents: 1
   max_rounds: 1
   max_model_requests: 302
-  max_tool_calls: 692
+  max_tool_calls: 1180
   max_input_tokens: 3390000
   max_output_tokens: 4832000
   max_cost_usd: 23.75

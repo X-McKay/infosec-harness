@@ -43,7 +43,7 @@ def test_a_zero_or_negative_ceiling_is_rejected():
 def test_budgets_reach_pydantic_ai_as_usage_limits():
     limits = usage_limits_for("probe-author", load_spec("probe-author").metadata)
     assert limits.request_limit == 16
-    assert limits.tool_calls_limit == 36
+    assert limits.tool_calls_limit == 64
     assert limits.input_tokens_limit == 120_000
     assert float(limits.cost_limit) == pytest.approx(1.0)
 
@@ -121,3 +121,55 @@ def test_raising_a_backends_token_floor_is_caught_by_the_invariant():
         "this test exists to show the invariant is load-bearing: raising a backend's "
         "min_max_tokens without regenerating the budgets would make the ceilings too low again"
     )
+
+
+TOOL_CAPABILITIES = {"Skills", "RepoReadOnly", "SandboxShell"}
+TOOL_CALLS_PER_REQUEST = 4
+
+
+def _capability_names(spec: dict) -> set[str]:
+    names: set[str] = set()
+    for capability in spec.get("capabilities") or []:
+        names |= set(capability) if isinstance(capability, dict) else {capability}
+    return names
+
+
+def test_tool_call_ceilings_scale_with_the_request_budget():
+    """A tool-call ceiling calibrated against yesterday's toolset breaks when a tool is added.
+
+    Adding a fourth read tool (`describe_callables`) made agents call more tools per turn, and the
+    ceilings set when there were three became tight. The breach surfaced as an intermittent
+    UsageLimitExceeded in whichever stage happened to explore hardest — pointing nowhere near the
+    cause. Tying the ceiling to max_requests keeps the request limit the operative brake and makes
+    the next capability addition safe by construction.
+    """
+    import yaml
+
+    from infosec_harness.agents.registry import spec_path
+
+    for name in AGENT_BINDINGS:
+        spec = yaml.safe_load(spec_path(name).read_text())
+        budget = spec["metadata"]["budgets"]
+        if not (_capability_names(spec) & TOOL_CAPABILITIES):
+            continue  # no tools to call; see the companion test
+        want = budget["max_requests"] * TOOL_CALLS_PER_REQUEST
+        assert budget["max_tool_calls"] >= want, (
+            f"{name}: max_tool_calls {budget['max_tool_calls']} is below "
+            f"{budget['max_requests']} requests x {TOOL_CALLS_PER_REQUEST} tools = {want}"
+        )
+
+
+def test_an_agent_with_no_tools_keeps_a_tight_ceiling():
+    """verdict exposes no toolset, so a tool call from it is an anomaly worth braking on."""
+    import yaml
+
+    from infosec_harness.agents.registry import spec_path
+
+    for name in AGENT_BINDINGS:
+        spec = yaml.safe_load(spec_path(name).read_text())
+        if _capability_names(spec) & TOOL_CAPABILITIES:
+            continue
+        budget = spec["metadata"]["budgets"]
+        assert budget["max_tool_calls"] <= 8, (
+            f"{name} exposes no tools; a large tool-call ceiling brakes nothing"
+        )

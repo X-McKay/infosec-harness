@@ -44,7 +44,7 @@ metadata:
   # relationship is asserted in tests/test_budgets.py.
   budgets:
     max_requests: 4
-    max_tool_calls: 6
+    max_tool_calls: 16
     max_input_tokens: 20000
     max_output_tokens: 64000
     max_cost_usd: 0.25

@@ -471,7 +471,9 @@ async def _score_corpus_once(*, language: str, sandbox: bool | None) -> dict:
         mark = "OK " if r["ok"] else "XX "
         print(f"  {mark}{r['case']:26} {r['expected']:24} -> {r['actual']:24} {r['early_exit'] or ''}")
         if not r["ok"] and r["rationale"]:
-            print(f"        {r['rationale'][:160]}")
+            # Long enough to carry the whole failure. A truncated reason costs more time than
+            # the extra lines do: "UsageLimitExceeded: The" says nothing about which limit.
+            print(f"        {r['rationale'][:600]}")
     print(f"accuracy={metrics['accuracy']:.0%}  FN-on-exploitable={metrics['false_negative_rate_on_exploitable']:.0%}  "
           f"sandbox={'on' if sandbox else 'off (verdicts not meaningful)'}")
     print("tool/skill evocation (per agent, rate across cases):")
