@@ -38,6 +38,24 @@ def _skipped(path: Path, root: Path) -> bool:
     return any(part in SKIP for part in path.relative_to(root).parts)
 
 
+def _remove_excluded(dest: Path, exclude_paths: list[str]) -> None:
+    """Delete repo-relative paths from a fresh checkout, before anything reads it.
+
+    Used to strip a benchmark's own proof-of-vulnerability test (see RepoRef.exclude_paths).
+    Paths are resolved against the checkout and anything escaping it is ignored rather than
+    followed -- the list comes from a dataset, which is untrusted input like any other.
+    """
+    root = dest.resolve()
+    for rel in exclude_paths:
+        target = (root / rel).resolve()
+        if not target.is_relative_to(root) or not target.exists():
+            continue
+        if target.is_dir():
+            shutil.rmtree(target, ignore_errors=True)
+        else:
+            target.unlink(missing_ok=True)
+
+
 async def checkout(ref: RepoRef) -> RepoSnapshot:
     workspace = default_workspace() / "snapshots"
     workspace.mkdir(parents=True, exist_ok=True)
@@ -62,6 +80,10 @@ async def checkout(ref: RepoRef) -> RepoSnapshot:
         _, rev = await _git("rev-parse", "HEAD", cwd=str(dest))
         resolved = rev.strip()
         shutil.rmtree(dest / ".git", ignore_errors=True)
+
+    # Applied before the content hash, so a masked checkout is not mistaken for the unmasked
+    # one: the hash is what identifies this tree downstream.
+    _remove_excluded(dest, ref.exclude_paths)
 
     return RepoSnapshot(
         repo_url=ref.repo_url,

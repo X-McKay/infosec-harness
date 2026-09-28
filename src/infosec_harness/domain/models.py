@@ -181,6 +181,12 @@ class Finding(_Model):
 class RepoRef(_Model):
     repo_url: str
     revision: str = "HEAD"
+    # Benchmark hygiene, empty in production. Harvested corpora carry the proof-of-vulnerability
+    # test that established the ground truth, and on a `-fixed` revision it is in the tree by
+    # construction, because the fix commit added it. An agent handed that checkout can copy the
+    # test instead of writing a probe, and `probe-author` then measures transcription rather
+    # than authorship. Measured on Vul4J: 53 of 58 fixed cases ship a PoV in the checkout.
+    exclude_paths: list[str] = Field(default_factory=list)
 
 
 class RepoSnapshot(_Model):

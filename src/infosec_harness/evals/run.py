@@ -538,9 +538,16 @@ async def _score_corpus_once(*, language: str, sandbox: bool | None) -> dict:
         from infosec_harness.sandbox import docker
         sandbox = await docker.docker_available() and await docker.runtime_available()
     prepare_sink: dict[tuple[str, str], list] = {}
+    # A harvested case ships the PoV test that established its ground truth, and on a `-fixed`
+    # revision the fix commit put it in the tree. Strip it before any agent reads the checkout,
+    # or probe-author is scored on copying rather than authoring.
+    masks: dict[tuple[str, str], list[str]] = {}
+    for c in cases:
+        if c.mask_paths:
+            masks.setdefault((c.finding.repo_url, c.finding.revision), []).extend(c.mask_paths)
     # Cache off: an eval must exercise every stage and give the same answer twice.
     outputs = await triage_batch_local([c.finding for c in cases], sandbox=sandbox,
-                                       recipe_cache=False,
+                                       recipe_cache=False, mask_paths=masks,
                                        prepare_sink=prepare_sink)
     by_fp = {o.finding.fingerprint: o for o in outputs}
 

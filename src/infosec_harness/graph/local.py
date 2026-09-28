@@ -66,11 +66,20 @@ async def triage_one(ops: LocalOps, inp: FindingInput, prepared) -> TriageRunOut
 
 async def triage_batch_local(findings: list[FindingInput], *, sandbox: bool = True,
                              recipe_cache: bool = True,
-                             prepare_sink: dict[tuple[str, str], list] | None = None) -> list[TriageRunOutput]:
+                             prepare_sink: dict[tuple[str, str], list] | None = None,
+                             mask_paths: dict[tuple[str, str], list[str]] | None = None,
+                             ) -> list[TriageRunOutput]:
     """Run the pipeline in-process. If ``prepare_sink`` is given, each repo's prepare-phase
     agent invocations (recon, env-planner, build repair) are recorded there keyed by
     (repo_url, revision) — once per repo, since preparation is shared across a repo's
-    findings and must not be double-counted per finding."""
+    findings and must not be double-counted per finding.
+
+    ``mask_paths`` is benchmark hygiene and is empty in production: repo-relative paths, keyed
+    the same way, that are stripped from the checkout before any agent reads it. A harvested
+    case ships the proof-of-vulnerability test that established its ground truth, and on a
+    `-fixed` revision that test is in the tree because the fix commit added it — an agent can
+    copy it instead of writing a probe, which turns the probe-author measurement into a
+    measurement of transcription."""
     ops = LocalOps(sandbox=sandbox, recipe_cache=recipe_cache)
     groups: dict[tuple[str, str], list[FindingInput]] = defaultdict(list)
     for f in findings:
@@ -78,7 +87,9 @@ async def triage_batch_local(findings: list[FindingInput], *, sandbox: bool = Tr
     results: dict[int, TriageRunOutput] = {}
     order = {id(f): i for i, f in enumerate(findings)}
     for (repo_url, revision), group in groups.items():
-        snapshot = await checkout(RepoRef(repo_url=repo_url, revision=revision))
+        snapshot = await checkout(RepoRef(
+            repo_url=repo_url, revision=revision,
+            exclude_paths=(mask_paths or {}).get((repo_url, revision), [])))
         stack = detect_stack(snapshot.path)
         try:
             prep = await run_prepare(ops, snapshot, stack)
