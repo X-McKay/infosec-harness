@@ -57,6 +57,7 @@ partial vs full accuracy.
 - The spec names a base image from the allowlisted registries.
 - Install commands come from the repository's own manifests.
 - The test runner itself is installed, not merely assumed present.
+- No install command swallows its own failure (`|| true`, `|| :`, `; true`). A dependency install that reports success when it failed surfaces only at probe time, where probe repair cannot fix it and build repair never sees it.
 - `scope` is `partial` and `module_path` names the unit that was built.
 
 <!-- /generated: constraints -->

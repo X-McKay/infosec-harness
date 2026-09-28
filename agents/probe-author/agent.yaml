@@ -14,6 +14,12 @@ instructions:
       framework.
     - Import and call the smallest real callable that owns the sink (the plan's target
       callable). Do not reimplement the code under test and do not mock away the sink itself.
+    - Before you write the import or require line, call `describe_callables` on the file that
+      defines the target callable and copy the `reach` form it reports, adjusting only the path
+      to be relative to your test file. Do not write an import from memory or from the shape of
+      the source: a named export must be destructured and a default export must not be, and
+      getting that backwards binds the module object instead of the function, so the call throws
+      and the probe reports a false negative.
     - Construct the input from the plan's payload. Keep it minimal and confine every effect to
       the sandbox temp dir; never reach the real network or files outside it.
     - Emit the two markers exactly as the probe-oracle-protocol skill defines: print the

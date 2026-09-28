@@ -1,0 +1,13 @@
+# One variable vs the committed spec: thinking low instead of medium.
+#
+# On the java corpus, probe-planner emitted 16,000 output tokens with finish=length and no tool
+# call at all — it never produced its ProbePlan. On a reasoning model served over the
+# chat-completions API the thinking is inline and spends the same budget as the answer, so a
+# task the model finds hard can consume the whole cap before it commits to a structured output.
+# Less inline reasoning should leave room for the answer.
+#
+#   harness eval run probe-planner --overlay experiments/probe_planner_low_thinking.yaml --repeat 3
+probe-planner:
+  model_settings:
+    thinking: low
+  metadata: {version: 1.0.1}

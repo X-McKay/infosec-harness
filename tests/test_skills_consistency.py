@@ -109,9 +109,17 @@ def test_every_skill_has_an_owner_and_a_semantic_version(skill):
 
 @pytest.mark.parametrize("skill", _all_skills(), ids=lambda p: p.parent.name)
 def test_negative_criteria_point_somewhere_real(skill):
-    """'Use X instead' is only useful if X exists."""
+    """'Use X instead' is only useful if X exists.
+
+    The section ends at the generated region's closing marker, not at the next `## ` heading:
+    a skill whose procedure has no heading of its own would otherwise have its whole body read
+    as negative criteria, and any backticked `test-`/`build-` word in it (`test-compile`) read
+    as a skill that does not exist.
+    """
     text = skill.read_text()
-    section = text.split("## Do not use this skill when", 1)[1].split("\n## ", 1)[0]
+    section = text.split("## Do not use this skill when", 1)[1]
+    section = section.split("<!-- /generated: activation criteria -->", 1)[0]
+    section = section.split("\n## ", 1)[0]
     referenced = set(re.findall(r"`((?:cwe|lang|build|test|probe)-[a-z0-9-]+)`", section))
     on_disk = {p.parent.name for p in _all_skills()}
     assert referenced <= on_disk, (

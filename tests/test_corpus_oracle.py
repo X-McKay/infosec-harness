@@ -21,9 +21,14 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import io
+import pickle
 import tempfile
+import threading
 import uuid
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from urllib.error import URLError
+from xml.sax import SAXException
 
 import pytest
 
@@ -100,8 +105,118 @@ def _probe_xss(mod, nonce: str) -> None:
         print(f"{ORACLE_PREFIX}{nonce}")
 
 
+def _probe_codeinjection(mod, nonce: str) -> None:
+    # The payload is an expression, never the marker text: if the setting is *evaluated* the
+    # method call runs and yields the uppercased nonce, which a data-literal parser can never
+    # produce. Judging the observable effect, not that the input looked like code.
+    print(f"{PRECONDITION_PREFIX}{nonce}")
+    result = None
+    # The fixed variant's literal parser raises on a call node. That is the sink running and
+    # refusing the input, so the marker is still printed: a negative, not a probe defect.
+    with contextlib.suppress(ValueError, SyntaxError):
+        result = mod.compute_setting(f"{nonce!r}.upper()")
+    print(f"{SINK_RETURNED_PREFIX}{nonce}")
+    # Oracle: the injected expression actually executed.
+    if result == nonce.upper():
+        print(f"{ORACLE_PREFIX}{nonce}")
+
+
+def _probe_deserialization(mod, nonce: str) -> None:
+    canary = Path(tempfile.gettempdir()) / f"harness_canary_{nonce}"
+
+    class _Gadget:
+        """Harness-local benign gadget: its unpickling callback only touches the canary.
+
+        Not a real-world chain — the point is only that the payload, not the application,
+        decides what runs while the bytes are being deserialized.
+        """
+
+        def __reduce__(self):
+            return (Path.touch, (canary,))
+
+    blob = pickle.dumps(_Gadget())
+    print(f"{PRECONDITION_PREFIX}{nonce}")
+    # The fixed variant's allowlist refuses the class the payload names. The sink ran and
+    # decided, so the marker is still printed.
+    with contextlib.suppress(pickle.UnpicklingError):
+        mod.load_profile(blob)
+    print(f"{SINK_RETURNED_PREFIX}{nonce}")
+    # Oracle: deserializing the bytes invoked the payload's own callback.
+    if canary.exists():
+        print(f"{ORACLE_PREFIX}{nonce}")
+        canary.unlink()
+
+
+def _probe_xxe(mod, nonce: str) -> None:
+    # A marker file we create under the sandbox temp dir, per skills/cwe-611-xxe: the entity
+    # points at that file only, never a real system path and never a URL — the probe has no
+    # network, and this oracle does not need one.
+    marker = Path(tempfile.gettempdir()) / f"harness_xxe_{nonce}.txt"
+    marker.write_text(f"SECRET-{nonce}")
+    document = (
+        '<?xml version="1.0"?>\n'
+        f'<!DOCTYPE note [<!ENTITY leak SYSTEM "file://{marker}">]>\n'
+        "<note><body>&leak;</body></note>"
+    )
+    try:
+        print(f"{PRECONDITION_PREFIX}{nonce}")
+        text = ""
+        # A hardened parser may instead reject the DOCTYPE outright; that refusal is the sink
+        # deciding, so the marker is still printed.
+        with contextlib.suppress(SAXException):
+            text = mod.parse_note(document)
+        print(f"{SINK_RETURNED_PREFIX}{nonce}")
+        # Oracle: the parser resolved the external entity, so the file's contents came back in
+        # the parsed document. Not "the XML contained a DOCTYPE".
+        if f"SECRET-{nonce}" in text:
+            print(f"{ORACLE_PREFIX}{nonce}")
+    finally:
+        marker.unlink(missing_ok=True)
+
+
+def _probe_ssrf(mod, nonce: str) -> None:
+    # No egress, per skills/cwe-918-ssrf: the attacker-chosen destination is a listener this
+    # probe starts on loopback. The target builds its own HTTP client, so there is no
+    # transport to inject — a stub would be a silent false negative, the listener is not.
+    token = f"SSRF-REACHED-{nonce}"
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = token.encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass  # keep the probe's stdout to the markers
+
+    server = HTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_port}/internal/metadata"
+        print(f"{PRECONDITION_PREFIX}{nonce}")
+        body = ""
+        # The fixed variant's allowlist raises to refuse the destination. That is the code
+        # deciding, so the marker is still printed.
+        with contextlib.suppress(ValueError, URLError):
+            body = mod.fetch_preview(url)
+        print(f"{SINK_RETURNED_PREFIX}{nonce}")
+        # Oracle: the code really issued the request to the caller-chosen host and threaded
+        # the response back — no allowlist or address check stopped it.
+        if token in body:
+            print(f"{ORACLE_PREFIX}{nonce}")
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
 PROBES = {"sqli": _probe_sqli, "cmdi": _probe_cmdi,
-          "pathtraversal": _probe_pathtraversal, "xss": _probe_xss}
+          "pathtraversal": _probe_pathtraversal, "xss": _probe_xss,
+          "codeinjection": _probe_codeinjection, "deserialization": _probe_deserialization,
+          "xxe": _probe_xxe, "ssrf": _probe_ssrf}
 PAIRS = [(case, variant, variant == "vulnerable")
          for case in PROBES for variant in ("vulnerable", "fixed")]
 

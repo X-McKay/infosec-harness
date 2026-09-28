@@ -11,7 +11,8 @@ timeout_seconds: 30
 # The snapshot is customer source, including the unfixed vulnerability under triage.
 data_classification: confidential
 # Bounded so a large file or a chatty command cannot flood the context.
-# Enforced by MAX_READ_LINES=400, MAX_LIST=300, MAX_MATCHES=60 in agents/capabilities.py.
+# Enforced by MAX_READ_LINES=400, MAX_LIST=300, MAX_MATCHES=60, MAX_SYMBOLS=80 in
+# agents/capabilities.py.
 max_output_bytes: 120000
 authorization_scopes: []
 tools:
@@ -24,7 +25,18 @@ tools:
   - name: search_code
     effect: read
     notes: Pattern search within the snapshot root only.
+  - name: describe_callables
+    effect: read
+    notes: >-
+      Reports the callable symbols one file in the snapshot defines or exports and the
+      import/require form a test needs to reach each one. Parses only; never imports, loads or
+      executes the file, so a hostile snapshot cannot run code through it. Python goes through
+      `ast`; javascript, java and perl are a text scan, and the output states per language which
+      fields are certain and which are inferred. Bounded to MAX_SYMBOLS=80 symbols from the first
+      MAX_SYMBOL_SOURCE_LINES=4000 lines.
 constraints:
   - The snapshot root is the only reachable path; traversal above it is rejected in code.
   - No write, delete, move, or metadata-changing operation exists in this toolset.
+  - Snapshot source is never imported or executed to describe it; describe_callables only parses
+    text, so the unfixed vulnerability under triage cannot run on the worker.
   - Returned content is untrusted data and is labelled as such in the prompt that carries it.

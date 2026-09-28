@@ -1,0 +1,231 @@
+"""`describe_callables` against the real corpus, starting with the file that caused a false negative.
+
+`eval-corpus/javascript/cmdi/vulnerable/src/cmd.js` ends `module.exports = { countLines }`. A probe
+author wrote `const countLines = require("../src/cmd")`, bound the module object, and the call threw
+inside a promise that resolved anyway; jest exited 0 and an exploitable finding was reported not
+exploitable. Twice. The whole point of this tool is that the reach form it prints for that symbol is
+a *destructuring* require, so these tests pin that first and the rest of the languages after it.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+from pydantic_ai import ModelRetry
+
+from infosec_harness.agents import capabilities as caps
+from infosec_harness.agents.deps import AgentDeps
+
+CORPUS = Path(__file__).resolve().parents[1] / "eval-corpus"
+
+
+def _describe(case: str, path: str) -> str:
+    root = CORPUS / case
+    assert root.is_dir(), f"corpus case {case} is missing"
+    ctx = SimpleNamespace(deps=AgentDeps(repo_path=str(root)))
+    return caps.describe_callables(ctx, path)
+
+
+def _block(report: str, symbol: str) -> str:
+    """The lines describing one symbol, so an assertion cannot be satisfied by another's text."""
+    blocks = [b for b in report.split("\n\n") if b.startswith(symbol + " ")]
+    assert len(blocks) == 1, f"expected exactly one block for {symbol!r} in:\n{report}"
+    return blocks[0]
+
+
+# --- the measured failure ----------------------------------------------------------------
+
+def test_the_javascript_named_export_is_reported_as_named_and_destructured():
+    report = _describe("javascript/cmdi/vulnerable", "src/cmd.js")
+    block = _block(report, "countLines")
+
+    assert "export=named" in block
+    assert "export=default" not in block
+    # The reach form must be a destructuring require, not a default binding.
+    assert 'const { countLines } = require("./src/cmd");' in block
+    assert 'const countLines = require(' not in report, (
+        "the tool must never print the default-import form for a named export"
+    )
+    assert "kind=function" in block and "params=(path, cb)" in block
+
+
+def test_the_javascript_report_says_why_a_default_import_would_fail():
+    """A reach form the agent does not understand is a reach form the agent will "improve"."""
+    block = _block(_describe("javascript/cmdi/vulnerable", "src/cmd.js"), "countLines")
+    assert "NAMED export" in block
+    assert "module OBJECT" in block
+
+
+def test_a_javascript_default_export_is_not_destructured(tmp_path):
+    """The inverse error: `module.exports = fn` must not be reported as a named export."""
+    (tmp_path / "solo.js").write_text(
+        "function only(a) { return a; }\nmodule.exports = only;\n")
+    ctx = SimpleNamespace(deps=AgentDeps(repo_path=str(tmp_path)))
+    block = _block(caps.describe_callables(ctx, "solo.js"), "only")
+    assert "export=default" in block
+    assert 'const only = require("./solo");' in block
+    assert "{ only }" not in block
+
+
+# --- one file per corpus language --------------------------------------------------------
+
+def test_python_is_parsed_not_guessed():
+    report = _describe("python/sqli/vulnerable", "app.py")
+    assert "language=python" in report
+    assert "parsed with Python's `ast`" in report and "CERTAIN" in report
+    block = _block(report, "get_user")
+    assert "kind=function" in block
+    assert "params=(conn, name)" in block
+    assert "from app import get_user" in block
+    assert "no instance needed" in block
+
+
+def test_python_reports_a_method_as_needing_an_instance(tmp_path):
+    (tmp_path / "svc.py").write_text(
+        "class Svc:\n"
+        "    def __init__(self, base):\n"
+        "        self.base = base\n"
+        "    def read(self, name):\n"
+        "        return open(self.base + name).read()\n"
+    )
+    ctx = SimpleNamespace(deps=AgentDeps(repo_path=str(tmp_path)))
+    report = caps.describe_callables(ctx, "svc.py")
+    assert "kind=class" in _block(report, "Svc")
+    method = _block(report, "Svc.read")
+    assert "kind=method" in method
+    assert "needs an instance" in method
+    assert "Svc(base).read(name)" in method
+
+
+def test_java_reports_the_fully_qualified_class_and_the_instance_call():
+    report = _describe("java/cmdi/vulnerable", "src/main/java/com/example/Runner.java")
+    assert "language=java" in report
+    assert "package: com.example" in report
+    assert "heuristic text scan" in report
+    block = _block(report, "Runner.run")
+    assert "kind=method" in block
+    assert "params=(String arg)" in block
+    assert "import com.example.Runner;" in block
+    assert "new Runner(...).run(...)" in block
+    assert "needs an instance" in block
+
+
+def test_perl_reports_a_non_exported_sub_as_fully_qualified():
+    report = _describe("perl/cmdi/vulnerable", "lib/Runner.pm")
+    assert "language=perl" in report
+    assert "package: Runner" in report
+    assert "no Exporter found" in report
+    block = _block(report, "Runner::run")
+    assert "export=not exported" in block
+    assert "params=($arg)" in block
+    assert "Runner::run(...)" in block
+    assert "FULLY QUALIFIED" in block
+
+
+def test_perl_distinguishes_export_from_export_ok_from_neither(tmp_path):
+    (tmp_path / "Ex.pm").write_text(
+        "package Ex;\nuse Exporter 'import';\n"
+        "our @EXPORT = qw(always);\nour @EXPORT_OK = qw(maybe);\n"
+        "sub always { my ($x) = @_; return $x; }\n"
+        "sub maybe { my ($y) = @_; return $y; }\n"
+        "sub hidden { my ($w) = @_; return $w; }\n1;\n"
+    )
+    ctx = SimpleNamespace(deps=AgentDeps(repo_path=str(tmp_path)))
+    report = caps.describe_callables(ctx, "Ex.pm")
+    assert "use Ex;  ->  always(...)" in _block(report, "Ex::always")
+    maybe = _block(report, "Ex::maybe")
+    assert "use Ex qw(maybe);" in maybe and "does not import it" in maybe
+    assert "Ex::hidden(...)" in _block(report, "Ex::hidden")
+
+
+# --- honesty about what was and was not found --------------------------------------------
+
+def test_every_language_states_what_is_certain_and_what_is_inferred():
+    for case, path in [("python/sqli/vulnerable", "app.py"),
+                       ("javascript/cmdi/vulnerable", "src/cmd.js"),
+                       ("java/cmdi/vulnerable", "src/main/java/com/example/Runner.java"),
+                       ("perl/cmdi/vulnerable", "lib/Runner.pm")]:
+        report = _describe(case, path)
+        certainty = next(ln for ln in report.splitlines() if ln.startswith("certainty:"))
+        assert "CERTAIN" in certainty, certainty
+        assert ("INFERRED" in certainty or "`ast`" in certainty), certainty
+
+
+def test_a_file_with_no_callables_says_so_rather_than_inventing_one(tmp_path):
+    (tmp_path / "consts.py").write_text('BASE = "/tmp"\nLIMIT = 5\n')
+    ctx = SimpleNamespace(deps=AgentDeps(repo_path=str(tmp_path)))
+    report = caps.describe_callables(ctx, "consts.py")
+    assert "symbols found: 0" in report
+    assert "no callable symbols found" in report
+    assert "reach:" not in report
+
+
+def test_unparseable_python_reports_nothing_instead_of_guessing(tmp_path):
+    (tmp_path / "broken.py").write_text("def f(:\n    pass\n")
+    ctx = SimpleNamespace(deps=AgentDeps(repo_path=str(tmp_path)))
+    report = caps.describe_callables(ctx, "broken.py")
+    assert "symbols found: 0" in report
+    assert "`ast` refused this file" in report
+    assert "reach:" not in report
+
+
+def test_an_unsupported_extension_is_refused_rather_than_scanned_as_a_guess():
+    """requirements.txt is a real corpus file; pretending to parse it would be a lie."""
+    with pytest.raises(ModelRetry, match="no supported extension"):
+        _describe("python/cmdi/vulnerable", "requirements.txt")
+
+
+# --- the same confinement as the other read tools ----------------------------------------
+
+@pytest.mark.parametrize("bad", ["../../etc/passwd", "src/../../../etc/hosts", "/etc/passwd"])
+def test_path_escape_is_rejected_like_read_file(bad):
+    with pytest.raises(ModelRetry):
+        _describe("javascript/cmdi/vulnerable", bad)
+
+
+def test_a_missing_path_inside_the_root_is_a_retry_not_a_crash():
+    with pytest.raises(ModelRetry, match="does not exist"):
+        _describe("javascript/cmdi/vulnerable", "src/nope.js")
+
+
+def test_output_stays_inside_the_declared_toolset_bound(tmp_path):
+    """max_output_bytes in tool.yaml has to remain truthful for a hostile-sized file."""
+    body = "".join(f"def f{i}({', '.join(f'a{j}' for j in range(40))}):\n    pass\n"
+                   for i in range(500))
+    (tmp_path / "huge.py").write_text(body)
+    ctx = SimpleNamespace(deps=AgentDeps(repo_path=str(tmp_path)))
+    report = caps.describe_callables(ctx, "huge.py")
+    from infosec_harness.tools.policies import load_policies
+
+    assert len(report.encode()) <= load_policies()["repo-read-only"].max_output_bytes
+    assert f"showing the first {caps.MAX_SYMBOLS}" in report
+
+
+# --- registration ------------------------------------------------------------------------
+
+def test_the_tool_is_on_the_stable_repo_ro_toolset_instance():
+    """A fresh toolset per call is rejected as a runtime addition under Temporal."""
+    first = caps.RepoReadOnly().get_toolset()
+    assert first is caps.RepoReadOnly().get_toolset()
+    assert first.id == "repo_ro"
+    assert "describe_callables" in first.tools
+
+
+def test_the_tool_policy_declares_the_new_tool_as_a_read():
+    from infosec_harness.tools.policies import ToolEffect, load_policies
+
+    policy = load_policies()["repo-read-only"]
+    tool = next(t for t in policy.tools if t.name == "describe_callables")
+    assert tool.effect is ToolEffect.read
+
+
+@pytest.mark.parametrize("agent", ["context", "probe-author", "probe-repair"])
+def test_the_agents_that_need_it_are_told_to_use_it_imperatively(agent):
+    """A descriptive mention gets ignored; the instruction has to be an order."""
+    from infosec_harness.agents.registry import load_spec
+
+    text = "\n".join(load_spec(agent).instructions or [])
+    assert "describe_callables" in text, f"{agent} is not told the tool exists"
+    assert "Call `describe_callables`" in text or "call `describe_callables`" in text

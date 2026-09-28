@@ -34,7 +34,7 @@ from infosec_harness.domain.models import (
 from infosec_harness.settings import get_settings
 
 # The tools each agent must expose to the model (design contract).
-REPO = {"load_capability", "list_files", "read_file", "search_code"}
+REPO = {"load_capability", "list_files", "read_file", "search_code", "describe_callables"}
 EXPECTED_TOOLS = {
     "intake": {"load_capability"},
     "recon": REPO,

@@ -9,13 +9,13 @@ This is the cleanest ground-truth signal for the whole pipeline and for per-agen
 scoring (expected verdict, reachability, sink file/line, target callable). Truth is never
 shown to the agents.
 
-## Cases (22 total)
+## Cases (30 total)
 
 Each case name is `[<lang>-]<cwe>-<variant>` (Python cases are unprefixed).
 
 | Language (toolchain) | CWEs (paired vulnerable/fixed) |
 |---|---|
-| python (pip / pytest) | CWE-89 SQLi, CWE-78 cmdi, CWE-22 path traversal, CWE-79 XSS |
+| python (pip / pytest) | CWE-89 SQLi, CWE-78 cmdi, CWE-22 path traversal, CWE-79 XSS, CWE-94 code injection, CWE-502 deserialization, CWE-611 XXE, CWE-918 SSRF |
 | java (maven / junit5) | CWE-89 SQLi, CWE-78 cmdi |
 | javascript (npm / jest) | CWE-78 cmdi, CWE-79 XSS |
 | perl (cpanm / Test::More) | CWE-89 SQLi, CWE-78 cmdi |
@@ -27,6 +27,12 @@ query — context should mark it unreachable) and `testonly` (the flagged patter
 Every case's ground truth includes the exact sink file/line and target callable, and
 `test_corpus.py` asserts `detect_stack` identifies the right language, build system, and test
 framework for each.
+
+Every Python case is written so its exploit condition is observable **offline**: probes have no
+egress, so the SSRF case is driven against a loopback listener the probe starts, and the XXE
+case's entity points at a marker file under the sandbox temp dir. The XXE pair uses
+stdlib `xml.sax` (`feature_external_ges` on/off) rather than a third-party parser so no case
+needs a dependency beyond `pytest`.
 
 ## How it's used
 

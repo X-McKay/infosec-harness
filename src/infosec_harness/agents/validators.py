@@ -6,6 +6,7 @@ correct itself within its ``retries.output`` budget.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -84,18 +85,221 @@ def validate_probe(ctx: RunContext[AgentDeps], output: ProbeSource) -> ProbeSour
         raise ModelRetry("The probe must emit an oracle signal when the exploit condition holds: "
                          "print HARNESS_ORACLE::<nonce>, or create the canary file the plan's "
                          "canary_file oracle names.")
+    problems = _skipping_probe_violations(output)
+    if problems:
+        raise ModelRetry("The probe could report nothing when it runs:\n- " + "\n- ".join(problems))
     return output
+
+
+# A probe that *declines to run* is the worst shape a probe can take: it produces no markers,
+# so the harness cannot tell it from a probe that is broken, and probe_diagnosis sends the
+# graph into a repair loop that can never succeed. Both idioms below are ordinary, good
+# practice in their own ecosystems — which is exactly why a model reaches for them.
+_PERL_SKIPS = ("skip_all", "skip_rest", "SKIP:")
+# Test::More needs a plan, before or after the assertions; without one prove reports a bad
+# plan and exits nonzero on a probe that did everything right.
+_PERL_PLAN = ("done_testing", "tests =>", "tests=>", "no_plan")
+_JUNIT_SKIPS = ("@Disabled", "@Ignore", "assumeTrue", "assumeFalse", "assumingThat",
+                "Assumptions.", "assumeThat")
+
+
+def _is_perl_probe(output: ProbeSource) -> bool:
+    return (output.test_file_path.endswith(".t")
+            or "Test::More" in output.content or "Test2::" in output.content)
+
+
+def _is_junit_probe(output: ProbeSource) -> bool:
+    return output.test_file_path.endswith(".java") or "org.junit" in output.content
+
+
+def _skipping_probe_violations(output: ProbeSource) -> list[str]:
+    """Deterministic: a probe that can skip itself can never report anything. Pure, for tests."""
+    problems: list[str] = []
+    if _is_perl_probe(output):
+        skips = [idiom for idiom in _PERL_SKIPS if idiom in output.content]
+        if skips:
+            problems.append(
+                f"Delete the {skips[0]} — a skipped Test::More script prints no markers, so the "
+                "harness records `skipped, 0 tests executed`, which is indistinguishable from a "
+                "broken probe and sends probe repair into a loop it cannot end. A module the "
+                "probe needs being absent is an *environment* defect: let the `use` fail so the "
+                "run exits nonzero with the module name, and build repair can install it."
+            )
+        if not any(marker in output.content for marker in _PERL_PLAN):
+            problems.append(
+                "Add `done_testing();` as the script's last statement (or declare the count up "
+                "front with `use Test::More tests => 1;`). With no plan, prove reports a bad "
+                "plan and exits nonzero on a probe that printed every marker correctly."
+            )
+    if _is_junit_probe(output):
+        skips = [idiom for idiom in _JUNIT_SKIPS if idiom in output.content]
+        if skips:
+            problems.append(
+                f"Delete the {skips[0]} — an aborted or disabled JUnit test prints no markers "
+                "and Surefire reports it as skipped, which the harness cannot tell from a "
+                "broken probe. Let a missing precondition surface as a failure with a message "
+                "instead; the probe must run to completion either way."
+            )
+    return problems
 
 
 # pytest buffers stdout unless told not to, and the oracle markers are stdout. Either of
 # these disables that capture.
 _PYTEST_UNBUFFERED = ("-s", "--capture=no", "--capture no")
+# prove parses its child's TAP stream and throws away everything that is not TAP unless it is
+# verbose, so a non-verbose `prove` swallows every marker exactly as an un-`-s`ed pytest does.
 # JVM runners select a test by class name rather than by file path.
 _CLASS_SELECTORS = ("-Dtest=", "--tests")
+# Maven relays the forked test JVM's stdout through its own logger at INFO level, so -q raises
+# the threshold above the markers and they never reach the runner's stdout.
+_MAVEN_REDIRECT_OFF = ("-Dmaven.test.redirectTestOutputToFile=false",
+                       "-DredirectTestOutputToFile=false")
+# Maven 3.x binds maven-surefire-plugin **2.12.4** to the `test` phase by default, and 2.12.4
+# has no JUnit Platform provider: a JUnit 5 probe is simply never discovered ("No tests were
+# executed"). The plugin version bound to a phase cannot be overridden from the command line,
+# so the only fix available to an EnvironmentSpec (which may not edit the repo's pom.xml) is to
+# compile with `test-compile` and then invoke a pinned surefire goal directly.
+_SUREFIRE_PIN = re.compile(r"maven-surefire-plugin:(\d+)[.:]")
+# Lifecycle phases that run the pom's own (2.12.4) surefire execution on the way past.
+_PHASES_RUNNING_SUREFIRE = frozenset(
+    {"test", "integration-test", "verify", "package", "install", "deploy"})
+_COMPILES_TESTS = "test-compile"
+MAVEN_TEST_COMMAND = (
+    "mvn -B -o test-compile "
+    "org.apache.maven.plugins:maven-surefire-plugin:3.2.5:test "
+    "-Dtest=HarnessProbeTest -Dmaven.test.redirectTestOutputToFile=false"
+)
+GRADLE_TEST_COMMAND = "./gradlew --no-daemon --offline -i test --tests '*HarnessProbeTest'"
+# `cmd || true` makes a failed dependency install invisible: the image builds, the smoke test
+# passes, and the absence surfaces at probe time as a compile error inside the probe — past
+# build repair, the only stage that could have installed anything.
+_SWALLOWED_FAILURE = re.compile(r"\|\|\s*(?:true|:)\s*(?=$|[;&|])|;\s*true\s*$")
+# cpanm into a local lib puts the modules somewhere perl does not look by default.
+_CPANM_LOCAL_LIB = re.compile(r"cpanm\b.*?(?:\s-[lL]\s|--local-lib(?:-contained)?)")
 
 
 def _selects_by_class_name(command: str) -> bool:
     return any(sel in command for sel in _CLASS_SELECTORS)
+
+
+def _is_jvm_runner(command: str) -> bool:
+    """A Maven or Gradle command, selector or not.
+
+    Routing on the selector alone misfiled `mvn test` with no `-Dtest=` as a path runner and
+    told it to add `{test_file}`, which Maven does not accept — the opposite of the advice it
+    needs, which is to name a class.
+    """
+    return any(token.rsplit("/", 1)[-1].removesuffix(".cmd") in ("mvn", "mvnw", "gradle", "gradlew")
+               for token in command.split())
+
+
+def _short_flag(command: str, letter: str) -> bool:
+    """Whether a standalone or clustered short flag carries `letter` (`-v`, `-lv`).
+
+    `-D` properties and `--long` options are skipped: `-Dmaven.test.redirect...` contains an
+    `i`, and reading it as `--info` would silently satisfy the check it is unrelated to.
+    """
+    for token in command.split():
+        if not token.startswith("-") or token.startswith(("--", "-D")):
+            continue
+        if letter in token[1:]:
+            return True
+    return False
+
+
+def _long_flag(command: str, *names: str) -> bool:
+    tokens = command.split()
+    return any(name in tokens for name in names)
+
+
+def _maven_goals(command: str) -> list[str]:
+    """The phases and goals a `mvn` invocation asks for, with flags and properties removed."""
+    tokens = command.split()
+    start = next((i for i, t in enumerate(tokens)
+                  if t.rsplit("/", 1)[-1] in ("mvn", "mvnw", "mvn.cmd", "./mvnw")), None)
+    if start is None:
+        return []
+    return [t for t in tokens[start + 1:] if not t.startswith("-")]
+
+
+def _install_violations(spec: EnvironmentSpec) -> list[str]:
+    """Install steps whose failure, or whose success, the probe run cannot see."""
+    problems: list[str] = []
+    for command in spec.install_commands:
+        if _SWALLOWED_FAILURE.search(command):
+            fixed = _SWALLOWED_FAILURE.sub("", command).strip().rstrip(";").strip()
+            problems.append(
+                f"Drop the failure-swallowing suffix from the install command: use {fixed!r}. "
+                "A dependency install that reports success when it failed makes the image build "
+                "and the smoke test pass, and the missing module surfaces only at probe time as "
+                "a compile error inside the probe (`Can't locate DBI.pm in @INC`), which "
+                "probe repair cannot fix and build repair never sees."
+            )
+        if _CPANM_LOCAL_LIB.search(command) and not (
+            "PERL5LIB" in spec.env or "PERL5LIB" in (spec.test_command or "")
+            or _short_flag(spec.test_command or "", "I")
+        ):
+            problems.append(
+                "This install puts the modules in a local lib, so set "
+                "env.PERL5LIB=/work/home/perl5/lib/perl5 (matching the -l/-L path) or drop the "
+                "local lib entirely. Without it prove runs with the stock @INC and the probe "
+                "dies on the modules that were just installed."
+            )
+    return problems
+
+
+def _jvm_violations(command: str) -> list[str]:
+    """Maven and Gradle: the ways a JVM probe runs and reports nothing anyway."""
+    problems: list[str] = []
+    if "mvn" in command:
+        if _short_flag(command, "q") or _long_flag(command, "--quiet"):
+            problems.append(
+                f"Drop -q and use -B instead: {MAVEN_TEST_COMMAND}. Maven relays the forked "
+                "test JVM's stdout through its own logger at INFO level, so -q raises the "
+                "threshold above the probe's HARNESS_ markers and a correct probe is recorded "
+                "as having reached nothing."
+            )
+        if not any(flag in command for flag in _MAVEN_REDIRECT_OFF):
+            problems.append(
+                "Add -Dmaven.test.redirectTestOutputToFile=false. A pom that turns the "
+                "redirect on writes the markers to target/surefire-reports/*-output.txt "
+                "instead of stdout, and the harness only reads stdout."
+            )
+        pinned = _SUREFIRE_PIN.search(command)
+        if not pinned or int(pinned.group(1)) < 3:
+            problems.append(
+                f"Pin a JUnit-Platform-capable Surefire and invoke it directly: "
+                f"{MAVEN_TEST_COMMAND}. Maven 3.x binds maven-surefire-plugin 2.12.4 to the "
+                "`test` phase, which has no JUnit Platform provider, so a JUnit 5 probe is "
+                "never discovered and the run fails with 'No tests were executed'. A plugin "
+                "version bound to a phase cannot be overridden from the command line."
+            )
+        goals = _maven_goals(command)
+        reached = sorted(_PHASES_RUNNING_SUREFIRE.intersection(goals))
+        if reached:
+            problems.append(
+                f"Remove the `{reached[0]}` phase and keep only test-compile plus the pinned "
+                f"goal: {MAVEN_TEST_COMMAND}. Reaching `{reached[0]}` also runs the pom's own "
+                "Surefire 2.12.4 execution, which fails the build with 'No tests were executed' "
+                "before the pinned goal ever runs."
+            )
+        elif _COMPILES_TESTS not in goals:
+            problems.append(
+                f"Compile the probe: the command must run the test-compile phase, as in "
+                f"{MAVEN_TEST_COMMAND}. The probe file is written into the container at probe "
+                "time, so a command that only invokes a surefire goal runs against the test "
+                "classes baked into the image and never sees the probe at all."
+            )
+    if "gradle" in command and not (
+        _short_flag(command, "i") or _short_flag(command, "d")
+        or _long_flag(command, "--info", "--debug")
+    ):
+        problems.append(
+            f"Add -i: {GRADLE_TEST_COMMAND}. Gradle's Test task forwards a test's standard "
+            "streams only from the INFO log level up, so at the default level the probe's "
+            "HARNESS_ markers are dropped and a correct probe reports nothing."
+        )
+    return problems
 
 
 def _has_class_selector_value(command: str) -> bool:
@@ -114,9 +318,9 @@ def environment_spec_violations(spec: EnvironmentSpec) -> list[str]:
     neither the probe nor the diagnosis can see the cause: the probe looks correct, exits
     cleanly, and reports nothing.
     """
-    problems: list[str] = []
+    problems: list[str] = _install_violations(spec)
     command = spec.test_command or ""
-    if _selects_by_class_name(command):
+    if _selects_by_class_name(command) or _is_jvm_runner(command):
         # Maven and Gradle select tests by *class*, not by path: `-Dtest=HarnessProbeTest`,
         # `--tests '*HarnessProbeTest'`. Substituting a file path there matches nothing, so
         # these commands legitimately carry no {test_file} — the coupling is that the probe's
@@ -128,7 +332,7 @@ def environment_spec_violations(spec: EnvironmentSpec) -> list[str]:
                 "'mvn -q -B -o test -Dtest=HarnessProbeTest' or "
                 "\"./gradlew --offline test --tests '*HarnessProbeTest'\"."
             )
-        return problems
+        return problems + _jvm_violations(command)
     if "{test_file}" not in command:
         # The harness writes the probe to the path the author chose and substitutes it here.
         # A hardcoded path means the probe file that was actually written is never run: pytest
@@ -145,6 +349,17 @@ def environment_spec_violations(spec: EnvironmentSpec) -> list[str]:
             "a pytest test_command must disable output capture with -s (or --capture=no), "
             "otherwise the probe's HARNESS_ markers never reach the runner and a correct "
             "probe is recorded as having reached nothing."
+        )
+    if "prove" in command and not (
+        _short_flag(command, "v") or _long_flag(command, "--verbose")
+    ):
+        # prove is a TAP consumer: it parses the child's stream and reports the plan, and
+        # everything that is not TAP — which is every HARNESS_ marker — is discarded unless it
+        # is verbose. Same failure as an un-`-s`ed pytest, and just as invisible downstream.
+        problems.append(
+            "a prove test_command must be verbose: 'prove -v {test_file}'. prove discards "
+            "non-TAP output from the test it runs, so without -v the probe's HARNESS_ markers "
+            "never reach the runner and a correct probe is recorded as having reached nothing."
         )
     return problems
 

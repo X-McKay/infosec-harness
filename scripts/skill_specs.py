@@ -31,6 +31,9 @@ BUILD_COMPLETION = [
     "The spec names a base image from the allowlisted registries.",
     "Install commands come from the repository's own manifests.",
     "The test runner itself is installed, not merely assumed present.",
+    "No install command swallows its own failure (`|| true`, `|| :`, `; true`). A dependency "
+    "install that reports success when it failed surfaces only at probe time, where probe "
+    "repair cannot fix it and build repair never sees it.",
 ]
 # Runners that take a path must carry the placeholder; JVM runners select by class name
 # instead, so demanding it of them would be wrong (and was, briefly).
@@ -47,6 +50,31 @@ JVM_RUNNER_COMPLETION = [
     "`test_command` names the probe's test *class* in its selector (`-Dtest=HarnessProbeTest`, "
     "`--tests '*HarnessProbeTest'`) — not a file path, which these runners do not accept. The "
     "probe's class name must therefore match the selector.",
+]
+PROVE_COMPLETION = [
+    "The `prove` command is verbose (`prove -v {test_file}`). prove parses its child's TAP and "
+    "discards every other line, so without `-v` the probe's markers are thrown away and a "
+    "correct probe is recorded as having reached nothing — the Perl form of pytest's `-s`.",
+    "Every module the repository's cpanfile/Makefile.PL declares is installed, and if the "
+    "install used a local lib then `env.PERL5LIB` points at it.",
+]
+MAVEN_COMPLETION = [
+    "`test_command` compiles the probe (`test-compile`) and then invokes a version-pinned "
+    "Surefire goal (`org.apache.maven.plugins:maven-surefire-plugin:3.2.5:test`) rather than "
+    "the `test` phase: Maven 3.x binds Surefire 2.12.4, which has no JUnit Platform provider "
+    "and so discovers no JUnit 5 test at all.",
+    "`test_command` uses `-B` and never `-q`, and passes "
+    "`-Dmaven.test.redirectTestOutputToFile=false`, so the probe's markers reach stdout.",
+]
+GRADLE_COMPLETION = [
+    "`test_command` runs at the INFO log level (`-i`): Gradle's `Test` task forwards a test's "
+    "standard streams only from INFO up, so at the default level the probe's markers are "
+    "dropped and a correct probe is recorded as having reached nothing.",
+]
+NO_SKIP_COMPLETION = [
+    "The probe cannot decline to run: no skip, no disable, no assumption guard. A skipped test "
+    "prints no markers, which the harness cannot distinguish from a broken probe, so probe "
+    "repair is handed a correct probe and exhausts its budget on it.",
 ]
 TEST_SAFETY = [
     "The test must run to completion and print its markers whether or not the exploit "
@@ -243,7 +271,8 @@ SKILLS = {
                   "The repository declares a pom.xml."],
         avoid_when=["The project builds with Gradle — use `build-gradle`.",
                     "The repository is not a JVM project."],
-        safety=BUILD_SAFETY, completion=BUILD_COMPLETION + JVM_RUNNER_COMPLETION),
+        safety=BUILD_SAFETY,
+        completion=BUILD_COMPLETION + JVM_RUNNER_COMPLETION + MAVEN_COMPLETION),
     "build-gradle": dict(
         description=("Recipe for building a Gradle Java test environment in the sandbox. Use "
                      "this when planning or repairing a build for a Gradle project."),
@@ -251,7 +280,8 @@ SKILLS = {
                   "The repository declares build.gradle or build.gradle.kts."],
         avoid_when=["The project builds with Maven — use `build-maven`.",
                     "The repository is not a JVM project."],
-        safety=BUILD_SAFETY, completion=BUILD_COMPLETION + JVM_RUNNER_COMPLETION),
+        safety=BUILD_SAFETY,
+        completion=BUILD_COMPLETION + JVM_RUNNER_COMPLETION + GRADLE_COMPLETION),
     "build-npm": dict(
         description=("Recipe for building a Node and JavaScript test environment in the "
                      "sandbox. Use this when planning or repairing a build for a package.json "
@@ -266,7 +296,8 @@ SKILLS = {
         use_when=["You are producing or repairing an EnvironmentSpec for a Perl repository.",
                   "The repository declares a cpanfile, Makefile.PL, or Build.PL."],
         avoid_when=["The repository is not Perl."],
-        safety=BUILD_SAFETY, completion=BUILD_COMPLETION + PATH_RUNNER_COMPLETION),
+        safety=BUILD_SAFETY,
+        completion=BUILD_COMPLETION + PATH_RUNNER_COMPLETION + PROVE_COMPLETION),
     "partial-build": dict(
         description=("Tactics for building only the sub-unit that contains the finding. Use "
                      "this when a full build has exhausted its repair budget."),
@@ -297,7 +328,7 @@ SKILLS = {
                   "JUnit 5."],
         avoid_when=["The repository uses a different framework; load that `test-*` skill.",
                     "You have not yet read `probe-oracle-protocol`; read it first."],
-        safety=TEST_SAFETY, completion=TEST_COMPLETION),
+        safety=TEST_SAFETY, completion=TEST_COMPLETION + NO_SKIP_COMPLETION),
     "test-jest": dict(
         description=("How to write a probe as a Jest or Vitest test that emits the oracle "
                      "markers. Use this when authoring or repairing a probe for a Jest "
@@ -315,5 +346,5 @@ SKILLS = {
                   "Test::More or Test2."],
         avoid_when=["The repository uses a different framework; load that `test-*` skill.",
                     "You have not yet read `probe-oracle-protocol`; read it first."],
-        safety=TEST_SAFETY, completion=TEST_COMPLETION),
+        safety=TEST_SAFETY, completion=TEST_COMPLETION + NO_SKIP_COMPLETION),
 }

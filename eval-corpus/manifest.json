@@ -194,6 +194,198 @@
       "language": "python"
     },
     {
+      "name": "codeinjection-vulnerable",
+      "finding": {
+        "title": "Code injection in compute_setting",
+        "repo_url": "eval-corpus/python/codeinjection/vulnerable",
+        "revision": "HEAD",
+        "file_path": "app.py",
+        "start_line": 1,
+        "symbol": "compute_setting",
+        "cwe": "CWE-94",
+        "severity": "critical",
+        "source_tool": "seed-corpus",
+        "description": "`expr` is passed to eval in compute_setting."
+      },
+      "truth": {
+        "expected_verdict": "potentially_exploitable",
+        "reachability": "reachable",
+        "sink_file": "app.py",
+        "sink_line": 6,
+        "source": "expr parameter",
+        "target_callable": "compute_setting"
+      },
+      "language": "python"
+    },
+    {
+      "name": "codeinjection-fixed",
+      "finding": {
+        "title": "Code injection in compute_setting",
+        "repo_url": "eval-corpus/python/codeinjection/fixed",
+        "revision": "HEAD",
+        "file_path": "app.py",
+        "start_line": 4,
+        "symbol": "compute_setting",
+        "cwe": "CWE-94",
+        "severity": "critical",
+        "source_tool": "seed-corpus",
+        "description": "`expr` reaches an eval-family call in compute_setting."
+      },
+      "truth": {
+        "expected_verdict": "likely_not_exploitable",
+        "reachability": "reachable",
+        "sink_file": "app.py",
+        "sink_line": 9,
+        "source": "expr parameter",
+        "target_callable": "compute_setting"
+      },
+      "language": "python"
+    },
+    {
+      "name": "deserialization-vulnerable",
+      "finding": {
+        "title": "Unsafe deserialization in load_profile",
+        "repo_url": "eval-corpus/python/deserialization/vulnerable",
+        "revision": "HEAD",
+        "file_path": "app.py",
+        "start_line": 4,
+        "symbol": "load_profile",
+        "cwe": "CWE-502",
+        "severity": "critical",
+        "source_tool": "seed-corpus",
+        "description": "`blob` is passed to pickle.loads in load_profile."
+      },
+      "truth": {
+        "expected_verdict": "potentially_exploitable",
+        "reachability": "reachable",
+        "sink_file": "app.py",
+        "sink_line": 9,
+        "source": "blob parameter",
+        "target_callable": "load_profile"
+      },
+      "language": "python"
+    },
+    {
+      "name": "deserialization-fixed",
+      "finding": {
+        "title": "Unsafe deserialization in load_profile",
+        "repo_url": "eval-corpus/python/deserialization/fixed",
+        "revision": "HEAD",
+        "file_path": "app.py",
+        "start_line": 15,
+        "symbol": "load_profile",
+        "cwe": "CWE-502",
+        "severity": "critical",
+        "source_tool": "seed-corpus",
+        "description": "`blob` reaches a pickle unpickler in load_profile."
+      },
+      "truth": {
+        "expected_verdict": "likely_not_exploitable",
+        "reachability": "reachable",
+        "sink_file": "app.py",
+        "sink_line": 20,
+        "source": "blob parameter",
+        "target_callable": "load_profile"
+      },
+      "language": "python"
+    },
+    {
+      "name": "xxe-vulnerable",
+      "finding": {
+        "title": "XML external entity expansion in parse_note",
+        "repo_url": "eval-corpus/python/xxe/vulnerable",
+        "revision": "HEAD",
+        "file_path": "app.py",
+        "start_line": 21,
+        "symbol": "parse_note",
+        "cwe": "CWE-611",
+        "severity": "high",
+        "source_tool": "seed-corpus",
+        "description": "`document` is parsed with external general entity resolution enabled."
+      },
+      "truth": {
+        "expected_verdict": "potentially_exploitable",
+        "reachability": "reachable",
+        "sink_file": "app.py",
+        "sink_line": 31,
+        "source": "document parameter",
+        "target_callable": "parse_note"
+      },
+      "language": "python"
+    },
+    {
+      "name": "xxe-fixed",
+      "finding": {
+        "title": "XML external entity expansion in parse_note",
+        "repo_url": "eval-corpus/python/xxe/fixed",
+        "revision": "HEAD",
+        "file_path": "app.py",
+        "start_line": 21,
+        "symbol": "parse_note",
+        "cwe": "CWE-611",
+        "severity": "high",
+        "source_tool": "seed-corpus",
+        "description": "`document` reaches a SAX parser in parse_note."
+      },
+      "truth": {
+        "expected_verdict": "likely_not_exploitable",
+        "reachability": "reachable",
+        "sink_file": "app.py",
+        "sink_line": 31,
+        "source": "document parameter",
+        "target_callable": "parse_note"
+      },
+      "language": "python"
+    },
+    {
+      "name": "ssrf-vulnerable",
+      "finding": {
+        "title": "Server-side request forgery in fetch_preview",
+        "repo_url": "eval-corpus/python/ssrf/vulnerable",
+        "revision": "HEAD",
+        "file_path": "app.py",
+        "start_line": 4,
+        "symbol": "fetch_preview",
+        "cwe": "CWE-918",
+        "severity": "high",
+        "source_tool": "seed-corpus",
+        "description": "`url` chooses the destination of urlopen in fetch_preview."
+      },
+      "truth": {
+        "expected_verdict": "potentially_exploitable",
+        "reachability": "reachable",
+        "sink_file": "app.py",
+        "sink_line": 10,
+        "source": "url parameter",
+        "target_callable": "fetch_preview"
+      },
+      "language": "python"
+    },
+    {
+      "name": "ssrf-fixed",
+      "finding": {
+        "title": "Server-side request forgery in fetch_preview",
+        "repo_url": "eval-corpus/python/ssrf/fixed",
+        "revision": "HEAD",
+        "file_path": "app.py",
+        "start_line": 8,
+        "symbol": "fetch_preview",
+        "cwe": "CWE-918",
+        "severity": "high",
+        "source_tool": "seed-corpus",
+        "description": "`url` reaches urlopen in fetch_preview."
+      },
+      "truth": {
+        "expected_verdict": "likely_not_exploitable",
+        "reachability": "reachable",
+        "sink_file": "app.py",
+        "sink_line": 17,
+        "source": "url parameter",
+        "target_callable": "fetch_preview"
+      },
+      "language": "python"
+    },
+    {
       "name": "unreachable",
       "finding": {
         "title": "SQL execution in healthcheck",

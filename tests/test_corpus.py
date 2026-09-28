@@ -12,6 +12,10 @@ SINK_PATTERN = {
     "CWE-78": re.compile(r"subprocess\.run|exec|ProcessBuilder|system|`echo"),
     "CWE-22": re.compile(r"open\("),
     "CWE-79": re.compile(r"<div"),
+    "CWE-94": re.compile(r"eval\("),  # eval / ast.literal_eval
+    "CWE-502": re.compile(r"pickle\.loads|Unpickler"),
+    "CWE-611": re.compile(r"\.parse\("),
+    "CWE-918": re.compile(r"urlopen\("),
 }
 DEFINITION_PATTERN = {  # language -> regex (with a {name} slot) for "this callable is defined here"
     "python": r"def\s+{name}\s*\(",

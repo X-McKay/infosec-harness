@@ -62,12 +62,26 @@ def _env_plan(stack: dict | None) -> dict:
                 "install_commands": ["npm install --no-audit --no-fund"],
                 "test_command": "npx jest --runTestsByPath {test_file}", "rationale": "stub heuristic: node"}
     if lang == "java":
+        # Compile with test-compile and then invoke a *pinned* surefire goal: the version Maven
+        # 3.x binds to the `test` phase is 2.12.4, which has no JUnit Platform provider, and a
+        # phase-bound plugin version cannot be overridden from the command line. The build warms
+        # the pinned plugin and its provider into the local repo so the probe run can be offline.
         return {"base_image": "maven:3.9-eclipse-temurin-21",
-                "install_commands": ["mvn -q -B -DskipTests test-compile"],
-                "test_command": "mvn -q -B test -Dtest=HarnessProbeTest", "rationale": "stub heuristic: maven"}
+                "install_commands": [
+                    "mvn -B -DskipTests test-compile",
+                    "mvn -B org.apache.maven.plugins:maven-surefire-plugin:3.2.5:test "
+                    "-DfailIfNoTests=false"],
+                "test_command": ("mvn -B -o test-compile "
+                                 "org.apache.maven.plugins:maven-surefire-plugin:3.2.5:test "
+                                 "-Dtest=HarnessProbeTest "
+                                 "-Dmaven.test.redirectTestOutputToFile=false"),
+                "rationale": "stub heuristic: maven"}
     if lang == "perl":
-        return {"base_image": "perl:5.40", "install_commands": ["cpanm --notest --installdeps . || true"],
-                "test_command": "prove -v {test_file}", "rationale": "stub heuristic: perl"}
+        # No `|| true`: a swallowed cpanm failure builds an image whose probe cannot compile,
+        # and the absence appears at probe time where nothing can install anything.
+        return {"base_image": "perl:5.40",
+                "install_commands": ["cpanm --notest --installdeps .", "cpanm --notest App::prove"],
+                "test_command": "prove -v -Ilib {test_file}", "rationale": "stub heuristic: perl"}
     return {"base_image": "debian:bookworm-slim", "install_commands": [],
             "test_command": "sh {test_file}", "rationale": "stub heuristic: unknown stack"}
 

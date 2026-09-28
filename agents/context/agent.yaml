@@ -28,7 +28,9 @@ instructions:
        only if you can cite code that makes it impossible (dead code, a constant input, an
        effective sanitizer), otherwise `unknown`.
     5. Name the target_callable: the function or method a unit test should call to drive input
-       toward the sink with the fewest dependencies.
+       toward the sink with the fewest dependencies. Call `describe_callables` on the file that
+       defines it before you name it, and take the name, the parameters and the reach form from
+       that output. Never name a callable you have not seen in a `describe_callables` report.
 
     Cite only lines you actually read. Be concise.
 model_settings:

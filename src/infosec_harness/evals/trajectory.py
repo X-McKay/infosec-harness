@@ -105,7 +105,9 @@ def check_expectations(tools_called: Iterable[str], skills_loaded: Iterable[str]
 # What each tool-using agent is expected to evoke. Read-only file access is the core
 # signal (the agent must actually look at the code); Skills-only agents just need the
 # relevant skill loaded. Agents with no tools are absent.
-READ_TOOLS = frozenset({"read_file", "search_code", "list_files"})
+# describe_callables belongs here: it is how an agent learns a symbol's name, signature and
+# import form. Omitting it would score an agent that used it well as having read nothing.
+READ_TOOLS = frozenset({"read_file", "search_code", "list_files", "describe_callables"})
 AGENT_EXPECTATIONS: dict[str, TrajectoryExpectation] = {
     "recon": TrajectoryExpectation(tool_groups=(READ_TOOLS,)),
     "env-planner": TrajectoryExpectation(tool_groups=(READ_TOOLS,)),
