@@ -83,7 +83,8 @@ def _stage_results(case, out) -> list[tuple[str, bool | None]]:
 
 
 async def score_corpus(*, language: str = "python", sandbox: bool | None = None,
-                       repeat: int = 1) -> dict:
+                       repeat: int = 1, manifest_path: Path | None = None,
+                       dataset: str = "seed", limit: int = 0) -> dict:
     """Run the seeded corpus end-to-end and score verdicts against ground truth (§10.2).
 
     Headline metrics: per-class recall and the false-negative rate on truly exploitable
@@ -98,14 +99,22 @@ async def score_corpus(*, language: str = "python", sandbox: bool | None = None,
     cannot separate a real effect from noise. Repeat both sides of an A/B.
     """
     from infosec_harness.evals.corpus import languages as corpus_languages
+    from infosec_harness.evals.corpus import load_corpus
 
-    langs = corpus_languages() if language == "all" else [language]
+    if language == "all" and manifest_path is not None:
+        # `languages()` reads the seeded manifest, so sweeping a harvested one has to come
+        # from the harvested file rather than from the seed's language list.
+        langs = sorted({c.language for c in load_corpus(manifest_path=manifest_path)})
+    else:
+        langs = corpus_languages() if language == "all" else [language]
     runs: list[dict] = []
     for rep in range(repeat):
         for lang in langs:
             if len(langs) > 1 or repeat > 1:
                 print(f"--- {lang}" + (f" (pass {rep + 1}/{repeat})" if repeat > 1 else ""))
-            runs.append({"language": lang, **await _score_corpus_once(language=lang, sandbox=sandbox)})
+            runs.append({"language": lang, **await _score_corpus_once(
+                language=lang, sandbox=sandbox, manifest_path=manifest_path,
+                dataset=dataset, limit=limit)})
     if len(runs) == 1:
         return runs[0]
 
@@ -521,7 +530,9 @@ async def compare_experiments(baseline: str, candidate: str) -> None:
     print(f"  candidate confusion: {c.metrics.get('confusion')}")
 
 
-async def _score_corpus_once(*, language: str, sandbox: bool | None) -> dict:
+async def _score_corpus_once(*, language: str, sandbox: bool | None,
+                             manifest_path: Path | None = None, dataset: str = "seed",
+                             limit: int = 0) -> dict:
     """One pass over the corpus. See :func:`score_corpus`."""
     from infosec_harness.domain.models import Finding, InconclusiveReason
     from infosec_harness.evals.corpus import load_corpus
@@ -533,7 +544,13 @@ async def _score_corpus_once(*, language: str, sandbox: bool | None) -> dict:
     )
     from infosec_harness.graph.local import triage_batch_local
 
-    cases = load_corpus(language)
+    cases = load_corpus(language, manifest_path=manifest_path, dataset=dataset)
+    if limit:
+        # Harvested manifests run to hundreds of cases against real repositories; a bounded
+        # slice keeps a first run interpretable. Pairs are kept together, since scoring one
+        # half of a pair measures nothing.
+        keep = {c.name.rsplit("-", 1)[0] for c in cases[:limit]}
+        cases = [c for c in cases if c.name.rsplit("-", 1)[0] in keep]
     if sandbox is None:
         from infosec_harness.sandbox import docker
         sandbox = await docker.docker_available() and await docker.runtime_available()

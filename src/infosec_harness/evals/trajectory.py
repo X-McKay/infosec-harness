@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from functools import cache
 
 from pydantic_ai.messages import ModelMessage, ToolCallPart
 
@@ -157,9 +158,30 @@ def scores_skills(agent: str) -> bool:
     return bool(exp and exp.skill_prefixes)
 
 
+@cache
+def _available_cwe_skill_prefixes() -> frozenset[str]:
+    """The `cwe-*` skills that exist on disk, as prefixes."""
+    from infosec_harness.settings import get_settings
+
+    root = get_settings().skills_dir
+    if not root.is_dir():
+        return frozenset()
+    return frozenset("-".join(p.name.split("-")[:2])
+                     for p in root.iterdir() if p.name.startswith("cwe-"))
+
+
 def cwe_skill_prefix(cwe: str | None) -> str | None:
-    """Map CWE-89 -> the 'cwe-89' skill prefix so we can check the *matching* skill loaded."""
+    """Map CWE-89 -> the 'cwe-89' skill prefix so we can check the *matching* skill loaded.
+
+    Returns None when no such skill exists. The seeded corpus only uses the eight classes we
+    cover, but a harvested dataset does not: Vul4J spans 37 CWEs we have no skill for, and
+    demanding the "matching" skill there would score an agent for failing to load a file that
+    is not on disk. The honest answer is that skill loading is unscoreable for those cases.
+    """
     if not cwe:
         return None
     num = cwe.upper().removeprefix("CWE-")
-    return f"cwe-{num}" if num.isdigit() else None
+    if not num.isdigit():
+        return None
+    prefix = f"cwe-{num}"
+    return prefix if prefix in _available_cwe_skill_prefixes() else None
