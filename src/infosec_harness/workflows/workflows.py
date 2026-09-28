@@ -96,7 +96,8 @@ class FindingTriageWorkflow:
         state = TriageState(finding=finding, prepared=prepared)
         result = await TRIAGE_GRAPH.run(state=state, deps=TriageDeps(ops=ops), inputs=PreFilter())
         return TriageRunOutput(finding=finding, result=result, prepared_status=prepared.status,
-                               invocations=invocations + state.invocations)
+                               invocations=invocations + state.invocations,
+                               context=state.context, executions=state.executions)
 
 
 @workflow.defn

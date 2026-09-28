@@ -81,6 +81,11 @@ class Settings(BaseSettings):
     max_build_repairs: int = 6
     max_partial_build_attempts: int = 4
     max_probe_repairs: int = 3
+    # Environment re-plans triggered by a probe-time discovery (see graph.triage
+    # RepairEnvironment). Deliberately 1, not 3: this loop rebuilds an image, so it is the most
+    # expensive edge in the graph, and a genuine missing dependency is nearly always fixed by
+    # one install. A second attempt usually means the diagnosis was wrong, not the spec.
+    max_environment_repairs: int = 1
     per_repo_concurrency: int = 4
 
     # Azure DevOps (D13: comment-only write-back)

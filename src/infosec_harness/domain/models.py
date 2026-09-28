@@ -454,3 +454,8 @@ class TriageRunOutput(_Model):
     prepared_status: str
     invocations: list[AgentOutcome] = Field(default_factory=list)
     needs_info: bool = False
+    # The per-stage evidence. Without these a run records only its final label, so a failure
+    # can be seen but not located: "inconclusive" says nothing about whether the environment
+    # failed, the context misread reachability, or the probe never reached the sink.
+    context: FindingContext | None = None
+    executions: list[ProbeExecution] = Field(default_factory=list)

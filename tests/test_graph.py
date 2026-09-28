@@ -400,3 +400,144 @@ def test_a_zero_test_run_can_never_come_back_as_a_positive_or_a_negative():
     for kind in (DiagnosisKind.valid_positive, DiagnosisKind.valid_negative):
         diagnosis = ProbeDiagnosis(kind=kind, explanation="x")
         assert _ground_zero_test_diagnosis(diagnosis, execution).kind is DiagnosisKind.probe_defect
+
+
+def _diagnosis_ops(ops, kinds):
+    """Wrap `ops` so probe-diagnosis returns `kinds` in order (last value repeats).
+
+    Everything else still goes to the stub models, so the rest of the graph is exercised
+    normally rather than mocked out around the edge under test.
+    """
+    from infosec_harness.domain.models import AgentOutcome, DiagnosisKind, ProbeDiagnosis
+
+    real = ops.run_agent
+    seen = []
+
+    async def run_agent(name, prompt, deps):
+        seen.append(name)
+        if name == "probe-diagnosis":
+            nth = seen.count("probe-diagnosis") - 1
+            kind = kinds[min(nth, len(kinds) - 1)]
+            return AgentOutcome(
+                output=ProbeDiagnosis(kind=DiagnosisKind(kind),
+                                      explanation="missing driver", fix_hint=""),
+                agent=name, model_name="stub")
+        return await real(name, prompt, deps)
+
+    ops.run_agent = run_agent
+    return seen
+
+
+async def test_an_environment_issue_found_at_probe_time_rebuilds_and_retries(repo):
+    """The edge that did not exist: a probe-time environment failure used to end the finding.
+
+    Measured on java-sqli, where `No suitable driver found` meant a missing test dependency.
+    The probe was correct; only build-repair could act, and it was never reached.
+    """
+    ops, prepared = await _prepared(repo)
+    seen = _diagnosis_ops(ops, ["environment_issue", "valid_negative"])
+    rebuilt = []
+    real_build = ops.build_environment
+
+    async def build(snapshot, spec):
+        rebuilt.append(spec)
+        return await real_build(snapshot, spec)
+
+    ops.build_environment = build
+    probes = []
+
+    async def fake_exec(image, probe, spec, nonce, attempt):
+        # Attempt 1 hits the missing dependency; after the rebuild the same probe runs clean.
+        # The second execution must genuinely reach the sink, or `_correct_unsupported_negative`
+        # rewrites the negative into a probe defect and the graph keeps repairing the probe.
+        probes.append(probe.content)
+        if attempt == 1:
+            return ProbeExecution(attempt=attempt, exit_code=1, oracle_fired=False,
+                                  precondition_reached=False, sink_returned=False,
+                                  stderr_tail="No suitable driver found")
+        return ProbeExecution(attempt=attempt, exit_code=0, oracle_fired=False,
+                              precondition_reached=True, sink_returned=True)
+
+    ops.execute_probe = fake_exec
+    finding = to_finding(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
+                                      start_line=2, cwe="CWE-89", severity="high"))
+    state = TriageState(finding=finding, prepared=prepared)
+    await TRIAGE_GRAPH.run(state=state, deps=TriageDeps(ops=ops), inputs=PreFilter())
+
+    assert "build-repair" in seen, "the environment issue never reached the agent that owns specs"
+    assert len(rebuilt) == 1, "the environment was not rebuilt from the probe's evidence"
+    assert len(probes) == 2, f"the probe was not re-run after the rebuild (ran {len(probes)}x)"
+    # The premise of this edge: the probe was fine, its environment was not.
+    assert probes[0] == probes[1], "the probe source was changed; only the environment should be"
+    assert state.environment_repairs == 1
+
+
+async def test_the_environment_repair_is_spent_at_most_once(repo):
+    """A rebuild is the most expensive edge in the graph, so it must not become a loop."""
+    ops, prepared = await _prepared(repo)
+    seen = _diagnosis_ops(ops, ["environment_issue"])
+
+    async def fake_exec(image, probe, spec, nonce, attempt):
+        return ProbeExecution(attempt=attempt, exit_code=1, oracle_fired=False,
+                              precondition_reached=False, sink_returned=False,
+                              stderr_tail="No suitable driver found")
+
+    ops.execute_probe = fake_exec
+    finding = to_finding(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
+                                      start_line=2, cwe="CWE-89", severity="high"))
+    state = TriageState(finding=finding, prepared=prepared)
+    result = await TRIAGE_GRAPH.run(state=state, deps=TriageDeps(ops=ops), inputs=PreFilter())
+
+    assert seen.count("build-repair") == 1, f"rebuilt {seen.count('build-repair')} times"
+    assert state.environment_repairs == 1
+    assert result.verdict.label in set(VerdictLabel)  # it still terminates with a verdict
+
+
+async def test_a_failed_environment_rebuild_ends_the_finding_honestly(repo):
+    """If the rebuild does not work, say so rather than re-running against the old image."""
+    ops, prepared = await _prepared(repo)
+    _diagnosis_ops(ops, ["environment_issue"])
+    original_image = prepared.build.image_tag
+
+    async def failed_build(snapshot, spec):
+        from infosec_harness.domain.models import BuildResult
+
+        return BuildResult(ok=False, image_tag="", spec=spec, error_excerpt="still broken")
+
+    ops.build_environment = failed_build
+
+    async def fake_exec(image, probe, spec, nonce, attempt):
+        assert image == original_image, "a failed rebuild must not change the image being used"
+        return ProbeExecution(attempt=attempt, exit_code=1, oracle_fired=False,
+                              precondition_reached=False, sink_returned=False,
+                              stderr_tail="No suitable driver found")
+
+    ops.execute_probe = fake_exec
+    finding = to_finding(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
+                                      start_line=2, cwe="CWE-89", severity="high"))
+    state = TriageState(finding=finding, prepared=prepared)
+    result = await TRIAGE_GRAPH.run(state=state, deps=TriageDeps(ops=ops), inputs=PreFilter())
+
+    assert result.early_exit == "environment_repair_failed"
+    # The recorded spec must still describe the image the probe actually ran in.
+    assert state.prepared.build.image_tag == original_image
+
+
+async def test_a_probe_defect_does_not_trigger_an_environment_rebuild(repo):
+    """Guards against over-firing: only an environment_issue may take this edge."""
+    ops, prepared = await _prepared(repo)
+    seen = _diagnosis_ops(ops, ["probe_defect"])
+
+    async def fake_exec(image, probe, spec, nonce, attempt):
+        return ProbeExecution(attempt=attempt, exit_code=1, oracle_fired=False,
+                              precondition_reached=False, sink_returned=False)
+
+    ops.execute_probe = fake_exec
+    finding = to_finding(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
+                                      start_line=2, cwe="CWE-89", severity="high"))
+    state = TriageState(finding=finding, prepared=prepared)
+    await TRIAGE_GRAPH.run(state=state, deps=TriageDeps(ops=ops), inputs=PreFilter())
+
+    assert "build-repair" not in seen
+    assert state.environment_repairs == 0
+    assert "probe-repair" in seen, "a probe defect must still go to probe repair"

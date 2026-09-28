@@ -39,6 +39,8 @@ from infosec_harness.settings import get_settings
 class TriageDeps:
     ops: Ops
     max_probe_repairs: int = field(default_factory=lambda: get_settings().max_probe_repairs)
+    max_environment_repairs: int = field(
+        default_factory=lambda: get_settings().max_environment_repairs)
 
 
 @dataclass
@@ -54,6 +56,8 @@ class TriageState:
     last_diagnosis: ProbeDiagnosis | None = None
     invocations: list[AgentOutcome] = field(default_factory=list)
     early_exit: str | None = None
+    # Probe-time environment re-plans already spent (RepairEnvironment).
+    environment_repairs: int = 0
 
     @property
     def image_tag(self) -> str:
@@ -238,7 +242,8 @@ def _ground_zero_test_diagnosis(diagnosis: ProbeDiagnosis,
 
 @dataclass
 class DiagnoseProbe(BaseNode[TriageState, TriageDeps, TriageResult]):
-    async def run(self, ctx: GraphRunContext[TriageState, TriageDeps]) -> RepairProbe | Decide:
+    async def run(self, ctx: GraphRunContext[TriageState, TriageDeps]
+                  ) -> RepairProbe | RepairEnvironment | Decide:
         s = ctx.state
         execution = s.executions[-1]
         prompt = render_prompt(
@@ -253,6 +258,14 @@ class DiagnoseProbe(BaseNode[TriageState, TriageDeps, TriageResult]):
             _correct_unsupported_negative(outcome.output, execution), execution)
         if s.last_diagnosis.kind == DiagnosisKind.probe_defect and s.attempt <= ctx.deps.max_probe_repairs:
             return RepairProbe()
+        # An environment problem found at probe time used to end the finding: the diagnosis was
+        # recorded, nothing acted on it, and the run reported `inconclusive`. The probe was
+        # usually fine -- measured on java-sqli, where `No suitable driver found` meant a
+        # missing test dependency, and probe-repair, the only agent downstream, could see the
+        # cause but had no power to install anything. Hand it back to the stage that does.
+        if (s.last_diagnosis.kind == DiagnosisKind.environment_issue
+                and s.environment_repairs < ctx.deps.max_environment_repairs):
+            return RepairEnvironment()
         return Decide()
 
 
@@ -270,6 +283,55 @@ class RepairProbe(BaseNode[TriageState, TriageDeps, TriageResult]):
         outcome = await ctx.deps.ops.run_agent("probe-repair", prompt, s.deps())
         s.invocations.append(outcome)
         s.probe = outcome.output
+        return ExecuteProbe()
+
+
+@dataclass
+class RepairEnvironment(BaseNode[TriageState, TriageDeps, TriageResult]):
+    """Re-plan and rebuild the environment from what the probe run revealed, then retry.
+
+    The image built and smoke-tested clean, so preparation had no way to know anything was
+    missing: the gap only appears when the probe actually exercises the code. `build-repair` is
+    the agent that owns environment specs, so it is the one asked, but the evidence it gets is
+    the probe's output rather than a build log -- and the prompt says so, because "the build
+    failed, here is the log" would be a lie and invites it to fix a build that worked.
+
+    The probe source is deliberately NOT changed here. It is being re-run unmodified, because
+    the whole premise of this edge is that the probe was correct and its environment was not.
+    """
+
+    async def run(self, ctx: GraphRunContext[TriageState, TriageDeps]) -> ExecuteProbe | Decide:
+        s = ctx.state
+        s.environment_repairs += 1
+        execution = s.executions[-1]
+        outcome = await ctx.deps.ops.run_agent(
+            "build-repair",
+            render_prompt(
+                "The image built and smoke-tested clean, but running the probe showed the "
+                "environment is missing something the test needs. Return a revised "
+                "EnvironmentSpec that installs it. Keep the test command's selector, flags and "
+                "paths as they are: the probe is not at fault and will be re-run unchanged.",
+                {"failed_spec": s.spec, "build_error": execution.stderr_tail or execution.stdout_tail,
+                 "probe_source": s.probe, "diagnosis": s.last_diagnosis,
+                 "previous_attempts": [s.spec.model_dump()]},
+                stack=s.stack(), profile=s.profile(),
+            ),
+            AgentDeps(repo_path=s.prepared.snapshot.path, sandbox_image=s.spec.base_image),
+        )
+        s.invocations.append(outcome)
+        build = await ctx.deps.ops.build_environment(s.prepared.snapshot, outcome.output)
+        if not build.ok:
+            # Nothing is retried from here. The prepared environment stays as it was, so the
+            # recorded spec still describes the image the probe actually ran in.
+            s.early_exit = "environment_repair_failed"
+            return Decide()
+        # The runner is re-verified because a revised spec may change the base image, and a
+        # missing runner at probe time reads as exit 127 -- a probe defect that is not one.
+        smoke = await ctx.deps.ops.smoke_test(build.image_tag, build.spec.test_command)
+        if not smoke.ok:
+            s.early_exit = "environment_repair_failed"
+            return Decide()
+        s.prepared = s.prepared.model_copy(update={"build": build, "smoke": smoke})
         return ExecuteProbe()
 
 
@@ -334,6 +396,7 @@ def build_triage_graph():
         g.node(ExecuteProbe),
         g.node(DiagnoseProbe),
         g.node(RepairProbe),
+        g.node(RepairEnvironment),
         g.node(Decide),
     )
     return g.build()

@@ -34,6 +34,50 @@ def _spread(values: list[float]) -> str:
     return f"{mean:.0%} [{min(values):.0%}-{max(values):.0%}]"
 
 
+# The pipeline's stages, in order, each scored against ground truth the manifest already
+# carries. A single accuracy number says a case failed; it cannot say *where*, and locating that
+# by hand meant reading raw traces for every failure. Each entry is
+# (label, applies_to_case, verdict_fn) where verdict_fn returns True/False, or None for "this
+# stage did not get to run", which is counted separately so a late-stage rate is never inflated
+# by the cases that never reached it.
+def _stage_results(case, out) -> list[tuple[str, bool | None]]:
+    """Score one case at each stage. None means the stage was never reached."""
+    ctx = out.context
+    execs = out.executions
+    last = execs[-1] if execs else None
+    probes = case.early_exit is None  # `testonly` is meant to stop before a probe
+
+    def sink_located() -> bool | None:
+        if ctx is None or ctx.sink is None:
+            return None if ctx is None else False
+        # The line is what the probe author actually needs; the file alone is not enough.
+        # A CodeRef may legitimately span the whole statement, so the truth line must fall
+        # inside the range rather than equal its start.
+        if ctx.sink.file_path != case.sink_file:
+            return False
+        last = ctx.sink.end_line or ctx.sink.start_line
+        return ctx.sink.start_line <= case.sink_line <= last
+
+    return [
+        ("environment built", out.prepared_status == "ready"),
+        ("context: reachability", None if ctx is None else ctx.reachability.value == case.reachability),
+        ("context: sink located", sink_located()),
+        ("context: target callable",
+         None if ctx is None else ctx.target_callable == case.target_callable),
+        ("probe reached the sink",
+         None if not probes else (last.precondition_reached if last else False)),
+        ("probe's sink returned",
+         None if not probes else (last.sink_returned if last else False)),
+        # Gated on the sink having returned, not merely on a probe existing. A silent oracle
+        # after a probe that never ran is not agreement -- and on the `fixed` half it would
+        # score as a pass for the same reason a zero-test run once scored as a clean negative.
+        ("oracle agreed with truth",
+         None if not probes or last is None or not last.sink_returned
+         else last.oracle_fired == (case.expected_verdict == "potentially_exploitable")),
+        ("verdict", out.result.verdict.label.value == case.expected_verdict),
+    ]
+
+
 async def score_corpus(*, language: str = "python", sandbox: bool | None = None,
                        repeat: int = 1) -> dict:
     """Run the seeded corpus end-to-end and score verdicts against ground truth (§10.2).
@@ -418,6 +462,9 @@ async def _score_corpus_once(*, language: str, sandbox: bool | None) -> dict:
     # label guessed before the build.
     expected_to_probe = correct_with_evidence = 0
     unexpected_exits: list[str] = []
+    # stage label -> [passed, scored, not_reached], in the order _stage_results returns them.
+    stages: dict[str, list[int]] = {}
+    first_failures: dict[str, list[str]] = {}
     # Trajectory scoring: did the tool-using agents evoke the expected tools/skills?
     traj_totals: dict[str, dict[str, int]] = {}
     # Request counts and repeated identical tool calls, so a `request_limit` breach can be told
@@ -488,6 +535,22 @@ async def _score_corpus_once(*, language: str, sandbox: bool | None) -> dict:
                      # whether the environment failed, the probe was unrepairable, or the
                      # judge declined.
                      "rationale": out.result.verdict.rationale})
+        stage_results = _stage_results(c, out)
+        blamed = False
+        for label, passed in stage_results:
+            tally = stages.setdefault(label, [0, 0, 0])
+            if passed is None:
+                tally[2] += 1
+                continue
+            tally[1] += 1
+            tally[0] += int(passed)
+            # Attribute each failing case to the FIRST stage that went wrong. A late stage
+            # inherits every earlier mistake, so without this the blame lands on `verdict`
+            # for a case whose context misread reachability three stages earlier.
+            if not passed and not blamed:
+                first_failures.setdefault(label, []).append(c.name)
+                blamed = True
+
         # Per-finding triage agents (context, probe-author, ...).
         for inv in out.invocations:
             _score_trajectory(inv.agent, inv.tools_called, inv.skills_loaded, c.finding.cwe,
@@ -506,6 +569,10 @@ async def _score_corpus_once(*, language: str, sandbox: bool | None) -> dict:
         "unexpected_early_exits": unexpected_exits,
         "confusion": {f"{k[0]}->{k[1]}": v for k, v in sorted(confusion.items())},
         "trajectory": trajectory,
+        "stages": {label: {"passed": p, "scored": n, "not_reached": nr,
+                           "rate": round(p / n, 3) if n else None,
+                           "first_failed_here": first_failures.get(label, [])}
+                   for label, (p, n, nr) in stages.items()},
         "budget": {a: {"n": v["n"],
                        "mean_requests": round(v["requests"] / v["n"], 2) if v["n"] else 0.0,
                        "max_requests": v["max_requests"],
@@ -528,6 +595,17 @@ async def _score_corpus_once(*, language: str, sandbox: bool | None) -> dict:
               f"({expected_to_probe - correct_with_evidence} of {expected_to_probe} cases that "
               f"should have probed did not reach a probed verdict)")
         print(f"  unexpected early exits: {', '.join(unexpected_exits)}")
+    if metrics["stages"]:
+        print("stage funnel (where the pipeline actually loses cases):")
+        for label, st in metrics["stages"].items():
+            if not st["scored"]:
+                print(f"  {label:26} --      (not reached in {st['not_reached']} cases)")
+                continue
+            blame = st["first_failed_here"]
+            note = f"   <- first failure for {', '.join(blame)}" if blame else ""
+            skipped = f"  (+{st['not_reached']} not reached)" if st["not_reached"] else ""
+            print(f"  {label:26} {st['passed']}/{st['scored']}"
+                  f"  {st['rate']:.0%}{skipped}{note}")
     print("tool/skill evocation (per agent, rate across cases):")
     for agent, t in trajectory.items():
         skills = f"{t['skill_use_rate']:.0%}" if scores_skills(agent) else "n/a"

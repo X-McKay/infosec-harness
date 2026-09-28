@@ -190,3 +190,92 @@ def test_the_only_declared_early_exit_is_the_one_case_that_should_not_be_probed(
     by = {c.name: c for c in CASES}
     assert by["testonly"].early_exit == "test_or_vendored"
     assert all(c.early_exit is None for c in CASES if c.name != "testonly")
+
+
+def _case_and_output(*, reachability="reachable", sink_line=None, verdict="potentially_exploitable",
+                     precondition=True, sink_returned=True, oracle=True, status="ready"):
+    """One corpus case plus a synthetic run output, for scoring a single stage in isolation."""
+    from infosec_harness.domain.models import (
+        CodeRef,
+        FindingContext,
+        PriorityBand,
+        ProbeExecution,
+        Reachability,
+        TriageResult,
+        TriageRunOutput,
+        Verdict,
+        VerdictLabel,
+    )
+    from infosec_harness.intake.adapters import to_finding
+
+    case = next(c for c in CASES if c.name == "sqli-vulnerable")
+    finding = to_finding(case.finding)
+    ctx = FindingContext(
+        summary="s", reachability=Reachability(reachability), reachability_rationale="r",
+        sink=CodeRef(file_path=case.sink_file, start_line=sink_line or case.sink_line,
+                     end_line=sink_line or case.sink_line),
+        target_callable=case.target_callable,
+    )
+    execution = ProbeExecution(attempt=1, exit_code=0, oracle_fired=oracle,
+                               precondition_reached=precondition, sink_returned=sink_returned)
+    result = TriageResult(fingerprint=finding.fingerprint,
+                          verdict=Verdict(label=VerdictLabel(verdict), confidence=0.9, rationale="x"),
+                          priority_score=1.0, priority=PriorityBand.p1)
+    return case, TriageRunOutput(finding=finding, result=result, prepared_status=status,
+                                 context=ctx, executions=[execution])
+
+
+def test_the_stage_funnel_locates_a_failure_instead_of_only_reporting_one():
+    """A single accuracy number says a case failed; it cannot say where.
+
+    Locating that by hand meant reading raw traces for every failure, which is what this
+    replaces. Here the context misreads reachability while every later stage is fine.
+    """
+    from infosec_harness.evals.run import _stage_results
+
+    case, out = _case_and_output(reachability="unreachable")
+    stages = dict(_stage_results(case, out))
+    assert stages["context: reachability"] is False
+    assert stages["environment built"] is True
+    assert stages["probe reached the sink"] is True
+    assert stages["verdict"] is True
+
+
+def test_a_stage_that_never_ran_is_not_scored_as_a_pass():
+    """The session's recurring lesson, applied to the funnel itself: a silent oracle behind a
+    probe that never reached the sink is not agreement. On the `fixed` half it would otherwise
+    score as a pass for exactly the reason a zero-test run once scored as a clean negative.
+    """
+    from infosec_harness.evals.run import _stage_results
+
+    case, out = _case_and_output(sink_returned=False, oracle=False)
+    stages = dict(_stage_results(case, out))
+    assert stages["oracle agreed with truth"] is None, "must be 'not reached', not a pass"
+    assert stages["probe's sink returned"] is False
+
+
+def test_the_sink_location_accepts_a_ref_spanning_the_statement_but_not_a_wrong_one():
+    from infosec_harness.evals.run import _stage_results
+
+    case, _ = _case_and_output()
+    _, spanning = _case_and_output(sink_line=case.sink_line)
+    assert dict(_stage_results(case, spanning))["context: sink located"] is True
+    _, wrong = _case_and_output(sink_line=case.sink_line + 40)
+    assert dict(_stage_results(case, wrong))["context: sink located"] is False
+
+
+async def test_the_funnel_blames_the_first_broken_stage_not_the_last():
+    """A late stage inherits every earlier mistake, so unattributed counts would put the blame
+    on `verdict` for a case whose context went wrong three stages earlier."""
+    from infosec_harness.evals.run import score_corpus
+
+    metrics = await score_corpus(language="python", sandbox=False)
+    assert metrics["stages"], "no stages were scored"
+    blamed = [n for st in metrics["stages"].values() for n in st["first_failed_here"]]
+    assert len(blamed) == len(set(blamed)), "a case was blamed at more than one stage"
+    # Under stub models the context agent returns placeholders, so the funnel must locate the
+    # loss there rather than at the verdict it ultimately produced.
+    assert metrics["stages"]["environment built"]["rate"] == 1.0
+    assert not metrics["stages"]["verdict"]["first_failed_here"], (
+        "every failure was attributed to the final stage; the attribution is not working"
+    )
