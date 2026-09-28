@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from pydantic_ai import ModelRetry, RunContext
@@ -399,6 +400,92 @@ def _pathish_selector_violation(command: str) -> str | None:
     )
 
 
+# --- JDK / language-level compatibility -----------------------------------------------------
+#
+# Vul4J's 79 reproducible Java vulnerabilities span projects targeting Java 7 through 16, so a
+# single pinned base image cannot build the corpus. Both directions of mismatch fail, and both
+# fail in ways build repair cannot reason its way out of, so they are caught at plan time.
+#
+# Floors come from JEP 182's "one plus three back" retirement policy. Only the two removals that
+# actually shipped are encoded; an unknown JDK gets no floor rather than a guessed one, because
+# a wrong floor would reject a spec that builds.
+_JAVAC_SOURCE_FLOOR = (
+    (20, 8),   # JDK 20 removed -source/-target 7: "Source option 7 is no longer supported."
+    (12, 7),   # JDK 12 removed 6 (deprecated in 11).
+)
+_IMAGE_JDK_PATTERNS = (
+    re.compile(r"-jdk[-]?(\d+)"),              # gradle:8-jdk21, eclipse-temurin:17-jdk
+    re.compile(r"eclipse-temurin[:-](\d+)"),   # maven:3.9-eclipse-temurin-17
+    re.compile(r"\bopenjdk[:-](\d+)"),         # openjdk:11
+    re.compile(r"\bamazoncorretto[:-](\d+)"),
+)
+# `maven:3.9-...` and `gradle:8-...` lead with the BUILD TOOL's version, so a naive "first
+# number" read picks 3 or 8 and silently validates against the wrong JDK.
+_JAVA_RELEASE_TAGS = (
+    re.compile(r"<maven\.compiler\.release>\s*(\d+)\s*</maven\.compiler\.release>"),
+    re.compile(r"<maven\.compiler\.source>\s*(?:1\.)?(\d+)\s*</maven\.compiler\.source>"),
+    re.compile(r"<maven\.compiler\.target>\s*(?:1\.)?(\d+)\s*</maven\.compiler\.target>"),
+    re.compile(r"<java\.version>\s*(?:1\.)?(\d+)\s*</java\.version>"),
+    re.compile(r"<source>\s*(?:1\.)?(\d+)\s*</source>"),
+    re.compile(r"<target>\s*(?:1\.)?(\d+)\s*</target>"),
+)
+_GRADLE_RELEASE_TAGS = (
+    re.compile(r"sourceCompatibility\s*=?\s*['\"]?(?:1\.)?(\d+)"),
+    re.compile(r"targetCompatibility\s*=?\s*['\"]?(?:1\.)?(\d+)"),
+    re.compile(r"languageVersion\s*=\s*JavaLanguageVersion\.of\((\d+)\)"),
+)
+
+
+def image_jdk_major(base_image: str) -> int | None:
+    """The JDK major version a base image provides, or None when it cannot be read."""
+    for pattern in _IMAGE_JDK_PATTERNS:
+        match = pattern.search(base_image)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def declared_java_release(build_file_text: str) -> int | None:
+    """The oldest language level a build file asks for, or None if it says nothing.
+
+    The *oldest* rather than the newest: a pom setting source 7 and target 8 has to be compiled
+    by a JDK that still accepts 7, so the lower number is the binding constraint.
+    """
+    found = [int(m.group(1))
+             for pattern in _JAVA_RELEASE_TAGS + _GRADLE_RELEASE_TAGS
+             for m in pattern.finditer(build_file_text)]
+    return min(found) if found else None
+
+
+def jdk_compatibility_violations(base_image: str, declared_release: int | None) -> list[str]:
+    """Reject a base image that cannot compile the language level the repo asks for.
+
+    Both directions are hard failures with fixed messages that build repair cannot argue with,
+    so naming the right image here saves the whole repair loop.
+    """
+    jdk = image_jdk_major(base_image)
+    if jdk is None or declared_release is None:
+        return []
+    if declared_release > jdk:
+        return [
+            f"base_image {base_image!r} provides JDK {jdk}, but the project declares Java "
+            f"{declared_release}. javac fails with 'invalid target release: {declared_release}'. "
+            f"Use an image providing JDK {declared_release} or newer, e.g. "
+            f"'maven:3.9-eclipse-temurin-{declared_release}'."
+        ]
+    floor = next((f for threshold, f in _JAVAC_SOURCE_FLOOR if jdk >= threshold), None)
+    if floor is not None and declared_release < floor:
+        return [
+            f"base_image {base_image!r} provides JDK {jdk}, which no longer accepts "
+            f"-source/-target {declared_release}: javac fails with 'Source option "
+            f"{declared_release} is no longer supported. Use {floor} or later.' The project "
+            f"declares Java {declared_release}, so pin an older JDK -- "
+            f"'maven:3.9-eclipse-temurin-11' builds Java {declared_release} -- rather than "
+            f"editing the project's compiler level, which changes what is being tested."
+        ]
+    return []
+
+
 def environment_spec_violations(spec: EnvironmentSpec) -> list[str]:
     """Deterministic requirements on a test command. Pure, so evals and tests can check it.
 
@@ -581,9 +668,45 @@ def offline_warmup_violations(spec: EnvironmentSpec) -> list[str]:
     return problems
 
 
+# Build files whose declared language level binds the choice of JDK. Read at most a few, from
+# the repo root and one level down, because a multi-module project's root pom usually carries
+# the compiler properties and walking a whole tree here would be slow and rarely add anything.
+_JAVA_BUILD_FILES = ("pom.xml", "build.gradle", "build.gradle.kts")
+
+
+def repo_java_release(repo_path: str | None) -> int | None:
+    """The oldest Java language level the repository's build files ask for.
+
+    None when there is no repo, no Java build file, or nothing declared -- in which case the
+    JDK check stays silent rather than guessing.
+    """
+    if not repo_path:
+        return None
+    root = Path(repo_path)
+    if not root.is_dir():
+        return None
+    candidates = [root / name for name in _JAVA_BUILD_FILES]
+    candidates += [child / name for child in sorted(root.iterdir())[:40]
+                   if child.is_dir() for name in _JAVA_BUILD_FILES]
+    declared = []
+    for path in candidates:
+        try:
+            if path.is_file():
+                found = declared_java_release(path.read_text(errors="replace"))
+                if found is not None:
+                    declared.append(found)
+        except OSError:
+            continue
+    return min(declared) if declared else None
+
+
 def validate_environment_spec(ctx: RunContext[AgentDeps], output: EnvironmentSpec) -> EnvironmentSpec:
     problems = (environment_spec_violations(output) + install_path_violations(output)
-                + offline_warmup_violations(output))
+                + offline_warmup_violations(output)
+                # Repo-aware, unlike the three above: the binding constraint is what the
+                # project declares, which no amount of inspecting the spec alone can reveal.
+                + jdk_compatibility_violations(
+                    output.base_image, repo_java_release(getattr(ctx.deps, "repo_path", None))))
     if problems:
         raise ModelRetry("The environment spec cannot run a probe:\n- " + "\n- ".join(problems))
     return output

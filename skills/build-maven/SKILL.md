@@ -57,7 +57,25 @@ metadata:
   the plugins in the effective pom, which means Surefire 2.12.4, and leaves even the pinned 3.2.5
   plugin absent. And **dropping `-o` is not a fallback** — the probe container has no network at
   all, so an online Maven just fails later and slower.
-- **Base image:** `maven:3.9-eclipse-temurin-21` (drop to `-17` if the project targets 17).
+- **Base image: read the project's language level first, then pick the JDK.** Do not default
+  to the newest. Look for `maven.compiler.release`, `maven.compiler.source`/`target`, or a
+  `<java.version>` property in the pom (a multi-module project usually declares them in the
+  root pom), and take the **oldest** level anything declares — a module at source 7 binds the
+  whole build even if another targets 11. Then choose:
+
+  | project declares | use |
+  | --- | --- |
+  | Java 7 or older | `maven:3.9-eclipse-temurin-11` |
+  | Java 8-11 | `maven:3.9-eclipse-temurin-11` or `-17` |
+  | Java 17 | `maven:3.9-eclipse-temurin-17` |
+  | Java 21, or nothing declared | `maven:3.9-eclipse-temurin-21` |
+
+  Both directions of mismatch are hard failures with fixed javac messages, and neither is
+  something build repair can argue its way out of. A JDK that is too new refuses the old level
+  outright — JDK 20 removed `-source 7` ("Source option 7 is no longer supported. Use 8 or
+  later."), JDK 12 removed 6 — and a JDK that is too old fails with `invalid target release`.
+  **Never resolve this by raising the project's compiler level.** That edits the code under
+  test and changes what the probe is measuring; pin an older JDK instead.
 - **Never `-q`.** Use `-B` for non-interactive batch output instead. Maven relays the forked test
   JVM's stdout through its own logger at INFO level, so `-q` raises the threshold above the
   probe's `HARNESS_` markers: the probe runs, passes, and is recorded as having reached nothing.

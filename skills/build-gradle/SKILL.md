@@ -28,6 +28,12 @@ metadata:
 <!-- /generated: activation criteria -->
 
 - **Base image:** `gradle:8-jdk21` or an Eclipse Temurin image plus the repo's `./gradlew`.
+- **JDK version: read `sourceCompatibility`, `targetCompatibility` or
+  `JavaLanguageVersion.of(...)` and match the image to the oldest level declared**, exactly as
+  build-maven describes. `gradle:8-jdk21` is the default, not the answer: a project declaring
+  Java 8 needs `gradle:8-jdk11`. Note that in `gradle:8-jdk21` the `8` is Gradle's version and
+  the `21` is the JDK — matching the wrong one silently builds against a JDK the project cannot
+  compile under.
 - **Install / compile:** prefer the wrapper: `./gradlew --no-daemon testClasses` to resolve
   dependencies and compile test sources. Use `--offline` on the probe run. The `test` task
   compiles its own inputs, so the probe written into the container at probe time is compiled

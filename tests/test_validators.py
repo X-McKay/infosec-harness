@@ -833,3 +833,79 @@ def test_a_neutralized_claim_alone_does_not_support_a_safe_verdict():
     assert is_unevidenced_safe("verdict", case("neutralized"), "likely_not_exploitable"), (
         "a neutralized claim with no probe behind it is an unevidenced safe verdict"
     )
+
+
+def test_the_jdk_a_base_image_provides_is_read_past_the_build_tool_version():
+    """`maven:3.9-...` and `gradle:8-...` lead with the build tool's version, so a naive
+    first-number read validates against JDK 3 or JDK 8 and silently passes anything."""
+    from infosec_harness.agents.validators import image_jdk_major
+
+    assert image_jdk_major("maven:3.9-eclipse-temurin-17") == 17
+    assert image_jdk_major("gradle:8-jdk21") == 21
+    assert image_jdk_major("eclipse-temurin:11-jdk") == 11
+    assert image_jdk_major("openjdk:8") == 8
+    assert image_jdk_major("python:3.12-slim") is None
+
+
+def test_the_oldest_declared_language_level_is_the_binding_one():
+    """A pom with source 7 and target 8 needs a JDK that still accepts 7, so the lower number
+    is the constraint."""
+    from infosec_harness.agents.validators import declared_java_release
+
+    pom = ("<properties><maven.compiler.source>1.7</maven.compiler.source>"
+           "<maven.compiler.target>1.8</maven.compiler.target></properties>")
+    assert declared_java_release(pom) == 7
+    assert declared_java_release("sourceCompatibility = 1.8") == 8
+    assert declared_java_release("languageVersion = JavaLanguageVersion.of(17)") == 17
+    assert declared_java_release("<groupId>org.example</groupId>") is None
+
+
+def test_a_modern_jdk_is_rejected_for_a_project_that_declares_an_old_source_level():
+    """The Vul4J case: its 79 reproducible vulnerabilities target Java 7 through 16, so one
+    pinned image cannot build the corpus. JDK 20 removed -source 7 outright, and the failure is
+    a fixed javac message that build repair cannot reason its way out of.
+    """
+    from infosec_harness.agents.validators import jdk_compatibility_violations
+
+    problems = jdk_compatibility_violations("maven:3.9-eclipse-temurin-21", 7)
+    assert problems and "no longer supported" in problems[0]
+    # Names a working image rather than only the defect, per the house style.
+    assert "eclipse-temurin-11" in problems[0]
+    # And must not suggest editing the project's compiler level, which changes the subject.
+    assert "changes what is being tested" in problems[0]
+
+
+def test_a_jdk_older_than_the_project_is_rejected_too():
+    from infosec_harness.agents.validators import jdk_compatibility_violations
+
+    problems = jdk_compatibility_violations("openjdk:8", 11)
+    assert problems and "invalid target release: 11" in problems[0]
+
+
+def test_a_compatible_pairing_and_an_unreadable_one_are_both_left_alone():
+    """Silence when it cannot tell: an unknown image or an undeclared level must not be
+    guessed at, because a wrong floor would reject a spec that builds."""
+    from infosec_harness.agents.validators import jdk_compatibility_violations
+
+    assert jdk_compatibility_violations("maven:3.9-eclipse-temurin-17", 11) == []
+    assert jdk_compatibility_violations("python:3.12-slim", 7) == []
+    assert jdk_compatibility_violations("maven:3.9-eclipse-temurin-21", None) == []
+
+
+def test_the_declared_level_is_read_from_a_real_repository(tmp_path):
+    """Multi-module projects keep the compiler properties in the root pom, so the root and one
+    level down is where to look."""
+    from infosec_harness.agents.validators import repo_java_release
+
+    (tmp_path / "pom.xml").write_text("<project><properties>"
+                                      "<maven.compiler.source>1.7</maven.compiler.source>"
+                                      "</properties></project>")
+    assert repo_java_release(str(tmp_path)) == 7
+    module = tmp_path / "core"
+    module.mkdir()
+    (module / "pom.xml").write_text(
+        "<project><properties><java.version>11</java.version></properties></project>")
+    # Still 7: the oldest level anywhere in the project binds the JDK choice.
+    assert repo_java_release(str(tmp_path)) == 7
+    assert repo_java_release(None) is None
+    assert repo_java_release(str(tmp_path / "nope")) is None
