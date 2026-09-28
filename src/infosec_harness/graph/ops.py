@@ -54,7 +54,7 @@ class LocalOps:
         from infosec_harness.agents import models as model_factory
         from infosec_harness.agents.budgets import usage_limits_for
         from infosec_harness.agents.registry import build_agent, config_hash, load_spec
-        from infosec_harness.evals.trajectory import inspect_messages
+        from infosec_harness.evals.trajectory import count_repeated_calls, inspect_messages
         from infosec_harness.settings import get_settings
 
         agent = build_agent(name, durable=False)
@@ -80,13 +80,15 @@ class LocalOps:
                 ) from e
         usage = result.usage
         cost, estimated = model_factory.estimate_cost(model_name, usage)
-        tools_called, skills_loaded = inspect_messages(result.all_messages())
+        tools_called, skills_loaded = inspect_messages(messages := result.all_messages())
+        repeated = count_repeated_calls(messages)
         outcome = AgentOutcome(
             output=result.output, agent=name, model_name=model_name, config_hash=config_hash(name, spec),
             input_tokens=usage.input_tokens, output_tokens=usage.output_tokens,
             cache_read_tokens=usage.cache_read_tokens or 0, cache_write_tokens=usage.cache_write_tokens or 0,
             cost_usd=cost, cost_estimated=estimated, latency_s=time.monotonic() - start,
             tools_called=tools_called, skills_loaded=skills_loaded,
+            requests=usage.requests or 0, repeated_tool_calls=repeated,
         )
         span.set_attributes(telemetry.outcome_attributes(outcome))
         return outcome

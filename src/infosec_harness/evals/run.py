@@ -415,8 +415,25 @@ async def _score_corpus_once(*, language: str, sandbox: bool | None) -> dict:
     correct = fn = exploitable = 0
     # Trajectory scoring: did the tool-using agents evoke the expected tools/skills?
     traj_totals: dict[str, dict[str, int]] = {}
+    # Request counts and repeated identical tool calls, so a `request_limit` breach can be told
+    # from honest work without re-running live. inspect_messages de-duplicates by tool name and
+    # drops arguments, so without this a run that read one file eight times is byte-identical in
+    # the record to one that read it once.
+    budget_totals: dict[str, dict[str, int]] = {}
+    worst_repeats: dict[str, dict[str, int]] = {}
 
-    def _score_trajectory(agent: str, tools_called, skills_loaded, cwe: str | None = None) -> None:
+    def _score_trajectory(agent: str, tools_called, skills_loaded, cwe: str | None = None,
+                          requests: int = 0, repeated: dict[str, int] | None = None) -> None:
+        # Recorded for every agent, including those with no expectation: an agent that burns its
+        # request budget is worth seeing whether or not its tool use is scored.
+        b = budget_totals.setdefault(agent, {"n": 0, "requests": 0, "max_requests": 0, "looping": 0})
+        b["n"] += 1
+        b["requests"] += requests
+        b["max_requests"] = max(b["max_requests"], requests)
+        b["looping"] += int(bool(repeated))
+        for key, count in (repeated or {}).items():
+            worst_repeats.setdefault(agent, {})
+            worst_repeats[agent][key] = max(worst_repeats[agent].get(key, 0), count)
         base = AGENT_EXPECTATIONS.get(agent)
         if base is None:
             return
@@ -433,7 +450,8 @@ async def _score_corpus_once(*, language: str, sandbox: bool | None) -> dict:
     # Prepare-phase agents (recon, env-planner, build repair) run once per repo.
     for invs in prepare_sink.values():
         for inv in invs:
-            _score_trajectory(inv.agent, inv.tools_called, inv.skills_loaded)
+            _score_trajectory(inv.agent, inv.tools_called, inv.skills_loaded,
+                              requests=inv.requests, repeated=inv.repeated_tool_calls)
 
     for c in cases:
         out = by_fp[Finding.compute_fingerprint(c.finding)]
@@ -454,7 +472,8 @@ async def _score_corpus_once(*, language: str, sandbox: bool | None) -> dict:
                      "rationale": out.result.verdict.rationale})
         # Per-finding triage agents (context, probe-author, ...).
         for inv in out.invocations:
-            _score_trajectory(inv.agent, inv.tools_called, inv.skills_loaded, c.finding.cwe)
+            _score_trajectory(inv.agent, inv.tools_called, inv.skills_loaded, c.finding.cwe,
+                              requests=inv.requests, repeated=inv.repeated_tool_calls)
 
     trajectory = {a: {"n": v["n"],
                       "tool_use_rate": round(v["tools_ok"] / v["n"], 3) if v["n"] else 0.0,
@@ -466,6 +485,13 @@ async def _score_corpus_once(*, language: str, sandbox: bool | None) -> dict:
         "sandbox": sandbox,
         "confusion": {f"{k[0]}->{k[1]}": v for k, v in sorted(confusion.items())},
         "trajectory": trajectory,
+        "budget": {a: {"n": v["n"],
+                       "mean_requests": round(v["requests"] / v["n"], 2) if v["n"] else 0.0,
+                       "max_requests": v["max_requests"],
+                       "runs_with_repeated_calls": v["looping"],
+                       "worst_repeats": dict(sorted(worst_repeats.get(a, {}).items(),
+                                                    key=lambda kv: -kv[1])[:3])}
+                   for a, v in sorted(budget_totals.items())},
     }
     for r in rows:
         mark = "OK " if r["ok"] else "XX "
@@ -480,4 +506,15 @@ async def _score_corpus_once(*, language: str, sandbox: bool | None) -> dict:
     for agent, t in trajectory.items():
         skills = f"{t['skill_use_rate']:.0%}" if scores_skills(agent) else "n/a"
         print(f"  {agent:14} tools {t['tool_use_rate']:.0%}  skills {skills}  (n={t['n']})")
+    if any(v["max_requests"] for v in metrics["budget"].values()):
+        print("requests per agent run (max, and identical calls repeated):")
+        for agent, b in metrics["budget"].items():
+            if not b["max_requests"]:
+                continue
+            note = ""
+            if b["runs_with_repeated_calls"]:
+                worst = next(iter(b["worst_repeats"].items()), None)
+                note = (f"  LOOPING in {b['runs_with_repeated_calls']}/{b['n']} runs"
+                        + (f", worst {worst[0]} x{worst[1]}" if worst else ""))
+            print(f"  {agent:14} max {b['max_requests']:3}  mean {b['mean_requests']:6.2f}{note}")
     return metrics

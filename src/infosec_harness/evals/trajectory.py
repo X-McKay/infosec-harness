@@ -12,6 +12,7 @@ and are exercised deterministically in tests via a scripted tool-calling model.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
@@ -62,6 +63,36 @@ def inspect_messages(messages: Sequence[ModelMessage]) -> tuple[list[str], list[
         if name not in tools:
             tools.append(name)
     return tools, skills
+
+
+def count_repeated_calls(messages: Sequence[ModelMessage]) -> dict[str, int]:
+    """Count tool calls that were made with the *same arguments* more than once.
+
+    `inspect_messages` de-duplicates by tool name and discards arguments, which is right for
+    measuring evocation ("did the agent use its tools at all") but makes a run that read one
+    file eight times byte-identical to one that read it once. That is exactly the distinction
+    needed to tell a runaway loop from legitimate work when an agent exhausts its request
+    budget, so it is counted separately here rather than by loosening the contract above.
+
+    Keys are `tool(arg=value, ...)` with arguments sorted so the key is stable; only entries
+    with a count above one are returned, so a healthy run yields an empty dict and costs
+    nothing to record.
+    """
+    seen: Counter[str] = Counter()
+    for call in _tool_calls(messages):
+        name = call.tool_name
+        if name.startswith("final_result") or name.startswith("_"):
+            continue
+        try:
+            args = call.args_as_dict() if hasattr(call, "args_as_dict") else call.args
+        except Exception:  # malformed args from the model must not break accounting
+            args = None
+        if isinstance(args, dict):
+            rendered = ", ".join(f"{k}={args[k]!r}" for k in sorted(args))
+        else:
+            rendered = repr(args)
+        seen[f"{name}({rendered})"] += 1
+    return {key: n for key, n in seen.items() if n > 1}
 
 
 @dataclass

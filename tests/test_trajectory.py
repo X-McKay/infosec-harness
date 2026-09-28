@@ -22,6 +22,7 @@ from infosec_harness.evals.trajectory import (
     AGENT_EXPECTATIONS,
     TrajectoryExpectation,
     check_expectations,
+    count_repeated_calls,
     cwe_skill_prefix,
     inspect_messages,
 )
@@ -137,3 +138,44 @@ def test_a_vacuous_skill_pass_is_still_reported_as_ok_by_check_expectations():
 
     res = check_expectations(["read_file"], [], TrajectoryExpectation(tool_groups=()))
     assert res.skills_ok and not res.missing_skill_prefixes
+
+
+def _calls(*specs) -> list[ModelMessage]:
+    """One response per (tool_name, args) pair, in order."""
+    return [ModelResponse(parts=[ToolCallPart(tool_name=n, args=a)]) for n, a in specs]
+
+
+def test_reading_different_files_is_not_counted_as_repetition():
+    """Legitimate exploration must stay invisible, or the signal is useless noise."""
+    messages = _calls(("read_file", {"path": "a.py"}), ("read_file", {"path": "b.py"}),
+                      ("describe_callables", {"path": "a.py"}))
+    assert count_repeated_calls(messages) == {}
+
+
+def test_the_same_call_made_repeatedly_is_counted():
+    """The distinction inspect_messages cannot make: eight reads of one file vs one read."""
+    messages = _calls(*[("read_file", {"path": "a.py"})] * 8)
+    repeated = count_repeated_calls(messages)
+    assert repeated == {"read_file(path='a.py')": 8}, repeated
+
+
+def test_a_loop_and_legitimate_work_are_distinguishable_at_equal_call_counts():
+    """Both runs make six calls and evoke the same tool, so only argument-awareness separates
+    them. This is the property that makes a request_limit breach diagnosable from the record.
+    """
+    working = _calls(*[("read_file", {"path": f"f{i}.py"}) for i in range(6)])
+    looping = _calls(*[("read_file", {"path": "f0.py"}) for _ in range(6)])
+    assert inspect_messages(working) == inspect_messages(looping), "premise: indistinguishable before"
+    assert count_repeated_calls(working) == {}
+    assert count_repeated_calls(looping) == {"read_file(path='f0.py')": 6}
+
+
+def test_argument_order_does_not_create_spurious_distinct_keys():
+    messages = _calls(("read_file", {"path": "a.py", "start_line": 1}),
+                      ("read_file", {"start_line": 1, "path": "a.py"}))
+    assert count_repeated_calls(messages) == {"read_file(path='a.py', start_line=1)": 2}
+
+
+def test_output_tool_calls_are_excluded_like_they_are_from_evocation():
+    messages = _calls(*[("final_result", {"kind": "x"})] * 3)
+    assert count_repeated_calls(messages) == {}

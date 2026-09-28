@@ -425,6 +425,13 @@ class AgentOutcome(_Model):
     retries: int = 0
     tools_called: list[str] = Field(default_factory=list)
     skills_loaded: list[str] = Field(default_factory=list)
+    # Model requests this run actually made. Without it, a run that exhausted its request
+    # budget is indistinguishable in the record from one that finished comfortably, so a
+    # `request_limit` breach cannot be told from a loop without re-running live.
+    requests: int = 0
+    # Tool calls repeated with identical arguments, `tool(args)` -> count, only where count > 1.
+    # Empty on a healthy run; non-empty is the signature of a loop rather than of hard work.
+    repeated_tool_calls: dict[str, int] = Field(default_factory=dict)
 
 
 class TriageRunOutput(_Model):

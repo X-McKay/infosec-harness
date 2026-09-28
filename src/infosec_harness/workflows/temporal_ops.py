@@ -33,7 +33,7 @@ with workflow.unsafe.imports_passed_through():
         agent_usage_limits,
         resolved_model_names,
     )
-    from infosec_harness.evals.trajectory import inspect_messages
+    from infosec_harness.evals.trajectory import count_repeated_calls, inspect_messages
     from infosec_harness.workflows import activities
 
 
@@ -62,7 +62,8 @@ class TemporalOps:
         usage = result.usage
         model_name = self._models[name]
         cost, estimated = model_factory.estimate_cost(model_name, usage)
-        tools_called, skills_loaded = inspect_messages(result.all_messages())
+        tools_called, skills_loaded = inspect_messages(messages := result.all_messages())
+        repeated = count_repeated_calls(messages)
         return AgentOutcome(
             output=result.output, agent=name, model_name=model_name, config_hash=self._hashes[name],
             input_tokens=usage.input_tokens, output_tokens=usage.output_tokens,
@@ -70,6 +71,7 @@ class TemporalOps:
             cost_usd=cost, cost_estimated=estimated,
             latency_s=(workflow.now() - started).total_seconds(),
             tools_called=tools_called, skills_loaded=skills_loaded,
+            requests=usage.requests or 0, repeated_tool_calls=repeated,
         )
 
     async def new_nonce(self) -> str:
