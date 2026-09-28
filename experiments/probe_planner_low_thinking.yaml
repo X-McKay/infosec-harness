@@ -7,6 +7,14 @@
 # Less inline reasoning should leave room for the answer.
 #
 #   harness eval run probe-planner --overlay experiments/probe_planner_low_thinking.yaml --repeat 3
+#
+# RESULT: not adopted. Both arms scored 100% over 18 runs, and the overlay used *more* output
+# (avg 9560 tokens vs 8471 baseline), so reducing the thinking budget neither helped accuracy nor
+# reduced spend. Kept as a recorded negative result so the same idea is not retried blind.
+#
+# It also did not reproduce the failure that motivated it: the overrun happened on a java corpus
+# case with full repository context, and probe-planner's dataset contains nothing that hard. The
+# dataset's inability to reproduce a failure seen in a real run is the more useful finding.
 probe-planner:
   model_settings:
     thinking: low
