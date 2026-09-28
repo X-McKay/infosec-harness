@@ -30,12 +30,23 @@ BUILD_SAFETY = [
 BUILD_COMPLETION = [
     "The spec names a base image from the allowlisted registries.",
     "Install commands come from the repository's own manifests.",
+    "The test runner itself is installed, not merely assumed present.",
+]
+# Runners that take a path must carry the placeholder; JVM runners select by class name
+# instead, so demanding it of them would be wrong (and was, briefly).
+PATH_RUNNER_COMPLETION = [
     "`test_command` contains the literal `{test_file}` placeholder — never a hardcoded test "
     "path. The harness writes the probe to the path its author chose and substitutes it here; "
     "a hardcoded path runs a file that does not exist and no test executes.",
-    "A pytest command disables output capture with `-s`, or the probe's markers are buffered "
+]
+PYTEST_COMPLETION = [
+    "The pytest command disables output capture with `-s`, or the probe's markers are buffered "
     "away and a correct probe is recorded as having reached nothing.",
-    "The test runner itself is installed, not merely assumed present.",
+]
+JVM_RUNNER_COMPLETION = [
+    "`test_command` names the probe's test *class* in its selector (`-Dtest=HarnessProbeTest`, "
+    "`--tests '*HarnessProbeTest'`) — not a file path, which these runners do not accept. The "
+    "probe's class name must therefore match the selector.",
 ]
 TEST_SAFETY = [
     "The test must run to completion and print its markers whether or not the exploit "
@@ -224,7 +235,7 @@ SKILLS = {
                   "Pipfile."],
         avoid_when=["The repository is not Python.",
                     "You are reading code rather than planning a build — use `lang-python`."],
-        safety=BUILD_SAFETY, completion=BUILD_COMPLETION),
+        safety=BUILD_SAFETY, completion=BUILD_COMPLETION + PATH_RUNNER_COMPLETION + PYTEST_COMPLETION),
     "build-maven": dict(
         description=("Recipe for building a Maven Java test environment in the sandbox. Use "
                      "this when planning or repairing a build for a pom.xml project."),
@@ -232,7 +243,7 @@ SKILLS = {
                   "The repository declares a pom.xml."],
         avoid_when=["The project builds with Gradle — use `build-gradle`.",
                     "The repository is not a JVM project."],
-        safety=BUILD_SAFETY, completion=BUILD_COMPLETION),
+        safety=BUILD_SAFETY, completion=BUILD_COMPLETION + JVM_RUNNER_COMPLETION),
     "build-gradle": dict(
         description=("Recipe for building a Gradle Java test environment in the sandbox. Use "
                      "this when planning or repairing a build for a Gradle project."),
@@ -240,7 +251,7 @@ SKILLS = {
                   "The repository declares build.gradle or build.gradle.kts."],
         avoid_when=["The project builds with Maven — use `build-maven`.",
                     "The repository is not a JVM project."],
-        safety=BUILD_SAFETY, completion=BUILD_COMPLETION),
+        safety=BUILD_SAFETY, completion=BUILD_COMPLETION + JVM_RUNNER_COMPLETION),
     "build-npm": dict(
         description=("Recipe for building a Node and JavaScript test environment in the "
                      "sandbox. Use this when planning or repairing a build for a package.json "
@@ -248,14 +259,14 @@ SKILLS = {
         use_when=["You are producing or repairing an EnvironmentSpec for a Node project.",
                   "The repository declares a package.json."],
         avoid_when=["The repository is not a Node project."],
-        safety=BUILD_SAFETY, completion=BUILD_COMPLETION),
+        safety=BUILD_SAFETY, completion=BUILD_COMPLETION + PATH_RUNNER_COMPLETION),
     "build-cpanm": dict(
         description=("Recipe for building a Perl test environment in the sandbox. Use this when "
                      "planning or repairing a build for a cpanfile or Makefile.PL project."),
         use_when=["You are producing or repairing an EnvironmentSpec for a Perl repository.",
                   "The repository declares a cpanfile, Makefile.PL, or Build.PL."],
         avoid_when=["The repository is not Perl."],
-        safety=BUILD_SAFETY, completion=BUILD_COMPLETION),
+        safety=BUILD_SAFETY, completion=BUILD_COMPLETION + PATH_RUNNER_COMPLETION),
     "partial-build": dict(
         description=("Tactics for building only the sub-unit that contains the finding. Use "
                      "this when a full build has exhausted its repair budget."),

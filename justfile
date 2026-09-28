@@ -46,6 +46,18 @@ eval-run agent="probe-diagnosis":
     HARNESS_MODEL_MODE=stub HARNESS_DATABASE_URL="sqlite+aiosqlite:///.harness/demo.db" \
       uv run harness eval run {{agent}}
 
+# Every agent's dataset through its adapter, on the stub model — what CI runs. This proves the
+# datasets and adapters still load and score end to end; stub accuracy is meaningless and low,
+# so read nothing into the numbers.
+eval-adapters:
+    mkdir -p .harness
+    for dataset in agents/*/evals/dataset.yaml; do \
+      agent="$(basename "$(dirname "$(dirname "$dataset")")")"; \
+      echo "--- $agent"; \
+      HARNESS_MODEL_MODE=stub HARNESS_DATABASE_URL="sqlite+aiosqlite:///.harness/demo.db" \
+        uv run harness eval run "$agent"; \
+    done
+
 # --- Full stack ---
 up:
     docker compose up --build

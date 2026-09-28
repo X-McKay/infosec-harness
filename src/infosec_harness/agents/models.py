@@ -205,12 +205,32 @@ def resolved_model_name(agent_name: str, tier: str) -> str:
     return f"{backend}:{cfg.model_id(tier, backend)}"
 
 
+def strip_backend_prefix(model_name: str) -> str:
+    """Drop a leading ``<backend>:`` from a recorded model name.
+
+    :func:`resolved_model_name` records ``"gateway:Qwen3.6-35B-A3B-NVFP4"`` so a run is
+    attributable to the backend that served it, but every price table — genai-prices and the
+    configured fallbacks alike — is keyed on the bare model id. Looking a prefixed name up
+    silently found nothing, so *all* configured prices were dead and cost came back None for
+    any model genai-prices does not know, which is precisely the case they exist to cover.
+
+    Only a known backend name is stripped, so a model id that legitimately contains a colon
+    (``qwen3.5:9b``) is left alone.
+    """
+    prefix, sep, rest = model_name.partition(":")
+    if sep and prefix in load_models_config().backends:
+        return rest
+    return model_name
+
+
 def custom_prices(model_name: str) -> Prices | None:
     """Configured fallback prices for models genai-prices doesn't know (e.g. gateways)."""
     cfg = load_models_config()
+    bare = strip_backend_prefix(model_name)
     for backend in cfg.backends.values():
-        if model_name in backend.prices:
-            return backend.prices[model_name]
+        for candidate in (bare, model_name):
+            if candidate in backend.prices:
+                return backend.prices[candidate]
     return None
 
 
@@ -220,7 +240,7 @@ def estimate_cost(model_name: str, usage: Any) -> tuple[float | None, bool]:
         from genai_prices import Usage, calc_price
 
         provider = None
-        name = model_name
+        name = strip_backend_prefix(model_name)
         if name.startswith("anthropic."):
             name, provider = name.removeprefix("anthropic."), "anthropic"
         for prefix in ("us.", "eu.", "global.", "apac."):

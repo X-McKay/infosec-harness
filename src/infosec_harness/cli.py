@@ -127,10 +127,35 @@ def eval_run(
     report: Path = typer.Option(None, help="Write an agentctl-compatible release report here"),
 ):
     """Run an agent's eval dataset (or the e2e corpus) and persist the experiment."""
+    from infosec_harness.evals.inert_gates import announce_inert_checks
     from infosec_harness.evals.run import run_experiment
 
     exp_id = asyncio.run(run_experiment(agent, overlay=overlay, repeat=repeat, report=report))
+    if report is not None and report.exists():
+        # A threshold on a metric this run could not move looks like coverage and is none:
+        # say so next to the evidence, loudly, without changing the run's verdict.
+        announce_inert_checks(agent, report, echo=typer.echo)
     typer.echo(f"EXPERIMENT_ID={exp_id}")
+
+
+@eval_app.command("inert-gates")
+def eval_inert_gates(
+    report: Path = typer.Argument(..., help="An eval release report written by `eval run --report`"),
+    agent: str = typer.Option(None, help="Agent name; defaults to the report's own subject"),
+    policy: Path = typer.Option(None, help="Policy YAML; defaults to the agent's release-policy.yaml"),
+):
+    """Audit a release report: which of its policy's checks could not have failed?
+
+    Exit code is always 0 — inertness is evidence quality, not a gate (see
+    infosec_harness.evals.inert_gates).
+    """
+    from infosec_harness.evals.inert_gates import announce_inert_checks
+
+    name = agent or (json.loads(report.read_text()).get("agent") or "")
+    if not name and policy is None:
+        raise typer.BadParameter("report names no agent; pass --agent or --policy")
+    announce_inert_checks(name or "the subject", report, policy_path=policy, echo=typer.echo,
+                          once=False)
 
 
 @eval_app.command("corpus")

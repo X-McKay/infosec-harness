@@ -4,6 +4,13 @@ version: "1"
 # needs `canary_file`; SQL injection and XSS both hand back a value the test can inspect, so
 # they need `marker_output`. Choosing the other one is not a style difference — a probe that
 # watches a return value for an injected `touch` will never see it.
+#
+# The split is deliberately not the CWE: `canary_file` cases are the ones whose sink returns
+# the caller nothing usable (Runtime.exec hands back a Process, subprocess output is discarded
+# into a count), and `marker_output` cases are the ones where the exploited value comes back
+# through the call — including path traversal, whose whole effect *is* the returned bytes.
+# Both labels appear more than once and in more than one language, so an agent that has settled
+# on one oracle for everything tops out well below the release threshold.
 cases:
   - name: cmdi-needs-a-canary
     repo: eval-corpus/python/cmdi/vulnerable
@@ -37,4 +44,46 @@ cases:
         reachability: reachable
         reachability_rationale: "render_comment returns caller input inside a div"
         target_callable: render_comment
+    expected: marker_output
+  - name: pathtraversal-returns-the-escaped-file
+    # The exploit's whole observable effect is the bytes read back from outside BASE, so the
+    # test can decide by inspecting the return value. A canary here would prove nothing: the
+    # payload creates no file, it reads one.
+    repo: eval-corpus/python/pathtraversal/vulnerable
+    payload:
+      finding: {title: "Path traversal in read_doc", cwe: "CWE-22", severity: high,
+                file_path: app.py, start_line: 8}
+      finding_context:
+        summary: "name is joined onto BASE and opened with no containment check"
+        reachability: reachable
+        reachability_rationale: "read_doc opens os.path.join(BASE, name) directly"
+        target_callable: read_doc
+    expected: marker_output
+  - name: java-cmdi-returns-only-a-process-handle
+    # Runtime.exec returns a Process, not the command's effect, and the finding is in the shell
+    # string it builds. Nothing the caller receives distinguishes "injected" from "not", so the
+    # only reliable signal is a file the injected command creates in the sandbox temp dir.
+    repo: eval-corpus/java/cmdi/vulnerable
+    payload:
+      finding: {title: "OS command injection in run", cwe: "CWE-78", severity: critical,
+                file_path: "src/main/java/com/example/Runner.java", start_line: 6}
+      finding_context:
+        summary: "arg is concatenated into the sh -c string passed to Runtime.exec"
+        reachability: reachable
+        reachability_rationale: "run builds `echo ` + arg and executes it through sh -c"
+        target_callable: run
+    expected: canary_file
+  - name: perl-sqli-returns-the-rows
+    # selectall_arrayref hands the caller the result set, so a row the WHERE clause should have
+    # excluded is directly observable — the same reasoning as the Python case, in a language
+    # whose string interpolation makes the sink look different.
+    repo: eval-corpus/perl/sqli/vulnerable
+    payload:
+      finding: {title: "SQL injection in get_user", cwe: "CWE-89", severity: high,
+                file_path: "lib/UserDao.pm", start_line: 8}
+      finding_context:
+        summary: "$name is interpolated into the SQL text passed to selectall_arrayref"
+        reachability: reachable
+        reachability_rationale: "get_user interpolates its argument into the query string"
+        target_callable: get_user
     expected: marker_output

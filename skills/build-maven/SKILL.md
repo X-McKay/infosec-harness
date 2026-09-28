@@ -45,8 +45,7 @@ metadata:
 
 - The spec names a base image from the allowlisted registries.
 - Install commands come from the repository's own manifests.
-- `test_command` contains the literal `{test_file}` placeholder — never a hardcoded test path. The harness writes the probe to the path its author chose and substitutes it here; a hardcoded path runs a file that does not exist and no test executes.
-- A pytest command disables output capture with `-s`, or the probe's markers are buffered away and a correct probe is recorded as having reached nothing.
 - The test runner itself is installed, not merely assumed present.
+- `test_command` names the probe's test *class* in its selector (`-Dtest=HarnessProbeTest`, `--tests '*HarnessProbeTest'`) — not a file path, which these runners do not accept. The probe's class name must therefore match the selector.
 
 <!-- /generated: constraints -->

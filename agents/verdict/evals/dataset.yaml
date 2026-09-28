@@ -1,5 +1,15 @@
 # Verdict agent eval cases. Inputs are the structured evidence the agent reasons over
 # (repository content is untrusted data). `expected` is the ground-truth label.
+#
+# The evidence in each case is one of the shapes the graph really produces, and the last four
+# are the ones where the label does not follow from a single field. Two make the same mistake
+# attractive from opposite directions — a valid_negative diagnosis whose probe never reached the
+# sink, and a fired oracle on a probe diagnosed as defective — so an agent that reads only
+# `oracle_fired`, or only `last_diagnosis`, gets one of them wrong whichever field it picks.
+# `verdict_violations` rejects those two labels outright, so a model that reaches for them burns
+# output retries and lands on invalid_output; the case measures whether it needed the validator.
+# Inconclusive is the plurality label (4 of 7), which is deliberate: it is the answer the agent
+# must not avoid, and no constant answer comes near the 0.85 threshold.
 version: "1"
 cases:
   - name: valid_positive_sqli
@@ -28,4 +38,76 @@ cases:
       finding_context: {summary: "unknown", reachability: unknown, reachability_rationale: "not analyzed"}
       diagnosis: null
     facts: {environment_ready: false, oracle_fired: false, precondition_reached: false}
+    expected: inconclusive
+  - name: unreachable_sink_needs_no_probe
+    # The corpus `unreachable` case: healthcheck runs a constant query through a private helper,
+    # so no probe was ever built and environment_ready is false. "No probe ran" is not the same
+    # as "no answer" — cited code showing untrusted input cannot reach the sink is a verdict, and
+    # the contract admits it as the one non-inconclusive label without an execution.
+    payload:
+      finding: {title: "SQL execution in healthcheck", cwe: "CWE-89", severity: medium,
+                file_path: app.py, start_line: 12}
+      finding_context:
+        summary: "healthcheck calls _run with the literal 'SELECT 1'"
+        reachability: unreachable
+        reachability_rationale: "the only argument to the execute sink is a constant; no caller can influence it"
+        sink: {file_path: app.py, start_line: 12, end_line: 12,
+               note: "_run executes the sql it is handed"}
+        path: [{file_path: app.py, start_line: 17, end_line: 17,
+                note: "healthcheck passes the constant 'SELECT 1'"}]
+      diagnosis: null
+    facts: {environment_ready: false, oracle_fired: false, precondition_reached: false,
+            reachability: unreachable}
+    expected: likely_not_exploitable
+  - name: probe_unrepairable_after_budget
+    # Repairs are exhausted and the probe never reached the sink, so nothing was learned about
+    # the code. The wrong answer is the comfortable one: a clean exit code with no oracle reads
+    # like a negative result, and calling it safe is exactly the unevidenced-safety failure.
+    payload:
+      finding: {title: "Command injection in count_lines", cwe: "CWE-78", severity: critical,
+                file_path: app.py, start_line: 6}
+      finding_context: {summary: "path is concatenated into a shell command run with shell=True",
+                        reachability: reachable,
+                        reachability_rationale: "count_lines passes caller input straight to the shell"}
+      probe_execution: {attempt: 3, exit_code: 2, oracle_fired: false, precondition_reached: false,
+                        stderr_tail: "ModuleNotFoundError: No module named 'app'"}
+      diagnosis: {kind: probe_defect, explanation: "the probe still fails at import",
+                  fix_hint: "import count_lines from the repository root"}
+    facts: {environment_ready: true, oracle_fired: false, precondition_reached: false,
+            last_diagnosis: probe_defect, reachability: reachable, probe_repairs_exhausted: true}
+    expected: inconclusive
+  - name: valid_negative_that_never_reached_the_sink
+    # The diagnosis claims the code resisted the payload, but precondition_reached is false, so
+    # the payload never arrived: the evidence contradicts itself and the honest label is
+    # inconclusive (conflicting_evidence). A verdict of likely_not_exploitable here is counted as
+    # an unevidenced safe verdict, the costliest error in the system (RISK-SEC-003).
+    payload:
+      finding: {title: "SQL injection in getUser", cwe: "CWE-89", severity: high,
+                file_path: "src/main/java/com/example/UserDao.java", start_line: 12}
+      finding_context: {summary: "name is concatenated into the SQL passed to executeQuery",
+                        reachability: reachable,
+                        reachability_rationale: "getUser interpolates its argument into the query text"}
+      probe_execution: {attempt: 2, exit_code: 0, oracle_fired: false, precondition_reached: false,
+                        stdout_tail: "Tests run: 1, Failures: 0"}
+      diagnosis: {kind: valid_negative, explanation: "the payload did not alter the query"}
+    facts: {environment_ready: true, oracle_fired: false, precondition_reached: false,
+            last_diagnosis: valid_negative, reachability: reachable}
+    expected: inconclusive
+  - name: oracle_fired_on_a_defective_probe
+    # The mirror image: a signal, but not one a valid execution produced — the probe asserted on
+    # HTML it had built itself, so the oracle proves the test's own string handling. Treating
+    # "oracle_fired" as sufficient would report an exploit the run never demonstrated.
+    payload:
+      finding: {title: "Cross-site scripting in renderComment", cwe: "CWE-79", severity: medium,
+                file_path: "src/render.js", start_line: 3}
+      finding_context: {summary: "text is concatenated into HTML with no encoding",
+                        reachability: reachable,
+                        reachability_rationale: "renderComment returns caller input inside a div"}
+      probe_execution: {attempt: 1, exit_code: 0, oracle_fired: true, precondition_reached: true,
+                        stdout_tail: "HARNESS_PRECONDITION::n1\nHARNESS_ORACLE::n1"}
+      diagnosis: {kind: probe_defect,
+                  explanation: "the probe concatenated the payload itself and never called renderComment",
+                  fix_hint: "require the module and judge what renderComment returns"}
+    facts: {environment_ready: true, oracle_fired: true, precondition_reached: true,
+            last_diagnosis: probe_defect, reachability: reachable}
     expected: inconclusive

@@ -13,6 +13,86 @@ jobs:
       - run: uv run python -m compileall -q src
       - run: uv run harness agents validate
       - run: uv run pytest -q -k "not integration"
+      # Every agent's eval dataset, through its adapter, on the stub model. This is a load
+      # test of the datasets and adapters, not of quality: stub accuracy is meaningless and
+      # low by design, so nothing here asserts on accuracy — the check is that each
+      # experiment runs to completion. A dataset that stops parsing, an adapter whose
+      # unpacking drifts from its agent's output type, or a renamed field fails the run and
+      # so fails CI.
+      - name: Run every agent eval adapter (stub model, no accuracy assertion)
+        env:
+          # Experiments are persisted, so the run needs a database; SQLite keeps CI free of a
+          # Postgres service. Scoped to this step: pytest brings its own isolated DB.
+          HARNESS_DATABASE_URL: sqlite+aiosqlite:///${{ github.workspace }}/.harness/ci.db
+        run: |
+          mkdir -p .harness
+          shopt -s nullglob
+          datasets=(agents/*/evals/dataset.yaml)
+          if [ ${#datasets[@]} -eq 0 ]; then
+            echo "no agents/*/evals/dataset.yaml found - adapter coverage would be silently empty"
+            exit 1
+          fi
+          for dataset in "${datasets[@]}"; do
+            agent="$(basename "$(dirname "$(dirname "$dataset")")")"
+            echo "::group::eval run $agent"
+            uv run harness eval run "$agent"
+            echo "::endgroup::"
+          done
+  conformance:
+    # Validates the repo against the Agent / Multi-Agent Playbooks via agentctl, which lives
+    # in a separate repository. Fetching and building that tool is infrastructure: when it is
+    # unavailable the job warns and stops rather than reporting this repo as non-conformant,
+    # so a GitHub outage or a permissions change never reads as a contract violation.
+    runs-on: ubuntu-latest
+    env:
+      HARNESS_MODEL_MODE: stub
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out the playbooks repo (provides tools/agentctl)
+        id: playbooks
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          repository: X-McKay/playbooks
+          path: .playbooks
+          # github.token covers a public playbooks repo; set PLAYBOOKS_TOKEN (a PAT with read
+          # access) if it is private.
+          token: ${{ secrets.PLAYBOOKS_TOKEN || github.token }}
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --all-extras
+      # scripts/conformance.py shells out to `uv run --locked --project <path> agentctl`, so
+      # probe exactly that before the real check: the tool is either buildable or it is not,
+      # and that answer must not be reported as a conformance verdict. The agentctl project is
+      # tools/agentctl in the playbooks repo; the repo root also works if it is a uv workspace.
+      - name: Locate a runnable agentctl (infrastructure probe, not a conformance check)
+        id: agentctl
+        if: steps.playbooks.outcome == 'success'
+        continue-on-error: true
+        run: |
+          for candidate in .playbooks/tools/agentctl .playbooks; do
+            [ -f "$candidate/pyproject.toml" ] || continue
+            if uv run --locked --project "$candidate" agentctl --no-color --help > /dev/null 2>&1; then
+              echo "agentctl runs from $candidate"
+              echo "project=$candidate" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "agentctl is not runnable from $candidate"
+          done
+          echo "no runnable agentctl found under .playbooks"
+          exit 1
+      - name: Playbook conformance
+        if: steps.agentctl.outcome == 'success'
+        # Exits non-zero on real errors only; documented waivers are printed and pass.
+        run: uv run python scripts/conformance.py --agentctl "${{ steps.agentctl.outputs.project }}"
+      - name: Explain why conformance did not run
+        if: steps.playbooks.outcome != 'success' || steps.agentctl.outcome != 'success'
+        run: |
+          if [ "${{ steps.playbooks.outcome }}" != "success" ]; then
+            reason="could not check out X-McKay/playbooks (network, or the repo is private and PLAYBOOKS_TOKEN is unset)"
+          else
+            reason="agentctl could not be built or run from the playbooks checkout (see the probe step's log)"
+          fi
+          echo "::warning title=Playbook conformance not run::${reason}. This is an infrastructure gap, not a conformance failure - the repo was not checked. Run 'just conformance /path/to/playbooks/tools/agentctl' locally."
   web:
     runs-on: ubuntu-latest
     steps:

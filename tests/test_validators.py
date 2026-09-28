@@ -174,3 +174,43 @@ def test_the_retry_message_names_the_fix_rather_than_the_violation():
     joined = " ".join(environment_spec_violations(spec))
     assert "{test_file}" in joined and "-s" in joined
     assert "python -m pytest -q -s {test_file}" in joined  # shows the corrected command
+
+
+def test_jvm_runners_select_by_class_and_are_not_required_to_carry_the_placeholder():
+    """Maven and Gradle take a test *class*, not a path — the skills had this right.
+
+    A blanket {test_file} requirement rejected every valid Java spec, including the one the
+    stub model produces, which would have broken the Java corpus runs outright. The coupling
+    for these runners is that the probe's class name matches the selector.
+    """
+    from infosec_harness.agents.validators import environment_spec_violations
+    from infosec_harness.domain.models import EnvironmentSpec
+
+    for command in ("mvn -q -B -o test -Dtest=HarnessProbeTest",
+                    "./gradlew --no-daemon --offline test --tests '*HarnessProbeTest'"):
+        spec = EnvironmentSpec(base_image="maven:3.9-eclipse-temurin-21", test_command=command)
+        assert environment_spec_violations(spec) == [], command
+
+
+def test_an_empty_class_selector_is_still_rejected():
+    """`-Dtest=` with nothing after it selects no test at all."""
+    from infosec_harness.agents.validators import environment_spec_violations
+    from infosec_harness.domain.models import EnvironmentSpec
+
+    spec = EnvironmentSpec(base_image="maven:3.9", test_command="mvn -q -B test -Dtest=")
+    assert any("test class" in p for p in environment_spec_violations(spec))
+
+
+def test_the_stub_models_own_specs_satisfy_the_contract():
+    """The stub is the offline stand-in; if the contract rejects it, every offline test lies."""
+    from infosec_harness.agents.stubs import _env_plan
+    from infosec_harness.agents.validators import environment_spec_violations
+    from infosec_harness.domain.models import EnvironmentSpec, StackFingerprint
+
+    for languages, manifests in (({"python": 1}, ["requirements.txt"]),
+                                 ({"javascript": 1}, ["package.json"]),
+                                 ({"java": 1}, ["pom.xml"]),
+                                 ({"perl": 1}, ["cpanfile"])):
+        stack = StackFingerprint(languages=languages, manifests=manifests)
+        spec = EnvironmentSpec.model_validate(_env_plan(stack.model_dump(mode="json")))
+        assert environment_spec_violations(spec) == [], (languages, spec.test_command)

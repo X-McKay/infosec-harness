@@ -249,3 +249,39 @@ async def test_a_repo_that_cannot_be_prepared_does_not_sink_the_batch(repo, monk
     assert failed.result.verdict.inconclusive_reason is InconclusiveReason.environment_unbuildable
     assert "input_tokens_limit" in failed.result.verdict.rationale
     assert outputs[1].result.verdict.label in set(VerdictLabel)
+
+
+async def test_a_hung_agent_run_is_bounded(repo, monkeypatch):
+    """A hung provider request never fails, so nothing else ends it.
+
+    The client's retries do not fire (nothing errored), no budget trips (no tokens arrive),
+    and the run simply sits. Observed repeatedly against the test endpoint, once for twenty
+    minutes on a single request. Under Temporal the activity's start_to_close_timeout covers
+    this; outside it, LocalOps must.
+    """
+    import asyncio
+
+    from infosec_harness.graph.ops import LocalOps
+    from infosec_harness.settings import get_settings
+
+    monkeypatch.setenv("HARNESS_AGENT_RUN_TIMEOUT_S", "1")
+    get_settings.cache_clear()
+    try:
+        ops = LocalOps(sandbox=False)
+        from infosec_harness.agents import registry
+
+        class _Hang:
+            async def run(self, *a, **kw):
+                await asyncio.sleep(30)
+
+        monkeypatch.setattr(registry, "build_agent", lambda *a, **kw: _Hang(), raising=True)
+        with pytest.raises(TimeoutError, match="HARNESS_AGENT_RUN_TIMEOUT_S=1s"):
+            await ops.run_agent("verdict", ["go"], _deps_for_timeout())
+    finally:
+        get_settings.cache_clear()
+
+
+def _deps_for_timeout():
+    from infosec_harness.agents.deps import AgentDeps
+
+    return AgentDeps(repo_path="/nonexistent")

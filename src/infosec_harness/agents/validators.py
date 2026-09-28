@@ -77,6 +77,21 @@ def validate_probe(ctx: RunContext[AgentDeps], output: ProbeSource) -> ProbeSour
 # pytest buffers stdout unless told not to, and the oracle markers are stdout. Either of
 # these disables that capture.
 _PYTEST_UNBUFFERED = ("-s", "--capture=no", "--capture no")
+# JVM runners select a test by class name rather than by file path.
+_CLASS_SELECTORS = ("-Dtest=", "--tests")
+
+
+def _selects_by_class_name(command: str) -> bool:
+    return any(sel in command for sel in _CLASS_SELECTORS)
+
+
+def _has_class_selector_value(command: str) -> bool:
+    """The selector must actually name something, not sit empty."""
+    for sel in _CLASS_SELECTORS:
+        _, found, rest = command.partition(sel)
+        if found and rest.lstrip(" =\"'").strip():
+            return True
+    return False
 
 
 def environment_spec_violations(spec: EnvironmentSpec) -> list[str]:
@@ -88,6 +103,19 @@ def environment_spec_violations(spec: EnvironmentSpec) -> list[str]:
     """
     problems: list[str] = []
     command = spec.test_command or ""
+    if _selects_by_class_name(command):
+        # Maven and Gradle select tests by *class*, not by path: `-Dtest=HarnessProbeTest`,
+        # `--tests '*HarnessProbeTest'`. Substituting a file path there matches nothing, so
+        # these commands legitimately carry no {test_file} — the coupling is that the probe's
+        # class name must be the one the selector names, which is the author's job and what
+        # the test-junit5 skill specifies.
+        if not _has_class_selector_value(command):
+            problems.append(
+                "a JVM test command must name the probe's test class in its selector, e.g. "
+                "'mvn -q -B -o test -Dtest=HarnessProbeTest' or "
+                "\"./gradlew --offline test --tests '*HarnessProbeTest'\"."
+            )
+        return problems
     if "{test_file}" not in command:
         # The harness writes the probe to the path the author chose and substitutes it here.
         # A hardcoded path means the probe file that was actually written is never run: pytest

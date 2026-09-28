@@ -3,6 +3,14 @@ version: "1"
 # that still satisfies the protocol. The defects are the ones seen in real runs: a probe that
 # asserts before reaching the sink, and a probe that instruments an object the target never
 # uses — the failure mode that produced a silent false negative.
+#
+# The defects are spread over the four corpus ecosystems and over the three ways the scored
+# label can come out wrong, so a repair that fixes one class of defect by habit does not carry
+# the dataset: a missing precondition marker (JavaScript), a canary written to a path the runner
+# never inspects (Perl), a target reimplemented instead of called (Java), and an import that
+# fails during collection so nothing runs at all (Python). Two of them "passed" — exit code 0,
+# one of them with the oracle fired — which is the point: the probe that looks healthiest is the
+# one whose repair matters most.
 cases:
   - name: asserts-before-reaching-the-sink
     repo: eval-corpus/python/sqli/vulnerable
@@ -80,4 +88,169 @@ cases:
           target used, so last_sql is always None and the oracle can never fire.
         fix_hint: "Observe the effect of the real call instead of wrapping the driver."
       oracle_nonce: "5f0a8d3b16c7e924"
+    expected: conformant
+  - name: java-probe-asserts-against-its-own-copy-of-the-sink
+    # The probe builds the concatenated SQL itself and never constructs UserDao, so it would
+    # report "exploitable" for the fixed variant too: it is testing string concatenation, not
+    # the code under investigation. The repair has to route through UserDao.getUser.
+    repo: eval-corpus/java/sqli/vulnerable
+    target_callable: getUser
+    payload:
+      probe_plan:
+        hypothesis: "A quote in name changes the structure of the query UserDao builds."
+        payload: "alice' OR '1'='1"
+        oracle: marker_output
+        oracle_condition: "the ResultSet contains a row the WHERE clause should have excluded"
+        precondition_checkpoint: "immediately before calling UserDao.getUser"
+        test_file_path: src/test/java/com/example/HarnessProbeTest.java
+      probe_source:
+        test_file_path: src/test/java/com/example/HarnessProbeTest.java
+        content: |
+          package com.example;
+
+          import org.junit.jupiter.api.Test;
+
+          class HarnessProbeTest {
+              @Test
+              void sqli() {
+                  String payload = "alice' OR '1'='1";
+                  System.out.println("HARNESS_PRECONDITION::" + NONCE);
+                  // rebuilt by hand; UserDao is never instantiated
+                  String sql = "SELECT id, name, secret FROM users WHERE name = '" + payload + "'";
+                  if (sql.contains("OR '1'='1")) {
+                      System.out.println("HARNESS_ORACLE::" + NONCE);
+                  }
+              }
+          }
+      probe_execution:
+        attempt: 1
+        exit_code: 0
+        oracle_fired: true
+        precondition_reached: true
+        stdout_tail: "HARNESS_PRECONDITION::n1\nHARNESS_ORACLE::n1\nTests run: 1, Failures: 0"
+      diagnosis:
+        kind: probe_defect
+        explanation: >-
+          The oracle fired on a string the test built itself. The same test would fire against
+          the PreparedStatement variant, so it distinguishes nothing.
+        fix_hint: "Call UserDao.getUser with a real Connection and judge the rows it returns."
+      oracle_nonce: "d17c4b93e6a20f58"
+    expected: conformant
+  - name: javascript-probe-never-prints-the-precondition-marker
+    # It reached the sink and even fired the oracle, but with no precondition marker the runner
+    # cannot tell this from a probe that crashed on import, so "not exploitable" would be
+    # unevidenced. The repair is additive and must not weaken the oracle it already has.
+    repo: eval-corpus/javascript/xss/vulnerable
+    target_callable: renderComment
+    payload:
+      probe_plan:
+        hypothesis: "Angle brackets in text survive into the returned HTML unencoded."
+        payload: "<script>1</script>"
+        oracle: marker_output
+        oracle_condition: "the returned string contains the payload with its brackets intact"
+        precondition_checkpoint: "immediately before calling renderComment"
+        test_file_path: __tests__/harness_probe.test.js
+      probe_source:
+        test_file_path: __tests__/harness_probe.test.js
+        content: |
+          const { renderComment } = require("../src/render");
+
+          test("xss probe", () => {
+            const out = renderComment("<script>1</script>");
+            if (out.includes("<script>")) {
+              console.log("HARNESS_ORACLE::" + NONCE);
+            }
+          });
+      probe_execution:
+        attempt: 1
+        exit_code: 0
+        oracle_fired: true
+        precondition_reached: true
+        stdout_tail: "HARNESS_ORACLE::n1\n1 passed"
+      diagnosis:
+        kind: probe_defect
+        explanation: >-
+          The probe never prints the precondition marker, so a run in which the oracle does not
+          fire is indistinguishable from one that never reached renderComment at all.
+        fix_hint: "Print the precondition marker immediately before the renderComment call."
+      oracle_nonce: "2e6f81b04d7c395a"
+    expected: conformant
+  - name: perl-probe-writes-a-canary-the-runner-never-looks-for
+    # The canary oracle is read by the runner, not by the test: it checks for one exact path
+    # derived from the nonce. A canary at any other path is invisible however the test asserts
+    # on it, which is why this failed as a silent negative rather than an error.
+    repo: eval-corpus/perl/cmdi/vulnerable
+    target_callable: "Runner::run"
+    payload:
+      probe_plan:
+        hypothesis: "A semicolon in arg runs a second command in the same shell."
+        payload: "x; touch the canary path"
+        oracle: canary_file
+        oracle_condition: "the canary file exists under the sandbox temp dir after the call"
+        precondition_checkpoint: "immediately before calling Runner::run"
+        test_file_path: t/harness_probe.t
+      probe_source:
+        test_file_path: t/harness_probe.t
+        content: |
+          use strict;
+          use warnings;
+          use lib 'lib';
+          use Runner;
+          use Test::More tests => 1;
+
+          my $canary = "/tmp/probe_marker";   # not the nonce path the runner checks
+          print "HARNESS_PRECONDITION::" . $NONCE . "\n";
+          Runner::run("x; touch $canary");
+          ok(-e $canary, 'canary created');
+      probe_execution:
+        attempt: 1
+        exit_code: 0
+        oracle_fired: false
+        precondition_reached: true
+        stdout_tail: "HARNESS_PRECONDITION::n1\nok 1 - canary created\n"
+      diagnosis:
+        kind: probe_defect
+        explanation: >-
+          The injected command created /tmp/probe_marker, but the runner only reports a canary at
+          the nonce-derived path, so the oracle could not fire even though the payload worked.
+        fix_hint: "Create the canary at the nonce-derived path under the sandbox temp dir."
+      oracle_nonce: "8b0d5f2a71c43e69"
+    expected: conformant
+  - name: python-probe-imports-the-module-by-the-wrong-path
+    # It dies during collection, before any marker is printed: exit code 2 with no precondition.
+    # Only the import is wrong, so the repair must not take the opportunity to restructure the
+    # oracle.
+    repo: eval-corpus/python/pathtraversal/vulnerable
+    target_callable: read_doc
+    payload:
+      probe_plan:
+        hypothesis: "A ../ sequence in name reads a file outside the document root."
+        payload: "../<a file the probe plants in the sandbox temp dir>"
+        oracle: marker_output
+        oracle_condition: "the returned bytes are those of the file planted outside BASE"
+        precondition_checkpoint: "immediately before calling read_doc"
+        test_file_path: tests/test_pathtraversal_probe.py
+      probe_source:
+        test_file_path: tests/test_pathtraversal_probe.py
+        content: |
+          from src.app import read_doc          # app.py is at the repo root, not under src/
+
+          def test_pathtraversal(tmp_path):
+              planted = tmp_path / "outside.txt"
+              planted.write_text("SENTINEL")
+              print("HARNESS_PRECONDITION::" + NONCE)
+              data = read_doc("../" + str(planted))
+              if b"SENTINEL" in data:
+                  print("HARNESS_ORACLE::" + NONCE)
+      probe_execution:
+        attempt: 1
+        exit_code: 2
+        oracle_fired: false
+        precondition_reached: false
+        stderr_tail: "ModuleNotFoundError: No module named 'src'"
+      diagnosis:
+        kind: probe_defect
+        explanation: "Collection failed on the import, so no part of the probe ran."
+        fix_hint: "Import read_doc from app, which sits at the repository root."
+      oracle_nonce: "3f92a0c85d1b47e6"
     expected: conformant

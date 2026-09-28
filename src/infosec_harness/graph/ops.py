@@ -47,6 +47,7 @@ class LocalOps:
         self._sandbox = sandbox
 
     async def run_agent(self, name: str, prompt, deps: AgentDeps) -> AgentOutcome:
+        import asyncio
         import time
 
         from infosec_harness import telemetry
@@ -54,15 +55,29 @@ class LocalOps:
         from infosec_harness.agents.budgets import usage_limits_for
         from infosec_harness.agents.registry import build_agent, config_hash, load_spec
         from infosec_harness.evals.trajectory import inspect_messages
+        from infosec_harness.settings import get_settings
 
         agent = build_agent(name, durable=False)
         spec = load_spec(name)
         model_name = model_factory.resolved_model_name(name, spec.model or "sonnet")
         attrs = telemetry.agent_run_attributes(name, model_name, config_hash(name, spec))
         start = time.monotonic()
+        timeout = get_settings().agent_run_timeout_s
         with telemetry.agent_span(name, attrs) as span:
-            result = await agent.run(list(prompt), deps=deps,
-                                     usage_limits=usage_limits_for(name, spec.metadata))
+            try:
+                result = await asyncio.wait_for(
+                    agent.run(list(prompt), deps=deps,
+                              usage_limits=usage_limits_for(name, spec.metadata)),
+                    timeout=timeout,
+                )
+            except TimeoutError as e:
+                # A hung provider request never fails on its own, so neither the client's
+                # retries nor a budget will end it. Observed repeatedly against the test
+                # endpoint: a corpus run sat for twenty minutes on one request. Surface it as
+                # the infrastructure failure it is; callers contain it per finding.
+                raise TimeoutError(
+                    f"agent {name!r} exceeded HARNESS_AGENT_RUN_TIMEOUT_S={timeout}s"
+                ) from e
         usage = result.usage
         cost, estimated = model_factory.estimate_cost(model_name, usage)
         tools_called, skills_loaded = inspect_messages(result.all_messages())

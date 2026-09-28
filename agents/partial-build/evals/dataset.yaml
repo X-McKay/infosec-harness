@@ -1,6 +1,16 @@
 version: "1"
 # Scored on `scope`: after the full build has failed its repair budget, the correct move is to
 # narrow to the module the finding needs, not to retry everything again.
+#
+# The label is one-sided by contract — the agent is only ever invoked once a full build has
+# exhausted its budget, and its instructions require scope "partial" — so there are no
+# `full` cases to add. The discrimination comes from `full` being the *default* value of
+# EnvironmentSpec.scope: an agent that re-plans a whole-repository build (the cheapest thing
+# to do when the repo has no obvious sub-module, which is true of most of this corpus) or that
+# returns a spec without setting the field at all scores `full` and fails. Cases span the four
+# corpus ecosystems because the narrowing tactic is per-ecosystem (`mvn -pl`, a workspace
+# package dir, one module directory's own dependencies), and the last case adds a failed
+# partial attempt, where the tempting move is to fall back to the full build it came from.
 cases:
   - name: narrow-after-repeated-full-build-failure
     repo: eval-corpus/python/sqli/vulnerable
@@ -18,4 +28,109 @@ cases:
       finding_context: {summary: "name is %-formatted into the query", reachability: reachable,
                         reachability_rationale: "caller input reaches cursor.execute",
                         target_callable: get_user}
+    expected: partial
+  - name: narrow-a-maven-project-to-the-module-holding-the-dao
+    repo: eval-corpus/java/sqli/vulnerable
+    payload:
+      failed_spec: {base_image: "maven:3.9-eclipse-temurin-21", system_packages: [],
+                    install_commands: ["mvn -q -B -DskipTests test-compile"],
+                    test_command: "mvn -q -B -o test -Dtest={test_file}"}
+      build_result:
+        ok: false
+        log_tail: |
+          [ERROR] Failed to execute goal com.example:license-enforcer:1.4:check (default) on
+          [ERROR] project sqli-vuln: plugin requires a license server at build time
+          [ERROR] Connection refused: licenses.internal.example (attempt 6 of 6)
+      finding: {title: "SQL injection in getUser", cwe: "CWE-89", severity: high,
+                file_path: "src/main/java/com/example/UserDao.java", start_line: 12}
+      finding_context: {summary: "name is concatenated into the SQL passed to executeQuery",
+                        reachability: reachable,
+                        reachability_rationale: "getUser interpolates its argument into the query text",
+                        target_callable: getUser}
+    expected: partial
+  - name: narrow-a-node-package-past-a-native-devdependency
+    # The finding lives in src/render.js, a pure-JS function with no native dependency at all;
+    # the build only dies on an unrelated image-processing devDependency.
+    repo: eval-corpus/javascript/xss/vulnerable
+    payload:
+      failed_spec: {base_image: "node:22-slim", system_packages: [],
+                    install_commands: ["npm install --no-audit --no-fund"],
+                    test_command: "npx jest --runTestsByPath {test_file}"}
+      build_result:
+        ok: false
+        log_tail: |
+          npm error gyp ERR! build error
+          npm error gyp ERR! stack Error: `make` failed with exit code: 2
+          npm error node-pre-gyp ERR! install error (sharp@0.33.4) (attempt 6 of 6)
+      finding: {title: "Cross-site scripting in renderComment", cwe: "CWE-79", severity: medium,
+                file_path: "src/render.js", start_line: 3}
+      finding_context: {summary: "text is concatenated into HTML with no encoding",
+                        reachability: reachable,
+                        reachability_rationale: "renderComment returns caller input inside a div",
+                        target_callable: renderComment}
+    expected: partial
+  - name: narrow-a-perl-distribution-to-one-module-directory
+    # cpanfile requires DBI only; the heavy XS driver in the log is not what UserDao needs.
+    repo: eval-corpus/perl/sqli/vulnerable
+    payload:
+      failed_spec: {base_image: "perl:5.40", system_packages: [],
+                    install_commands: ["cpanm --notest --installdeps ."],
+                    test_command: "prove -v {test_file}"}
+      build_result:
+        ok: false
+        log_tail: |
+          ! Installing the dependencies failed: Module 'DBD::Oracle' is not installed
+          Can't find Oracle instant client headers (attempt 6 of 6)
+      finding: {title: "SQL injection in get_user", cwe: "CWE-89", severity: high,
+                file_path: "lib/UserDao.pm", start_line: 8}
+      finding_context: {summary: "$name is interpolated into the SQL text",
+                        reachability: reachable,
+                        reachability_rationale: "get_user interpolates its argument into selectall_arrayref",
+                        target_callable: get_user}
+    expected: partial
+  - name: narrow-when-the-build-times-out-rather-than-errors
+    # Nothing in the log names a missing package, so there is no dependency to add — only less
+    # to build. This is the case an agent that treats partial-build as "guess another package"
+    # gets wrong.
+    repo: eval-corpus/python/pathtraversal/vulnerable
+    payload:
+      failed_spec: {base_image: "python:3.12-slim", system_packages: [gcc],
+                    install_commands: ["python -m pip install --no-cache-dir --user -r requirements.txt"],
+                    test_command: "python -m pytest -q -s {test_file}"}
+      build_result:
+        ok: false
+        log_tail: |
+          Building wheel for scipy (pyproject.toml): still running...
+          error: build timed out after 1800s (attempt 6 of 6)
+      finding: {title: "Path traversal in read_doc", cwe: "CWE-22", severity: high,
+                file_path: app.py, start_line: 8}
+      finding_context: {summary: "name is joined onto BASE with no containment check",
+                        reachability: reachable,
+                        reachability_rationale: "read_doc opens the joined path directly",
+                        target_callable: read_doc}
+    expected: partial
+  - name: a-failed-partial-attempt-is-not-a-reason-to-rebuild-everything
+    # previous_attempts already contains one narrowing that failed. The instruction is not to
+    # repeat it — which means a *different* partial plan, not a return to the full build whose
+    # repair budget is already gone.
+    repo: eval-corpus/java/cmdi/vulnerable
+    payload:
+      failed_spec: {base_image: "maven:3.9-eclipse-temurin-21", system_packages: [],
+                    install_commands: ["mvn -q -B -pl . -am -DskipTests test-compile"],
+                    test_command: "mvn -q -B -o test -Dtest={test_file}",
+                    scope: partial, module_path: "."}
+      previous_attempts:
+        - {scope: partial, module_path: ".",
+           error_excerpt: "license-enforcer plugin still bound to the root pom"}
+      build_result:
+        ok: false
+        log_tail: |
+          [ERROR] project cmdi-vuln: plugin requires a license server at build time
+          [ERROR] Connection refused: licenses.internal.example (attempt 6 of 6)
+      finding: {title: "OS command injection in run", cwe: "CWE-78", severity: critical,
+                file_path: "src/main/java/com/example/Runner.java", start_line: 6}
+      finding_context: {summary: "arg is concatenated into an sh -c string",
+                        reachability: reachable,
+                        reachability_rationale: "run passes its argument to Runtime.exec via sh -c",
+                        target_callable: run}
     expected: partial

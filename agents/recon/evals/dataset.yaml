@@ -1,7 +1,10 @@
 version: "1"
 # Scored on `primary_language/test_framework`, the two fields every later stage builds on: the
 # environment plan picks a base image from the language and a test command from the framework.
-# One case per corpus ecosystem, so a regression that only affects one toolchain is visible.
+# One case per corpus ecosystem, so a regression that only affects one toolchain is visible,
+# plus two repositories that declare nothing useful: an empty cpanfile with an empty t/, and a
+# tests/ directory whose only file defines helpers and no test. Both are the shape where an
+# agent reports an unknown framework and the environment planner then has no runner to install.
 # The stack fingerprint is derived from the repo by detect_stack, exactly as the graph does it.
 cases:
   - name: python-pytest
@@ -20,3 +23,18 @@ cases:
     repo: eval-corpus/perl/sqli/vulnerable
     payload: {}
     expected: perl/test::more
+  - name: perl-with-nothing-declared
+    # The cpanfile is empty and t/ holds no tests, so neither the language nor the framework can
+    # be read off a dependency list: both come from the .pm layout and the ecosystem's own
+    # convention. An agent that reports "unknown" when nothing is declared fails here, and the
+    # environment planner downstream would have no runner to install.
+    repo: eval-corpus/perl/cmdi/vulnerable
+    payload: {}
+    expected: perl/test::more
+  - name: python-whose-only-test-file-is-a-helper
+    # tests/test_helpers.py defines build_query and no test function at all. The framework is
+    # still pytest (requirements.txt declares it, and pytest is what collects that path); the
+    # trap is concluding the project has no test framework because it has no tests.
+    repo: eval-corpus/python/testonly/vulnerable
+    payload: {}
+    expected: python/pytest

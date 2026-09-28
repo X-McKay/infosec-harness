@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     # Sandbox
     sandbox_runtime: str = "runsc"  # gVisor; set to "runc" only for local development without gVisor
     sandbox_probe_timeout_s: int = 300
+    # Ceiling on one agent run outside Temporal. A hung provider request has no natural
+    # end: the client's own retries never fire because nothing failed, so a run can sit
+    # forever. Under Temporal the activity's start_to_close_timeout does this instead.
+    agent_run_timeout_s: int = 600
     sandbox_build_timeout_s: int = 1800
     sandbox_memory: str = "2g"
     sandbox_cpus: str = "2"

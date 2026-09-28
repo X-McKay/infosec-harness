@@ -7,6 +7,7 @@ model/prompt/skill change with an evidence-based, one-variable-at-a-time method.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import subprocess
@@ -107,8 +108,41 @@ def _git_sha() -> str:
         return ""
 
 
+class TruncatedExperiment(SystemExit):
+    """A run stopped on an infrastructure failure after some cases had already been scored.
+
+    The completed cases are persisted before this is raised, so a long run is not lost — but
+    it is raised (non-zero exit) because a truncated experiment is a failed run, not a smaller
+    one. ``experiment_id`` is the partial experiment; ``truncation`` is the record stored in
+    its metrics.
+    """
+
+    def __init__(self, experiment_id: str, truncation: dict) -> None:
+        self.experiment_id = experiment_id
+        self.truncation = truncation
+        super().__init__(
+            f"experiment {experiment_id} TRUNCATED after "
+            f"{truncation['completed_runs']}/{truncation['planned_runs']} case runs "
+            f"({truncation['completed_cases']}/{truncation['planned_cases']} dataset cases): "
+            f"{truncation['error_type']}: {truncation['error']} "
+            f"— failed on case {truncation['failed_case']!r} repetition "
+            f"{truncation['failed_repetition']}. The completed cases are saved as "
+            f"EXPERIMENT_ID={experiment_id}, marked status=truncated: its metrics cover only "
+            f"the cases that ran and must not be compared against a complete experiment."
+        )
+
+
 async def run_experiment(agent: str, *, overlay: Path | None = None, repeat: int = 1,
                          report: Path | None = None) -> str:
+    """Run an agent's dataset, score it, and persist the experiment.
+
+    Persistence is incremental: the experiment row and its case results are written as each
+    case finishes, so an endpoint failure (or a kill) partway through a long ``--repeat`` run
+    keeps the work already scored instead of discarding it. An experiment is only marked
+    ``status=complete`` once every planned case run has been scored; a run cut short is stored
+    as ``status=truncated`` with the error and the count, and raises
+    :class:`TruncatedExperiment` so the failure is not mistaken for a smaller-but-clean run.
+    """
     if agent not in ADAPTERS:
         raise SystemExit(f"No eval adapter for agent {agent!r}. Available: {sorted(ADAPTERS)}")
     from infosec_harness.agents.registry import build_agent, config_hash, load_spec
@@ -133,72 +167,134 @@ async def run_experiment(agent: str, *, overlay: Path | None = None, repeat: int
         f"{agent}:{version}:{cfg_hash}:{overlay}:{uuid.uuid4()}".encode()).hexdigest()[:16]
 
     total = passed = invalid_output = budget_exhausted = unevidenced_safe = 0
+    completed_cases = 0
     cost = cache_read = tokens = 0.0
-    case_rows = []
     model_requests: list[int] = []
     confusion: dict[tuple[str, str], int] = {}
+    planned_runs = len(cases) * repeat
+
+    def build_metrics(status: str, truncation: dict | None = None) -> dict:
+        metrics = {
+            "accuracy": round(passed / total, 4) if total else 0.0,
+            "n": total, "passed": passed,
+            "cost_usd_total": round(cost, 6), "cost_usd_per_case": round(cost / total, 6) if total else 0.0,
+            "avg_tokens": round(tokens / total, 1) if total else 0.0,
+            "cache_hit_ratio": round(cache_read / tokens, 4) if tokens else 0.0,
+            "confusion": {f"{k[0]}->{k[1]}": v for k, v in sorted(confusion.items())},
+            # Named to match the release policy's gates and thresholds so the contract is
+            # executable rather than aspirational (agent-playbook §7).
+            "task_success_rate": round(passed / total, 4) if total else 0.0,
+            "schema_validity_rate": round((total - invalid_output) / total, 4) if total else 0.0,
+            "budget_exhausted_count": budget_exhausted,
+            "average_cost_usd": round(cost / total, 6) if total else 0.0,
+            "p95_model_requests": _p95(model_requests),
+            "unevidenced_safe_verdicts": unevidenced_safe,
+            # Coverage travels with the numbers: every metric above is over `n` of
+            # `n_planned` case runs, and only `status == "complete"` means they are equal.
+            # `harness eval compare` refuses to read anything else as a like-for-like run.
+            "status": status,
+            "n_planned": planned_runs,
+            "cases_planned": len(cases),
+            "cases_completed": completed_cases,
+        }
+        if truncation is not None:
+            metrics["truncated"] = truncation
+        return metrics
+
+    async def persist(status: str, rows: list, truncation: dict | None = None) -> None:
+        """Upsert the experiment with the metrics so far and append the new case rows.
+
+        Called after every case, so what has been scored is already durable when the next
+        model call fails or the process is killed.
+        """
+        async with db.session() as s:
+            await s.merge(db.EvalExperiment(
+                id=exp_id, agent=agent, dataset=str(dataset_path.name),
+                dataset_version=version, git_sha=git_sha,
+                overlay=str(overlay) if overlay else "", config_hash=cfg_hash,
+                repetitions=repeat, metrics=build_metrics(status, truncation)))
+            for row in rows:
+                s.add(row)
+            await s.commit()
 
     from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
 
-    for case in cases:
-        task_text, payload, deps, predict, expected = ADAPTERS[agent](case)
-        for rep in range(repeat):
-            prompt = render_prompt(task_text, payload)
-            try:
-                result = await built.run(prompt, deps=deps)
-                predicted = predict(result.output)
-                model_requests.append(result.usage.requests)
-                c, _ = model_factory.estimate_cost(model_name, result.usage)
-                tokens += result.usage.input_tokens + result.usage.output_tokens
-                cache_read += result.usage.cache_read_tokens or 0
-            except UsageLimitExceeded:
-                # The run hit its declared budget: it was stopped, not answered. This is a
-                # hard gate, so it is counted separately from a wrong answer.
-                predicted, c = "budget_exhausted", 0.0
-                budget_exhausted += 1
-            except UnexpectedModelBehavior:
-                # The model could not produce a valid output within its retry budget
-                # (e.g. it kept violating an output contract). That is a failed case, and an
-                # output that does not validate is no answer rather than a wrong one.
-                predicted, c = "invalid_output", 0.0
-                invalid_output += 1
-            if is_unevidenced_safe(agent, case, predicted):
-                unevidenced_safe += 1
-            ok = predicted == expected
-            total += 1
-            passed += int(ok)
-            cost += c or 0.0
-            confusion[(expected, predicted)] = confusion.get((expected, predicted), 0) + 1
-            case_rows.append(db.EvalCaseResult(
-                experiment_id=exp_id, case_name=case["name"], repetition=rep, passed=ok,
-                scores={"expected": expected, "predicted": predicted}, cost_usd=c or 0.0))
-
-    metrics = {
-        "accuracy": round(passed / total, 4) if total else 0.0,
-        "n": total, "passed": passed,
-        "cost_usd_total": round(cost, 6), "cost_usd_per_case": round(cost / total, 6) if total else 0.0,
-        "avg_tokens": round(tokens / total, 1) if total else 0.0,
-        "cache_hit_ratio": round(cache_read / tokens, 4) if tokens else 0.0,
-        "confusion": {f"{k[0]}->{k[1]}": v for k, v in sorted(confusion.items())},
-        # Named to match the release policy's gates and thresholds so the contract is
-        # executable rather than aspirational (agent-playbook §7).
-        "task_success_rate": round(passed / total, 4) if total else 0.0,
-        "schema_validity_rate": round((total - invalid_output) / total, 4) if total else 0.0,
-        "budget_exhausted_count": budget_exhausted,
-        "average_cost_usd": round(cost / total, 6) if total else 0.0,
-        "p95_model_requests": _p95(model_requests),
-        "unevidenced_safe_verdicts": unevidenced_safe,
-    }
-
+    git_sha = _git_sha()
     await db.create_all()
-    async with db.session() as s:
-        s.add(db.EvalExperiment(id=exp_id, agent=agent, dataset=str(dataset_path.name),
-                                dataset_version=version, git_sha=_git_sha(),
-                                overlay=str(overlay) if overlay else "", config_hash=cfg_hash,
-                                repetitions=repeat, metrics=metrics))
-        for row in case_rows:
-            s.add(row)
-        await s.commit()
+    # Claim the row before the first model call: a run that dies on case 1 is still a visible
+    # `status=running` experiment rather than nothing at all.
+    await persist("running", [])
+
+    truncation: dict | None = None
+    case_name = ""
+    rep = 0
+    # Rows scored but not yet committed. Never more than one case's worth, and flushed on the
+    # way out too, so the persisted rows always match the persisted counters.
+    pending_rows: list = []
+    try:
+        for case in cases:
+            case_name = case["name"]
+            task_text, payload, deps, predict, expected = ADAPTERS[agent](case)
+            for rep in range(repeat):
+                prompt = render_prompt(task_text, payload)
+                try:
+                    result = await built.run(prompt, deps=deps)
+                    predicted = predict(result.output)
+                    model_requests.append(result.usage.requests)
+                    c, _ = model_factory.estimate_cost(model_name, result.usage)
+                    tokens += result.usage.input_tokens + result.usage.output_tokens
+                    cache_read += result.usage.cache_read_tokens or 0
+                except UsageLimitExceeded:
+                    # The run hit its declared budget: it was stopped, not answered. This is a
+                    # hard gate, so it is counted separately from a wrong answer.
+                    predicted, c = "budget_exhausted", 0.0
+                    budget_exhausted += 1
+                except UnexpectedModelBehavior:
+                    # The model could not produce a valid output within its retry budget
+                    # (e.g. it kept violating an output contract). That is a failed case, and an
+                    # output that does not validate is no answer rather than a wrong one.
+                    predicted, c = "invalid_output", 0.0
+                    invalid_output += 1
+                if is_unevidenced_safe(agent, case, predicted):
+                    unevidenced_safe += 1
+                ok = predicted == expected
+                total += 1
+                passed += int(ok)
+                cost += c or 0.0
+                confusion[(expected, predicted)] = confusion.get((expected, predicted), 0) + 1
+                pending_rows.append(db.EvalCaseResult(
+                    experiment_id=exp_id, case_name=case["name"], repetition=rep, passed=ok,
+                    scores={"expected": expected, "predicted": predicted}, cost_usd=c or 0.0))
+            completed_cases += 1
+            await persist("running", pending_rows)
+            pending_rows = []
+    except BaseException as exc:
+        # Anything the per-case handlers above did not classify is not an answer about the
+        # model: it is the run falling over (transport error, a cancelled/hung request, Ctrl-C,
+        # a bug in an adapter). Record where it stopped, keep the scored cases, then fail.
+        truncation = {
+            "error_type": type(exc).__name__,
+            "error": str(exc)[:500] or repr(exc)[:500],
+            "failed_case": case_name,
+            "failed_repetition": rep,
+            "completed_runs": total,
+            "planned_runs": planned_runs,
+            "completed_cases": completed_cases,
+            "planned_cases": len(cases),
+        }
+        await persist("truncated", pending_rows, truncation)
+        print(f"experiment {exp_id}: TRUNCATED on case {case_name!r} rep {rep} after "
+              f"{total}/{planned_runs} case runs ({type(exc).__name__}: {str(exc)[:200]}); "
+              f"the {total} scored case runs are saved and the experiment is marked truncated")
+        if report is not None:
+            print(f"no release report written to {report}: a truncated run cannot clear "
+                  f"release gates it did not measure")
+        if isinstance(exc, KeyboardInterrupt | SystemExit | asyncio.CancelledError):
+            raise  # an interrupt or a cancellation keeps its own semantics
+        raise TruncatedExperiment(exp_id, truncation) from exc
+
+    metrics = build_metrics("complete")
+    await persist("complete", pending_rows)
 
     print(f"experiment {exp_id}: accuracy={metrics['accuracy']:.2%} "
           f"cost/case=${metrics['cost_usd_per_case']:.4f} cache_hit={metrics['cache_hit_ratio']:.2%} "
@@ -270,7 +366,24 @@ async def compare_experiments(baseline: str, candidate: str) -> None:
         return f"{bv:>10} -> {cv:<10} ({cv - bv:+.4f})"
 
     print(f"agent={b.agent}  baseline={baseline}  candidate={candidate}")
+    incomplete = [(label, exp) for label, exp in (("baseline", b), ("candidate", c))
+                  if exp.metrics.get("status", "complete") != "complete"]
+    for label, exp in incomplete:
+        # Loud and first: the deltas below are between different numbers of cases, so a
+        # "+8% accuracy" here can be nothing but which cases happened to run.
+        t = exp.metrics.get("truncated") or {}
+        print(f"  !! {label} {exp.id} is {exp.metrics.get('status', 'incomplete').upper()}: "
+              f"{exp.metrics.get('n', 0)}/{exp.metrics.get('n_planned', '?')} case runs scored"
+              + (f" — stopped on case {t['failed_case']!r} ({t['error_type']}: {t['error'][:120]})"
+                 if t else "")
+              + ". Its metrics cover only those cases.")
+    if incomplete:
+        print("  !! NOT a like-for-like comparison: re-run the "
+              f"{'/'.join(label for label, _ in incomplete)} side before drawing a conclusion.")
     print(f"  config      {b.config_hash} -> {c.config_hash}")
+    print(f"  coverage    {b.metrics.get('n', 0)}/{b.metrics.get('n_planned', '?')} -> "
+          f"{c.metrics.get('n', 0)}/{c.metrics.get('n_planned', '?')} case runs "
+          f"({b.metrics.get('status', 'complete')} -> {c.metrics.get('status', 'complete')})")
     for key in ("accuracy", "cost_usd_per_case", "avg_tokens", "cache_hit_ratio"):
         print(f"  {key:18} {delta(key)}")
     print(f"  baseline confusion: {b.metrics.get('confusion')}")
@@ -334,7 +447,11 @@ async def _score_corpus_once(*, language: str, sandbox: bool | None) -> dict:
                 fn += 1  # missed a real vulnerability — the costliest error
         rows.append({"case": c.name, "expected": c.expected_verdict, "actual": actual,
                      "ok": ok, "early_exit": out.result.early_exit,
-                     "priority": out.result.priority.value})
+                     "priority": out.result.priority.value,
+                     # Why, not just that: a table of `inconclusive` tells you nothing about
+                     # whether the environment failed, the probe was unrepairable, or the
+                     # judge declined.
+                     "rationale": out.result.verdict.rationale})
         # Per-finding triage agents (context, probe-author, ...).
         for inv in out.invocations:
             _score_trajectory(inv.agent, inv.tools_called, inv.skills_loaded, c.finding.cwe)
@@ -353,6 +470,8 @@ async def _score_corpus_once(*, language: str, sandbox: bool | None) -> dict:
     for r in rows:
         mark = "OK " if r["ok"] else "XX "
         print(f"  {mark}{r['case']:26} {r['expected']:24} -> {r['actual']:24} {r['early_exit'] or ''}")
+        if not r["ok"] and r["rationale"]:
+            print(f"        {r['rationale'][:160]}")
     print(f"accuracy={metrics['accuracy']:.0%}  FN-on-exploitable={metrics['false_negative_rate_on_exploitable']:.0%}  "
           f"sandbox={'on' if sandbox else 'off (verdicts not meaningful)'}")
     print("tool/skill evocation (per agent, rate across cases):")
