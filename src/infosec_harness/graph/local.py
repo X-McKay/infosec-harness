@@ -21,7 +21,7 @@ from infosec_harness.domain.models import (
     Verdict,
     VerdictLabel,
 )
-from infosec_harness.graph.ops import LocalOps
+from infosec_harness.graph.ops import LocalOps, is_infrastructure_failure
 from infosec_harness.graph.prepare import run_prepare
 from infosec_harness.graph.triage import TRIAGE_GRAPH, PreFilter, TriageDeps, TriageState
 from infosec_harness.intake import adapters
@@ -87,9 +87,14 @@ async def triage_batch_local(findings: list[FindingInput], *, sandbox: bool = Tr
             # on real build logs and the exception left this loop, discarding every finding in
             # the run including repos already triaged. `environment_unbuildable` is what the
             # contract reserves for "no usable environment", which is exactly the situation.
+            # A provider outage is not a statement about this repository, so it must not be
+            # filed as `environment_unbuildable` -- an eval reading that cannot tell an endpoint
+            # being down from a pipeline regression.
+            reason = (InconclusiveReason.infrastructure_error if is_infrastructure_failure(e)
+                      else InconclusiveReason.environment_unbuildable)
             for f in group:
                 results[order[id(f)]] = _inconclusive(
-                    adapters.to_finding(f), InconclusiveReason.environment_unbuildable,
+                    adapters.to_finding(f), reason,
                     f"Preparing {repo_url} failed: {type(e).__name__}: {e}", "failed")
             continue
         if prepare_sink is not None:
@@ -104,7 +109,9 @@ async def triage_batch_local(findings: list[FindingInput], *, sandbox: bool = Tr
                 # run — including findings already triaged. Record it as inconclusive/error,
                 # which is what the three-way contract reserves for exactly this, and go on.
                 results[order[id(f)]] = _inconclusive(
-                    adapters.to_finding(f), InconclusiveReason.error,
+                    adapters.to_finding(f),
+                    InconclusiveReason.infrastructure_error if is_infrastructure_failure(e)
+                    else InconclusiveReason.error,
                     f"Triage failed for this finding: {type(e).__name__}: {e}",
                     prep.prepared.status)
     return [results[i] for i in sorted(results)]

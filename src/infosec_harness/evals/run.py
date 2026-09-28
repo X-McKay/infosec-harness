@@ -436,7 +436,7 @@ async def compare_experiments(baseline: str, candidate: str) -> None:
 
 async def _score_corpus_once(*, language: str, sandbox: bool | None) -> dict:
     """One pass over the corpus. See :func:`score_corpus`."""
-    from infosec_harness.domain.models import Finding
+    from infosec_harness.domain.models import Finding, InconclusiveReason
     from infosec_harness.evals.corpus import load_corpus
     from infosec_harness.evals.trajectory import (
         AGENT_EXPECTATIONS,
@@ -465,6 +465,7 @@ async def _score_corpus_once(*, language: str, sandbox: bool | None) -> dict:
     # stage label -> [passed, scored, not_reached], in the order _stage_results returns them.
     stages: dict[str, list[int]] = {}
     first_failures: dict[str, list[str]] = {}
+    infrastructure_failures: list[str] = []
     # Trajectory scoring: did the tool-using agents evoke the expected tools/skills?
     traj_totals: dict[str, dict[str, int]] = {}
     # Request counts and repeated identical tool calls, so a `request_limit` breach can be told
@@ -535,6 +536,12 @@ async def _score_corpus_once(*, language: str, sandbox: bool | None) -> dict:
                      # whether the environment failed, the probe was unrepairable, or the
                      # judge declined.
                      "rationale": out.result.verdict.rationale})
+        # A provider outage tells us nothing about any stage. Counting it would have read
+        # "environment built 1/4" on a run where the environment stage worked and the model
+        # endpoint was returning 502 -- the precise misattribution this funnel exists to stop.
+        if out.result.verdict.inconclusive_reason == InconclusiveReason.infrastructure_error:
+            infrastructure_failures.append(c.name)
+            continue
         stage_results = _stage_results(c, out)
         blamed = False
         for label, passed in stage_results:
@@ -567,6 +574,7 @@ async def _score_corpus_once(*, language: str, sandbox: bool | None) -> dict:
         "accuracy_with_evidence": (round(correct_with_evidence / expected_to_probe, 4)
                                    if expected_to_probe else 0.0),
         "unexpected_early_exits": unexpected_exits,
+        "infrastructure_failures": infrastructure_failures,
         "confusion": {f"{k[0]}->{k[1]}": v for k, v in sorted(confusion.items())},
         "trajectory": trajectory,
         "stages": {label: {"passed": p, "scored": n, "not_reached": nr,
@@ -595,6 +603,11 @@ async def _score_corpus_once(*, language: str, sandbox: bool | None) -> dict:
               f"({expected_to_probe - correct_with_evidence} of {expected_to_probe} cases that "
               f"should have probed did not reach a probed verdict)")
         print(f"  unexpected early exits: {', '.join(unexpected_exits)}")
+    if infrastructure_failures:
+        print(f"WARNING: {len(infrastructure_failures)} of {len(cases)} cases failed on "
+              f"infrastructure, not on the pipeline (model provider unreachable, timed out, or "
+              f"a transport error). These are excluded from the stage funnel below, and the "
+              f"accuracy above is not a measurement of anything: {', '.join(infrastructure_failures)}")
     if metrics["stages"]:
         print("stage funnel (where the pipeline actually loses cases):")
         for label, st in metrics["stages"].items():

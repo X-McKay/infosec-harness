@@ -382,6 +382,13 @@ class InconclusiveReason(StrEnum):
     budget_exhausted = "budget_exhausted"
     conflicting_evidence = "conflicting_evidence"
     needs_info = "needs_info"
+    # The harness's own dependency failed -- the model provider was unreachable, timed out, or
+    # returned a transport error. Distinct from environment_unbuildable, which is a statement
+    # about the *repository*: this one says nothing about the finding at all. Kept separate so
+    # an outage cannot be read as a pipeline regression. Measured: a 502 from the model gateway
+    # bucketed every case as environment_unbuildable, and the stage funnel duly reported
+    # "environment built 1/4" -- blaming the stage that had in fact worked.
+    infrastructure_error = "infrastructure_error"
     error = "error"
 
 

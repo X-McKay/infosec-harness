@@ -24,6 +24,19 @@ from infosec_harness.domain.models import (
 )
 
 
+def is_infrastructure_failure(e: BaseException) -> bool:
+    """True when the harness's own dependencies failed, rather than the work failing.
+
+    A provider outage, a transport error or a run timeout says nothing about the repository or
+    the finding, so it must not be recorded as `environment_unbuildable` -- an eval reading
+    that cannot tell an endpoint being down from a pipeline regression.
+    """
+    import httpx
+    from pydantic_ai.exceptions import ModelAPIError
+
+    return isinstance(e, ModelAPIError | httpx.TransportError | TimeoutError)
+
+
 class Ops(Protocol):
     async def run_agent(
         self, name: str, prompt: Sequence[UserContent], deps: AgentDeps

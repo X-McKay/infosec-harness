@@ -279,3 +279,39 @@ async def test_the_funnel_blames_the_first_broken_stage_not_the_last():
     assert not metrics["stages"]["verdict"]["first_failed_here"], (
         "every failure was attributed to the final stage; the attribution is not working"
     )
+
+
+def test_a_provider_outage_is_not_filed_as_an_unbuildable_environment():
+    """The 502 that voided a live validation run, classified.
+
+    `llm.almckay.io` returned `upstream_unreachable` mid-run. Every case was bucketed as
+    `environment_unbuildable` and the stage funnel duly reported "environment built 1/4" --
+    blaming the one stage that had actually worked. An outage says nothing about the repository.
+    """
+    import httpx
+    from pydantic_ai.exceptions import ModelHTTPError
+
+    from infosec_harness.graph.ops import is_infrastructure_failure
+
+    outage = ModelHTTPError(status_code=502, model_name="Qwen3.6-35B-A3B-NVFP4",
+                            body={"type": "upstream_unreachable"})
+    assert is_infrastructure_failure(outage)
+    assert is_infrastructure_failure(httpx.ConnectError("refused"))
+    assert is_infrastructure_failure(TimeoutError("agent run timed out"))
+    # A genuine build failure is the pipeline's own business and must stay attributable.
+    assert not is_infrastructure_failure(RuntimeError("mvn exited 1"))
+    assert not is_infrastructure_failure(ValueError("bad spec"))
+
+
+async def test_infrastructure_failures_are_excluded_from_the_stage_funnel():
+    """They are reported on their own line instead, because a run full of them measures nothing."""
+    from infosec_harness.domain.models import InconclusiveReason
+    from infosec_harness.evals.run import score_corpus
+
+    metrics = await score_corpus(language="python", sandbox=False)
+    assert "infrastructure_failures" in metrics
+    # The stub path never hits the provider, so a clean run must report none — otherwise the
+    # exclusion would be silently swallowing real stage failures.
+    assert metrics["infrastructure_failures"] == []
+    assert metrics["stages"]["environment built"]["scored"] == metrics["n"]
+    assert InconclusiveReason.infrastructure_error != InconclusiveReason.environment_unbuildable
