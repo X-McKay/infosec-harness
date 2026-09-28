@@ -47,7 +47,9 @@ async def test_triage_full_path(repo):
 
     async def fake_exec(image, probe, spec, nonce, attempt):
         return ProbeExecution(attempt=attempt, exit_code=0, oracle_fired=False,
-                              precondition_reached=True, stdout_tail=f"HARNESS_PRECONDITION::{nonce}")
+                              precondition_reached=True, sink_returned=True,
+                              stdout_tail=f"HARNESS_PRECONDITION::{nonce}\n"
+                                          f"HARNESS_SINK_RETURNED::{nonce}")
 
     ops.execute_probe = fake_exec
     finding = to_finding(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
@@ -143,7 +145,9 @@ async def test_a_judge_that_cannot_satisfy_the_contract_yields_inconclusive(repo
 
     async def fake_exec(image, probe, spec, nonce, attempt):
         return ProbeExecution(attempt=attempt, exit_code=0, oracle_fired=False,
-                              precondition_reached=True, stdout_tail=f"HARNESS_PRECONDITION::{nonce}")
+                              precondition_reached=True, sink_returned=True,
+                              stdout_tail=f"HARNESS_PRECONDITION::{nonce}\n"
+                                          f"HARNESS_SINK_RETURNED::{nonce}")
 
     ops.execute_probe = fake_exec
     real_run_agent = ops.run_agent
@@ -285,3 +289,61 @@ def _deps_for_timeout():
     from infosec_harness.agents.deps import AgentDeps
 
     return AgentDeps(repo_path="/nonexistent")
+
+
+# --- A clean negative requires the sink call to have returned -----------------------------
+
+def test_a_negative_without_a_returned_sink_becomes_a_probe_defect():
+    """"The code resisted the payload" needs the call to have happened.
+
+    Measured false negative on javascript-cmdi-vulnerable: the corpus module uses a named
+    export, the probe imported it as a default, the call threw inside a promise that resolved
+    anyway, jest exited 0, and the run looked exactly like a clean negative. The diagnosis was
+    not unreasonable — the evidence it saw did look like one. The precondition marker is printed
+    *before* the call, so only a second marker after it can tell the two apart.
+    """
+    from infosec_harness.domain.models import DiagnosisKind, ProbeDiagnosis, ProbeExecution
+    from infosec_harness.graph.triage import _correct_unsupported_negative
+
+    execution = ProbeExecution(attempt=1, exit_code=0, oracle_fired=False,
+                               precondition_reached=True, sink_returned=False)
+    diagnosis = ProbeDiagnosis(kind=DiagnosisKind.valid_negative,
+                               explanation="the code resisted the payload")
+    corrected = _correct_unsupported_negative(diagnosis, execution)
+    assert corrected.kind is DiagnosisKind.probe_defect
+    assert "sink-returned marker" in corrected.explanation
+    assert "the code resisted the payload" in corrected.explanation  # original reading kept
+    assert "HARNESS_SINK_RETURNED" in corrected.fix_hint
+
+
+def test_a_negative_whose_sink_returned_is_left_alone():
+    from infosec_harness.domain.models import DiagnosisKind, ProbeDiagnosis, ProbeExecution
+    from infosec_harness.graph.triage import _correct_unsupported_negative
+
+    execution = ProbeExecution(attempt=1, exit_code=0, oracle_fired=False,
+                               precondition_reached=True, sink_returned=True)
+    diagnosis = ProbeDiagnosis(kind=DiagnosisKind.valid_negative, explanation="resisted")
+    assert _correct_unsupported_negative(diagnosis, execution) is diagnosis
+
+
+def test_the_guard_only_touches_negatives():
+    """A positive, a defect, or an environment issue is left exactly as diagnosed."""
+    from infosec_harness.domain.models import DiagnosisKind, ProbeDiagnosis, ProbeExecution
+    from infosec_harness.graph.triage import _correct_unsupported_negative
+
+    execution = ProbeExecution(attempt=1, exit_code=1, oracle_fired=False,
+                               precondition_reached=False, sink_returned=False)
+    for kind in (DiagnosisKind.valid_positive, DiagnosisKind.probe_defect,
+                 DiagnosisKind.environment_issue):
+        diagnosis = ProbeDiagnosis(kind=kind, explanation="x")
+        assert _correct_unsupported_negative(diagnosis, execution) is diagnosis
+
+
+def test_a_fired_oracle_implies_the_sink_returned():
+    """The exploit condition cannot be observed without the call producing something."""
+    from infosec_harness.sandbox.docker import sink_returned
+
+    assert sink_returned("HARNESS_ORACLE::n1", "n1") is True
+    assert sink_returned("HARNESS_CANARY_PRESENT::n1", "n1") is True
+    assert sink_returned("HARNESS_PRECONDITION::n1", "n1") is False
+    assert sink_returned("HARNESS_SINK_RETURNED::n1", "n1") is True

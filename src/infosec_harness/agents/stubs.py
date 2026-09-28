@@ -72,13 +72,31 @@ def _env_plan(stack: dict | None) -> dict:
             "test_command": "sh {test_file}", "rationale": "stub heuristic: unknown stack"}
 
 
+# The stub carries all three markers with the oracle branch present but never taken: a probe
+# that reaches the sink, returns, and observes nothing. It must satisfy the same contract as a real probe — an offline stand-in the
+# validator rejects would make every offline test a lie.
 _PROBE_TEMPLATES = {
     "python": ("tests/test_harness_probe.py",
-               "def test_harness_probe():\n    print('HARNESS_PRECONDITION::{nonce}')\n"),
+               "def test_harness_probe():\n"
+               "    print('HARNESS_PRECONDITION::{nonce}')\n"
+               "    print('HARNESS_SINK_RETURNED::{nonce}')\n"
+               "    observed = False  # the stub never observes the exploit condition\n"
+               "    if observed:\n"
+               "        print('HARNESS_ORACLE::{nonce}')\n"),
     "javascript": ("__tests__/harness_probe.test.js",
-                   "test('harness probe', () => { console.log('HARNESS_PRECONDITION::{nonce}'); });\n"),
+                   "test('harness probe', () => {\n"
+                   "  console.log('HARNESS_PRECONDITION::{nonce}');\n"
+                   "  console.log('HARNESS_SINK_RETURNED::{nonce}');\n"
+                   "  const observed = false;  // the stub never observes the condition\n"
+                   "  if (observed) { console.log('HARNESS_ORACLE::{nonce}'); }\n"
+                   "});\n"),
     "perl": ("t/harness_probe.t",
-             "use Test::More tests => 1;\nprint \"HARNESS_PRECONDITION::{nonce}\\n\";\nok(1);\n"),
+             "use Test::More tests => 1;\n"
+             "print \"HARNESS_PRECONDITION::{nonce}\\n\";\n"
+             "print \"HARNESS_SINK_RETURNED::{nonce}\\n\";\n"
+             "my $observed = 0;  # the stub never observes the condition\n"
+             "print \"HARNESS_ORACLE::{nonce}\\n\" if $observed;\n"
+             "ok(1);\n"),
 }
 
 
@@ -86,10 +104,14 @@ def _probe(text: str) -> dict:
     lang = _primary_language(_tag(text, "stack_fingerprint"))
     nonce = _tag(text, "oracle_nonce") or "none"
     plan = _tag(text, "probe_plan") or {}
-    path, body = _PROBE_TEMPLATES.get(lang, ("harness_probe.sh", "echo HARNESS_PRECONDITION::{nonce}\n"))
+    fallback = ("harness_probe.sh",
+                "echo HARNESS_PRECONDITION::{nonce}\n"
+                "echo HARNESS_SINK_RETURNED::{nonce}\n"
+                "if false; then echo HARNESS_ORACLE::{nonce}; fi\n")
+    path, body = _PROBE_TEMPLATES.get(lang, fallback)
     path = plan.get("test_file_path") or path
     return {"test_file_path": path, "content": body.replace("{nonce}", str(nonce)),
-            "explanation": "stub probe: reaches the precondition checkpoint only"}
+            "explanation": "stub probe: reaches the sink and returns; observes nothing"}
 
 
 def _diagnosis(text: str) -> dict:

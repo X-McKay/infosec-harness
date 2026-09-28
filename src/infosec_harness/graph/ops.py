@@ -128,7 +128,7 @@ class LocalOps:
             # documented Docker-free mode both far slower and unrepresentative, and it
             # inflated probe-repair's share of the trajectory metrics.
             return ProbeExecution(attempt=attempt, exit_code=None, oracle_fired=False,
-                                  precondition_reached=False,
+                                  precondition_reached=False, sink_returned=False,
                                   stderr_tail=self.SANDBOX_DISABLED)
         from infosec_harness.workflows.activities import execute_probe_activity
 

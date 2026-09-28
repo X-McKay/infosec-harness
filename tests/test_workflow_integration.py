@@ -37,10 +37,19 @@ async def _fake_build(snapshot_path, spec, tag):
 
 
 async def _fake_probe(image, test_file_path, content, test_command, nonce, module_path=""):
-    from infosec_harness.sandbox.docker import PRECONDITION_PREFIX, ProcResult
+    """A probe that reached the sink, returned, and observed nothing — a clean negative.
 
-    return ProcResult(exit_code=0, stdout=f"{PRECONDITION_PREFIX}{nonce}\n", stderr="",
-                      timed_out=False, duration_s=0.1)
+    Both markers matter: without the sink-returned one the graph would correctly treat this as
+    a probe defect and enter its repair loop.
+    """
+    from infosec_harness.sandbox.docker import (
+        PRECONDITION_PREFIX,
+        SINK_RETURNED_PREFIX,
+        ProcResult,
+    )
+
+    stdout = f"{PRECONDITION_PREFIX}{nonce}\n{SINK_RETURNED_PREFIX}{nonce}\n"
+    return ProcResult(exit_code=0, stdout=stdout, stderr="", timed_out=False, duration_s=0.1)
 
 
 async def _fake_shell(image, command, *, network, timeout=None):

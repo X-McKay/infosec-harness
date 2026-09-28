@@ -330,6 +330,9 @@ class ProbeExecution(_Model):
     timed_out: bool = False
     oracle_fired: bool
     precondition_reached: bool
+    # The sink call returned. `precondition_reached` is printed before the call, so without
+    # this a probe that threw mid-call looks exactly like one the code resisted.
+    sink_returned: bool = False
     stdout_tail: str = ""
     stderr_tail: str = ""
     duration_s: float = 0.0

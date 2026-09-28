@@ -126,12 +126,31 @@ async def test_agent_emits_typed_contract(name):
     assert type(result.output) is AGENT_BINDINGS[name]
 
 
+CONFORMANT_PROBE = (
+    "print('HARNESS_PRECONDITION::x')\n"
+    "result = target('payload')\n"
+    "print('HARNESS_SINK_RETURNED::x')\n"
+    "if 'x' in str(result):\n"
+    "    print('HARNESS_ORACLE::x')\n"
+)
+
+
 def test_probe_guard_rejects_bad_probes(tmp_path):
     ctx = SimpleNamespace(deps=AgentDeps(repo_path=str(tmp_path)))
-    assert validate_probe(ctx, ProbeSource(test_file_path="tests/t.py",
-                                           content="print('HARNESS_ORACLE::x')"))
-    with pytest.raises(ModelRetry):  # no markers
+    assert validate_probe(ctx, ProbeSource(test_file_path="tests/t.py", content=CONFORMANT_PROBE))
+    with pytest.raises(ModelRetry):  # no markers at all
         validate_probe(ctx, ProbeSource(test_file_path="tests/t.py", content="print('hi')"))
+    with pytest.raises(ModelRetry, match="sink-returned"):
+        # Reaching the sink is not the same as the call completing; without the second marker a
+        # probe that threw on the way in is indistinguishable from a clean negative.
+        validate_probe(ctx, ProbeSource(
+            test_file_path="tests/t.py",
+            content="print('HARNESS_PRECONDITION::x')\nprint('HARNESS_ORACLE::x')\n"))
+    with pytest.raises(ModelRetry, match="oracle signal"):
+        # A probe with no oracle branch can never report exploitability, so it is useless.
+        validate_probe(ctx, ProbeSource(
+            test_file_path="tests/t.py",
+            content="print('HARNESS_PRECONDITION::x')\nprint('HARNESS_SINK_RETURNED::x')\n"))
     with pytest.raises(ModelRetry):  # path traversal
         validate_probe(ctx, ProbeSource(test_file_path="../evil.py", content="HARNESS_ORACLE::x"))
 

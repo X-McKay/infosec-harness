@@ -164,6 +164,38 @@ class ExecuteProbe(BaseNode[TriageState, TriageDeps, TriageResult]):
         return DiagnoseProbe()
 
 
+def _correct_unsupported_negative(diagnosis: ProbeDiagnosis,
+                                  execution: ProbeExecution) -> ProbeDiagnosis:
+    """A clean negative requires the sink call to have returned.
+
+    "The code resisted the payload" is only sayable if the payload reached the code and the
+    call completed. The precondition marker is printed *before* the call, so on its own it
+    cannot tell a resisted payload from a probe that threw on the way — and a probe can swallow
+    its own error and still exit 0, which is exactly what happened on
+    javascript-cmdi-vulnerable: a named export imported as a default, a call that threw inside a
+    promise that resolved anyway, jest exiting 0, and a false negative on a genuinely
+    exploitable finding.
+
+    Deterministic rather than a retry, because it is arithmetic on recorded facts and the model
+    reading them was not being unreasonable — the evidence it saw did look like a negative.
+    """
+    if diagnosis.kind is not DiagnosisKind.valid_negative or execution.sink_returned:
+        return diagnosis
+    return diagnosis.model_copy(update={
+        "kind": DiagnosisKind.probe_defect,
+        "explanation": (
+            "Recorded as a probe defect rather than a negative: the probe never printed the "
+            "sink-returned marker, so the call it was meant to exercise cannot be shown to "
+            "have completed. A payload that never reached the sink says nothing about whether "
+            "the code resists it. Original reading: " + diagnosis.explanation
+        ),
+        "fix_hint": diagnosis.fix_hint or (
+            "Print HARNESS_SINK_RETURNED::<nonce> immediately after the sink call returns, and "
+            "do not swallow an exception raised by that call."
+        ),
+    })
+
+
 @dataclass
 class DiagnoseProbe(BaseNode[TriageState, TriageDeps, TriageResult]):
     async def run(self, ctx: GraphRunContext[TriageState, TriageDeps]) -> RepairProbe | Decide:
@@ -177,7 +209,7 @@ class DiagnoseProbe(BaseNode[TriageState, TriageDeps, TriageResult]):
         )
         outcome = await ctx.deps.ops.run_agent("probe-diagnosis", prompt, s.deps())
         s.invocations.append(outcome)
-        s.last_diagnosis = outcome.output
+        s.last_diagnosis = _correct_unsupported_negative(outcome.output, execution)
         if s.last_diagnosis.kind == DiagnosisKind.probe_defect and s.attempt <= ctx.deps.max_probe_repairs:
             return RepairProbe()
         return Decide()

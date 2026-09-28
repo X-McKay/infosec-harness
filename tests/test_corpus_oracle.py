@@ -27,7 +27,13 @@ from pathlib import Path
 
 import pytest
 
-from infosec_harness.sandbox.docker import ORACLE_PREFIX, PRECONDITION_PREFIX, oracle_signals
+from infosec_harness.sandbox.docker import (
+    ORACLE_PREFIX,
+    PRECONDITION_PREFIX,
+    SINK_RETURNED_PREFIX,
+    oracle_signals,
+    sink_returned,
+)
 from infosec_harness.settings import REPO_ROOT
 
 CORPUS = REPO_ROOT / "eval-corpus" / "python"
@@ -46,6 +52,7 @@ def _probe_sqli(mod, nonce: str) -> None:
     conn = mod.init_db()
     print(f"{PRECONDITION_PREFIX}{nonce}")
     rows = mod.get_user(conn, "alice' OR '1'='1")
+    print(f"{SINK_RETURNED_PREFIX}{nonce}")
     # Oracle: the payload changed the query's structure, so a row the filter should have
     # excluded came back. Not "the string looked like SQL".
     if any("TOP-SECRET" in str(row) for row in rows):
@@ -57,6 +64,7 @@ def _probe_cmdi(mod, nonce: str) -> None:
     print(f"{PRECONDITION_PREFIX}{nonce}")
     with contextlib.suppress(Exception):
         mod.count_lines(f"/dev/null; touch {canary}")
+        print(f"{SINK_RETURNED_PREFIX}{nonce}")
     # Oracle: the injected command actually ran (canary_file form).
     if canary.exists():
         print(f"{ORACLE_PREFIX}{nonce}")
@@ -71,8 +79,11 @@ def _probe_pathtraversal(mod, nonce: str) -> None:
     try:
         print(f"{PRECONDITION_PREFIX}{nonce}")
         data = b""
-        with contextlib.suppress(Exception):
+        # The fixed variant raises to refuse the path. That is the sink running and deciding,
+        # so the marker is still printed: a negative, not a probe defect.
+        with contextlib.suppress(ValueError):
             data = mod.read_doc(f"../{outside.name}")
+        print(f"{SINK_RETURNED_PREFIX}{nonce}")
         # Oracle: a file outside the document root was read.
         if f"SECRET-{nonce}".encode() in data:
             print(f"{ORACLE_PREFIX}{nonce}")
@@ -83,6 +94,7 @@ def _probe_pathtraversal(mod, nonce: str) -> None:
 def _probe_xss(mod, nonce: str) -> None:
     print(f"{PRECONDITION_PREFIX}{nonce}")
     rendered = str(mod.render_comment(f"<script>{nonce}</script>"))
+    print(f"{SINK_RETURNED_PREFIX}{nonce}")
     # Oracle: the tag survived into the output unencoded.
     if f"<script>{nonce}</script>" in rendered:
         print(f"{ORACLE_PREFIX}{nonce}")
@@ -94,19 +106,25 @@ PAIRS = [(case, variant, variant == "vulnerable")
          for case in PROBES for variant in ("vulnerable", "fixed")]
 
 
-def _run_probe(case: str, variant: str) -> tuple[bool, bool]:
+def _run_probe(case: str, variant: str) -> tuple[bool, bool, bool]:
     nonce = uuid.uuid4().hex
     captured = io.StringIO()
     with contextlib.redirect_stdout(captured):
         PROBES[case](_load(case, variant), nonce)
-    return oracle_signals(captured.getvalue(), nonce)
+    output = captured.getvalue()
+    fired, reached = oracle_signals(output, nonce)
+    return fired, reached, sink_returned(output, nonce)
 
 
 @pytest.mark.parametrize(("case", "variant", "should_fire"), PAIRS,
                          ids=[f"{c}-{v}" for c, v, _ in PAIRS])
 def test_variant_fires_the_oracle_only_when_it_is_vulnerable(case, variant, should_fire):
-    fired, reached = _run_probe(case, variant)
+    fired, reached, returned = _run_probe(case, variant)
     assert reached, f"{case}/{variant}: probe never reached the sink — it proves nothing"
+    assert returned, (
+        f"{case}/{variant}: the sink call never returned, so a negative here would be a probe "
+        f"defect rather than evidence the code resisted the payload"
+    )
     assert fired is should_fire, (
         f"{case}/{variant}: oracle_fired={fired}, expected {should_fire}. The corpus's "
         f"ground truth says this variant is {'exploitable' if should_fire else 'safe'}."

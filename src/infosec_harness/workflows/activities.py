@@ -143,12 +143,14 @@ async def execute_probe_activity(args: dict) -> ProbeExecution:
                                  spec.test_command, nonce, module_path=spec.module_path or "")
     combined = res.stdout + "\n" + res.stderr
     oracle_fired, precondition = docker.oracle_signals(combined, nonce)
+    returned = docker.sink_returned(combined, nonce)
     return ProbeExecution(
         attempt=attempt,
         exit_code=res.exit_code,
         timed_out=res.timed_out,
         oracle_fired=oracle_fired,
         precondition_reached=precondition,
+        sink_returned=returned,
         stdout_tail=docker.tail(res.stdout, 4000),
         stderr_tail=docker.tail(res.stderr, 4000),
         duration_s=res.duration_s,

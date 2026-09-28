@@ -68,9 +68,22 @@ def validate_verdict(ctx: RunContext[AgentDeps], output: Verdict) -> Verdict:
 def validate_probe(ctx: RunContext[AgentDeps], output: ProbeSource) -> ProbeSource:
     if ".." in output.test_file_path.split("/") or output.test_file_path.startswith("/"):
         raise ModelRetry("test_file_path must be a repo-relative path without '..'.")
-    if "HARNESS_" not in output.content:
-        raise ModelRetry("The probe must print the precondition marker and the oracle marker "
-                         "(see the probe-oracle-protocol skill).")
+    missing = [name for name, marker in (
+        ("precondition", "HARNESS_PRECONDITION::"),
+        ("sink-returned", "HARNESS_SINK_RETURNED::"),
+    ) if marker not in output.content]
+    if missing:
+        raise ModelRetry(
+            f"The probe is missing the {' and '.join(missing)} marker(s). Print "
+            "HARNESS_PRECONDITION::<nonce> immediately before the sink call and "
+            "HARNESS_SINK_RETURNED::<nonce> immediately after it returns; without the second, a "
+            "probe that throws on the way in is indistinguishable from one the code resisted. "
+            "See the probe-oracle-protocol skill."
+        )
+    if not any(m in output.content for m in ("HARNESS_ORACLE::", "harness_canary_")):
+        raise ModelRetry("The probe must emit an oracle signal when the exploit condition holds: "
+                         "print HARNESS_ORACLE::<nonce>, or create the canary file the plan's "
+                         "canary_file oracle names.")
     return output
 
 

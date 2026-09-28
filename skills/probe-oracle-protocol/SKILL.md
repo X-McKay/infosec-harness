@@ -29,7 +29,7 @@ sandbox?** The answer must come from an explicit, observable signal, never from 
 test "passed". This makes triage deterministic and lets the harness distinguish
 *not exploitable* from *never reached the code*.
 
-## The two markers
+## The three markers
 
 The runner passes a random `oracle_nonce` in the task input. Use it verbatim; it prevents a
 repository's own output from being mistaken for a signal.
@@ -44,7 +44,29 @@ repository's own output from being mistaken for a signal.
    It tells the harness the test actually exercised the code path. A probe that never prints
    it is treated as *did not reach the sink* (a probe defect), not as a clean negative.
 
-2. **Oracle signal** — emit this only when the exploit condition actually holds. Two forms:
+2. **Sink-returned marker** — print this once, on stdout, immediately after the call to the
+   sink *returns*:
+
+   ```
+   HARNESS_SINK_RETURNED::<nonce>
+   ```
+
+   The precondition marker is printed *before* the call, so by itself it proves only that the
+   probe meant to make it. Without this second marker a probe that threw on the way into the
+   sink — a wrong import, a bad signature, an exception swallowed by a promise or a `try` —
+   looks exactly like a probe whose payload the code resisted, and the harness records a false
+   negative on an exploitable finding.
+
+   **Print it once the sink has run and produced an outcome**, which includes the target
+   *rejecting* the input: a containment check that raises, a validator that throws, a guard that
+   returns an error are all the code under test deciding, and that is a negative. Catch that
+   rejection, print the marker, and do not fire the oracle.
+
+   **Do not print it when the call could not be made at all** — the symbol was not found, the
+   signature was wrong, the import failed. That is a probe defect, and its absence is how the
+   harness tells the two apart. A fired oracle implies the marker.
+
+3. **Oracle signal** — emit this only when the exploit condition actually holds. Two forms:
 
    - `marker_output`: print, on stdout, exactly
 
@@ -79,8 +101,13 @@ comments, or inside the payload text — emit each only at its real moment.
 ```
 nonce = <from task input>
 setup the target object/module
-print("HARNESS_PRECONDITION::" + nonce)      # reached the sink call
-result = target_callable(build_input(nonce)) # exercise the real sink
+print("HARNESS_PRECONDITION::" + nonce)      # about to call the sink
+try:                                         # exercise the real sink
+    result = target_callable(build_input(nonce))
+except TargetRejectedInput:                  # the code refused it: that is a negative
+    print("HARNESS_SINK_RETURNED::" + nonce)
+    return
+print("HARNESS_SINK_RETURNED::" + nonce)     # the sink ran and produced an outcome
 if exploit_condition_holds(result):          # e.g. marker survived unescaped
     print("HARNESS_ORACLE::" + nonce)
 # test ends normally either way

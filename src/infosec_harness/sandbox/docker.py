@@ -29,6 +29,12 @@ from infosec_harness.settings import get_settings
 
 ORACLE_PREFIX = "HARNESS_ORACLE::"
 PRECONDITION_PREFIX = "HARNESS_PRECONDITION::"
+# Printed *after* the sink call returns. The precondition marker is printed before it, so on
+# its own it proves the probe meant to call the sink, not that the call completed: a probe that
+# threw or swallowed an error in between is indistinguishable from one the code resisted. That
+# produced a measured false negative on javascript-cmdi-vulnerable, the costliest error class
+# this system has.
+SINK_RETURNED_PREFIX = "HARNESS_SINK_RETURNED::"
 CANARY_PREFIX = "HARNESS_CANARY_PRESENT::"
 SANDBOX_USER = "10001:10001"
 MAX_CAPTURE = 64_000
@@ -305,6 +311,17 @@ def oracle_signals(output: str, nonce: str) -> tuple[bool, bool]:
     return fired, reached
 
 
+def sink_returned(output: str, nonce: str) -> bool:
+    """Whether the sink call completed, as distinct from the probe having reached it.
+
+    A fired oracle implies it: the exploit condition cannot be observed without the call
+    having produced something to observe.
+    """
+    if f"{SINK_RETURNED_PREFIX}{nonce}" in output:
+        return True
+    return (f"{ORACLE_PREFIX}{nonce}" in output) or (f"{CANARY_PREFIX}{nonce}" in output)
+
+
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
@@ -336,6 +353,7 @@ def default_workspace() -> Path:
 __all__ = [
     "ORACLE_PREFIX",
     "PRECONDITION_PREFIX",
+    "SINK_RETURNED_PREFIX",
     "ProcResult",
     "build_image",
     "default_workspace",
