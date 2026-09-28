@@ -184,7 +184,7 @@ interactions:
       max_tool_calls: 32
       max_input_tokens_per_request: 40000
       max_input_tokens: 320000
-      max_output_tokens: 128000
+      max_output_tokens: 192000
       max_cost_usd: 0.6
     retry:
       maximum_attempts: 3

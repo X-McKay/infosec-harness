@@ -656,3 +656,79 @@ def test_the_maven_recipe_verified_against_the_corpus_passes():
     assert environment_spec_violations(spec) == []
     assert install_path_violations(spec) == []
     assert offline_warmup_violations(spec) == []
+
+
+def test_a_jvm_selector_given_a_file_path_is_rejected_with_the_class_name():
+    """Measured on java-sqli-fixed: `-Dtest={test_file}` substituted to a path, Surefire matched
+    nothing, and the case burned its repair budget to `inconclusive`. The existing check only
+    required the selector to be non-empty, which a path satisfies."""
+    from infosec_harness.agents.validators import (
+        MAVEN_WARMUP_COMMAND,
+        environment_spec_violations,
+    )
+    from infosec_harness.domain.models import EnvironmentSpec
+
+    spec = EnvironmentSpec(
+        base_image="maven:3.9-eclipse-temurin-17",
+        install_commands=[MAVEN_WARMUP_COMMAND],
+        test_command=("mvn -B -o test-compile "
+                      "org.apache.maven.plugins:maven-surefire-plugin:3.2.5:test "
+                      "-Dtest=src/test/java/com/example/UserDaoTest.java "
+                      "-Dmaven.test.redirectTestOutputToFile=false"),
+    )
+    problems = environment_spec_violations(spec)
+    assert any("file path, not a class name" in p for p in problems), problems
+    # House style: the message names the corrected value, not just the defect.
+    assert any("-Dtest=UserDaoTest" in p for p in problems), problems
+
+
+def test_a_jvm_selector_holding_the_test_file_placeholder_is_rejected():
+    """`{test_file}` is the shape that produced the failure, and it is recognisable before the
+    substitution ever happens."""
+    from infosec_harness.agents.validators import (
+        MAVEN_WARMUP_COMMAND,
+        environment_spec_violations,
+    )
+    from infosec_harness.domain.models import EnvironmentSpec
+
+    spec = EnvironmentSpec(
+        base_image="maven:3.9-eclipse-temurin-17",
+        install_commands=[MAVEN_WARMUP_COMMAND],
+        test_command=("mvn -B -o test-compile "
+                      "org.apache.maven.plugins:maven-surefire-plugin:3.2.5:test "
+                      "-Dtest={test_file} -Dmaven.test.redirectTestOutputToFile=false"),
+    )
+    problems = environment_spec_violations(spec)
+    assert any("do not use {test_file} in a jvm selector" in p.lower() for p in problems), problems
+
+
+def test_a_gradle_selector_given_a_path_names_the_glob_form():
+    from infosec_harness.agents.validators import _pathish_selector_violation
+
+    msg = _pathish_selector_violation(
+        "./gradlew --no-daemon --offline -i test --tests 'src/test/java/FooTest.java'")
+    assert msg is not None and "--tests '*FooTest'" in msg, msg
+
+
+def test_a_proper_class_selector_is_accepted():
+    """Guards against over-firing: the canonical commands must stay clean."""
+    from infosec_harness.agents.validators import (
+        GRADLE_TEST_COMMAND,
+        MAVEN_TEST_COMMAND,
+        _pathish_selector_violation,
+    )
+
+    assert _pathish_selector_violation(MAVEN_TEST_COMMAND) is None
+    assert _pathish_selector_violation(GRADLE_TEST_COMMAND) is None
+
+
+def test_surefires_own_no_match_wording_is_recognised_as_a_zero_test_run():
+    """The two halves must meet: the validator stops the bad selector being written, and if one
+    slips through, the runner's output is still classified rather than left to be inferred."""
+    from infosec_harness.sandbox import docker
+
+    output = ('[ERROR] No tests matching pattern "src/test/java/com/example/UserDaoTest.java" '
+              'were executed!\n')
+    reason = docker.no_tests_executed(output)
+    assert reason is not None and "matched no test class" in reason
+    assert "not a negative result" in reason

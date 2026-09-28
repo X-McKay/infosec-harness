@@ -177,6 +177,103 @@ def test_an_unsupported_extension_is_refused_rather_than_scanned_as_a_guess():
         _describe("python/cmdi/vulnerable", "requirements.txt")
 
 
+# --- a retry the model can act on --------------------------------------------------------
+# java-sqli-vulnerable aborted in a live run with "Tool 'describe_callables' exceeded max
+# retries count of 2": the model kept passing something that is not a repo-relative file path
+# and every retry said only that it "does not exist". A retry that does not name the corrected
+# value cannot end the loop, so each shape below asserts the message names the file to call.
+
+JAVA_CASE = "java/sqli/vulnerable"
+JAVA_FILE = "src/main/java/com/example/UserDao.java"
+
+
+def _retry_message(case: str, path: str) -> str:
+    with pytest.raises(ModelRetry) as excinfo:
+        _describe(case, path)
+    return str(excinfo.value)
+
+
+def test_a_fully_qualified_class_name_is_answered_with_the_file_that_defines_it():
+    """`com.example.UserDao` is the single likeliest wrong argument for a Java finding."""
+    message = _retry_message(JAVA_CASE, "com.example.UserDao")
+    assert JAVA_FILE in message, message
+    assert "not a class or package name" in message
+
+
+@pytest.mark.parametrize("wrong", [
+    "UserDao",                    # bare type name
+    "com/example/UserDao",        # package path, extension dropped
+    "com/example/UserDao.java",   # right file, wrong depth (the source root is stripped)
+    "UserDao.class",              # the compiled artefact instead of the source
+])
+def test_a_path_that_points_at_the_right_file_by_the_wrong_route_names_that_file(wrong):
+    message = _retry_message(JAVA_CASE, wrong)
+    assert JAVA_FILE in message, message
+    assert "exactly that path" in message
+
+
+def test_a_filename_with_a_real_extension_is_not_called_a_class_name():
+    """The corrective clause has to fit the mistake actually made."""
+    assert "not a class or package name" not in _retry_message(JAVA_CASE, "UserDao.java")
+
+
+def test_an_absolute_path_is_answered_with_its_repo_relative_form():
+    absolute = str(CORPUS / JAVA_CASE / JAVA_FILE)
+    message = _retry_message(JAVA_CASE, absolute)
+    assert "is an absolute path" in message
+    assert f"Call describe_callables with {JAVA_FILE!r}" in message, message
+
+
+def test_a_directory_is_answered_with_the_files_inside_it():
+    message = _retry_message(JAVA_CASE, "src/main/java/com/example")
+    assert "is a directory" in message
+    assert JAVA_FILE in message, message
+
+
+def test_a_directory_with_no_source_in_it_points_at_list_files(tmp_path):
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "notes.txt").write_text("nothing callable here\n")
+    ctx = SimpleNamespace(deps=AgentDeps(repo_path=str(tmp_path)))
+    with pytest.raises(ModelRetry) as excinfo:
+        caps.describe_callables(ctx, "docs")
+    message = str(excinfo.value)
+    assert "list_files('docs')" in message, message
+    assert "read_file" in message
+
+
+def test_a_name_that_matches_nothing_still_names_the_sources_it_could_parse():
+    message = _retry_message(JAVA_CASE, "com.example.Nope")
+    assert JAVA_FILE in message, message
+
+
+def test_an_ambiguous_name_lists_every_match_instead_of_picking_one():
+    """Two snapshots of the same class live under eval-corpus/java/sqli; guessing would be a lie."""
+    message = _retry_message("java/sqli", "com.example.UserDao")
+    assert f"vulnerable/{JAVA_FILE}" in message, message
+    assert f"fixed/{JAVA_FILE}" in message, message
+    assert "whichever one the finding points at" in message
+
+
+def test_an_unsupported_extension_names_the_source_with_the_same_stem(tmp_path):
+    (tmp_path / "UserDao.java").write_text("package com.example;\npublic class UserDao {}\n")
+    (tmp_path / "UserDao.txt").write_text("notes about UserDao\n")
+    ctx = SimpleNamespace(deps=AgentDeps(repo_path=str(tmp_path)))
+    with pytest.raises(ModelRetry) as excinfo:
+        caps.describe_callables(ctx, "UserDao.txt")
+    message = str(excinfo.value)
+    assert "no supported extension" in message
+    assert "read_file('UserDao.txt')" in message
+    assert "'UserDao.java'" in message, message
+
+
+def test_a_path_outside_the_root_is_never_named_back_to_the_model():
+    """The confinement boundary: the message may not say what does or does not exist outside."""
+    message = _retry_message(JAVA_CASE, "/etc/passwd")
+    assert "does not exist in the repository" in message
+    assert "Call describe_callables with '/" not in message
+    assert str(CORPUS) not in message
+
+
 # --- the same confinement as the other read tools ----------------------------------------
 
 @pytest.mark.parametrize("bad", ["../../etc/passwd", "src/../../../etc/hosts", "/etc/passwd"])

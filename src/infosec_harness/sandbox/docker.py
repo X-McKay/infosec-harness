@@ -342,9 +342,12 @@ _NO_TESTS_SIGNATURES: tuple[tuple[str, str], ...] = (
     # pytest
     ("no tests ran", "pytest: no tests ran"),
     ("collected 0 items", "pytest: collected 0 items"),
-    # Maven Surefire
+    # Maven Surefire. The "matching pattern" wording is the one that actually showed up, on
+    # java-sqli-fixed: a selector handed a file path instead of a class name matches nothing.
     ("Tests run: 0", "surefire: ran 0 tests"),
     ("No tests to run", "surefire: found no tests to run"),
+    ("No tests matching pattern", "surefire: the -Dtest selector matched no test class"),
+    ("No tests were executed", "surefire: no tests were executed"),
     # Jest
     ("No tests found", "jest: found no test files"),
     ("Tests:       0 total", "jest: ran 0 tests"),

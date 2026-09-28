@@ -33,7 +33,10 @@ def _resolve(root: str, rel: str) -> Path:
     base = Path(root).resolve()
     target = (base / rel.lstrip("/")).resolve()
     if target != base and base not in target.parents:
-        raise ModelRetry(f"Path {rel!r} is outside the repository.")
+        raise ModelRetry(
+            f"Path {rel!r} is outside the repository. Every path is relative to the repository "
+            "root; call list_files('.') and pass a path exactly as it is printed there."
+        )
     return target
 
 
@@ -579,6 +582,106 @@ _EXTRACTORS = {
 }
 
 
+# A `ModelRetry` that only says what is wrong costs the run three calls and then aborts the
+# whole finding with "exceeded max retries count of 2" — measured on java-sqli-vulnerable, where
+# the model called this tool with something that is not a repo-relative file path. So every
+# retry below names the path to call INSTEAD, the same contract the deterministic validators in
+# agents/validators.py hold themselves to. The candidate search goes through `list_files`, which
+# is already confined to the snapshot root: nothing here walks or stats outside it.
+
+_SUPPORTED_EXTS = ", ".join(sorted(_LANG_BY_SUFFIX))
+_MAX_NAMED_CANDIDATES = 8
+
+
+def _supported_matches(ctx: RunContext[AgentDeps], directory: str, pattern: str) -> list[str]:
+    """Repo-relative paths under `directory` matching `pattern` that this tool can parse."""
+    listing = list_files(ctx, directory, pattern)
+    return [line for line in listing.splitlines()
+            if line and not line.startswith(("(no matches)", "... truncated"))
+            and Path(line).suffix.lower() in _LANG_BY_SUFFIX]
+
+
+def _likely_stems(path: str) -> list[str]:
+    """File stems the caller may have meant, best guess first.
+
+    `com.example.UserDao` -> [`UserDao`, `com.example`], `com/example/UserDao.java` ->
+    [`UserDao`], `UserDao.class` -> [`class`, `UserDao`]. A fully-qualified class name and a
+    package path both end in the component that names the file, which is what makes the
+    corrected path findable; a stem that matches nothing just falls through to the next.
+    """
+    token = path.replace("\\", "/").rstrip("/").split("/")[-1]
+    parts = [p for p in token.split(".") if p]
+    out: list[str] = []
+    if len(parts) > 1 and f".{parts[-1].lower()}" in _LANG_BY_SUFFIX:
+        out.append(parts[-2])  # a real extension: the stem is what precedes it
+    elif parts:
+        out.append(parts[-1])  # `com.example.UserDao`: the type name is the last segment
+    stem = Path(token).stem
+    if stem and stem not in out:
+        out.append(stem)
+    return out
+
+
+def _name_them(candidates: list[str]) -> str:
+    shown = candidates[:_MAX_NAMED_CANDIDATES]
+    more = ("" if len(candidates) <= _MAX_NAMED_CANDIDATES
+            else f" (and {len(candidates) - _MAX_NAMED_CANDIDATES} more)")
+    return ", ".join(repr(c) for c in shown) + more
+
+
+def _not_a_file_retry(ctx: RunContext[AgentDeps], path: str, target: Path) -> ModelRetry:
+    """The retry for a `path` that resolved inside the repo but is not a readable source file."""
+    root = Path(ctx.deps.repo_path).resolve()
+    if target.is_dir():
+        rel_dir = target.relative_to(root).as_posix() or "."
+        inside = _supported_matches(ctx, rel_dir, "*")
+        if inside:
+            return ModelRetry(
+                f"{path!r} is a directory, and describe_callables takes one source file. Call it "
+                f"again with one of the files it contains: {_name_them(inside)}."
+            )
+        return ModelRetry(
+            f"{path!r} is a directory, and no file under it has an extension describe_callables "
+            f"parses ({_SUPPORTED_EXTS}). Call list_files({rel_dir!r}) to see what is there and "
+            "read_file on one of those paths instead."
+        )
+    # An absolute host path that lands inside the snapshot has an exact repo-relative form; one
+    # outside it is never named or stat'ed, because that is the confinement boundary.
+    if path.startswith("/"):
+        absolute = Path(path).resolve()
+        if absolute.is_relative_to(root):
+            rel = absolute.relative_to(root).as_posix()
+            lead = (f"{path!r} is an absolute path; describe_callables takes paths relative to "
+                    f"the repository root, so this one is {rel!r}.")
+            if absolute.is_file():
+                return ModelRetry(f"{lead} Call describe_callables with {rel!r}.")
+            if absolute.is_dir():
+                inside = _supported_matches(ctx, rel or ".", "*")
+                if inside:
+                    return ModelRetry(f"{lead} It is a directory, so call describe_callables with "
+                                      f"one file from it: {_name_them(inside)}.")
+    lead = f"{path!r} does not exist in the repository"
+    if "/" not in path and "." in path and Path(path).suffix.lower() not in _LANG_BY_SUFFIX:
+        # `com.example.UserDao`: a fully-qualified class name, not a path.
+        lead += (", and describe_callables takes a repo-relative FILE path, not a class or "
+                 "package name")
+    for stem in _likely_stems(path):
+        same_name = _supported_matches(ctx, ".", f"{stem}.*")
+        if len(same_name) == 1:
+            return ModelRetry(f"{lead}. The file named {stem!r} in this repository is "
+                              f"{same_name[0]!r}; call describe_callables with exactly that path.")
+        if same_name:
+            return ModelRetry(f"{lead}. The files named {stem!r} in this repository are "
+                              f"{_name_them(same_name)}; call describe_callables with whichever "
+                              "one the finding points at.")
+    sources = _supported_matches(ctx, ".", "*")
+    if sources:
+        return ModelRetry(f"{lead}. The source files describe_callables can parse here are "
+                          f"{_name_them(sources)}; call it again with one of those paths.")
+    return ModelRetry(f"{lead}, and it holds no file with an extension describe_callables parses "
+                      f"({_SUPPORTED_EXTS}). Use list_files('.') and read_file instead.")
+
+
 def describe_callables(ctx: RunContext[AgentDeps], path: str) -> str:
     """Report the callable symbols a source file defines or exports, and how to reach them.
 
@@ -588,19 +691,26 @@ def describe_callables(ctx: RunContext[AgentDeps], path: str) -> str:
     naming a target callable or writing an import; a named export requires destructuring and a
     default export must not be destructured, and reading the file does not make that obvious.
 
+    `path` is a single repo-relative file path, spelled exactly as `list_files` prints it (e.g.
+    src/main/java/com/example/UserDao.java) - never a class or package name, never an absolute
+    path, never a directory.
+
     Supports .py (parsed with `ast`, so exact), .js/.jsx/.mjs/.cjs, .java and .pl/.pm/.t
     (heuristic text scan - the output states per language what is certain and what is inferred).
     Only symbols actually found in the file are reported; at most 80.
     """
     target = _resolve(ctx.deps.repo_path, path)
     if not target.is_file():
-        raise ModelRetry(f"{path!r} does not exist.")
+        raise _not_a_file_retry(ctx, path, target)
     rel = target.relative_to(Path(ctx.deps.repo_path).resolve())
     language = _LANG_BY_SUFFIX.get(target.suffix.lower())
     if language is None:
+        same_stem = _supported_matches(ctx, ".", f"{target.stem}.*")
+        instead = (f" If you meant the source that defines {target.stem!r}, that is "
+                   f"{_name_them(same_stem)}." if same_stem else "")
         raise ModelRetry(
             f"{path!r} has no supported extension (got {target.suffix!r}; supported: "
-            f"{', '.join(sorted(_LANG_BY_SUFFIX))}). Use read_file for this one."
+            f"{_SUPPORTED_EXTS}). Use read_file({rel.as_posix()!r}) for this one.{instead}"
         )
     text = target.read_text(errors="replace")
     lines = text.splitlines()

@@ -121,6 +121,29 @@ def _apply_max_tokens_floor(settings: Any, floor: int) -> Any:
     return {**settings, "max_tokens": floor}
 
 
+def max_tokens_floor(agent_name: str | None = None) -> int:
+    """The per-call output floor required by the backend that will serve ``agent_name``.
+
+    The floor has to be applied in *two* places, and applying it only in the model is a bug
+    that shows up as an error message naming a cap that was never sent:
+
+    * the outgoing payload, so the endpoint actually gets the larger cap
+      (:meth:`_CompatOpenAIChatModel.prepare_request`), and
+    * the agent's own ``model_settings``, because pydantic-ai records
+      ``model_settings['max_tokens']`` into ``GraphAgentState.last_max_tokens`` *before* it
+      calls ``Model.prepare_request`` (``_agent_graph.py``), and that recorded number is what
+      "Model token limit (N) exceeded before any response was generated" reports. With the
+      floor applied only to the payload, a run that burned the real 16000-token cap was
+      reported as having exceeded 6000.
+
+    ``Model.settings`` cannot carry the floor either: pydantic-ai merges it as the *base*
+    under the agent's settings, so a small per-agent ``max_tokens`` overrides it. See
+    ``registry._apply_backend_token_floor`` for the agent-side half.
+    """
+    cfg = load_models_config()
+    return cfg.backends[cfg.backend_for(agent_name)].min_max_tokens
+
+
 class _CompatOpenAIChatModel(OpenAIChatModelBase):  # type: ignore[misc,valid-type]
     """An OpenAI-spec model that works around two common self-hosted-endpoint quirks.
 

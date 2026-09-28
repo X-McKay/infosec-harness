@@ -373,7 +373,7 @@ limits:
   max_model_requests: 302
   max_tool_calls: 1180
   max_input_tokens: 51320000
-  max_output_tokens: 4832000
+  max_output_tokens: 4896000
   max_cost_usd: 23.75
   deadline_seconds: 3600
 state:

@@ -311,6 +311,51 @@ def _has_class_selector_value(command: str) -> bool:
     return False
 
 
+def _class_selector_value(command: str) -> str:
+    """The raw text a JVM selector was given, unquoted. Empty when there is no selector."""
+    for sel in _CLASS_SELECTORS:
+        _, found, rest = command.partition(sel)
+        if found:
+            value = rest.lstrip(" =")
+            if value[:1] in ("'", '"'):
+                quote = value[0]
+                value = value[1:].partition(quote)[0]
+            else:
+                value = value.split()[0] if value.split() else ""
+            return value.strip()
+    return ""
+
+
+# Surefire and Gradle select by *class*, so a selector handed a file path matches nothing. The
+# run then exits having executed no test -- Surefire says `No tests matching pattern "<path>"
+# were executed!` -- which looks like a probe defect and is not one. Measured on
+# java-sqli-fixed: the planner wrote `-Dtest={test_file}`, the harness substituted
+# `src/test/java/com/example/UserDaoTest.java`, and the case burned its whole repair budget to
+# `inconclusive`. `{test_file}` is the giveaway, but a hardcoded path fails identically.
+_PATHISH_SELECTOR = re.compile(r"[/\\]|\.(?:java|kt|kts|groovy|scala)\b|\{test_file\}")
+
+
+def _pathish_selector_violation(command: str) -> str | None:
+    """Reject a JVM selector given a path rather than a class name, naming the correction."""
+    value = _class_selector_value(command)
+    if not value or not _PATHISH_SELECTOR.search(value):
+        return None
+    stem = value.replace("\\", "/").rstrip("/").rpartition("/")[2]
+    for suffix in (".java", ".kt", ".kts", ".groovy", ".scala"):
+        stem = stem.removesuffix(suffix)
+    named = stem if stem and "{" not in stem else "HarnessProbeTest"
+    hint = (f"-Dtest={named}" if "-Dtest=" in command else f"--tests '*{named}'")
+    return (
+        f"the test selector was given {value!r}, which is a file path, not a class name. Write "
+        f"{hint} instead. Surefire and Gradle match selectors against class names, so a path "
+        f"matches nothing and the run executes zero tests -- Surefire reports "
+        f"`No tests matching pattern \"{value}\" were executed!`. Do not use {{test_file}} in a "
+        f"JVM selector: the harness substitutes the probe's path there, which is exactly the "
+        f"value that matches nothing. The coupling is by name -- the probe's test class must be "
+        f"the one the selector names."
+    )
+
+
 def environment_spec_violations(spec: EnvironmentSpec) -> list[str]:
     """Deterministic requirements on a test command. Pure, so evals and tests can check it.
 
@@ -332,6 +377,8 @@ def environment_spec_violations(spec: EnvironmentSpec) -> list[str]:
                 "'mvn -q -B -o test -Dtest=HarnessProbeTest' or "
                 "\"./gradlew --offline test --tests '*HarnessProbeTest'\"."
             )
+        elif (pathish := _pathish_selector_violation(command)):
+            problems.append(pathish)
         return problems + _jvm_violations(command)
     if "{test_file}" not in command:
         # The harness writes the probe to the path the author chose and substitutes it here.

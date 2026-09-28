@@ -301,19 +301,31 @@ class OracleKind(StrEnum):
 class ProbePlan(_Model):
     """ProbePlannerAgent output: what the probe must demonstrate and how we detect it."""
 
+    # Every description carries its own length bound. These reach the model as the output
+    # tool's JSON schema, and they are the only length guidance it gets there: with none, a
+    # reasoning model has nothing telling it the answer is short, and deliberating over an
+    # open-ended one is how probe-planner spent a whole 16000-token cap on thinking and
+    # emitted nothing (docs/LIVE_VALIDATION.md). The agent's instructions say the same thing;
+    # saying it in both places means it survives a prompt the model skims.
     hypothesis: str = Field(description="One sentence: the exploit condition the test attempts")
-    payload: str = Field(description="The malicious input(s) the test will use")
+    payload: str = Field(
+        description="The malicious input(s) the test will use, in at most two sentences. "
+        "A description of the input, not test code"
+    )
     oracle: OracleKind
     oracle_condition: str = Field(
-        description="The observable condition that proves exploitation, which the test "
-        "converts into printing the oracle marker (or creating the canary file)"
+        description="One sentence: the observable condition that proves exploitation, which "
+        "the test converts into printing the oracle marker (or creating the canary file)"
     )
     precondition_checkpoint: str = Field(
-        description="The point the test reaches before triggering the sink; the test prints "
-        "the precondition marker there"
+        description="One sentence: the point the test reaches before triggering the sink; the "
+        "test prints the precondition marker there"
     )
     test_file_path: str = Field(description="Repo-relative path for the new test file")
-    notes: str = ""
+    notes: str = Field(
+        "", description="At most one sentence, for something the code context left unsettled. "
+        "Empty when nothing is"
+    )
 
 
 class ProbeSource(_Model):

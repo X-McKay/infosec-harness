@@ -185,6 +185,28 @@ def _absolutize_skill_dirs(spec: AgentSpec) -> AgentSpec:
     return AgentSpec.from_dict(data)
 
 
+def _apply_backend_token_floor(name: str, spec: AgentSpec) -> AgentSpec:
+    """Raise the spec's per-call ``max_tokens`` to the serving backend's floor.
+
+    The backend-level half of this lives in ``_CompatOpenAIChatModel.prepare_request``, which
+    raises the cap on the outgoing payload. That is not enough on its own: pydantic-ai copies
+    ``model_settings['max_tokens']`` into ``GraphAgentState.last_max_tokens`` when it builds
+    the request, *before* the model's ``prepare_request`` runs, and that copy is the number
+    reported by "Model token limit (N) exceeded before any response was generated". Applying
+    the floor here as well keeps the two in agreement, so a diagnostic names the cap that was
+    actually sent instead of the spec value that was superseded.
+
+    A zero floor (Bedrock, where thinking has its own budget) is a no-op, so this changes
+    nothing for the default backend. See :func:`models.max_tokens_floor`.
+    """
+    floored = model_factory._apply_max_tokens_floor(
+        dict(spec.model_settings or {}), model_factory.max_tokens_floor(name)
+    )
+    if floored == (spec.model_settings or {}):
+        return spec
+    return spec.model_copy(update={"model_settings": floored})
+
+
 def _assert_execution_class_covers_tools(name: str, metadata: Mapping[str, Any] | None) -> None:
     """An agent's execution class must be at least what its most consequential tool requires.
 
@@ -214,6 +236,7 @@ def build_agent(name: str, overlay: Mapping[str, Any] | None = None, *, durable:
     assert_governed(name, spec.metadata)
     _assert_execution_class_covers_tools(name, spec.metadata)
     spec = _absolutize_skill_dirs(spec)
+    spec = _apply_backend_token_floor(name, spec)
     capabilities: list[Any] = [ResolveModelId(
         lambda ctx, model_id, _n=name, _d=durable: model_factory.resolve(_n, model_id, durable=_d))]
     # Cross-cutting robustness, attached in code (see ALLOWED_CAPABILITIES note).

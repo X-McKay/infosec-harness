@@ -83,6 +83,81 @@ A probe whose markers are buffered away looks like a probe that found nothing; a
 looks like a defective probe. Each is now a deterministic check at the point where it is
 knowable.
 
+## Per-language, with the sandbox on
+
+Measured after the Maven and Perl fixes below. Live Qwen3.6-35B, gVisor, one repeat.
+
+| language | n | accuracy | FN on exploitable | notes |
+| --- | --- | --- | --- | --- |
+| python | 10 | 90% | 25% | |
+| perl | 4 | 75% | 50% | but see the caveat below — two passes never probed |
+| java | 4 | 25% | 50% | all four now *build*; four distinct model-side failures remain |
+
+**Perl's 75% is partly unearned, and the number now says so.** Both `fixed` cases returned
+`likely_not_exploitable` via an `unreachable_by_context` early exit: no build, no probe, no
+oracle. Two of the three "correct" cases never tested anything. The manifest declares an
+expected early exit for exactly one case (`testonly`, which is test/vendored code and should
+not be probed), so for the other 29 an early exit is a finding. `score_corpus` now reports
+`accuracy_with_evidence` and names undeclared exits, because the reasoning path that scores a
+`fixed` case right without evidence is the same one that, on a vulnerable case, is a false
+negative.
+
+### Three ways a test that never ran was scored as a result
+
+Every failure in this round reduced to one mistake in a different place: something reported
+success or a negative finding while zero tests had executed.
+
+1. **Maven's warm-up ran nothing and reported `BUILD SUCCESS`.** Surefire resolves its
+   *provider* lazily, at test-execution time, from the JUnit version on the test classpath. The
+   warm-up ran against a fixture whose `src/test/java` holds only a `.gitkeep`, so Surefire
+   short-circuited before provider selection, downloaded the plugin, and went green — then the
+   offline probe failed on `surefire-junit-platform:3.2.5`. The warm-up now compiles and runs a
+   throwaway `@Test`, which is what forces the download. `dependency:get` and
+   `dependency:resolve-plugins` are both dead ends: the first leaves
+   `junit-platform-launcher` absent at a version Surefire derives from the project, the second
+   resolves the effective pom's Surefire 2.12.4. `offline_warmup_violations()` now rejects a
+   warm-up that cannot have run a test — no `-Dtest=` selector, or `-DfailIfNoTests=false`,
+   which is exactly what let the old one pass while running nothing.
+2. **A selector handed a file path matched no class.** The planner wrote `-Dtest={test_file}`;
+   the harness substituted `src/test/java/com/example/UserDaoTest.java`; Surefire reported
+   `No tests matching pattern "..." were executed!` and the case burned its whole repair budget
+   to `inconclusive`. The old check only required the selector to be non-empty, which a path
+   satisfies. It now rejects a path-shaped selector and names the class to use instead.
+3. **`prove` reported a zero-test run with no diagnostic at all.** On `perl-cmdi-vulnerable`:
+   `skipped: (no reason given)` (a bare `1..0` plan), exit 255, and an **empty stderr**. The
+   diagnosis reached the right *kind* (`probe_defect`) for the wrong *reason* — it guessed "the
+   file was not written correctly" — so the repair rewrote a file that was never the problem
+   and a genuinely exploitable finding came back `inconclusive`. `no_tests_executed()` now
+   recognises that phrasing for all four runners deterministically, and
+   `_ground_zero_test_diagnosis` replaces the speculative fix hint with the real short list of
+   causes. A zero-test run is never a negative result: nothing exercised the sink.
+
+The through-line is the same as the earlier four defects: **the failure was invisible to the
+agent that could have reported it.** A warm-up that ran no test looks like a successful build;
+a selector that matched nothing looks like a broken probe.
+
+### What is left on Java
+
+All four cases build. The remaining failures are model-side and individually diagnosable:
+
+- `probe-planner` consumed its entire 16,000-token output budget in 287s with zero tool calls
+  and produced nothing (`finish=length`). This is the largest single blocker.
+- `describe_callables` hit its retry ceiling three times and aborted a finding, because its
+  `ModelRetry` messages named the problem without naming the correction — a model passing a
+  fully-qualified class name (very likely on Java) got only `'com.example.UserDao' does not
+  exist.` The messages now resolve the likely file and name the path to use.
+- Token ceilings were calibrated as if `input_tokens_limit` were per-call when pydantic-ai
+  defines it as cumulative across a run. A 19-request run on a 1.3 kB repository reaches ~246k
+  against a 120k ceiling; the same run with zero tool calls stays under it, so the ceiling only
+  ever survived short runs.
+
+`request_limit of 16` was deliberately **not** raised: the instructed procedure derives to <=13
+requests on a 1.3 kB repository, so exhausting 16 is not legitimate work and raising the limit
+would hide the bug. It could not be diagnosed from the record either, because
+`inspect_messages` de-duplicates tool names and discards arguments, making eight re-reads of
+one file byte-identical to one read. Runs now record request counts and repeated identical
+calls, and the corpus report prints a `LOOPING` marker naming the worst offender.
+
 ## Where the agents do well, and where they do not
 
 22 cases, four languages, `--no-sandbox`.
