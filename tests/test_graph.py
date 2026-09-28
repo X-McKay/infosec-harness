@@ -347,3 +347,56 @@ def test_a_fired_oracle_implies_the_sink_returned():
     assert sink_returned("HARNESS_CANARY_PRESENT::n1", "n1") is True
     assert sink_returned("HARNESS_PRECONDITION::n1", "n1") is False
     assert sink_returned("HARNESS_SINK_RETURNED::n1", "n1") is True
+
+
+def test_a_zero_test_run_gets_the_runners_own_reason_not_the_models_guess():
+    """The measured perl-cmdi-vulnerable failure, end to end through the correction.
+
+    The diagnosis reached the right *kind* for the wrong *reason*, and the reason is what the
+    repair agent acts on: it rewrote the probe file that was never the problem. The runner's own
+    words must displace the guess, and the speculative fix_hint must be replaced rather than
+    kept, because keeping it is what sent three repair attempts the wrong way.
+    """
+    from infosec_harness.domain.models import DiagnosisKind, ProbeDiagnosis, ProbeExecution
+    from infosec_harness.graph.triage import _ground_zero_test_diagnosis
+    from infosec_harness.sandbox import docker
+
+    reason = docker.no_tests_executed("t/x.t .. skipped: (no reason given)\nResult: FAIL\n")
+    execution = ProbeExecution(attempt=1, exit_code=1, oracle_fired=False,
+                               precondition_reached=False, sink_returned=False,
+                               runner_reported_no_tests=reason)
+    diagnosis = ProbeDiagnosis(kind=DiagnosisKind.probe_defect,
+                               explanation="the file was probably not written correctly",
+                               fix_hint="rewrite the probe file")
+    corrected = _ground_zero_test_diagnosis(diagnosis, execution)
+    assert corrected.kind is DiagnosisKind.probe_defect
+    assert "executed no tests" in corrected.explanation
+    assert "zero-test plan" in corrected.explanation  # the runner's evidence, verbatim
+    assert "not written correctly" in corrected.explanation  # original reading still recorded
+    assert "rewrite the probe file" not in corrected.fix_hint, "the guess must not steer repair"
+    assert "selector matches no test" in corrected.fix_hint
+
+
+def test_a_run_that_executed_tests_is_left_exactly_as_diagnosed():
+    from infosec_harness.domain.models import DiagnosisKind, ProbeDiagnosis, ProbeExecution
+    from infosec_harness.graph.triage import _ground_zero_test_diagnosis
+
+    execution = ProbeExecution(attempt=1, exit_code=0, oracle_fired=False,
+                               precondition_reached=True, sink_returned=True)
+    for kind in (DiagnosisKind.valid_positive, DiagnosisKind.valid_negative,
+                 DiagnosisKind.probe_defect, DiagnosisKind.environment_issue):
+        diagnosis = ProbeDiagnosis(kind=kind, explanation="x", fix_hint="y")
+        assert _ground_zero_test_diagnosis(diagnosis, execution) is diagnosis
+
+
+def test_a_zero_test_run_can_never_come_back_as_a_positive_or_a_negative():
+    """Nothing exercised the sink, so neither verdict direction is sayable from this run."""
+    from infosec_harness.domain.models import DiagnosisKind, ProbeDiagnosis, ProbeExecution
+    from infosec_harness.graph.triage import _ground_zero_test_diagnosis
+
+    execution = ProbeExecution(attempt=1, exit_code=1, oracle_fired=False,
+                               precondition_reached=False, sink_returned=False,
+                               runner_reported_no_tests="pytest: collected 0 items")
+    for kind in (DiagnosisKind.valid_positive, DiagnosisKind.valid_negative):
+        diagnosis = ProbeDiagnosis(kind=kind, explanation="x")
+        assert _ground_zero_test_diagnosis(diagnosis, execution).kind is DiagnosisKind.probe_defect

@@ -196,6 +196,46 @@ def _correct_unsupported_negative(diagnosis: ProbeDiagnosis,
     })
 
 
+def _ground_zero_test_diagnosis(diagnosis: ProbeDiagnosis,
+                                execution: ProbeExecution) -> ProbeDiagnosis:
+    """When the runner said it ran no tests, make that the recorded cause.
+
+    `_correct_unsupported_negative` above already stops a zero-test run being called a negative,
+    because nothing printed the sink-returned marker. What it cannot fix is a diagnosis that
+    reaches the right *kind* for the wrong *reason* — and the reason is what the repair agent
+    acts on. Measured on perl-cmdi-vulnerable: prove printed `skipped: (no reason given)` with
+    exit 255 and an empty stderr, the diagnosis correctly said probe_defect but explained it as
+    "the file was either not written correctly, or crashed without producing output", the repair
+    rewrote the file that was never the problem, and three attempts later a genuinely
+    exploitable finding was reported `inconclusive`.
+
+    So the runner's own words are promoted ahead of the model's reading, and the fix_hint is
+    replaced rather than defaulted: an existing hint here is precisely the speculative one that
+    sent the repair loop the wrong way. Deterministic for the same reason as above — it is a
+    recorded fact, and the model was not being unreasonable about the evidence it could see.
+    """
+    if not execution.runner_reported_no_tests:
+        return diagnosis
+    return diagnosis.model_copy(update={
+        "kind": DiagnosisKind.probe_defect,
+        "explanation": (
+            f"The test runner reported that it executed no tests: "
+            f"{execution.runner_reported_no_tests} Repair what stopped the test from running, "
+            f"not the probe's logic. Original reading: {diagnosis.explanation}"
+        ),
+        "fix_hint": (
+            "A run that executed zero tests has a short list of causes; check them in order. "
+            "(1) The file is not where the runner looks — confirm the path and that the runner "
+            "was pointed at it. (2) The selector matches no test — a class/function name "
+            "filter that does not match runs nothing and can still exit 0. (3) The plan or "
+            "assertion count was emitted before the assertions ran. (4) The module under test "
+            "failed to load, so the file aborted before its first assertion; if the runner "
+            "buffers the child's stderr this leaves no message at all, so print a marker as "
+            "the very first statement to distinguish 'never started' from 'started and died'."
+        ),
+    })
+
+
 @dataclass
 class DiagnoseProbe(BaseNode[TriageState, TriageDeps, TriageResult]):
     async def run(self, ctx: GraphRunContext[TriageState, TriageDeps]) -> RepairProbe | Decide:
@@ -209,7 +249,8 @@ class DiagnoseProbe(BaseNode[TriageState, TriageDeps, TriageResult]):
         )
         outcome = await ctx.deps.ops.run_agent("probe-diagnosis", prompt, s.deps())
         s.invocations.append(outcome)
-        s.last_diagnosis = _correct_unsupported_negative(outcome.output, execution)
+        s.last_diagnosis = _ground_zero_test_diagnosis(
+            _correct_unsupported_negative(outcome.output, execution), execution)
         if s.last_diagnosis.kind == DiagnosisKind.probe_defect and s.attempt <= ctx.deps.max_probe_repairs:
             return RepairProbe()
         return Decide()
