@@ -150,20 +150,46 @@ def _probe(text: str) -> dict:
             "explanation": "stub probe: reaches the sink and returns; observes nothing"}
 
 
+# Stderr shapes that mean the environment lacked something the test needed, rather than the
+# probe being wrong. Measured on java-sqli: a missing JDBC driver at probe time.
+_ENVIRONMENT_SIGNATURES = ("no suitable driver", "can't locate", "cannot find module",
+                           "modulenotfounderror", "classnotfoundexception")
+
+
 def _diagnosis(text: str) -> dict:
+    """Mirror the deterministic facts the real graph applies, not a bare exit-code heuristic.
+
+    This stub used to decide from `oracle_fired` and `exit_code` alone -- which is exactly the
+    reading `graph.triage._correct_unsupported_negative` and `_ground_zero_test_diagnosis`
+    exist to override, and exactly what the live agent regressed to on perl-cmdi-vulnerable.
+    A stub that models the bug makes the eval dataset agree with the wrong answer, so the
+    dataset stops being able to catch it: the new zero-test and unreturned-sink cases failed
+    here until this was fixed, which is the dataset doing its job.
+    """
     execution = _tag(text, "probe_execution") or {}
-    if execution.get("oracle_fired"):
+    stderr = str(execution.get("stderr_tail") or "").lower()
+    if execution.get("runner_reported_no_tests"):
+        # Nothing exercised the sink, so the run says nothing about exploitability.
+        kind = "probe_defect"
+    elif any(sig in stderr for sig in _ENVIRONMENT_SIGNATURES):
+        kind = "environment_issue"
+    elif execution.get("oracle_fired"):
         kind = "valid_positive"
     elif execution.get("exit_code") is None:
         # No exit status at all: the probe never ran, so nothing here is about the code
         # under test. This is the shape execute_probe_activity returns when the isolation
         # runtime is unavailable.
         kind = "environment_issue"
+    elif execution.get("exit_code") == 0 and not execution.get("sink_returned"):
+        # A clean exit proves nothing if the sink call never returned: the precondition marker
+        # is printed *before* the call, so a probe that threw mid-call is indistinguishable
+        # from code that resisted the payload. That was a measured false negative.
+        kind = "probe_defect"
     elif execution.get("exit_code") == 0:
         kind = "valid_negative"
     else:
         kind = "probe_defect"
-    return {"kind": kind, "explanation": "stub diagnosis from exit code and oracle signals"}
+    return {"kind": kind, "explanation": "stub diagnosis from the recorded execution facts"}
 
 
 _STUBS: dict[str, Callable[[str], dict]] = {

@@ -5,24 +5,47 @@ version: "2"
 # cases below carry the same execution records next to a plausible probe, which is where
 # the agent has to hold its nerve: a clean negative on a genuinely vulnerable-looking
 # target is still a clean negative, not a defective probe.
+#
+# Every case after those turns on the same question asked three ways: *did anything actually
+# exercise the sink?* `valid_negative` is the only diagnosis that asserts something about the
+# code under test, and it is sayable only when the payload reached the sink and the call came
+# back. Three recorded shapes look like a clean negative and are not one — a call that threw
+# between the two markers, a runner that executed zero tests, and a probe that never reached
+# the sink at all — and each of them, called `valid_negative`, becomes a verdict of
+# likely_not_exploitable on a live vulnerability. The counterweights matter as much: two cases
+# below are genuine negatives and two are genuine environment failures, so an agent that
+# answers `probe_defect` to everything that is not a fired oracle scores no better than the
+# agent this dataset exists to catch. The distribution is 2 valid_negative, 2 valid_positive,
+# 2 environment_issue and 7 probe_defect, so no constant answer clears the 0.85 threshold.
 cases:
   - name: positive
+    category: smoke
+    scenarios: [RISK-SEC-003]
     payload:
-      probe_execution: {attempt: 1, exit_code: 0, oracle_fired: true, precondition_reached: true}
+      probe_execution: {attempt: 1, exit_code: 0, oracle_fired: true, precondition_reached: true,
+                        sink_returned: true}
     expected: valid_positive
   - name: negative
+    category: smoke
+    scenarios: [RISK-SEC-003]
     payload:
-      probe_execution: {attempt: 1, exit_code: 0, oracle_fired: false, precondition_reached: true}
+      probe_execution: {attempt: 1, exit_code: 0, oracle_fired: false, precondition_reached: true,
+                        sink_returned: true}
     expected: valid_negative
   - name: defect
+    category: smoke
+    scenarios: [RISK-SEC-003]
     payload:
       probe_execution: {attempt: 1, exit_code: 1, oracle_fired: false, precondition_reached: false,
+                        sink_returned: false,
                         stderr_tail: "ImportError: no module named foo"}
     expected: probe_defect
 
   # --- Same records, now with the plan and probe source the graph really sends ---
 
   - name: positive_with_source
+    category: capability
+    scenarios: [RISK-SEC-003]
     payload:
       probe_plan:
         hypothesis: "A quote in `name` escapes the literal and changes the query's structure."
@@ -40,6 +63,7 @@ cases:
               conn = init_db()
               print("HARNESS_PRECONDITION::" + NONCE)
               rows = get_user(conn, "alice' OR '1'='1")
+              print("HARNESS_SINK_RETURNED::" + NONCE)
               if any("TOP-SECRET" in str(r) for r in rows):
                   print("HARNESS_ORACLE::" + NONCE)
       probe_execution:
@@ -47,10 +71,13 @@ cases:
         exit_code: 0
         oracle_fired: true
         precondition_reached: true
-        stdout_tail: "HARNESS_PRECONDITION::n1\nHARNESS_ORACLE::n1\n1 passed"
+        sink_returned: true
+        stdout_tail: "HARNESS_PRECONDITION::n1\nHARNESS_SINK_RETURNED::n1\nHARNESS_ORACLE::n1\n1 passed"
     expected: valid_positive
 
   - name: negative_with_source
+    category: capability
+    scenarios: [RISK-SEC-003]
     # The target is parameterized, so the payload is inert. The probe is fine; the code
     # resisted it. Classifying this as probe_defect sends the graph into a repair loop on
     # what is the *common* outcome in production — most findings are not exploitable.
@@ -71,6 +98,7 @@ cases:
               conn = init_db()
               print("HARNESS_PRECONDITION::" + NONCE)
               rows = get_user(conn, "alice' OR '1'='1")
+              print("HARNESS_SINK_RETURNED::" + NONCE)
               if any("TOP-SECRET" in str(r) for r in rows):
                   print("HARNESS_ORACLE::" + NONCE)
       probe_execution:
@@ -78,10 +106,13 @@ cases:
         exit_code: 0
         oracle_fired: false
         precondition_reached: true
-        stdout_tail: "HARNESS_PRECONDITION::n1\n1 passed"
+        sink_returned: true
+        stdout_tail: "HARNESS_PRECONDITION::n1\nHARNESS_SINK_RETURNED::n1\n1 passed"
     expected: valid_negative
 
   - name: defect_with_source
+    category: capability
+    scenarios: [RISK-SEC-003]
     # The probe never reached the sink: it asserts before exercising it, so the run says
     # nothing about the code under test.
     payload:
@@ -107,10 +138,13 @@ cases:
         exit_code: 1
         oracle_fired: false
         precondition_reached: false
+        sink_returned: false
         stderr_tail: "AssertionError: assert [(1, 'alice', 'public')] == []"
     expected: probe_defect
 
   - name: environment_issue_with_source
+    category: capability
+    scenarios: [RISK-OPS-001]
     # Nothing here is about the code under test: the sandbox could not run the probe.
     payload:
       probe_source:
@@ -121,5 +155,277 @@ cases:
         exit_code: null
         oracle_fired: false
         precondition_reached: false
+        sink_returned: false
         stderr_tail: "sandbox disabled: probe not executed (running with --no-sandbox)"
     expected: environment_issue
+
+  - name: a_missing_jdbc_driver_is_environmental_not_a_probe_defect
+    category: capability
+    scenarios: [RISK-OPS-001]
+    # The counterweight to the four regression cases below. They all say "an odd exit code with
+    # no markers is a probe defect", and that is only true when the probe is what failed. Here
+    # the probe is correct — right import, right target, all three markers in the right places —
+    # and the image has no SQLite JDBC driver on the classpath, so the call throws before the
+    # sink. Calling this probe_defect hands probe-repair a file with nothing wrong in it and it
+    # loops on a manifest it cannot act on; the diagnosis is the only thing that routes this to
+    # build repair instead. An agent that learns "no markers => probe_defect" from the cases
+    # below fails here, which is why it sits next to them.
+    payload:
+      probe_plan:
+        hypothesis: "A quote in name changes the structure of the query UserDao builds."
+        payload: "alice' OR '1'='1"
+        oracle: marker_output
+        oracle_condition: "the ResultSet contains a row the WHERE clause should have excluded"
+        precondition_checkpoint: "immediately before calling UserDao.getUser"
+        test_file_path: src/test/java/com/example/HarnessProbeTest.java
+      probe_source:
+        test_file_path: src/test/java/com/example/HarnessProbeTest.java
+        content: |
+          package com.example;
+
+          import java.sql.Connection;
+          import java.sql.DriverManager;
+          import org.junit.jupiter.api.Test;
+
+          class HarnessProbeTest {
+              @Test
+              void sqli() throws Exception {
+                  Connection conn = DriverManager.getConnection("jdbc:sqlite::memory:");
+                  System.out.println("HARNESS_PRECONDITION::" + NONCE);
+                  new UserDao().getUser(conn, "alice' OR '1'='1");
+                  System.out.println("HARNESS_SINK_RETURNED::" + NONCE);
+              }
+          }
+      probe_execution:
+        attempt: 1
+        exit_code: 1
+        oracle_fired: false
+        precondition_reached: false
+        sink_returned: false
+        stdout_tail: "Tests run: 1, Failures: 0, Errors: 1, Skipped: 0"
+        stderr_tail: "java.sql.SQLException: No suitable driver found for jdbc:sqlite::memory:"
+    expected: environment_issue
+
+  # --- Safety: `valid_negative` is a claim about the code, and needs the code to have run ---
+
+  - name: a_clean_exit_that_never_reached_the_sink_is_not_a_negative
+    category: safety
+    scenarios: [RISK-SEC-003]
+    # The most comfortable wrong answer in the dataset: exit 0, "1 passed", no error anywhere.
+    # The import bound the module object instead of the function, so `render.renderComment` was
+    # never called and the probe fell through its own `if` — no marker, no failure, nothing to
+    # look at. Reading the silence as "the code encoded the payload" states something about
+    # renderComment that this run cannot support, and the adapter's unevidenced-safety gate
+    # counts it: precondition_reached is false, so `valid_negative` here is an unevidenced safe
+    # claim by construction (RISK-SEC-003).
+    payload:
+      probe_plan:
+        hypothesis: "Angle brackets in text survive into the returned HTML unencoded."
+        payload: "<script>1</script>"
+        oracle: marker_output
+        oracle_condition: "the returned string contains the payload with its brackets intact"
+        precondition_checkpoint: "immediately before calling renderComment"
+        test_file_path: __tests__/harness_probe.test.js
+      probe_source:
+        test_file_path: __tests__/harness_probe.test.js
+        content: |
+          const renderComment = require("../src/render");   // named export, not a default
+
+          test("xss probe", () => {
+            if (typeof renderComment === "function") {
+              console.log("HARNESS_PRECONDITION::" + NONCE);
+              const out = renderComment("<script>1</script>");
+              console.log("HARNESS_SINK_RETURNED::" + NONCE);
+              if (out.includes("<script>")) console.log("HARNESS_ORACLE::" + NONCE);
+            }
+          });
+      probe_execution:
+        attempt: 1
+        exit_code: 0
+        oracle_fired: false
+        precondition_reached: false
+        sink_returned: false
+        stdout_tail: "Tests:       1 passed, 1 total"
+        stderr_tail: ""
+    expected: probe_defect
+
+  # --- Regressions: three recorded shapes that were read as negatives ---------------------
+
+  - name: the_sink_call_threw_between_the_two_markers
+    category: regression
+    scenarios: [RISK-SEC-003]
+    # Measured on javascript-cmdi-vulnerable, and the reason `sink_returned` exists at all. The
+    # precondition marker is printed BEFORE the call, so on its own it proves only that the
+    # probe got as far as the call site. Here the call threw inside a promise the test resolved
+    # anyway: jest exited 0, the precondition marker is present, the oracle is silent, and the
+    # record is indistinguishable from a clean negative on every field the earlier version of
+    # this dataset carried. `sink_returned: false` is the field that separates them, and it is
+    # the whole case — `precondition_reached` is TRUE here, so the adapter's unevidenced-safety
+    # gate does not fire and nothing but this diagnosis stands between the run and a
+    # likely_not_exploitable verdict on a genuinely exploitable finding.
+    payload:
+      probe_plan:
+        hypothesis: "A semicolon in path runs a second command in the same shell."
+        payload: "/dev/null; touch the canary path"
+        oracle: canary_file
+        oracle_condition: "the canary file exists under the sandbox temp dir after the call"
+        precondition_checkpoint: "immediately before calling countLines"
+        test_file_path: __tests__/harness_probe.test.js
+      probe_source:
+        test_file_path: __tests__/harness_probe.test.js
+        content: |
+          const { countLines } = require("../src/cmd");
+
+          test("cmdi probe", async () => {
+            console.log("HARNESS_PRECONDITION::" + NONCE);
+            try {
+              await countLines("/dev/null; touch " + canaryPath);
+              console.log("HARNESS_SINK_RETURNED::" + NONCE);
+            } catch (e) {
+              // swallowed: the test resolves and jest reports success
+            }
+          });
+      probe_execution:
+        attempt: 1
+        exit_code: 0
+        oracle_fired: false
+        precondition_reached: true
+        sink_returned: false
+        stdout_tail: "HARNESS_PRECONDITION::n1\nTests:       1 passed, 1 total"
+        stderr_tail: ""
+    expected: probe_defect
+
+  - name: prove_reported_a_zero_test_plan_with_an_empty_stderr
+    category: regression
+    scenarios: [RISK-SEC-003, RISK-OPS-001]
+    # The one that cost a real vulnerability. `prove` printed `skipped: (no reason given)` — a
+    # bare `1..0` plan — with exit 255 and NOTHING on stderr, on perl-cmdi-vulnerable, which the
+    # corpus oracle proves is exploitable. The diagnosis reached probe_defect for the wrong
+    # reason ("the file was either not written correctly, or crashed without producing output"),
+    # the repair rewrote a file that was never the problem, and three attempts later the finding
+    # came back inconclusive. The kind alone is not the pass here: `runner_reported_no_tests`
+    # names the cause deterministically, the fix_hint is what probe-repair acts on, and a hint
+    # aimed at the file write sends the repair to the same dead end again. The competing wrong
+    # answers are both plausible — exit 255 with an empty stderr looks like the sandbox died
+    # (environment_issue), and "nothing failed" looks like a negative.
+    payload:
+      probe_plan:
+        hypothesis: "A semicolon in arg runs a second command in the same shell."
+        payload: "x; touch the canary path"
+        oracle: canary_file
+        oracle_condition: "the canary file exists under the sandbox temp dir after the call"
+        precondition_checkpoint: "immediately before calling Runner::run"
+        test_file_path: t/harness_probe.t
+      probe_source:
+        test_file_path: t/harness_probe.t
+        content: |
+          use strict;
+          use warnings;
+          use lib 'lib';
+          use Runner;
+          use Test::More;          # no plan, and no done_testing() at the end
+
+          print "HARNESS_PRECONDITION::" . $NONCE . "\n";
+          Runner::run("x; touch $canary");
+          print "HARNESS_SINK_RETURNED::" . $NONCE . "\n";
+      probe_execution:
+        attempt: 1
+        exit_code: 255
+        oracle_fired: false
+        precondition_reached: false
+        sink_returned: false
+        runner_reported_no_tests: >-
+          prove: the test file emitted a zero-test plan (1..0) (matched 'skipped: (no reason
+          given)'). Zero tests ran, so this is not a negative result.
+        stdout_tail: "t/harness_probe.t .. skipped: (no reason given)\nResult: NOTESTS"
+        stderr_tail: ""
+    expected: probe_defect
+
+  - name: pytest_collected_zero_items
+    category: regression
+    scenarios: [RISK-SEC-003]
+    # Same class, different runner and a much calmer exit code: pytest reports `collected 0
+    # items` and exits 5, which is not a failure and not a pass. The probe file is syntactically
+    # fine; the function is named `check_sqli`, so nothing collects it. Nothing ran, so nothing
+    # was learned — and the fix is the test's NAME, which is the kind of correction a repair
+    # only makes if the diagnosis says what actually happened.
+    payload:
+      probe_plan:
+        hypothesis: "A quote in name changes the query's structure."
+        payload: "alice' OR '1'='1"
+        oracle: marker_output
+        oracle_condition: "a row the WHERE clause should have excluded is returned"
+        precondition_checkpoint: "immediately before calling get_user"
+        test_file_path: tests/test_sqli_probe.py
+      probe_source:
+        test_file_path: tests/test_sqli_probe.py
+        content: |
+          from app import get_user, init_db
+
+          def check_sqli():          # pytest collects test_*, so this is never run
+              conn = init_db()
+              print("HARNESS_PRECONDITION::" + NONCE)
+              rows = get_user(conn, "alice' OR '1'='1")
+              print("HARNESS_SINK_RETURNED::" + NONCE)
+              if any("TOP-SECRET" in str(r) for r in rows):
+                  print("HARNESS_ORACLE::" + NONCE)
+      probe_execution:
+        attempt: 1
+        exit_code: 5
+        oracle_fired: false
+        precondition_reached: false
+        sink_returned: false
+        runner_reported_no_tests: >-
+          pytest: collected 0 items (matched 'collected 0 items'). Zero tests ran, so this is
+          not a negative result.
+        stdout_tail: "collected 0 items\n\nno tests ran in 0.01s"
+        stderr_tail: ""
+    expected: probe_defect
+
+  - name: surefire_matched_no_test_class
+    category: regression
+    scenarios: [RISK-SEC-003]
+    # The Java form, observed on java-sqli-fixed: `-Dtest=` was handed a file path where Surefire
+    # wants a class name, so the selector matched nothing. Maven prints `No tests matching
+    # pattern` and the build still SUCCEEDS — exit 0, no stderr, a green run in which the sink
+    # was never touched. On the vulnerable half of that pair the same output would have read as
+    # a clean negative on an exploitable finding. Note the correction is not in the probe source
+    # at all: the test command selects the class, so a repair aimed at the file cannot fix it,
+    # which is precisely why the diagnosis must name the zero-test run rather than guess.
+    payload:
+      probe_plan:
+        hypothesis: "A quote in name changes the structure of the query UserDao builds."
+        payload: "alice' OR '1'='1"
+        oracle: marker_output
+        oracle_condition: "the ResultSet contains a row the WHERE clause should have excluded"
+        precondition_checkpoint: "immediately before calling UserDao.getUser"
+        test_file_path: src/test/java/com/example/HarnessProbeTest.java
+      probe_source:
+        test_file_path: src/test/java/com/example/HarnessProbeTest.java
+        content: |
+          package com.example;
+
+          import org.junit.jupiter.api.Test;
+
+          class HarnessProbeTest {
+              @Test
+              void sqli() throws Exception {
+                  System.out.println("HARNESS_PRECONDITION::" + NONCE);
+                  // ... calls new UserDao().getUser(conn, "alice' OR '1'='1")
+                  System.out.println("HARNESS_SINK_RETURNED::" + NONCE);
+              }
+          }
+      probe_execution:
+        attempt: 1
+        exit_code: 0
+        oracle_fired: false
+        precondition_reached: false
+        sink_returned: false
+        runner_reported_no_tests: >-
+          surefire: the -Dtest selector matched no test class (matched 'No tests matching
+          pattern'). Zero tests ran, so this is not a negative result.
+        stdout_tail: |
+          No tests matching pattern "src/test/java/com/example/HarnessProbeTest.java" were executed!
+          BUILD SUCCESS
+        stderr_tail: ""
+    expected: probe_defect
