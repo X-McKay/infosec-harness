@@ -22,6 +22,7 @@ from infosec_harness.evals.adapters import (
     UNEVIDENCED_SAFETY_AGENTS,
     is_unevidenced_safe,
 )
+from infosec_harness.evals.coverage import coverage_for
 from infosec_harness.evals.trajectory import scores_skills
 from infosec_harness.settings import get_settings
 
@@ -381,9 +382,17 @@ def write_release_report(path: Path, *, agent: str, metrics: dict, cfg_hash: str
         "schema_version": 1,
         "subject": {"kind": "agent", "name": agent},
         "agent": agent,
-        "hard_gates": gates,
+        "hard_gates": {**gates,
+                       # Zero is the only passing value: "passing average quality cannot
+                       # compensate for an uncovered material risk".
+                       "uncovered_material_scenarios":
+                           len(coverage_for(agent).uncovered_material)},
         "metrics": {k: metrics[k] for k in
                     ("task_success_rate", "average_cost_usd", "p95_model_requests")},
+        # The playbook makes uncovered material risk a release blocker, so the report must
+        # carry covered *and uncovered* scenario IDs -- a report that lists only what passed
+        # cannot show what was never tested.
+        "coverage": coverage_for(agent).as_report(),
         "provenance": {
             "git_commit": _git_sha(),
             "agent_version": agent_version,

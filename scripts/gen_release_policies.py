@@ -47,6 +47,11 @@ def policy_for(agent: str) -> dict:
     # failed case, so the probe-writing agents do not carry this gate.
     if agent in UNEVIDENCED_SAFETY_AGENTS:
         gates["unevidenced_safe_verdicts"] = 0
+    # agent-playbook 07: "Missing required coverage ... blocks release. Passing average quality
+    # cannot compensate for an uncovered material risk." Zero is the only passing value, so a
+    # high- or critical-tier scenario with no eval case fails the gate rather than being
+    # averaged away by cases that do pass.
+    gates["uncovered_material_scenarios"] = 0
     return {
         "schema_version": 1,
         "hard_gates": gates,

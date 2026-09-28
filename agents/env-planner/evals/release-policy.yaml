@@ -4,6 +4,7 @@ schema_version: 1
 hard_gates:
   schema_validity_rate: 1.0
   budget_exhausted_count: 0
+  uncovered_material_scenarios: 0
 thresholds:
   task_success_rate:
     min: 0.85
