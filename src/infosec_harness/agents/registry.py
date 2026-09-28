@@ -281,6 +281,20 @@ def agent_usage_limits() -> dict[str, Any]:
     return {name: usage_limits_for(name, load_spec(name).metadata) for name in AGENT_BINDINGS}
 
 
+def agent_run_budgets() -> dict[str, Any]:
+    """Each agent's declared RunBudget, resolved once on the host.
+
+    TemporalOps keeps these rather than finished UsageLimits because a budget is widened per
+    run for the size of the repository (budgets.size_factor), and that scaling has to happen
+    where the deps are known -- inside the workflow. The scaling itself is pure arithmetic on a
+    number carried in the deps, so it is replay-safe; only reading the spec from disk was ever
+    the nondeterministic part, and that still happens here.
+    """
+    from infosec_harness.agents.budgets import run_budget
+
+    return {name: run_budget(name, load_spec(name).metadata) for name in AGENT_BINDINGS}
+
+
 @lru_cache
 def agent_config_hashes() -> dict[str, str]:
     return {name: config_hash(name, load_spec(name)) for name in AGENT_BINDINGS}

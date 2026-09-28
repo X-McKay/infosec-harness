@@ -18,3 +18,10 @@ class AgentDeps(BaseModel):
     """Image the sandbox shell runs commands in (build agents only)."""
     facts: VerdictFacts | None = None
     """Deterministic facts for the verdict output validator."""
+    source_files: int | None = None
+    """Source files in the repository, from the stack fingerprint.
+
+    Widens this run's budget for a large repository (see agents.budgets.size_factor). None
+    means unknown, and an unknown repository gets its declared ceiling unchanged rather than a
+    guessed one.
+    """

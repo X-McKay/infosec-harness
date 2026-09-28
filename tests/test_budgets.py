@@ -8,6 +8,8 @@ reading a trace. A budget turns that into a bounded, named failure.
 
 from __future__ import annotations
 
+import pathlib
+
 import pytest
 from pydantic import ValidationError
 
@@ -265,3 +267,94 @@ def test_an_agent_that_accumulates_tool_results_bounds_its_history():
             f"ceiling {meta['budgets']['max_input_tokens_per_request']} — the ceiling fires "
             "first and the compaction never runs"
         )
+
+
+# --- size-scaled budgets ---------------------------------------------------------------------
+#
+# Every ceiling was fitted against the seeded corpus, whose Java fixture is three files. The
+# first live run over the harvested Vul4J repositories (~500 files) failed five of six cases
+# with UsageLimitExceeded during preparation and produced not one build failure: `recon` spent
+# all twelve requests having made exactly one repeated call. A constant fitted to a toy
+# repository is not a brake on a real one, it is a wall.
+
+
+def _recon_budget():
+    import yaml
+
+    from infosec_harness.agents.budgets import RunBudget
+
+    md = yaml.safe_load(pathlib.Path("agents/recon/agent.yaml").read_text())
+    return RunBudget.model_validate(md["metadata"]["budgets"])
+
+
+def test_a_fixture_sized_or_unknown_repo_keeps_its_declared_budget_exactly():
+    """The seeded corpus must behave exactly as before, and an unmeasured repo gets the
+    declared ceiling rather than a guessed one."""
+    from infosec_harness.agents.budgets import size_factor
+
+    budget = _recon_budget()
+    for files in (None, 0, 1, 3, 16):
+        assert size_factor(files) == 1.0, files
+        assert budget.scaled_for(files) is budget, f"{files} should be the same object"
+
+
+def test_a_real_repository_gets_past_the_ceiling_that_stopped_it():
+    """The measurement that motivated this: 12 requests was not enough for ~500 files."""
+    from infosec_harness.agents.budgets import size_factor
+
+    scaled = _recon_budget().scaled_for(500)
+    assert scaled.max_requests > 12, "still capped at the number the live run exhausted"
+    assert 2.0 < size_factor(500) < 2.5, size_factor(500)
+
+
+def test_growth_is_logarithmic_rather_than_linear():
+    """Exploration cost grows with the breadth and depth of the tree, not the file count:
+    doubling a repository does not double the directories you have to list."""
+    from infosec_harness.agents.budgets import size_factor
+
+    f64, f500, f4000 = size_factor(64), size_factor(500), size_factor(4000)
+    assert f64 < f500 < f4000
+    # Eight times the files must cost far less than eight times the budget.
+    assert f500 / f64 < 2.0, (f64, f500)
+
+
+def test_the_brake_stays_a_brake_however_large_the_repository():
+    from infosec_harness.agents.budgets import MAX_SIZE_FACTOR, size_factor
+
+    assert size_factor(10**7) == MAX_SIZE_FACTOR
+    capped = _recon_budget().scaled_for(10**7)
+    assert capped.max_requests == round(_recon_budget().max_requests * MAX_SIZE_FACTOR)
+
+
+def test_every_ceiling_scales_together_so_the_invariants_survive():
+    """The output ceiling is `max_requests x` the per-call cap and the cumulative input ceiling
+    is `max_requests x` the per-request one. Scaling `max_requests` alone would break both, so
+    a uniform factor is what keeps them true without a second set of numbers to drift.
+    """
+    base = _recon_budget()
+    scaled = base.scaled_for(500)
+    ratio = scaled.max_requests / base.max_requests
+    for field in ("max_tool_calls", "max_input_tokens", "max_output_tokens"):
+        got = getattr(scaled, field) / getattr(base, field)
+        assert abs(got - ratio) < 0.02, f"{field} scaled by {got:.3f}, requests by {ratio:.3f}"
+    # The per-request context brake is NOT size-dependent: one request's context does not grow
+    # because the repository has more files in it.
+    assert scaled.max_input_tokens_per_request == base.max_input_tokens_per_request
+
+
+def test_the_derived_input_ceiling_still_matches_its_own_derivation_after_scaling():
+    scaled = _recon_budget().scaled_for(500)
+    assert scaled.max_input_tokens >= scaled.worst_case_input_tokens * 0.98
+
+
+def test_the_repo_size_reaches_the_limits_a_run_is_given():
+    """Threaded end to end: without this the scaling exists and never applies."""
+    import yaml
+
+    from infosec_harness.agents.budgets import usage_limits_for
+
+    md = yaml.safe_load(pathlib.Path("agents/recon/agent.yaml").read_text())["metadata"]
+    small = usage_limits_for("recon", md, source_files=3)
+    large = usage_limits_for("recon", md, source_files=500)
+    assert large.request_limit > small.request_limit
+    assert usage_limits_for("recon", md).request_limit == small.request_limit

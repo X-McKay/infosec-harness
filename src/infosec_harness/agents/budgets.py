@@ -12,6 +12,7 @@ declarative contract and move with an overlay during experiments.
 
 from __future__ import annotations
 
+import math
 from decimal import Decimal
 from typing import Any
 
@@ -53,6 +54,40 @@ class RunBudget(BaseModel):
     max_output_tokens: int = Field(gt=0)
     max_cost_usd: float = Field(gt=0)
 
+    def scaled_for(self, source_files: int | None) -> RunBudget:
+        """This budget, widened for the size of the repository being worked on.
+
+        Every ceiling here was fitted against the seeded corpus, whose Java fixture is **three
+        files**. The harvested Vul4J repositories are around **five hundred**, and the first
+        live run over them failed five of six cases with `UsageLimitExceeded` during
+        preparation -- not one build failure. `recon` spent all twelve of its requests and had
+        made exactly one repeated call, so that was a 500-file project needing more turns to
+        profile, not a loop. A constant fitted to a toy repository is not a brake on a real one,
+        it is a wall.
+
+        Scaling is logarithmic because exploration cost grows with the breadth and depth of the
+        tree rather than with the file count: you list directories and read a handful of files,
+        and doubling the repository does not double either.
+
+        **Every** ceiling scales by the same factor, deliberately. Each invariant in
+        tests/test_budgets.py is linear in `max_requests` -- the output ceiling is
+        `max_requests x` the per-call cap, the cumulative input ceiling is `max_requests x` the
+        per-request one -- so scaling uniformly preserves all of them by construction rather
+        than by a second set of numbers that could drift. `max_input_tokens_per_request` is the
+        exception: it is a per-context brake, and one request's context does not get larger
+        because the repository has more files in it.
+        """
+        factor = size_factor(source_files)
+        if factor == 1.0:
+            return self
+        return self.model_copy(update={
+            "max_requests": max(1, round(self.max_requests * factor)),
+            "max_tool_calls": max(1, round(self.max_tool_calls * factor)),
+            "max_input_tokens": max(1, round(self.max_input_tokens * factor)),
+            "max_output_tokens": max(1, round(self.max_output_tokens * factor)),
+            "max_cost_usd": round(self.max_cost_usd * factor, 6),
+        })
+
     @property
     def worst_case_input_tokens(self) -> int:
         """The most input a run can legitimately accumulate within its own request budget."""
@@ -85,5 +120,29 @@ def run_budget(agent_name: str, metadata: dict[str, Any] | None) -> RunBudget:
     return RunBudget.model_validate(budgets)
 
 
-def usage_limits_for(agent_name: str, metadata: dict[str, Any] | None) -> UsageLimits:
-    return run_budget(agent_name, metadata).to_usage_limits()
+# A repository at or below this many source files is "fixture scale" and gets its declared
+# budget unchanged, so the seeded corpus behaves exactly as it did.
+BASELINE_SOURCE_FILES = 16
+# Added per doubling beyond the baseline. 0.25 puts a 500-file repository at ~2.2x, which
+# clears the twelve requests `recon` exhausted on one with room to spare.
+GROWTH_PER_DOUBLING = 0.25
+# The brake has to stay a brake. Three times the declared budget bounds the worst case at a
+# number that is still obviously wrong for one agent run, so a genuine runaway is still caught.
+MAX_SIZE_FACTOR = 3.0
+
+
+def size_factor(source_files: int | None) -> float:
+    """How much to widen a budget for a repository of this many source files.
+
+    1.0 for anything fixture-sized or unknown: absent a measurement, the declared ceiling
+    stands rather than being guessed upward.
+    """
+    if not source_files or source_files <= BASELINE_SOURCE_FILES:
+        return 1.0
+    doublings = math.log2(source_files / BASELINE_SOURCE_FILES)
+    return min(1.0 + GROWTH_PER_DOUBLING * doublings, MAX_SIZE_FACTOR)
+
+
+def usage_limits_for(agent_name: str, metadata: dict[str, Any] | None,
+                     *, source_files: int | None = None) -> UsageLimits:
+    return run_budget(agent_name, metadata).scaled_for(source_files).to_usage_limits()

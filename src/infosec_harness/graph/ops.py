@@ -93,7 +93,8 @@ class LocalOps:
             try:
                 result = await asyncio.wait_for(
                     agent.run(list(prompt), deps=deps,
-                              usage_limits=usage_limits_for(name, spec.metadata)),
+                              usage_limits=usage_limits_for(
+                                  name, spec.metadata, source_files=deps.source_files)),
                     timeout=timeout,
                 )
             except TimeoutError as e:

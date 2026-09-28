@@ -33,7 +33,10 @@ class PrepareOutcome:
 async def run_prepare(ops: Ops, snapshot: RepoSnapshot, stack: StackFingerprint) -> PrepareOutcome:
     s = get_settings()
     invocations: list[AgentOutcome] = []
-    deps = AgentDeps(repo_path=snapshot.path)
+    # Sum of the stack's per-language file counts: how much repository the agents have to
+    # explore, which is what their request budgets scale on.
+    source_files = sum((stack.languages or {}).values()) or None
+    deps = AgentDeps(repo_path=snapshot.path, source_files=source_files)
 
     def prepared(status, *, profile=None, build=None, smoke=None, attempts=0, reason=""):
         return PreparedEnvironment(
@@ -93,7 +96,8 @@ async def run_prepare(ops: Ops, snapshot: RepoSnapshot, stack: StackFingerprint)
                  "previous_attempts": [t.model_dump() for t in tried_specs]},
                 stack=stack, profile=profile,
             ),
-            AgentDeps(repo_path=snapshot.path, sandbox_image=build.spec.base_image),
+            AgentDeps(repo_path=snapshot.path, sandbox_image=build.spec.base_image,
+                      source_files=source_files),
         )
         invocations.append(repair)
         spec = repair.output
@@ -113,7 +117,8 @@ async def run_prepare(ops: Ops, snapshot: RepoSnapshot, stack: StackFingerprint)
                  "previous_attempts": [t.model_dump() for t in tried_specs]},
                 stack=stack, profile=profile,
             ),
-            AgentDeps(repo_path=snapshot.path, sandbox_image=build.spec.base_image),
+            AgentDeps(repo_path=snapshot.path, sandbox_image=build.spec.base_image,
+                      source_files=source_files),
         )
         invocations.append(partial)
         spec = partial.output

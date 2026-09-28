@@ -68,7 +68,13 @@ class TriageState:
         return self.prepared.build.spec
 
     def deps(self, facts: VerdictFacts | None = None) -> AgentDeps:
-        return AgentDeps(repo_path=self.prepared.snapshot.path, sandbox_image=self.image_tag, facts=facts)
+        return AgentDeps(repo_path=self.prepared.snapshot.path, sandbox_image=self.image_tag,
+                         facts=facts, source_files=self.source_files)
+
+    @property
+    def source_files(self) -> int | None:
+        """How much repository the agents have to explore, for budget scaling."""
+        return sum((self.prepared.stack.languages or {}).values()) or None
 
     def stack(self):
         return self.prepared.stack
@@ -321,7 +327,8 @@ class RepairEnvironment(BaseNode[TriageState, TriageDeps, TriageResult]):
                  "previous_attempts": [s.spec.model_dump()]},
                 stack=s.stack(), profile=s.profile(),
             ),
-            AgentDeps(repo_path=s.prepared.snapshot.path, sandbox_image=s.spec.base_image),
+            AgentDeps(repo_path=s.prepared.snapshot.path, sandbox_image=s.spec.base_image,
+                      source_files=s.source_files),
         )
         s.invocations.append(outcome)
         build = await ctx.deps.ops.build_environment(s.prepared.snapshot, outcome.output)
