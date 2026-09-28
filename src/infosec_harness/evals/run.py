@@ -542,5 +542,7 @@ async def _score_corpus_once(*, language: str, sandbox: bool | None) -> dict:
                 worst = next(iter(b["worst_repeats"].items()), None)
                 note = (f"  LOOPING in {b['runs_with_repeated_calls']}/{b['n']} runs"
                         + (f", worst {worst[0]} x{worst[1]}" if worst else ""))
-            print(f"  {agent:14} max {b['max_requests']:3}  mean {b['mean_requests']:6.2f}{note}")
+            # 15 wide: this section lists every agent, including probe-diagnosis, which is
+            # one character wider than the tool-using agents the trajectory table covers.
+            print(f"  {agent:15} max {b['max_requests']:3}  mean {b['mean_requests']:6.2f}{note}")
     return metrics
