@@ -87,13 +87,29 @@ knowable.
 
 Measured after the Maven and Perl fixes below. Live Qwen3.6-35B, gVisor, one repeat.
 
-| language | n | accuracy | FN on exploitable | notes |
+| language | n | accuracy | accuracy with evidence | FN on exploitable |
 | --- | --- | --- | --- | --- |
-| python | 10 | 90% | 25% | |
-| perl | 4 | 75% | 50% | but see the caveat below — two passes never probed |
-| java | 4 | 25% | 50% | all four now *build*; four distinct model-side failures remain |
+| python | 10 | 90% | — | 25% |
+| perl | 4 | 75% | 25% | 50% |
+| java | 4 | **100%** | 50% | **0%** |
 
-**Perl's 75% is partly unearned, and the number now says so.** Both `fixed` cases returned
+Java took four runs to get there, and each step is worth more than the final number:
+25% (all four cases building for the first time) -> 50% (H2 driver declared) -> 75%
+(probe-repair given an exit from environmental failures) -> 100% (the Maven exemplar made to
+satisfy its own validator). Wall time fell from 1583s to 561s and model calls from 130 to 75
+across the last three, because most of what was removed was thrash rather than work.
+
+**Read the "with evidence" column, not the headline.** Java's 100% is four for four on
+labels, but two of those four — both `fixed` cases — reached `likely_not_exploitable` through
+an `unreachable_by_context` early exit, with no build, no probe and no oracle behind them. The
+reasoning was sound in isolation (`PreparedStatement` parameter binding and
+`ProcessBuilder(list)` genuinely are sanitizers) but it is unverified, and the same confident
+reasoning applied to a vulnerable case is a false negative — the costliest error this system
+makes. It also varies between runs rather than being systematic: in the immediately preceding
+run both of those cases *did* probe. So the negative half of the corpus exercises the probe
+path only sometimes, and a headline accuracy cannot show that.
+
+**Perl's 75% is partly unearned in the same way.** Both `fixed` cases returned
 `likely_not_exploitable` via an `unreachable_by_context` early exit: no build, no probe, no
 oracle. Two of the three "correct" cases never tested anything. The manifest declares an
 expected early exit for exactly one case (`testonly`, which is test/vendored code and should
@@ -136,9 +152,41 @@ The through-line is the same as the earlier four defects: **the failure was invi
 agent that could have reported it.** A warm-up that ran no test looks like a successful build;
 a selector that matched nothing looks like a broken probe.
 
-### What is left on Java
+### What the four Java rounds found
 
-All four cases build. The remaining failures are model-side and individually diagnosable:
+Each round's failure was a different instance of one pattern: **an exemplar, a warm-up, or a
+runner reporting success while nothing had actually been exercised.**
+
+- **The exemplar was a trap.** `MAVEN_TEST_COMMAND` is the string several `ModelRetry` messages
+  name as the command to write, and the validators rejected it — it omitted
+  `-Dmaven.repo.local=/work/home/.m2/repository`. An agent that fixed its selector by copying
+  the exemplar verbatim was bounced for a *different* violation than the one it had just
+  corrected, oscillated between the two, and exhausted its retries into
+  `environment_unbuildable`. The `build-maven` and `test-junit5` skills carried the same
+  omission in their worked examples, which matters more, since the skill is read first —
+  build-maven's own two-path rule already *said* the test command needs the `/work/home` path;
+  the example just didn't do it. An exemplar that fails the checker it exemplifies does not
+  teach, it traps. The invariant is now general: every canonical command must satisfy every
+  validator.
+- **The corpus under-declared a driver, exactly as Perl did.**
+  `UserDao.getUser(Connection, String)` takes a connection rather than opening one, so the
+  class is driver-agnostic and the pom declared none — but any test exercising it must pick
+  one. Both remaining failures were that single missing dependency; H2 is now declared at test
+  scope, which is what a real repo's test suite does.
+- **probe-repair had no exit from an environmental failure.** The new looping report caught it
+  re-reading `pom.xml` five times in every run, at up to 14 of its 16 requests. It had
+  correctly sensed that `No suitable driver found` was not a probe defect, but having sensed
+  that it had nowhere to go and kept searching a manifest it could not act on. Told to say so
+  once and stop, it disappeared from the report entirely.
+- **Both probe-writing agents were told there were two markers.** `probe-author` and
+  `probe-repair` said "the two markers" long after the protocol defined three. The
+  sink-returned marker was added as the fix for a measured false negative, and the two agents
+  that actually write probe source were still being told to emit the marker set that produced
+  that bug. The skill was always right; the prompts had drifted.
+
+### Earlier, before all four cases built
+
+The remaining failures at that point were model-side and individually diagnosable:
 
 - `probe-planner` consumed its entire 16,000-token output budget in 287s with zero tool calls
   and produced nothing (`finish=length`). This is the largest single blocker.
@@ -157,6 +205,11 @@ would hide the bug. It could not be diagnosed from the record either, because
 `inspect_messages` de-duplicates tool names and discards arguments, making eight re-reads of
 one file byte-identical to one read. Runs now record request counts and repeated identical
 calls, and the corpus report prints a `LOOPING` marker naming the worst offender.
+
+**That decision was vindicated on the next run.** The report named probe-repair immediately —
+14 of 16 requests, `read_file(path='pom.xml')` five times, in 4 of 4 runs — while every other
+agent sat well under its ceiling with zero repeats. The breach was a loop, not a tight limit,
+and it is now gone: the worst remaining entry is a single tool called twice.
 
 ## Where the agents do well, and where they do not
 
