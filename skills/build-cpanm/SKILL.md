@@ -27,10 +27,32 @@ metadata:
   `cpanfile`, `Makefile.PL` (`PREREQ_PM`) or `Build.PL`, and *nothing installs them for you* —
   there is no equivalent of a virtualenv that already has them. Open the file and check that
   your install commands cover every `requires`.
-- **Install:** `cpanm --notest --installdeps .` reads `cpanfile`/`Makefile.PL`/`Build.PL`. Add
-  `--mirror <url>` only for a mirror the repo declares. `cpanm App::prove` if `prove` is absent.
-  For XS modules (`DBD::SQLite`, `DBD::mysql`, `XML::LibXML`) add the matching `-dev` system
-  packages, or the compile fails inside cpanm.
+- **Install — this exact shape, verified against the corpus:**
+
+  ```yaml
+  system_packages: [gcc, make, libc6-dev]     # DBI and every other XS module is compiled here
+  install_commands: ["cpanm --notest --local-lib=/opt/home/perl5 --installdeps ."]
+  env: {PERL5LIB: "/work/home/perl5/lib/perl5"}
+  test_command: "prove -v {test_file}"
+  ```
+
+  Three things about it are not optional:
+
+  - **`--local-lib` is mandatory.** Install commands run as the non-root sandbox user, which
+    cannot write perl's site directory. Without `--local-lib`, cpanm warns, *reports success*,
+    installs nothing importable, and the build goes green with the dependency missing — the
+    failure then surfaces inside the probe as `Can't locate DBI.pm`, where nothing can fix it.
+  - **The install path is `/opt/home`, the `PERL5LIB` path is `/work/home`.** The image is built
+    with `HOME=/opt/home`; at probe time that directory is copied to a writable `/work/home`
+    tmpfs and the test runs from there. `--local-lib=/work/...` fails outright — /work does not
+    exist yet — and a `PERL5LIB` under `/opt` finds nothing at probe time.
+  - **XS modules need a compiler.** `DBI`, `DBD::SQLite`, `DBD::mysql`, `XML::LibXML` are C
+    extensions; without `gcc`/`make`/`libc6-dev` cpanm reports `Building DBI ... FAIL`. Add the
+    library's own `-dev` package too where one is needed (`libmysqlclient-dev`, `libxml2-dev`).
+
+  `prove` ships with perl core as part of Test-Harness — do **not** try to install `App::prove`,
+  which is not a distribution and fails the build. Add `--mirror <url>` only for a mirror the
+  repo declares.
 - **Never append `|| true` (or `|| :`, or `; true`) to an install command.** A swallowed cpanm
   failure builds an image the probe cannot even compile in: the build reports success, the smoke
   test (`prove --version`) passes, and the missing module first appears at *probe* time as

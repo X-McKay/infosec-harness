@@ -364,8 +364,69 @@ def environment_spec_violations(spec: EnvironmentSpec) -> list[str]:
     return problems
 
 
+# The image is built with HOME=/opt/home; run_probe then copies /opt/home to a writable
+# /work/home tmpfs and runs the test from there. So an install writes under /opt and anything
+# resolved at probe time reads from /work. Getting that backwards fails in two different
+# directions, and one of them is silent.
+BUILD_HOME = "/opt/home"
+RUNTIME_HOME = "/work/home"
+
+
+def install_path_violations(spec: EnvironmentSpec) -> list[str]:
+    """Install commands must write where they can, and env must point where things end up."""
+    problems: list[str] = []
+    installs = " ".join(spec.install_commands or [])
+    if RUNTIME_HOME in installs or "/work/" in installs:
+        problems.append(
+            f"an install command writes under /work, which does not exist at build time: the "
+            f"probe tmpfs is mounted later. Install under {BUILD_HOME} and point the matching "
+            f"environment variable at {RUNTIME_HOME}, which is where it is copied."
+        )
+    # cpanm as the non-root sandbox user cannot write perl's site dir. It warns, "succeeds",
+    # and installs nowhere on @INC -- so the build exits 0 with the dependency absent and the
+    # failure only appears inside the probe as "Can't locate X.pm". Verified against the corpus.
+    if "cpanm" in installs and not any(f in installs for f in ("--local-lib", " -l ", " -L ")):
+        problems.append(
+            "a cpanm install must use --local-lib, e.g. "
+            f"'cpanm --notest --local-lib={BUILD_HOME}/perl5 --installdeps .' with "
+            f"env PERL5LIB={RUNTIME_HOME}/perl5/lib/perl5. Without it cpanm cannot write perl's "
+            "site directory as the non-root sandbox user: it reports success, installs nothing "
+            "importable, and the build goes green with the dependency missing."
+        )
+    # Maven resolves its local repository from the JVM's user.home. The sandbox user has no
+    # passwd entry, so that is /root, and the build dies with
+    # "mkdir: cannot create directory '/root': Permission denied". Verified against the corpus.
+    if "mvn" in installs and "-Dmaven.repo.local=" not in installs:
+        problems.append(
+            f"a Maven install must set -Dmaven.repo.local={BUILD_HOME}/.m2/repository. Maven "
+            "takes its local repository from the JVM's user.home, which is /root for the "
+            "sandbox user's unmapped uid, so the build fails with \"cannot create directory "
+            "'/root'\" before it resolves anything."
+        )
+    command = spec.test_command or ""
+    if "mvn" in command and "-Dmaven.repo.local=" not in command:
+        problems.append(
+            f"a Maven test command must set -Dmaven.repo.local={RUNTIME_HOME}/.m2/repository — "
+            f"the repository populated under {BUILD_HOME} at build time is copied there for the "
+            "probe, and without the flag Maven looks in /root and cannot write it."
+        )
+    if "--local-lib" in installs or "cpanm" in installs:
+        perl5lib = (spec.env or {}).get("PERL5LIB", "")
+        if not perl5lib:
+            problems.append(
+                f"a cpanm install needs env PERL5LIB={RUNTIME_HOME}/perl5/lib/perl5 so the probe "
+                "can find what was installed; without it prove fails with 'Can't locate X.pm'."
+            )
+        elif not perl5lib.startswith(RUNTIME_HOME):
+            problems.append(
+                f"env PERL5LIB is {perl5lib!r}, but at probe time the local-lib lives under "
+                f"{RUNTIME_HOME}. Point it at {RUNTIME_HOME}/perl5/lib/perl5."
+            )
+    return problems
+
+
 def validate_environment_spec(ctx: RunContext[AgentDeps], output: EnvironmentSpec) -> EnvironmentSpec:
-    problems = environment_spec_violations(output)
+    problems = environment_spec_violations(output) + install_path_violations(output)
     if problems:
         raise ModelRetry("The environment spec cannot run a probe:\n- " + "\n- ".join(problems))
     return output

@@ -67,21 +67,31 @@ def _env_plan(stack: dict | None) -> dict:
         # phase-bound plugin version cannot be overridden from the command line. The build warms
         # the pinned plugin and its provider into the local repo so the probe run can be offline.
         return {"base_image": "maven:3.9-eclipse-temurin-21",
+                # -Dmaven.repo.local is not optional: Maven reads user.home, which is /root for
+                # the sandbox user's unmapped uid. Build writes under /opt/home; the probe reads
+                # the /work/home copy of it.
                 "install_commands": [
-                    "mvn -B -DskipTests test-compile",
-                    "mvn -B org.apache.maven.plugins:maven-surefire-plugin:3.2.5:test "
+                    "mvn -B -Dmaven.repo.local=/opt/home/.m2/repository -DskipTests test-compile",
+                    "mvn -B -Dmaven.repo.local=/opt/home/.m2/repository "
+                    "org.apache.maven.plugins:maven-surefire-plugin:3.2.5:test "
                     "-DfailIfNoTests=false"],
-                "test_command": ("mvn -B -o test-compile "
+                "test_command": ("mvn -B -o -Dmaven.repo.local=/work/home/.m2/repository "
+                                 "test-compile "
                                  "org.apache.maven.plugins:maven-surefire-plugin:3.2.5:test "
                                  "-Dtest=HarnessProbeTest "
                                  "-Dmaven.test.redirectTestOutputToFile=false"),
                 "rationale": "stub heuristic: maven"}
     if lang == "perl":
-        # No `|| true`: a swallowed cpanm failure builds an image whose probe cannot compile,
-        # and the absence appears at probe time where nothing can install anything.
-        return {"base_image": "perl:5.40",
-                "install_commands": ["cpanm --notest --installdeps .", "cpanm --notest App::prove"],
-                "test_command": "prove -v -Ilib {test_file}", "rationale": "stub heuristic: perl"}
+        # The shape verified against the corpus (see skills/build-cpanm): --local-lib because the
+        # sandbox user cannot write perl's site dir and cpanm would otherwise report success and
+        # install nothing importable; the install path is the build-time /opt/home while PERL5LIB
+        # is the probe-time /work/home it gets copied to; gcc/make because DBI is an XS module.
+        # `prove` is perl core, so nothing installs it -- `App::prove` is not a distribution.
+        return {"base_image": "perl:5.38-slim",
+                "system_packages": ["gcc", "make", "libc6-dev"],
+                "install_commands": ["cpanm --notest --local-lib=/opt/home/perl5 --installdeps ."],
+                "env": {"PERL5LIB": "/work/home/perl5/lib/perl5"},
+                "test_command": "prove -v {test_file}", "rationale": "stub heuristic: perl"}
     return {"base_image": "debian:bookworm-slim", "install_commands": [],
             "test_command": "sh {test_file}", "rationale": "stub heuristic: unknown stack"}
 

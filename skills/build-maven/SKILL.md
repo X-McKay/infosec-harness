@@ -23,6 +23,18 @@ metadata:
 
 <!-- /generated: activation criteria -->
 
+- **Set the local repository explicitly, to two different paths.** Verified against the corpus:
+  `-Dmaven.repo.local=/opt/home/.m2/repository` on every install command, and
+  `-Dmaven.repo.local=/work/home/.m2/repository` on the test command. Maven takes its local
+  repository from the JVM's `user.home`, and the sandbox user has no passwd entry, so that
+  resolves to `/root` and the build dies with `mkdir: cannot create directory '/root':
+  Permission denied` before resolving anything. The two paths differ because the image is built
+  with `HOME=/opt/home` and the probe runs from a `/work/home` copy of it.
+- **Known unresolved:** even with the repository warmed at build time, an offline (`-o`) probe run
+  can fail to resolve `surefire-junit-platform`, because warming the plugin does not always fetch
+  its provider. If the probe reports a provider it "has not been downloaded from it before", warm
+  surefire by actually running it at build time rather than invoking `:help`, and if that still
+  fails, drop `-o` from the test command and let the probe resolve from the allowlisted registry.
 - **Base image:** `maven:3.9-eclipse-temurin-21` (drop to `-17` if the project targets 17).
 - **Never `-q`.** Use `-B` for non-interactive batch output instead. Maven relays the forked test
   JVM's stdout through its own logger at INFO level, so `-q` raises the threshold above the

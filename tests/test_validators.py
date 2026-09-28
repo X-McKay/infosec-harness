@@ -475,3 +475,65 @@ def test_the_stub_models_own_probes_satisfy_the_contract():
     for language, (path, body) in _PROBE_TEMPLATES.items():
         probe = ProbeSource(test_file_path=path, content=body.replace("{nonce}", "n"))
         assert _skipping_probe_violations(probe) == [], language
+
+
+# --- The two-path sandbox layout (build under /opt, run under /work) ---------------------
+
+def test_an_install_that_writes_under_work_is_rejected():
+    """/work is the probe tmpfs; it does not exist while the image is being built."""
+    from infosec_harness.agents.validators import install_path_violations
+    from infosec_harness.domain.models import EnvironmentSpec
+
+    spec = EnvironmentSpec(
+        base_image="perl:5.38-slim", test_command="prove -v {test_file}",
+        install_commands=["cpanm --notest --local-lib=/work/home/perl5 --installdeps ."],
+        env={"PERL5LIB": "/work/home/perl5/lib/perl5"})
+    assert any("/work" in p for p in install_path_violations(spec))
+
+
+def test_cpanm_without_local_lib_is_rejected():
+    """The worst failure shape: cpanm reports success and installs nothing importable.
+
+    Install commands run as the non-root sandbox user, which cannot write perl's site directory.
+    Without --local-lib cpanm warns, exits 0, and the build goes green with the dependency
+    absent — so the fault first appears inside the probe as `Can't locate DBI.pm`, past build
+    repair (the only stage that could install it) and unfixable by probe repair (the probe is
+    correct). Both Perl SQLi corpus cases were lost this way, twice.
+    """
+    from infosec_harness.agents.validators import install_path_violations
+    from infosec_harness.domain.models import EnvironmentSpec
+
+    spec = EnvironmentSpec(base_image="perl:5.38-slim", test_command="prove -v {test_file}",
+                           install_commands=["cpanm --notest --installdeps ."])
+    problems = install_path_violations(spec)
+    assert any("--local-lib" in p for p in problems)
+    assert any("PERL5LIB" in p for p in problems)
+
+
+def test_perl5lib_must_point_at_the_probe_time_path():
+    from infosec_harness.agents.validators import install_path_violations
+    from infosec_harness.domain.models import EnvironmentSpec
+
+    spec = EnvironmentSpec(
+        base_image="perl:5.38-slim", test_command="prove -v {test_file}",
+        install_commands=["cpanm --notest --local-lib=/opt/home/perl5 --installdeps ."],
+        env={"PERL5LIB": "/opt/home/perl5/lib/perl5"})
+    assert any("probe time" in p for p in install_path_violations(spec))
+
+
+def test_the_recipe_verified_against_the_corpus_passes():
+    """This exact spec was built and probed under gVisor: DBI imports, markers reach prove."""
+    from infosec_harness.agents.validators import (
+        environment_spec_violations,
+        install_path_violations,
+    )
+    from infosec_harness.domain.models import EnvironmentSpec
+
+    spec = EnvironmentSpec(
+        base_image="perl:5.38-slim",
+        system_packages=["gcc", "make", "libc6-dev"],
+        install_commands=["cpanm --notest --local-lib=/opt/home/perl5 --installdeps ."],
+        env={"PERL5LIB": "/work/home/perl5/lib/perl5"},
+        test_command="prove -v {test_file}")
+    assert environment_spec_violations(spec) == []
+    assert install_path_violations(spec) == []
