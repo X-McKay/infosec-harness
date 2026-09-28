@@ -204,3 +204,17 @@ def test_each_skill_family_kept_its_substantive_guidance():
     for name, needle in expectations.items():
         text = (SKILLS / name / "SKILL.md").read_text()
         assert needle in text, f"{name} no longer mentions {needle!r}"
+
+
+def test_cwe_78_says_how_to_match_the_sinks_quoting_context():
+    """The most common silent failure of a canary probe, measured twice.
+
+    A payload that opens a quote the sink never opened makes the command a syntax error: the
+    shell rejects it, the canary is absent, and a genuinely exploitable target is recorded as
+    having resisted. Both javascript-cmdi false negatives were this.
+    """
+    text = (SKILLS / "cwe-78-os-command-injection" / "SKILL.md").read_text()
+    assert "quoting context" in text
+    for context in ("bare", "single quotes", "double quotes"):
+        assert context in text, f"cwe-78 does not say what to do for a {context} sink"
+    assert "unmatched" in text or "syntax error" in text

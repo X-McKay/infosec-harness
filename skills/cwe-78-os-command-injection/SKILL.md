@@ -51,6 +51,22 @@ network, no data access, no destructive action.
 Keep the injected fragment minimal and inert; its only purpose is to prove the shell evaluated
 attacker-controlled text.
 
+**Match the payload to the sink's quoting context — read the line before choosing it.** This is
+the most common way a canary probe fails on a genuinely vulnerable target, and the failure is
+silent: the shell rejects the command, the canary is absent, and the run is indistinguishable
+from the code having resisted.
+
+- The value is concatenated **bare** (`exec("wc -l " + path)`): inject a separator and nothing
+  else — `/dev/null; touch /tmp/harness_canary_<nonce>`. Do **not** add a leading quote; there
+  is no quote to escape, and an unmatched one makes the whole command a syntax error.
+- The value sits inside **single quotes** (`exec("wc -l '" + path + "'")`): close the quote
+  first — `'; touch /tmp/harness_canary_<nonce>; :'` — and leave the quoting balanced.
+- The value sits inside **double quotes**: `"; touch /tmp/harness_canary_<nonce>; :"`, or use
+  `$(touch ...)`, which needs no separator at all.
+
+Give the command something valid to operate on before the separator (`/dev/null`, an existing
+path) so a failure of the *original* command cannot be mistaken for a failure of the injection.
+
 <!-- generated: constraints (scripts/restructure_skills.py) -->
 
 ## Safety constraints
