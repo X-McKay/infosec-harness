@@ -10,8 +10,11 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import platform
 import subprocess
+import time
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
@@ -23,7 +26,7 @@ from infosec_harness.evals.adapters import (
     is_unevidenced_safe,
 )
 from infosec_harness.evals.coverage import coverage_for
-from infosec_harness.evals.trajectory import scores_skills
+from infosec_harness.evals.trajectory import inspect_messages, scores_skills
 from infosec_harness.settings import get_settings
 
 
@@ -215,6 +218,15 @@ async def run_experiment(agent: str, *, overlay: Path | None = None, repeat: int
     completed_cases = 0
     cost = cache_read = tokens = 0.0
     model_requests: list[int] = []
+    # Per-case series for the distributions the playbook asks for ("pass rate and worst-case
+    # score / p50-p95 latency and cost / tool-call and model-request distributions"). A single
+    # mean hides exactly the tail a budget is meant to brake.
+    latencies: list[float] = []
+    costs: list[float] = []
+    tool_calls: list[int] = []
+    # repetition -> [passed, total]; the worst repetition is the honest number to quote when
+    # --repeat is used, because a mean across runs launders a bad one.
+    per_repetition: dict[int, list[int]] = {}
     confusion: dict[tuple[str, str], int] = {}
     planned_runs = len(cases) * repeat
 
@@ -226,6 +238,28 @@ async def run_experiment(agent: str, *, overlay: Path | None = None, repeat: int
             "avg_tokens": round(tokens / total, 1) if total else 0.0,
             "cache_hit_ratio": round(cache_read / tokens, 4) if tokens else 0.0,
             "confusion": {f"{k[0]}->{k[1]}": v for k, v in sorted(confusion.items())},
+            "distributions": {
+                # The worst repetition, not the mean across them: with --repeat, averaging
+                # launders a bad run into an acceptable number.
+                "worst_repetition_pass_rate": (
+                    round(min(p / t for p, t in per_repetition.values()), 4)
+                    if per_repetition else 0.0),
+                "p50_latency_s": round(_pct(latencies, 0.50), 3),
+                "p95_latency_s": round(_pct(latencies, 0.95), 3),
+                "p50_cost_usd": round(_pct(costs, 0.50), 6),
+                "p95_cost_usd": round(_pct(costs, 0.95), 6),
+                "p50_model_requests": int(_pct([float(x) for x in model_requests], 0.50)),
+                "p95_model_requests": _p95(model_requests),
+                "p50_tool_calls": int(_pct([float(x) for x in tool_calls], 0.50)),
+                "p95_tool_calls": int(_pct([float(x) for x in tool_calls], 0.95)),
+                # Why cases failed, not just how many: a wrong answer, a run stopped by its
+                # budget, and an output that never validated are three different problems.
+                "failure_categories": {
+                    "wrong_answer": total - passed - budget_exhausted - invalid_output,
+                    "budget_exhausted": budget_exhausted,
+                    "invalid_output": invalid_output,
+                },
+            },
             # Named to match the release policy's gates and thresholds so the contract is
             # executable rather than aspirational (agent-playbook §7).
             "task_success_rate": round(passed / total, 4) if total else 0.0,
@@ -282,10 +316,12 @@ async def run_experiment(agent: str, *, overlay: Path | None = None, repeat: int
             task_text, payload, deps, predict, expected = ADAPTERS[agent](case)
             for rep in range(repeat):
                 prompt = render_prompt(task_text, payload)
+                started = time.monotonic()
                 try:
                     result = await built.run(prompt, deps=deps)
                     predicted = predict(result.output)
                     model_requests.append(result.usage.requests)
+                    tool_calls.append(len(inspect_messages(result.all_messages())[0]))
                     c, _ = model_factory.estimate_cost(model_name, result.usage)
                     tokens += result.usage.input_tokens + result.usage.output_tokens
                     cache_read += result.usage.cache_read_tokens or 0
@@ -300,9 +336,17 @@ async def run_experiment(agent: str, *, overlay: Path | None = None, repeat: int
                     # output that does not validate is no answer rather than a wrong one.
                     predicted, c = "invalid_output", 0.0
                     invalid_output += 1
+                # Recorded on every path, including the two failure branches above: a run
+                # that was stopped by its budget still took time, and excluding it would make
+                # the latency distribution describe only the cases that behaved.
+                latencies.append(time.monotonic() - started)
+                costs.append(c or 0.0)
                 if is_unevidenced_safe(agent, case, predicted):
                     unevidenced_safe += 1
                 ok = predicted == expected
+                per_repetition[rep] = per_repetition.get(rep, [0, 0])
+                per_repetition[rep][0] += int(ok)
+                per_repetition[rep][1] += 1
                 total += 1
                 passed += int(ok)
                 cost += c or 0.0
@@ -347,13 +391,21 @@ async def run_experiment(agent: str, *, overlay: Path | None = None, repeat: int
     if report is not None:
         write_release_report(
             report, agent=agent, metrics=metrics, cfg_hash=cfg_hash, model_name=model_name,
-            dataset_version=version,
+            dataset_version=version, experiment_id=exp_id, repeat=repeat, spec=spec,
             agent_version=str((spec.metadata or {}).get("version", "0.0.0")),
             extra_gates=({"unevidenced_safe_verdicts": metrics["unevidenced_safe_verdicts"]}
                          if agent in UNEVIDENCED_SAFETY_AGENTS else None),
         )
         print(f"release report written to {report}")
     return exp_id
+
+
+def _pct(values: list[float], q: float) -> float:
+    """Nearest-rank percentile, 0.0 when nothing ran. Small samples, so no interpolation."""
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    return ordered[min(len(ordered) - 1, int(round(q * (len(ordered) - 1))))]
 
 
 def _p95(values: list[int]) -> int:
@@ -367,7 +419,8 @@ def _p95(values: list[int]) -> int:
 
 def write_release_report(path: Path, *, agent: str, metrics: dict, cfg_hash: str,
                          model_name: str, dataset_version: str, agent_version: str,
-                         extra_gates: dict | None = None) -> None:
+                         extra_gates: dict | None = None, experiment_id: str = "",
+                         repeat: int = 1, spec: object | None = None) -> None:
     """Write the report `agentctl release` compares against the agent's release policy.
 
     The gate and threshold names here are the policy's names; provenance is what makes a pass
@@ -393,12 +446,37 @@ def write_release_report(path: Path, *, agent: str, metrics: dict, cfg_hash: str
         # carry covered *and uncovered* scenario IDs -- a report that lists only what passed
         # cannot show what was never tested.
         "coverage": coverage_for(agent).as_report(),
+        # Distributions, not just means: the playbook asks for pass rate and worst case,
+        # p50/p95 latency and cost, and tool-call and model-request spreads, because a single
+        # average cannot show the tail a budget exists to brake.
+        "distributions": metrics.get("distributions", {}),
         "provenance": {
             "git_commit": _git_sha(),
             "agent_version": agent_version,
             "config_hash": cfg_hash,
             "model": model_name,
             "dataset_version": dataset_version,
+            # The rest of what the playbook's Provenance section enumerates. What makes a pass
+            # reproducible is knowing which skills, toolsets and model settings produced it --
+            # `config_hash` fingerprints them, but a reader cannot expand a hash.
+            "recorded_at": datetime.now(UTC).isoformat(),
+            "run_count": repeat,
+            "experiment_id": experiment_id,
+            "dataset": f"agents/{agent}/evals/dataset.yaml",
+            "evaluators": ["deterministic_output_match", "schema_validity", "budget_gate",
+                           "scenario_coverage"],
+            # No LLM judge is used anywhere in this suite, which is deliberate: the playbook
+            # forbids one as the sole evaluator for schema validity and safety properties, and
+            # every gate here is deterministic. Recorded explicitly so its absence is a stated
+            # fact rather than an omission.
+            "judge_rubric": None,
+            "model_settings": dict(getattr(spec, "model_settings", None) or {}),
+            "skills": list(getattr(spec, "enabled_skills", None) or []),
+            "toolsets": list(getattr(spec, "enabled_toolsets", None) or []),
+            "python": platform.python_version(),
+            # Case-level results (per repetition, with pass/fail and cost) are persisted to the
+            # experiment store under this id rather than inlined, so the report stays readable.
+            "case_results": f"experiment {experiment_id}" if experiment_id else None,
         },
     }
     path.parent.mkdir(parents=True, exist_ok=True)

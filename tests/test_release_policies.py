@@ -34,7 +34,11 @@ def test_every_agent_has_a_release_policy(name):
 def test_every_gate_the_policy_names_is_a_metric_the_report_emits(name):
     """Otherwise the gate silently never applies."""
     policy = _policy(name)
-    emitted = {"schema_validity_rate", "budget_exhausted_count"}
+    # Verified against a real report: `harness eval run <agent> --report` writes each of
+    # these. uncovered_material_scenarios comes from evals.coverage and is computed
+    # statically, so it is emitted even when no case ran.
+    emitted = {"schema_validity_rate", "budget_exhausted_count",
+               "uncovered_material_scenarios"}
     if name in UNEVIDENCED_SAFETY_AGENTS:
         emitted.add("unevidenced_safe_verdicts")
     assert set(policy["hard_gates"]) <= emitted, (
