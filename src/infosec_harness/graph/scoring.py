@@ -24,7 +24,13 @@ VERDICT_WEIGHT = {
     VerdictLabel.likely_not_exploitable: 0.1,
 }
 REACHABILITY_WEIGHT = {
-    Reachability.reachable: 1.0, Reachability.unknown: 0.6, Reachability.unreachable: 0.2,
+    Reachability.reachable: 1.0,
+    Reachability.unknown: 0.6,
+    # Input reaches the sink and a control is claimed to stop it. Ranked above `unreachable`
+    # because the path exists -- if the control is wrong, or is removed by a later change, the
+    # finding is live -- and below `unknown` because a specific control has at least been named.
+    Reachability.neutralized: 0.4,
+    Reachability.unreachable: 0.2,
 }
 TEST_OR_VENDOR = ("test", "tests", "spec", "__tests__", "vendor", "node_modules",
                   "third_party", "examples", "fixtures")

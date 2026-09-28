@@ -41,7 +41,7 @@
       },
       "truth": {
         "expected_verdict": "likely_not_exploitable",
-        "reachability": "reachable",
+        "reachability": "neutralized",
         "sink_file": "app.py",
         "sink_line": 16,
         "source": "name parameter",
@@ -89,7 +89,7 @@
       },
       "truth": {
         "expected_verdict": "likely_not_exploitable",
-        "reachability": "reachable",
+        "reachability": "neutralized",
         "sink_file": "app.py",
         "sink_line": 6,
         "source": "path parameter",
@@ -137,7 +137,7 @@
       },
       "truth": {
         "expected_verdict": "likely_not_exploitable",
-        "reachability": "reachable",
+        "reachability": "neutralized",
         "sink_file": "app.py",
         "sink_line": 11,
         "source": "name parameter",
@@ -185,7 +185,7 @@
       },
       "truth": {
         "expected_verdict": "likely_not_exploitable",
-        "reachability": "reachable",
+        "reachability": "neutralized",
         "sink_file": "app.py",
         "sink_line": 6,
         "source": "text parameter",
@@ -233,7 +233,7 @@
       },
       "truth": {
         "expected_verdict": "likely_not_exploitable",
-        "reachability": "reachable",
+        "reachability": "neutralized",
         "sink_file": "app.py",
         "sink_line": 9,
         "source": "expr parameter",
@@ -281,7 +281,7 @@
       },
       "truth": {
         "expected_verdict": "likely_not_exploitable",
-        "reachability": "reachable",
+        "reachability": "neutralized",
         "sink_file": "app.py",
         "sink_line": 20,
         "source": "blob parameter",
@@ -329,7 +329,7 @@
       },
       "truth": {
         "expected_verdict": "likely_not_exploitable",
-        "reachability": "reachable",
+        "reachability": "neutralized",
         "sink_file": "app.py",
         "sink_line": 31,
         "source": "document parameter",
@@ -377,7 +377,7 @@
       },
       "truth": {
         "expected_verdict": "likely_not_exploitable",
-        "reachability": "reachable",
+        "reachability": "neutralized",
         "sink_file": "app.py",
         "sink_line": 17,
         "source": "url parameter",
@@ -475,7 +475,7 @@
       },
       "truth": {
         "expected_verdict": "likely_not_exploitable",
-        "reachability": "reachable",
+        "reachability": "neutralized",
         "sink_file": "src/main/java/com/example/UserDao.java",
         "sink_line": 11,
         "source": "name argument",
@@ -523,7 +523,7 @@
       },
       "truth": {
         "expected_verdict": "likely_not_exploitable",
-        "reachability": "reachable",
+        "reachability": "neutralized",
         "sink_file": "src/main/java/com/example/Runner.java",
         "sink_line": 6,
         "source": "arg argument",
@@ -571,7 +571,7 @@
       },
       "truth": {
         "expected_verdict": "likely_not_exploitable",
-        "reachability": "reachable",
+        "reachability": "neutralized",
         "sink_file": "src/cmd.js",
         "sink_line": 5,
         "source": "path argument",
@@ -619,7 +619,7 @@
       },
       "truth": {
         "expected_verdict": "likely_not_exploitable",
-        "reachability": "reachable",
+        "reachability": "neutralized",
         "sink_file": "src/render.js",
         "sink_line": 7,
         "source": "text argument",
@@ -667,7 +667,7 @@
       },
       "truth": {
         "expected_verdict": "likely_not_exploitable",
-        "reachability": "reachable",
+        "reachability": "neutralized",
         "sink_file": "lib/UserDao.pm",
         "sink_line": 8,
         "source": "name argument",
@@ -715,7 +715,7 @@
       },
       "truth": {
         "expected_verdict": "likely_not_exploitable",
-        "reachability": "reachable",
+        "reachability": "neutralized",
         "sink_file": "lib/Runner.pm",
         "sink_line": 8,
         "source": "arg argument",
@@ -723,5 +723,5 @@
       }
     }
   ],
-  "note": "Paired seeded corpus across languages. Each case carries its own `language`. Vulnerable variants -> potentially_exploitable; fixed -> likely_not_exploitable. Truth is for scoring only."
+  "note": "Paired seeded corpus across languages. Each case carries its own `language`. Vulnerable variants -> potentially_exploitable; fixed -> likely_not_exploitable. Truth is for scoring only. The `-fixed` variants are `neutralized`, not `unreachable` and not plain `reachable`: untrusted input does arrive at the sink, and a named control on the path stops it. `unreachable` is reserved for the one case where no untrusted value reaches the sink at all. The distinction decides whether the probe runs, so it is ground truth rather than wording."
 }

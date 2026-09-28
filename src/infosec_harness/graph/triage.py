@@ -118,6 +118,11 @@ class GatherContext(BaseNode[TriageState, TriageDeps, TriageResult]):
 class PlanProbe(BaseNode[TriageState, TriageDeps, TriageResult]):
     async def run(self, ctx: GraphRunContext[TriageState, TriageDeps]) -> AuthorProbe | End[TriageResult]:
         s = ctx.state
+        # Only `unreachable` skips the probe. `neutralized` does NOT: it says untrusted input
+        # reaches the sink and a named control stops it, and whether that control actually
+        # holds is a claim about behaviour -- exactly what the probe is for. Measured: both
+        # Java `fixed` cases took this exit with no build, probe or oracle behind them, and the
+        # same reasoning on a vulnerable case is a false negative, the costliest error here.
         if s.context and s.context.reachability == Reachability.unreachable and (
             s.context.source or s.context.sink or s.context.path
         ):

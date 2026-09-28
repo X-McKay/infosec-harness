@@ -815,3 +815,21 @@ def test_an_honest_probe_in_either_language_is_accepted():
                      content="test('harness probe', () => { console.log('HARNESS_PRECONDITION::n'); });")
     assert _skipping_probe_violations(py) == []
     assert _skipping_probe_violations(js) == []
+
+
+def test_a_neutralized_claim_alone_does_not_support_a_safe_verdict():
+    """`unreachable` supports safety on its own; `neutralized` must not.
+
+    It says untrusted input arrives and a control stops it — a claim about behaviour that only
+    a probe can support. If it were accepted here, a verdict could assert safety on reasoning
+    alone, which is precisely the gap the value was introduced to close.
+    """
+    from infosec_harness.evals.adapters import is_unevidenced_safe
+
+    def case(reachability):
+        return {"facts": {"reachability": reachability}, "payload": {}}
+
+    assert not is_unevidenced_safe("verdict", case("unreachable"), "likely_not_exploitable")
+    assert is_unevidenced_safe("verdict", case("neutralized"), "likely_not_exploitable"), (
+        "a neutralized claim with no probe behind it is an unevidenced safe verdict"
+    )

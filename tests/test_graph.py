@@ -541,3 +541,86 @@ async def test_a_probe_defect_does_not_trigger_an_environment_rebuild(repo):
     assert "build-repair" not in seen
     assert state.environment_repairs == 0
     assert "probe-repair" in seen, "a probe defect must still go to probe repair"
+
+
+def test_a_neutralized_finding_must_name_the_control_it_rests_on():
+    """Without a named control, `neutralized` degrades into a softer `unreachable`.
+
+    "Something probably stops it" is the vagueness the split exists to remove, and an unnamed
+    control cannot be checked by a probe — which is the whole reason this value does not
+    early-exit.
+    """
+    import pytest
+
+    from infosec_harness.domain.models import FindingContext, Reachability
+
+    with pytest.raises(ValueError, match="requires at least one entry in `sanitizers`"):
+        FindingContext(summary="s", reachability=Reachability.neutralized,
+                       reachability_rationale="a sanitizer handles it")
+
+
+async def test_neutralized_code_is_probed_while_unreachable_code_is_not(repo):
+    """The behavioural half of the split, and the measured defect it fixes.
+
+    Both Java `fixed` cases returned likely_not_exploitable through `unreachable_by_context` —
+    no build, no probe, no oracle — and the label happened to be right. The same reasoning on a
+    vulnerable case is a false negative. `neutralized` says the path exists and a control stops
+    it; whether the control holds is exactly what a probe establishes.
+    """
+    from infosec_harness.domain.models import (
+        AgentOutcome,
+        CodeRef,
+        FindingContext,
+        Reachability,
+    )
+
+    async def run_with(reachability, sanitizers):
+        ops, prepared = await _prepared(repo)
+        real = ops.run_agent
+        probed = []
+
+        async def run_agent(name, prompt, deps):
+            if name == "context":
+                return AgentOutcome(
+                    output=FindingContext(
+                        summary="s", reachability=reachability,
+                        reachability_rationale="r",
+                        sink=CodeRef(file_path="app.py", start_line=2, end_line=2),
+                        sanitizers=sanitizers, target_callable="lookup"),
+                    agent=name, model_name="stub")
+            return await real(name, prompt, deps)
+
+        ops.run_agent = run_agent
+
+        async def fake_exec(image, probe, spec, nonce, attempt):
+            probed.append(attempt)
+            return ProbeExecution(attempt=attempt, exit_code=0, oracle_fired=False,
+                                  precondition_reached=True, sink_returned=True)
+
+        ops.execute_probe = fake_exec
+        finding = to_finding(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
+                                          start_line=2, cwe="CWE-89", severity="high"))
+        state = TriageState(finding=finding, prepared=prepared)
+        result = await TRIAGE_GRAPH.run(state=state, deps=TriageDeps(ops=ops), inputs=PreFilter())
+        return result, probed
+
+    bound = [CodeRef(file_path="app.py", start_line=2, end_line=2, note="parameter binding")]
+    neutralized, probed = await run_with(Reachability.neutralized, bound)
+    assert probed, "a neutralized finding must be probed: the control is a claim, not evidence"
+    assert neutralized.early_exit != "unreachable_by_context"
+
+    unreachable, probed = await run_with(Reachability.unreachable, [])
+    assert not probed, "an unreachable finding has nothing to probe"
+    assert unreachable.early_exit == "unreachable_by_context"
+
+
+def test_a_neutralized_finding_outranks_an_unreachable_one():
+    """The path exists, so a wrong control or a later change makes it live. It ranks above
+    `unreachable` for that reason, and below `unknown` because a control has been named."""
+    from infosec_harness.domain.models import Reachability
+    from infosec_harness.graph.scoring import REACHABILITY_WEIGHT
+
+    assert (REACHABILITY_WEIGHT[Reachability.reachable]
+            > REACHABILITY_WEIGHT[Reachability.unknown]
+            > REACHABILITY_WEIGHT[Reachability.neutralized]
+            > REACHABILITY_WEIGHT[Reachability.unreachable])

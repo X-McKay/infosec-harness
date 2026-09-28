@@ -275,6 +275,18 @@ class CodeRef(_Model):
 class Reachability(StrEnum):
     reachable = "reachable"
     unreachable = "unreachable"
+    # Untrusted input DOES reach the sink; a control on the path neutralizes it (a bound
+    # parameter, an argv-form exec, an escaping encoder). Separate from `unreachable` because
+    # the two are different claims with different evidence: "no path exists" can be settled by
+    # reading the code, while "the control holds" is a claim about behaviour and is exactly
+    # what a probe is for.
+    #
+    # Conflating them was measured. Both Java `fixed` cases returned likely_not_exploitable via
+    # an `unreachable_by_context` early exit -- no build, no probe, no oracle -- and the label
+    # happened to be right. The same reasoning applied to a vulnerable case is a false
+    # negative, and the corpus manifest disagreed with the eval dataset about which word was
+    # even correct.
+    neutralized = "neutralized"
     unknown = "unknown"
 
 
@@ -291,6 +303,23 @@ class FindingContext(_Model):
     target_callable: str | None = Field(
         None, description="Function/method a unit test should call to reach the sink"
     )
+
+    @model_validator(mode="after")
+    def _neutralized_must_name_its_control(self) -> FindingContext:
+        """`neutralized` is a claim about a specific control, so it has to name one.
+
+        Without this the value degrades into a softer `unreachable` -- "something probably
+        stops it" -- which is the vagueness the split exists to remove. An unnamed control also
+        cannot be checked by a probe, and probing it is the whole point.
+        """
+        if self.reachability is Reachability.neutralized and not self.sanitizers:
+            raise ValueError(
+                "reachability=neutralized requires at least one entry in `sanitizers` naming "
+                "the control that stops the input (the bound parameter, the argv-form exec, "
+                "the encoder). If nothing on the path neutralizes it, the answer is "
+                "`reachable`; if no untrusted input arrives at all, it is `unreachable`."
+            )
+        return self
 
 
 class OracleKind(StrEnum):

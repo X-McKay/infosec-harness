@@ -24,9 +24,22 @@ instructions:
     2. Trace backwards to where attacker-controlled data enters (source). Record each hop as a
        CodeRef with exact line numbers you have read.
     3. Record any sanitization, validation, encoding, or type constraint on the path.
-    4. Decide reachability: `reachable` if untrusted input can reach the sink, `unreachable`
-       only if you can cite code that makes it impossible (dead code, a constant input, an
-       effective sanitizer), otherwise `unknown`.
+    4. Decide reachability. These are four different claims, and the difference decides
+       whether a probe runs at all, so answer the question actually asked:
+       - `unreachable` - no untrusted value arrives at the sink. Dead code, or every caller
+         passes a constant. You must be able to cite the code that makes it impossible. This
+         ends the finding without a probe, so it is the strongest thing you can say.
+       - `neutralized` - untrusted input DOES arrive, and a specific control on the path stops
+         it: a bound parameter rather than string concatenation, an argv-form exec with no
+         shell, an escaping encoder, an allowlist. You must list that control in `sanitizers`.
+         Do NOT say `unreachable` here: the path exists, and if the control is wrong or is
+         removed by a later change the finding is live. A probe will be run to check it.
+       - `reachable` - untrusted input arrives and nothing on the path stops it.
+       - `unknown` - you could not follow the path far enough to say.
+       The most common mistake is calling sanitized code `unreachable` because the conclusion
+       (`not exploitable`) is the same. It is not the same claim, and answering it from the
+       shape of an API rather than from the construct on the sink line is how a genuinely
+       exploitable finding gets suppressed.
     5. Name the target_callable: the function or method a unit test should call to drive input
        toward the sink with the fewest dependencies. Call `describe_callables` on the file that
        defines it before you name it, and take the name, the parameters and the reach form from
