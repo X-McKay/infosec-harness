@@ -47,7 +47,10 @@ test('harness probe', async () => {
 });
 ```
 
-- Run with `npx jest --runTestsByPath {test_file}` (or `npx vitest run {test_file}`).
+- Run with `npx jest --runTestsByPath {test_file}` (or `npx vitest run {test_file}`). One skill
+  covers both runners because the probe body is the same; the command is not. When a repository
+  has both, the runner is whichever its own `test` script invokes, and the selector has to match
+  it — vitest rejects `--runTestsByPath` outright, which costs the run before any test executes.
 - For a canary oracle, let the payload create `/tmp/harness_canary_<nonce>`; do not assert.
 
 ## Never skip or disable the probe

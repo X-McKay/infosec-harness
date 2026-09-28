@@ -21,6 +21,10 @@ metadata:
 - The value reaches a shell rather than a language evaluator — use `cwe-78-os-command-injection`.
 - The value is deserialized rather than evaluated — use `cwe-502-deserialization`.
 
+## When another skill also applies
+
+- `cwe-78-os-command-injection` also fires when the source this evaluator runs goes on to invoke a shell, and each skill redirects to the other. **This skill wins** whenever the value is parsed as program source before anything else consumes it; it is command injection only when the value reaches a shell without being evaluated on the way.
+
 <!-- /generated: activation criteria -->
 
 **Sink.** Evaluating untrusted input as program code or templates: `eval`, `exec`,

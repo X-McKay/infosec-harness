@@ -21,6 +21,10 @@ metadata:
 - The format is parsed into plain data only (JSON into dicts) with no object construction.
 - The payload is XML — use `cwe-611-xxe`.
 
+## When another skill also applies
+
+- `cwe-611-xxe` also fires on untrusted XML, and the negative criterion above sends every XML payload there — right for a parser that resolves entities, wrong for one that instantiates the types the document names (`XMLDecoder`, XStream). **This skill wins** whenever the reader constructs objects the document chose, because that is the sink a gadget oracle drives; entity or DTD expansion with no object construction stays with `cwe-611-xxe`.
+
 <!-- /generated: activation criteria -->
 
 **Sink.** Deserializing untrusted bytes with a mechanism that can instantiate arbitrary types

@@ -22,6 +22,10 @@ metadata:
 - The path is fixed and the untrusted value is only file *contents*.
 - The value reaches a URL fetch rather than the filesystem — use `cwe-918-ssrf`.
 
+## When another skill also applies
+
+- `cwe-918-ssrf` also fires when the caller-chosen value is a URL whose fetcher accepts `file:`, so one value both picks a destination and names a path, and each skill redirects to the other. **That skill wins** whenever a URL resolver stands between the value and the filesystem: the fetcher owns the sink, so the oracle is about the destination the code was willing to resolve, not about a base directory a name escaped.
+
 <!-- /generated: activation criteria -->
 
 **Sink.** Opening/reading/writing a path built from untrusted input: `open(base + name)`,

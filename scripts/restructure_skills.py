@@ -8,6 +8,11 @@ The activation criteria matter beyond conformance: a skill's `description` is wh
 reads when deciding whether to load it, and the measured jump in context's skill evocation
 (19% -> 100%, docs/LIVE_VALIDATION.md) came from making that choice explicit.
 
+The same argument extends to the precedence section this script renders from `relations`
+("When another skill also applies"). Two skills whose negative criteria point at each other
+tell a reader in the overlap to go round in a circle, so the agent guesses; naming the winner
+is what turns that guess back into a decision the library made.
+
 **The regions this script owns are delimited by explicit markers.** An earlier version
 inferred them from heading positions instead, and on a second run it deleted the body of every
 skill whose procedure had no `## ` heading of its own -- including the line in `build-python`
@@ -37,8 +42,43 @@ BEGIN_C = "<!-- generated: constraints (scripts/restructure_skills.py) -->"
 END_C = "<!-- /generated: constraints -->"
 
 
+# The phrase each verdict renders as. It is bold in the output because it is the one clause a
+# reader skimming the section needs, and it is a *fixed* phrase because `evals/skills.py` reads
+# the verdict back out of the rendered file rather than out of this module: the skill as
+# published is what an agent is given, so that is what the coverage check has to parse.
+VERDICT_PHRASES = {"wins": "**this skill wins**", "yields": "**that skill wins**"}
+
+
 def _bullets(items: list[str]) -> str:
     return "\n".join(f"- {item}" for item in items)
+
+
+def _relations(name: str, relations: list[dict]) -> str:
+    """Render the precedence section, refusing prose that disagrees with its own verdict."""
+    if not relations:
+        return ""
+    bullets: list[str] = []
+    for relation in relations:
+        target, verdict, text = relation["skill"], relation["verdict"], relation["text"]
+        if target not in SKILLS:
+            raise ValueError(f"{name}: relation names {target!r}, which is not a skill")
+        if target == name:
+            raise ValueError(f"{name}: declares a relation with itself")
+        if verdict not in VERDICT_PHRASES:
+            raise ValueError(f"{name}/{target}: unknown verdict {verdict!r}")
+        if not text.startswith(f"`{target}`"):
+            raise ValueError(
+                f"{name}/{target}: the relation's text must open with the other skill in "
+                "backticks, so the reader and the parser agree on which pair it settles"
+            )
+        if VERDICT_PHRASES[verdict] not in text.lower():
+            raise ValueError(
+                f"{name}/{target}: verdict is {verdict!r} but the text does not contain "
+                f"{VERDICT_PHRASES[verdict]!r}. A declared verdict the prose does not state is "
+                "a rule the reader never sees"
+            )
+        bullets.append(text)
+    return "## When another skill also applies\n\n" + _bullets(bullets) + "\n\n"
 
 
 def _split_frontmatter(text: str) -> tuple[dict, str]:
@@ -81,7 +121,8 @@ def restructure(name: str) -> bool:
         f"{BEGIN}\n\n"
         "## Use this skill when\n\n" + _bullets(spec["use_when"]) + "\n\n"
         "## Do not use this skill when\n\n" + _bullets(spec["avoid_when"]) + "\n\n"
-        f"{END}\n\n"
+        + _relations(name, spec.get("relations") or [])
+        + f"{END}\n\n"
         f"{procedure}\n\n"
         f"{BEGIN_C}\n\n"
         "## Safety constraints\n\n" + _bullets(spec["safety"]) + "\n\n"

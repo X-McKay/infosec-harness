@@ -21,6 +21,10 @@ metadata:
 - The parser has entity resolution explicitly disabled and the finding is about something else.
 - The document is JSON or YAML — use `cwe-502-deserialization`.
 
+## When another skill also applies
+
+- `cwe-502-deserialization` also fires when the XML goes to something that instantiates the types it names rather than to a plain parser, while its own negative criteria send every XML payload back here. **That skill wins** there: the oracle has to observe object construction, which an entity-expansion probe never exercises. Keep this skill when the hazard is the parser resolving an external entity or a DTD.
+
 <!-- /generated: activation criteria -->
 
 **Sink.** Parsing untrusted XML with a parser that resolves external entities/DTDs:

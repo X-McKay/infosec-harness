@@ -21,6 +21,10 @@ metadata:
 - The project builds with Gradle — use `build-gradle`.
 - The repository is not a JVM project.
 
+## When another skill also applies
+
+- `build-gradle` also fires on the repositories that carry both a `pom.xml` and a `build.gradle` — a Gradle build kept beside a published pom, or a migration half done — and each skill's negative criteria send the reader to the other, so on their own the two deadlock. **This skill wins** when the module holding the finding's sink is the one Maven builds, meaning its sources sit under a directory some `pom.xml` declares; otherwise defer to `build-gradle`. The tie has to be broken because the two recipes differ in the flag that lets a probe's markers out (`-Dmaven.test.redirectTestOutputToFile=false` here, Gradle's `-i` there), so a spec assembled from the wrong recipe runs a correct probe and records nothing.
+
 <!-- /generated: activation criteria -->
 
 - **Set the local repository explicitly, to two different paths.** Verified against the corpus:

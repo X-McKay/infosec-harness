@@ -28,9 +28,14 @@ Three questions decide where a case type lands.
    "procedure adherence" and "safety" become real, executable cases for those skills: every
    command and probe a skill *shows* is run through the validator that would judge the same
    artifact coming from a live agent.
-3. *Does it need a model?* Ambiguity resolution does. Nothing in a file says how a model
-   behaves when two skills both look applicable. It is declared :attr:`Status.LIVE_ONLY`
-   rather than approximated.
+3. *Does it need a model?* Ambiguity splits in two, and only one half does. Whether a model
+   *follows* a precedence rule needs a live run. Whether the library states one at all is a
+   property of the files — and it did not: two skills whose negative criteria each redirect to
+   the other left the overlap (a repository carrying both a ``pom.xml`` and a ``build.gradle``,
+   an ``eval`` of a string that runs a shell command) with no rule to follow, so the agent
+   guessed and no measurement could have told us which way. Declaring the rule is the fix;
+   :func:`ambiguity_problems` checks that every competing pair has one and that the two sides
+   agree, and the summary keeps saying that adherence is unmeasured.
 
 Routing every judgement through the *production* validator, rather than a copy of its rules,
 is deliberate and copied from ``inert_gates``: a check that restates the rule drifts from it,
@@ -74,19 +79,28 @@ from infosec_harness.domain.models import EnvironmentSpec, ProbeSource
 from infosec_harness.settings import REPO_ROOT
 
 __all__ = [
+    "AMBIGUITY_RESIDUE",
     "CASE_TYPES",
+    "COMPETING_PAIRS",
+    "COMPOSING_PAIRS",
     "MAX_AGENT_SKILL_SHARE",
     "MAX_BODY_TOKENS",
     "MAX_DESCRIPTION_CHARS",
     "UPSTREAM_DESCRIPTION_LIMIT",
     "AgentSkillCost",
+    "CompetingPair",
     "Coverage",
+    "Relation",
     "ShellCommand",
     "SkillCase",
     "SkillDoc",
     "Status",
+    "Verdict",
     "activation_problems",
+    "ambiguity_problems",
     "agent_skill_costs",
+    "competing_pairs_for",
+    "mutual_redirects",
     "body_substance_problems",
     "body_tokens",
     "completion_problems",
@@ -172,6 +186,48 @@ RECIPE_SKILLS = frozenset({"partial-build", "probe-oracle-protocol"})
 ORIENTATION_FAMILIES = ("lang-", "cwe-")
 
 
+class Verdict(StrEnum):
+    """Which of two competing skills governs where their guidance disagrees."""
+
+    WINS = "wins"
+    """The declaring skill's guidance governs."""
+
+    YIELDS = "yields"
+    """The named skill's guidance governs."""
+
+
+# The fixed phrases `scripts/restructure_skills.py` renders for each verdict. Parsing them back
+# out of the published file is deliberate: the generator refuses prose that does not carry its
+# own verdict, so these two forms are the only way a relation can reach a reader, and reading
+# the file is how this module judges what the reader was actually told.
+_VERDICT_PHRASES = {"this skill wins": Verdict.WINS, "that skill wins": Verdict.YIELDS}
+_RELATION = re.compile(
+    r"^`([a-z0-9-]+)`.*?\*\*(" + "|".join(_VERDICT_PHRASES) + r")\*\*", re.I | re.S
+)
+
+
+@dataclass(frozen=True)
+class Relation:
+    """One skill's declared precedence over another, as its ``SKILL.md`` states it."""
+
+    skill: str
+    target: str
+    """The other skill. Empty when the bullet named none, which is itself the defect."""
+
+    verdict: Verdict | None
+    """``None`` when the bullet carried no verdict phrase and settles nothing."""
+
+    text: str
+
+    @property
+    def winner(self) -> str | None:
+        if self.verdict is Verdict.WINS:
+            return self.skill
+        if self.verdict is Verdict.YIELDS:
+            return self.target
+        return None
+
+
 @dataclass(frozen=True)
 class SkillDoc:
     """One ``SKILL.md`` as the *runtime* sees it, plus the sections the standard requires.
@@ -193,6 +249,34 @@ class SkillDoc:
     @property
     def avoid_when(self) -> list[str]:
         return _bullets(_section(self.body, "Do not use this skill when"))
+
+    @property
+    def relations(self) -> list[Relation]:
+        """The precedence this skill declares over another, parsed from what it publishes.
+
+        Read out of the rendered ``SKILL.md`` rather than out of ``scripts/skill_specs.py``:
+        the file is what an agent is handed, so a rule that exists only in the generator is a
+        rule no model has been told.
+        """
+        out: list[Relation] = []
+        for bullet in _bullets(_section(self.body, "When another skill also applies")):
+            match = _RELATION.match(bullet)
+            if match is None:
+                out.append(Relation(self.name, "", None, bullet))
+                continue
+            out.append(
+                Relation(self.name, match.group(1), _VERDICT_PHRASES[match.group(2).lower()],
+                         bullet)
+            )
+        return out
+
+    @property
+    def redirect_targets(self) -> frozenset[str]:
+        """Skills the negative criteria send the reader to."""
+        return frozenset(
+            re.findall(r"`((?:cwe|lang|build|test|probe|partial)-[a-z0-9-]+)`",
+                       " ".join(self.avoid_when))
+        )
 
     @property
     def safety(self) -> list[str]:
@@ -279,8 +363,12 @@ MAX_DESCRIPTION_CHARS = 400
 MAX_BODY_TOKENS = 3_000
 # The share of an agent's own declared per-request input ceiling that its skills may occupy in
 # the worst case (catalog always, plus every enabled body loaded). Highest today is intake at
-# 31%, which is high because intake's ceiling is deliberately small; 40% leaves room to grow
-# without letting the skill library quietly become the majority of a prompt.
+# 37%, which is high because intake's ceiling is deliberately small (20k) while it enables all
+# eight CWE skills; 40% leaves room to grow without letting the skill library quietly become
+# the majority of a prompt. It moved from 31% when the CWE skills gained their precedence
+# sections, which is the kind of growth this budget exists to make somebody notice: ten
+# relations across eight skills cost intake about 1.1k tokens, and the next such addition has
+# roughly 700 left before it has to argue for a bigger ceiling instead.
 MAX_AGENT_SKILL_SHARE = 0.40
 
 
@@ -480,6 +568,207 @@ def completion_problems(skill: SkillDoc) -> list[str]:
         if key in seen:
             problems.append(f"completion criterion is listed twice: {item!r}")
         seen.add(key)
+    return problems
+
+
+# --- Ambiguity: which skill wins when two of them fire -------------------------------------
+
+
+@dataclass(frozen=True)
+class CompetingPair:
+    """Two skills one situation can satisfy at once, where only one of them can be right."""
+
+    a: str
+    b: str
+    situation: str
+    """The concrete case that fires both. A pair without one is a pair nobody has to resolve."""
+
+    @property
+    def key(self) -> tuple[str, str]:
+        return _pair(self.a, self.b)
+
+
+def _pair(a: str, b: str) -> tuple[str, str]:
+    return (a, b) if a <= b else (b, a)
+
+
+# Pairs a single repository, finding, or task can satisfy on both sides. Each was reached by
+# reading the activation criteria of all 23 skills and asking what input satisfies both; the
+# situation is recorded so the list can be argued with rather than trusted. Deliberately short.
+# The families that merely *overlap* are in COMPOSING_PAIRS below and are not listed here,
+# because a resolution asserted between two skills that never disagree is the decorative
+# coverage `evals/inert_gates.py` exists to name: it would raise this suite's ambiguity number
+# and tell a reader nothing.
+COMPETING_PAIRS = (
+    CompetingPair(
+        "build-maven", "build-gradle",
+        "a repository carrying both a pom.xml and a build.gradle — a Gradle build kept beside "
+        "a published pom, or a migration half done — satisfies each skill's positive criteria "
+        "while each skill's negative criteria send the reader to the other",
+    ),
+    CompetingPair(
+        "cwe-78-os-command-injection", "cwe-94-code-injection",
+        "an eval of a string that the evaluated code then hands to a shell is both 'evaluated "
+        "as program source' and 'reaches a shell', which is the exact wording of the two "
+        "skills' mutual redirects",
+    ),
+    CompetingPair(
+        "cwe-78-os-command-injection", "cwe-89-sql-injection",
+        "a query issued through a command-line database client (psql -c, mysql -e) puts the "
+        "same untrusted value into a shell command and into SQL, and each skill's negative "
+        "criteria point at the other",
+    ),
+    CompetingPair(
+        "cwe-22-path-traversal", "cwe-918-ssrf",
+        "a caller-chosen URL resolved by a fetcher that accepts file: both chooses a request "
+        "destination and names a filesystem path",
+    ),
+    CompetingPair(
+        "cwe-502-deserialization", "cwe-611-xxe",
+        "XML handed to a reader that instantiates the types the document names (XMLDecoder, "
+        "XStream) is untrusted XML and untrusted serialized bytes at once, and cwe-502's "
+        "negative criteria send every XML payload to cwe-611",
+    ),
+    CompetingPair(
+        "cwe-89-sql-injection", "probe-oracle-protocol",
+        "the protocol forbids mocking the sink while cwe-89's structure oracle needs to see the "
+        "statement the driver received; the more specific skill won and a wrapped cursor the "
+        "target never used reported a clean negative on an exploitable finding "
+        "(docs/LIVE_VALIDATION.md)",
+    ),
+    CompetingPair(
+        "cwe-918-ssrf", "probe-oracle-protocol",
+        "an SSRF probe has to substitute the transport because the sandbox has no egress, which "
+        "is precisely what the protocol's 'do not mock the sink' rule forbids",
+    ),
+)
+
+_COMPOSE_LANG_BUILD = (
+    "one orients the reader in the repository and the other plans its build; the two are "
+    "split by task, not by a contest, and an env-planner that reads both has been helped twice"
+)
+_COMPOSE_PARTIAL = (
+    "partial-build narrows the scope and the build-* skill still supplies the recipe inside "
+    "it — partial-build's own Maven bullet defers to build-maven for the repo-local flag. The "
+    "entry condition (the full build exhausted its repair budget) is already stated in "
+    "partial-build's negative criteria, so the ordering is declared and there is no winner"
+)
+_COMPOSE_PROTOCOL_TEST = (
+    "the protocol defines the markers and the test-* skill shows the shape in one framework; "
+    "each test-* skill's negative criteria already say to read the protocol first, and the "
+    "protocol's closing line says the test-* skills render it per framework"
+)
+
+# Pairs that fire together and do not compete. Listed, rather than left out, for two reasons: a
+# mutual redirect between two of them would otherwise read as an unclassified deadlock, and
+# declaring a winner for one of these is an error this module reports — the guard against
+# padding the ambiguity number with pairs that never disagree.
+COMPOSING_PAIRS: dict[tuple[str, str], str] = {
+    **{_pair(lang, build): _COMPOSE_LANG_BUILD
+       for lang, build in (("lang-python", "build-python"), ("lang-java", "build-maven"),
+                           ("lang-java", "build-gradle"), ("lang-javascript", "build-npm"),
+                           ("lang-perl", "build-cpanm"))},
+    **{_pair("partial-build", build): _COMPOSE_PARTIAL
+       for build in ("build-python", "build-maven", "build-gradle", "build-npm",
+                     "build-cpanm")},
+    **{_pair("probe-oracle-protocol", test): _COMPOSE_PROTOCOL_TEST
+       for test in ("test-pytest", "test-junit5", "test-jest", "test-perl-test-more")},
+}
+
+
+def mutual_redirects(skills: tuple[SkillDoc, ...]) -> set[tuple[str, str]]:
+    """Pairs whose negative criteria each send the reader to the other.
+
+    A circular redirect is the structural signature of an unresolved ambiguity: every situation
+    in the overlap is answered by "use the other skill" from both sides. Deriving the candidates
+    instead of only listing them is what makes the classification below load-bearing — a redirect
+    added later cannot slip in unclassified.
+    """
+    by_name = {s.name: s for s in skills}
+    return {
+        _pair(skill.name, target)
+        for skill in skills
+        for target in skill.redirect_targets
+        if target in by_name and skill.name in by_name[target].redirect_targets
+    }
+
+
+def competing_pairs_for(name: str) -> tuple[CompetingPair, ...]:
+    return tuple(p for p in COMPETING_PAIRS if name in (p.a, p.b))
+
+
+def ambiguity_problems(skills: tuple[SkillDoc, ...]) -> list[str]:
+    """Everything wrong with what the library says about two skills both applying.
+
+    Four things are checked, and none of them is about a model: every competing pair has a
+    resolution declared by at least one of its two skills; the two sides do not name different
+    winners; a declared relation names a skill that exists and a pair that was classified as
+    competing; and no pair a structural reading flags as a deadlock is left untriaged.
+    """
+    names = {s.name for s in skills}
+    problems: list[str] = []
+    declared: dict[tuple[str, str], list[Relation]] = {}
+
+    for skill in skills:
+        for relation in skill.relations:
+            if not relation.target or relation.verdict is None:
+                problems.append(
+                    f"{skill.name}: the relation {relation.text[:60]!r} names no skill or no "
+                    "verdict, so a reader in the overlap is no better off than before"
+                )
+                continue
+            if relation.target not in names:
+                problems.append(
+                    f"{skill.name} declares precedence over {relation.target!r}, which is not a "
+                    "skill in this library"
+                )
+                continue
+            key = _pair(skill.name, relation.target)
+            if key in COMPOSING_PAIRS:
+                problems.append(
+                    f"{skill.name} declares a winner against {relation.target}, but that pair is "
+                    f"classified as composing: {COMPOSING_PAIRS[key]}. Asserting a winner where "
+                    "the two never disagree answers a question nobody asked"
+                )
+                continue
+            if key not in {p.key for p in COMPETING_PAIRS}:
+                problems.append(
+                    f"{skill.name} declares a winner against {relation.target}, a pair COMPETING_"
+                    "PAIRS does not classify. Name the situation that fires both, or drop the "
+                    "relation: an unexplained precedence rule cannot be reviewed"
+                )
+                continue
+            declared.setdefault(key, []).append(relation)
+
+    for pair in COMPETING_PAIRS:
+        for name in (pair.a, pair.b):
+            if name not in names:
+                problems.append(f"COMPETING_PAIRS names {name!r}, which is not a skill")
+        relations = declared.get(pair.key, [])
+        if not relations:
+            problems.append(
+                f"{pair.a} and {pair.b} both apply when {pair.situation}, and neither declares "
+                "which one wins. A reader in that overlap is left to guess, and whatever the "
+                "model then does is unmeasurable because there was no rule to follow"
+            )
+            continue
+        winners = {r.winner for r in relations}
+        if len(winners) > 1:
+            problems.append(
+                f"{pair.a} and {pair.b} disagree about which of them wins: "
+                + "; ".join(f"{r.skill} says {r.winner}" for r in relations)
+                + ". Two skills contradicting each other is the failure this repository has "
+                "already paid for once (docs/LIVE_VALIDATION.md)"
+            )
+
+    for key in sorted(mutual_redirects(skills)):
+        if key in COMPOSING_PAIRS or key in {p.key for p in COMPETING_PAIRS}:
+            continue
+        problems.append(
+            f"{key[0]} and {key[1]} each redirect to the other and neither COMPETING_PAIRS nor "
+            "COMPOSING_PAIRS classifies the pair, so a situation matching both is a loop with "
+            "no exit. Classify it"
+        )
     return problems
 
 
@@ -872,10 +1161,31 @@ def run_case(case: SkillCase, skill: SkillDoc) -> list[str]:
 
 # --- Coverage summary ----------------------------------------------------------------------
 
-_LIVE_ONLY_AMBIGUITY = (
-    "needs a model: nothing in a file establishes which skill wins when two look applicable. "
-    "Approximating it statically would assert a behaviour never observed"
+AMBIGUITY_RESIDUE = (
+    "Declared and checked, but not measured: {n} pairs of skills can fire on the same input, "
+    "and each now states in the skill itself which of the two wins. This suite checks that the "
+    "rule exists, that the two sides do not name different winners, and that no pair whose "
+    "negative criteria point at each other was left untriaged. Whether a model *follows* the "
+    "rule is a live question and no eval scores it yet — the difference from before is that "
+    "there is now a rule to be scored against, where previously the agent was guessing."
 )
+_AMBIGUITY_NONE = (
+    "no other skill in the library competes with this one: the skills that fire alongside it "
+    "compose (a lang-* skill while a build-* skill plans, partial-build inside a build recipe, "
+    "a test-* skill after the protocol), so there is no winner to declare. Asserting one would "
+    "be filler"
+)
+
+
+def _ambiguity_reason(name: str, pairs: tuple[CompetingPair, ...]) -> str:
+    """What the ambiguity check establishes for a skill, and what it still does not."""
+    counterparts = ", ".join(sorted({p.b if p.a == name else p.a for p in pairs}))
+    return (
+        f"{len(pairs)} pair(s) where another skill also applies ({counterparts}); each declares "
+        "which skill wins, in the skill itself, and the two sides are checked for naming "
+        "different winners. Whether a model *follows* the declared rule is live-only and is not "
+        "measured anywhere yet"
+    )
 _TOOL_USE_ELSEWHERE = (
     "a skill declares no tools; tool evocation is a property of the agent that loads it and is "
     "already scored by evals/trajectory.py against AGENT_EXPECTATIONS"
@@ -892,8 +1202,9 @@ def coverage_summary(
     """Per skill, what each of the nine case types is — and why, where it is not evaluated.
 
     This is the deliverable that keeps the suite honest. Reading it should make it obvious that
-    ambiguity is untested and that a ``lang-*`` skill has no procedure cases, rather than
-    leaving both to be inferred from an absence.
+    a ``lang-*`` skill has no procedure cases, and that ambiguity is counted only for the ten
+    skills some other skill actually competes with, rather than leaving either to be inferred
+    from an absence.
     """
     summary: dict[str, dict[str, Coverage]] = {}
     for skill in skills if skills is not None else load_skills():
@@ -907,7 +1218,11 @@ def coverage_summary(
                 "criteria are present, redirect to skills that exist, and are checked against "
                 "the positive criteria for a trigger claimed on both sides",
             ),
-            "ambiguity": Coverage("ambiguity", Status.LIVE_ONLY, _LIVE_ONLY_AMBIGUITY),
+            "ambiguity": (
+                Coverage("ambiguity", Status.STATIC, _ambiguity_reason(skill.name, competing))
+                if (competing := competing_pairs_for(skill.name))
+                else Coverage("ambiguity", Status.NOT_APPLICABLE, _AMBIGUITY_NONE)
+            ),
             "tool_use": Coverage("tool_use", Status.NOT_APPLICABLE, _TOOL_USE_ELSEWHERE),
             "stopping": Coverage(
                 "stopping", Status.STATIC,
@@ -996,12 +1311,15 @@ def format_coverage_notice(
         lines.append("Not evaluated, and why:")
         for reason in not_evaluated:
             lines.extend("  " + ln for ln in textwrap.wrap(reason, width - 2))
+    lines.append("")
+    lines.extend(textwrap.wrap(AMBIGUITY_RESIDUE.format(n=len(COMPETING_PAIRS)), width))
+    lines.append("")
     lines.extend(
         textwrap.wrap(
             "The counts above are what *this* suite establishes, so they read low on purpose. "
             "'elsewhere' is genuine coverage owned by another suite and not claimed here; "
-            "'live_only' and 'not_applicable' are gaps this suite deliberately does not fill. "
-            "Do not read either as a pass.", width,
+            "'live_only' and 'not_applicable', wherever they appear, are gaps this suite "
+            "deliberately does not fill. Do not read either as a pass.", width,
         )
     )
     lines.append(rule)

@@ -23,6 +23,11 @@ metadata:
 - The value is evaluated as program source — use `cwe-94-code-injection`.
 - The call already uses an argument vector with no shell.
 
+## When another skill also applies
+
+- `cwe-94-code-injection` also fires when the value is interpolated into a string the language evaluates and the evaluated code then runs a shell command, so both criteria hold and each skill redirects to the other. **That skill wins**: the evaluator consumes the value first, and shell metacharacters aimed at a string the language parses first are a syntax error rather than a payload.
+- `cwe-89-sql-injection` also fires when the shell command is a database client carrying the value inside its SQL. **This skill wins** by the same first-interpreter rule: the shell parses the command line before the database sees a query, so the quoting context to match and the canary to observe are both the shell's.
+
 <!-- /generated: activation criteria -->
 
 **Sink.** Passing a string to a shell: `os.system`, `subprocess.*(..., shell=True)`,

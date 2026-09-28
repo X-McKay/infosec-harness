@@ -21,6 +21,11 @@ metadata:
 - The destination is fixed and only the request body is untrusted.
 - The value is used as a filesystem path — use `cwe-22-path-traversal`.
 
+## When another skill also applies
+
+- `cwe-22-path-traversal` also fires when the caller-chosen destination resolves under a scheme such as `file:` that reaches the filesystem, and each skill redirects to the other. **This skill wins** while a URL resolver stands between the value and the file: the fetcher is the sink and destination validation is the guard under test. Use `cwe-22-path-traversal` when the value is joined onto a base directory and opened with no resolver in between.
+- `probe-oracle-protocol` forbids substituting the sink, and this is the one weakness class whose probe must: the sandbox has no egress, so there is no real request to observe. **This skill wins** — inject the fake transport — but only after confirming from the code that the target uses the client you injected, because a transport the code never picked up produces exactly the silent false negative that rule exists to prevent.
+
 <!-- /generated: activation criteria -->
 
 **Sink.** Issuing a network request to a URL/host built from untrusted input: HTTP client

@@ -21,6 +21,10 @@ metadata:
 - The project builds with Maven — use `build-maven`.
 - The repository is not a JVM project.
 
+## When another skill also applies
+
+- `build-maven` also fires on the repositories that carry both a `build.gradle` and a `pom.xml`, and each skill's negative criteria send the reader to the other, so on their own the two deadlock. **That skill wins** when the module holding the finding's sink is the one Maven builds; use this skill when Gradle owns that module — it has a `build.gradle` of its own, or a root `settings.gradle` includes it. Deciding matters because the flag that lets a probe's markers out is different on each side (`-i` here, `-Dmaven.test.redirectTestOutputToFile=false` there), so a spec built from the wrong recipe runs a correct probe and records nothing.
+
 <!-- /generated: activation criteria -->
 
 - **Base image:** `gradle:8-jdk21` or an Eclipse Temurin image plus the repo's `./gradlew`.

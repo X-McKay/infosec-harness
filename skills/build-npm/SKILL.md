@@ -29,7 +29,11 @@ metadata:
   - `yarn.lock` -> `corepack enable && yarn install --frozen-lockfile`
   - TypeScript projects: ensure `ts-jest`/`ts-node` or a build step so the probe can import.
 - **test_command:** `npx jest --runTestsByPath {test_file}` (or `npx vitest run {test_file}`).
-  Add `--silent=false` equivalents so probe stdout survives.
+  Add `--silent=false` equivalents so probe stdout survives. When the repository carries both
+  runners — a migration in progress leaves jest and vitest side by side in `devDependencies` —
+  take the one its own `test` script invokes, and match the selector to it: `--runTestsByPath`
+  is not an option vitest accepts, so the wrong pairing exits before a single test runs and the
+  probe is recorded as having reached nothing.
 - **Registries:** honor `.npmrc`/`.yarnrc.yml` registries and scopes the repo declares; pass
   auth tokens as BuildKit secrets.
 - **Partial builds:** install and test within one workspace package dir.

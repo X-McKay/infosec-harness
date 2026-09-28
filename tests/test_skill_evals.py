@@ -10,11 +10,13 @@ below, so the gaps are part of the output rather than an absence a reader has to
 
 What this file does not establish
 ---------------------------------
-Nothing here says a model will load the right skill, resolve an ambiguity between two
-applicable skills, or follow a procedure it has read. Skill *evocation* is measured live by
-`evals/trajectory.py`; ambiguity is measured nowhere, deliberately. These tests establish that
-a skill is well-formed, affordable, internally consistent, and — for the skills that carry a
-recipe — that the recipe is one this harness would actually accept.
+Nothing here says a model will load the right skill, follow a procedure it has read, or obey a
+precedence rule when two skills fire at once. Skill *evocation* is measured live by
+`evals/trajectory.py`. Ambiguity splits: whether the library *states* which of two competing
+skills wins is a property of the files and is checked below; whether a model then follows the
+rule is live-only and still measured nowhere. These tests establish that a skill is
+well-formed, affordable, internally consistent, unambiguous against its neighbours, and — for
+the skills that carry a recipe — that the recipe is one this harness would actually accept.
 """
 
 from __future__ import annotations
@@ -24,18 +26,25 @@ import re
 import pytest
 
 from infosec_harness.evals.skills import (
+    AMBIGUITY_RESIDUE,
     CASE_TYPES,
+    COMPETING_PAIRS,
+    COMPOSING_PAIRS,
     MAX_AGENT_SKILL_SHARE,
     MAX_BODY_TOKENS,
     MAX_DESCRIPTION_CHARS,
     UPSTREAM_DESCRIPTION_LIMIT,
+    SkillDoc,
     Status,
+    Verdict,
     activation_problems,
     agent_skill_costs,
+    ambiguity_problems,
     body_substance_problems,
     body_tokens,
     capability_include,
     command_violations,
+    competing_pairs_for,
     completion_problems,
     context_cost_problems,
     coverage_summary,
@@ -47,6 +56,7 @@ from infosec_harness.evals.skills import (
     illustrative_commands,
     load_cases,
     load_skills,
+    mutual_redirects,
     non_activation_problems,
     orphan_skills,
     probe_exemplar_violations,
@@ -109,6 +119,119 @@ def test_a_skill_says_when_it_does_not_apply_without_contradicting_itself(skill)
     assert not non_activation_problems(skill, SKILL_NAMES), non_activation_problems(skill, SKILL_NAMES)
 
 
+# --- Ambiguity: which skill wins when two of them fire -------------------------------------
+#
+# What is established here is narrow and worth stating precisely: that the library *has* a rule
+# for every pair one input can satisfy on both sides, that the rule is in the skill rather than
+# in a test, and that the two skills do not name different winners. Whether a model follows the
+# rule needs a live run and is measured nowhere; before this, there was no rule for it to
+# follow, so the guessing could not have been scored either.
+
+
+def _synthetic(relations: dict[str, list[str]]) -> tuple[SkillDoc, ...]:
+    """The real skill names with synthetic precedence sections, to exercise the checker itself.
+
+    A gate that has only ever been run against a passing input is the failure mode
+    `evals/inert_gates.py` names. These fixtures are the evidence that `ambiguity_problems`
+    would actually object to the mistakes it claims to prevent.
+    """
+    from pathlib import Path
+
+    return tuple(
+        SkillDoc(
+            name=name,
+            path=Path(name),
+            description="",
+            body=f"# {name}\n\n## When another skill also applies\n\n"
+            + "\n".join(relations.get(name, ()))
+            + "\n",
+        )
+        for name in sorted(SKILL_NAMES)
+    )
+
+
+def test_two_skills_one_input_can_satisfy_both_say_which_of_them_wins():
+    """The gap this closes: `build-maven` and `build-gradle` each told the reader of a
+    repository carrying both a pom.xml and a build.gradle to use the other one, and `cwe-78`
+    and `cwe-94` did the same for an eval of a string that runs a shell command. A circular
+    redirect is not a rule, so the agent guessed and no measurement could say which way."""
+    assert not ambiguity_problems(SKILLS), ambiguity_problems(SKILLS)
+
+
+def test_a_competing_pair_names_two_real_skills_and_the_input_that_fires_both():
+    """A pair without a concrete situation is an assertion of ambiguity rather than a finding of
+    one, and would inflate this case type exactly the way filler does."""
+    seen = set()
+    for pair in COMPETING_PAIRS:
+        assert pair.a in SKILL_NAMES and pair.b in SKILL_NAMES, pair
+        assert pair.a != pair.b, pair
+        assert pair.key not in seen, f"{pair.key} is listed twice"
+        assert pair.key not in COMPOSING_PAIRS, f"{pair.key} is classified both ways"
+        seen.add(pair.key)
+        assert len(pair.situation) > 60, (
+            f"{pair.key} gives no concrete situation that fires both skills: {pair.situation!r}"
+        )
+
+
+def test_every_circular_redirect_is_classified():
+    """Derived, not listed: a pair whose negative criteria point at each other is the structural
+    signature of an unresolved ambiguity, so a redirect added later cannot slip in untriaged."""
+    found = mutual_redirects(SKILLS)
+    assert found, (
+        "no skill redirects to a skill that redirects back, so the derivation that feeds the "
+        "ambiguity triage is measuring nothing"
+    )
+    classified = set(COMPOSING_PAIRS) | {p.key for p in COMPETING_PAIRS}
+    assert found <= classified, sorted(found - classified)
+
+
+def test_the_one_sanctioned_exception_to_the_protocol_is_declared_from_both_ends():
+    """`cwe-918` must substitute the sink because the sandbox has no egress, and the protocol
+    forbids substituting the sink. Both skills now name the exception, and they name it the same
+    way round — the shape of disagreement that cost a corpus run when `cwe-89` and the protocol
+    silently differed (docs/LIVE_VALIDATION.md)."""
+    ssrf = next(s for s in SKILLS if s.name == "cwe-918-ssrf")
+    protocol = next(s for s in SKILLS if s.name == "probe-oracle-protocol")
+    outward = {r.target: r for r in ssrf.relations}
+    inward = {r.target: r for r in protocol.relations}
+    assert outward["probe-oracle-protocol"].verdict is Verdict.WINS
+    assert inward["cwe-918-ssrf"].verdict is Verdict.YIELDS
+    assert outward["probe-oracle-protocol"].winner == inward["cwe-918-ssrf"].winner
+
+
+def test_the_ambiguity_check_objects_to_the_mistakes_it_claims_to_prevent():
+    """Five synthetic libraries, each broken one way, and the reason each must be reported."""
+    unresolved = ambiguity_problems(_synthetic({}))
+    assert len(unresolved) == len(COMPETING_PAIRS), unresolved
+    assert all("neither declares which one wins" in p for p in unresolved)
+
+    both_claim = ambiguity_problems(_synthetic({
+        "build-maven": ["- `build-gradle` x **this skill wins** y"],
+        "build-gradle": ["- `build-maven` x **this skill wins** y"],
+    }))
+    assert any("disagree about which of them wins" in p for p in both_claim), both_claim
+
+    unknown = ambiguity_problems(_synthetic({
+        "build-maven": ["- `build-bazel` x **this skill wins** y"],
+    }))
+    assert any("not a skill in this library" in p for p in unknown), unknown
+
+    composing = ambiguity_problems(_synthetic({
+        "lang-python": ["- `build-python` x **this skill wins** y"],
+    }))
+    assert any("classified as composing" in p for p in composing), composing
+
+    unclassified = ambiguity_problems(_synthetic({
+        "lang-python": ["- `lang-java` x **this skill wins** y"],
+    }))
+    assert any("does not classify" in p for p in unclassified), unclassified
+
+    verdictless = ambiguity_problems(_synthetic({
+        "build-maven": ["- `build-gradle` is also a JVM build tool."],
+    }))
+    assert any("names no skill or no verdict" in p for p in verdictless), verdictless
+
+
 # --- Stopping ---------------------------------------------------------------------------------
 
 
@@ -155,8 +278,11 @@ def test_no_agent_spends_most_of_its_prompt_on_skills():
     """Priced against the ceiling each agent declares for itself, not one invented here.
 
     The worst case is the honest one: the catalog is always resident, and every enabled skill
-    might be loaded in a single run. `intake` is the pressure point at ~31%, because its
-    per-request ceiling is deliberately small (20k) while it enables all eight CWE skills.
+    might be loaded in a single run. `intake` is the pressure point at ~37%, because its
+    per-request ceiling is deliberately small (20k) while it enables all eight CWE skills. It
+    was ~31% before those skills declared which of them wins when two fire on one finding —
+    precedence that intake is the agent most likely to need, and the clearest example of this
+    budget doing its job, since the same text costs nothing at all against probe-repair's 120k.
     """
     costs = agent_skill_costs(SKILLS)
     assert costs, "no agent enables any skill; the cost model is measuring nothing"
@@ -392,9 +518,12 @@ def test_the_coverage_summary_names_its_own_gaps():
         assert set(entries) == set(CASE_TYPES), (
             f"{name} does not account for {set(CASE_TYPES) - set(entries)}"
         )
-        assert entries["ambiguity"].status is Status.LIVE_ONLY, (
-            f"{name} claims ambiguity coverage. Nothing in a file establishes which skill wins "
-            "when two look applicable; asserting it would be claiming a behaviour never observed"
+        competing = competing_pairs_for(name)
+        expected = Status.STATIC if competing else Status.NOT_APPLICABLE
+        assert entries["ambiguity"].status is expected, (
+            f"{name} reports ambiguity as {entries['ambiguity'].status.value} while competing "
+            f"with {[p.key for p in competing]}. A skill nothing competes with must say so "
+            "rather than claim coverage, and one that competes must have declared a winner"
         )
         assert entries["tool_use"].status is Status.NOT_APPLICABLE
         for coverage in entries.values():
@@ -442,6 +571,16 @@ def test_the_summary_does_not_claim_coverage_another_suite_owns(capsys):
             )
     notice = format_coverage_notice(summary)
     assert "Not evaluated, and why:" in notice
-    assert "live_only" in notice
+    # Ambiguity now counts for the ten skills something competes with, so the notice has to keep
+    # saying what that number does *not* include: adherence to the declared rule is live-only.
+    assert AMBIGUITY_RESIDUE.split("{n}")[0] in notice
+    assert "no eval scores it yet" in notice
+    evaluated = sum(
+        1 for entries in summary.values() if entries["ambiguity"].status is Status.STATIC
+    )
+    assert 0 < evaluated < len(summary), (
+        f"ambiguity reports {evaluated}/{len(summary)}; a number at either extreme means the "
+        "pairs stopped being triaged one at a time"
+    )
     print(notice)
     assert capsys.readouterr().out

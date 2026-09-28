@@ -21,6 +21,10 @@ metadata:
 
 - You are profiling a repository or planning a build environment; no markers are involved yet.
 
+## When another skill also applies
+
+- `cwe-918-ssrf` is the single sanctioned exception to the rule above that the probe must drive the real sink: the sandbox has no egress, so an SSRF probe has no real request it could make. **That skill wins** for SSRF findings, on the condition it states — confirm from the code that the target really uses the transport you injected — and for no other weakness class, each of which has a sink that can be driven for real inside the sandbox.
+
 <!-- /generated: activation criteria -->
 
 A probe is a unit test whose job is to answer one question about a pre-identified finding:
