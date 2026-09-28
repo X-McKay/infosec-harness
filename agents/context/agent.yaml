@@ -34,7 +34,12 @@ instructions:
 
     Cite only lines you actually read. Be concise.
 model_settings:
-  max_tokens: 8000
+  # Anthropic counts thinking *inside* max_tokens, so a `medium` level (10000 budget
+  # tokens) plus the 8000-token answer this agent was written for needs 18000.
+  # Declaring only 8000 is rejected by the API whenever budget_tokens is sent --
+  # latent today because sonnet-5/opus-5 use adaptive thinking, but the fast-v1 policy
+  # resolves to haiku-4-5, which does send it and would 400 on every call.
+  max_tokens: 18000
   thinking: medium
   bedrock_cache_tool_definitions: '5m'
   bedrock_cache_instructions: '1h'
@@ -73,7 +78,7 @@ metadata:
     max_tool_calls: 40
     max_input_tokens_per_request: 60000
     max_input_tokens: 600000
-    max_output_tokens: 160000
+    max_output_tokens: 180000
     max_cost_usd: 0.5
   enabled_skills:
     - cwe-22-path-traversal

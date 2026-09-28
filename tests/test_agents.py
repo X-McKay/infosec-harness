@@ -154,3 +154,43 @@ def test_openai_backends_ride_out_transient_upstream_failures():
     for name, backend in cfg.backends.items():
         if backend.kind == "openai_compatible":
             assert backend.max_retries >= 3, f"{name} retries too few times to be useful"
+
+
+def test_no_spec_asks_for_more_thinking_than_its_own_token_ceiling_allows():
+    """Anthropic counts thinking *inside* `max_tokens`, so `budget_tokens >= max_tokens` is
+    rejected by the API — and the answer gets whatever is left, so equality leaves zero.
+
+    Latent rather than broken today: `anthropic.claude-sonnet-5` and `opus-5` report
+    `bedrock_supports_adaptive_thinking`, so `budget_tokens` is never sent. But `claude-haiku-4-5`
+    does not, and it is what the `fast-v1` model policy resolves to — so routing any offending
+    agent to `fast-v1` would 400 on every call. Five specs were in that state (build-repair,
+    context, env-planner, partial-build, verdict), each declaring `medium` (10000) against a
+    4000-8000 ceiling.
+
+    Asserts the derivation, not the numbers: a spec may declare any thinking level, but its
+    ceiling must leave a real answer behind it.
+    """
+    import pathlib
+
+    import yaml
+    from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP
+
+    # Below this an answer is not meaningfully expressible, so equality-plus-epsilon is not
+    # enough to call the spec coherent.
+    MIN_ANSWER_TOKENS = 1024
+    checked = 0
+    for path in sorted(pathlib.Path("agents").glob("*/agent.yaml")):
+        settings = yaml.safe_load(path.read_text()).get("model_settings") or {}
+        max_tokens, thinking = settings.get("max_tokens"), settings.get("thinking")
+        level = thinking.get("effort") if isinstance(thinking, dict) else thinking
+        budget = ANTHROPIC_THINKING_BUDGET_MAP.get(level) if level is not None else None
+        if budget is None or max_tokens is None:
+            continue
+        checked += 1
+        assert max_tokens - budget >= MIN_ANSWER_TOKENS, (
+            f"{path.parent.name}: thinking={level!r} reserves {budget} of a {max_tokens}-token "
+            f"ceiling, leaving {max_tokens - budget} for the answer. Anthropic counts thinking "
+            f"inside max_tokens, so raise max_tokens to at least {budget + MIN_ANSWER_TOKENS} "
+            f"(the answer share this agent needs, plus {budget}) or lower the thinking level."
+        )
+    assert checked >= 10, f"only {checked} specs declared a thinking level; the schema changed"

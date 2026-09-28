@@ -29,7 +29,12 @@ instructions:
     merely because a test errored. A deterministic validator rejects verdicts that contradict
     the recorded facts, so stay faithful to them.
 model_settings:
-  max_tokens: 4000
+  # Anthropic counts thinking *inside* max_tokens, so a `medium` level (10000 budget
+  # tokens) plus the 4000-token answer this agent was written for needs 14000.
+  # Declaring only 4000 is rejected by the API whenever budget_tokens is sent --
+  # latent today because sonnet-5/opus-5 use adaptive thinking, but the fast-v1 policy
+  # resolves to haiku-4-5, which does send it and would 400 on every call.
+  max_tokens: 14000
   thinking: medium
   bedrock_cache_tool_definitions: '5m'
   bedrock_cache_instructions: '1h'

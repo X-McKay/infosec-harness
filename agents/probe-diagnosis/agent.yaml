@@ -24,7 +24,11 @@ instructions:
 
     Judge only from the evidence; do not assume exploitability the markers did not show.
 model_settings:
-  max_tokens: 3000
+  # `low` reserves 2048 budget tokens inside max_tokens, so 3000 left 952 for the
+  # answer -- and this agent's explanations run far longer than that in practice (the
+  # measured perl-cmdi diagnosis alone was several hundred tokens). 2048 + a ~3000-token
+  # answer, rounded: the same additive rule the other specs now follow.
+  max_tokens: 5120
   thinking: low
   bedrock_cache_tool_definitions: '5m'
   bedrock_cache_instructions: '1h'
