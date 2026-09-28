@@ -22,10 +22,15 @@ instructions:
       and the probe reports a false negative.
     - Construct the input from the plan's payload. Keep it minimal and confine every effect to
       the sandbox temp dir; never reach the real network or files outside it.
-    - Emit the two markers exactly as the probe-oracle-protocol skill defines: print the
-      precondition marker once you have reached the sink call, and print the oracle marker (or
-      create the canary file) only when the plan's oracle_condition holds. The runner supplies
-      the marker nonce in the task input; use it verbatim.
+    - Emit all THREE markers exactly as the probe-oracle-protocol skill defines, in this
+      order: the precondition marker once you have reached the sink call; the sink-returned
+      marker immediately after the sink call returns; and the oracle marker (or the canary
+      file) only when the plan's oracle_condition holds. The runner supplies the marker nonce
+      in the task input; use it verbatim. The sink-returned marker is not optional and is not
+      decorative: the precondition marker is printed *before* the call, so without a second
+      marker after it a probe that threw mid-call is indistinguishable from one the code
+      resisted. That produced a measured false negative on a genuinely exploitable finding,
+      which is the costliest mistake this system can make.
     - The test must run to completion whether or not the condition holds; do not rely on an
       assertion outcome to signal the verdict.
 

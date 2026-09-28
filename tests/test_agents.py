@@ -194,3 +194,44 @@ def test_no_spec_asks_for_more_thinking_than_its_own_token_ceiling_allows():
             f"(the answer share this agent needs, plus {budget}) or lower the thinking level."
         )
     assert checked >= 10, f"only {checked} specs declared a thinking level; the schema changed"
+
+
+def test_the_probe_writing_agents_are_told_about_the_sink_returned_marker():
+    """The marker count in a prompt must not drift from the protocol it points at.
+
+    `probe-author` and `probe-repair` both said "the two markers" long after the protocol
+    defined three. The sink-returned marker was added later, as the fix for a measured false
+    negative on javascript-cmdi-vulnerable: the precondition marker prints *before* the sink
+    call, so without a second marker after it, a probe that threw mid-call is indistinguishable
+    from one the code resisted. An agent told there are two markers can silently drop the one
+    that prevents this system's costliest error.
+
+    Deliberately checks the prompts rather than the skill: the skill was always correct, and it
+    is the prompt that told them otherwise.
+    """
+    import pathlib
+
+    import yaml
+
+    for name in ("probe-author", "probe-repair"):
+        spec = yaml.safe_load(pathlib.Path(f"agents/{name}/agent.yaml").read_text())
+        text = " ".join(spec["instructions"]).lower()
+        assert "two markers" not in text, (
+            f"{name}: says 'two markers', but probe-oracle-protocol defines three "
+            "(precondition, sink-returned, oracle)"
+        )
+        assert "sink-returned" in text or "sink_returned" in text, (
+            f"{name} writes probe source but is never told to emit the sink-returned marker; "
+            "without it a probe that threw mid-call reads as a clean negative"
+        )
+
+
+def test_the_protocol_skill_still_defines_exactly_the_three_markers_the_prompts_promise():
+    """Guards the other direction: if the protocol ever changes its marker set, the test above
+    stops meaning anything, so tie the prompts' promise to the skill's own text."""
+    import pathlib
+
+    protocol = pathlib.Path("skills/probe-oracle-protocol/SKILL.md").read_text()
+    assert "## The three markers" in protocol
+    for marker in ("HARNESS_PRECONDITION::", "HARNESS_SINK_RETURNED::", "HARNESS_ORACLE::"):
+        assert marker in protocol, f"{marker} missing from the protocol skill"

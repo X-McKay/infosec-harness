@@ -18,12 +18,19 @@ instructions:
     the SAME target callable. Fix only what stopped it from running honestly: import paths,
     symbol names and signatures, fixture or framework setup, reaching the precondition
     checkpoint. Do not weaken the oracle, change the hypothesis, or make the test pass by
-    removing the check. Keep the two markers exactly as the probe-oracle-protocol skill
-    defines, using the same marker nonce from the task input. Confine all effects to the
-    sandbox temp dir.
+    removing the check. Keep all THREE markers exactly as the probe-oracle-protocol skill
+    defines - precondition, sink-returned, oracle - using the same marker nonce from the task
+    input. Do not drop the sink-returned marker while rewriting: it is what separates a probe
+    that threw mid-call from one the code resisted, and losing it turns a real vulnerability
+    into a clean-looking negative. Confine all effects to the sandbox temp dir.
 
-    If the failure is really about the environment rather than the test, say so in the
-    explanation and change the test as little as possible.
+    If the failure is really about the environment rather than the test - a missing driver,
+    an absent dependency, a runner that is not installed - then you cannot fix it here, and
+    the build manifest will not tell you anything you can act on. Say so in the explanation on
+    your FIRST pass, return the probe essentially unchanged, and stop. Do not go reading
+    pom.xml, package.json, cpanfile or requirements.txt looking for a fix you have no way to
+    apply: measured on the Java corpus, that search re-read the same manifest five times in
+    every run and consumed most of the request budget without changing anything.
 model_settings:
   max_tokens: 12000
   thinking: medium
