@@ -66,15 +66,27 @@ def _env_plan(stack: dict | None) -> dict:
         # 3.x binds to the `test` phase is 2.12.4, which has no JUnit Platform provider, and a
         # phase-bound plugin version cannot be overridden from the command line. The build warms
         # the pinned plugin and its provider into the local repo so the probe run can be offline.
+        # The second install command writes a throwaway JUnit 5 test and *runs* it, then removes
+        # it. Merely invoking the plugin with nothing to run (`-DfailIfNoTests=false`) is not
+        # enough: surefire resolves its provider lazily at test-execution time, from the JUnit
+        # version on the test classpath, so the warm-up downloaded the plugin and all of its own
+        # dependencies and the offline probe still died on `surefire-junit-platform:jar:3.2.5
+        # (absent)`. Verified against eval-corpus/java: with the real run, the offline probe
+        # passes in a --network=none container; without it, all four cases fail.
         return {"base_image": "maven:3.9-eclipse-temurin-21",
                 # -Dmaven.repo.local is not optional: Maven reads user.home, which is /root for
                 # the sandbox user's unmapped uid. Build writes under /opt/home; the probe reads
                 # the /work/home copy of it.
                 "install_commands": [
                     "mvn -B -Dmaven.repo.local=/opt/home/.m2/repository -DskipTests test-compile",
-                    "mvn -B -Dmaven.repo.local=/opt/home/.m2/repository "
+                    "mkdir -p src/test/java && echo 'import org.junit.jupiter.api.Test; class "
+                    "HarnessWarmupTest { @Test void warm() {} }' > "
+                    "src/test/java/HarnessWarmupTest.java && "
+                    "mvn -B -Dmaven.repo.local=/opt/home/.m2/repository test-compile "
                     "org.apache.maven.plugins:maven-surefire-plugin:3.2.5:test "
-                    "-DfailIfNoTests=false"],
+                    "-Dtest=HarnessWarmupTest && "
+                    "rm -f src/test/java/HarnessWarmupTest.java "
+                    "target/test-classes/HarnessWarmupTest.class"],
                 "test_command": ("mvn -B -o -Dmaven.repo.local=/work/home/.m2/repository "
                                  "test-compile "
                                  "org.apache.maven.plugins:maven-surefire-plugin:3.2.5:test "

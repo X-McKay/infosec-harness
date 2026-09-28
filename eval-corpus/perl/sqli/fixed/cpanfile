@@ -1,1 +1,9 @@
 requires 'DBI';
+
+# UserDao takes a handle rather than opening one, so the module itself is driver-agnostic — but
+# any test that exercises it has to pick a driver. A real repo declares that here, and
+# `cpanm --installdeps .` installs test requirements by default. Without it a probe fails with
+# "install_driver(SQLite) failed: Can't locate DBD/SQLite.pm" and the finding scores inconclusive.
+on 'test' => sub {
+    requires 'DBD::SQLite';
+};

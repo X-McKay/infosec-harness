@@ -50,6 +50,14 @@ metadata:
     extensions; without `gcc`/`make`/`libc6-dev` cpanm reports `Building DBI ... FAIL`. Add the
     library's own `-dev` package too where one is needed (`libmysqlclient-dev`, `libxml2-dev`).
 
+  **Install test requirements, not just runtime ones.** `cpanm --installdeps .` covers a
+  `cpanfile`'s `on 'test'` block by default — keep it that way. A module that takes a database
+  handle rather than opening one declares no driver, so the driver a probe needs
+  (`DBD::SQLite`, `DBD::Pg`) is a *test* dependency. If the repo declares none and the probe
+  needs one, add it to `system_packages`/`install_commands` yourself rather than letting the
+  probe fail with `install_driver(...) failed: Can't locate DBD/...`; that failure looks like a
+  probe defect and is not one.
+
   `prove` ships with perl core as part of Test-Harness — do **not** try to install `App::prove`,
   which is not a distribution and fails the build. Add `--mirror <url>` only for a mirror the
   repo declares.

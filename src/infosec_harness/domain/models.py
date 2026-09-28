@@ -333,6 +333,11 @@ class ProbeExecution(_Model):
     # The sink call returned. `precondition_reached` is printed before the call, so without
     # this a probe that threw mid-call looks exactly like one the code resisted.
     sink_returned: bool = False
+    # Set when the test runner's own output says it executed zero tests (see
+    # sandbox.docker.no_tests_executed). A zero-test run is a probe defect, never a negative
+    # result: nothing exercised the sink. Naming it deterministically keeps the diagnosis agent
+    # from having to infer "did not run" from a bare exit code, which it gets wrong.
+    runner_reported_no_tests: str | None = None
     stdout_tail: str = ""
     stderr_tail: str = ""
     duration_s: float = 0.0

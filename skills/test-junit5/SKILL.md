@@ -71,6 +71,11 @@ class HarnessProbeTest {
   `./gradlew --offline -i test --tests '*HarnessProbeTest'`. Both shapes are deliberate and the
   reasons are in build-maven and build-gradle: Maven's default Surefire cannot see a JUnit 5
   test at all, and both runners hide a test's stdout unless told not to.
+- **If the Maven run fails on `surefire-junit-platform:jar:… (absent)`, the probe is not the
+  problem — the build is.** Surefire resolves that provider at test-execution time, so the
+  `-o` run can only find it if the build already warmed it by *running* a test. That is a
+  build-repair fix, not a probe-repair one; build-maven has the warm-up command. Do not respond
+  by rewriting the probe, and do not relax the offline flag: the probe container has no network.
 - For a canary oracle, let the payload create `/tmp/harness_canary_<nonce>`; assert nothing.
 
 ## Never skip or disable the probe

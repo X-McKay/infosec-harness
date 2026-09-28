@@ -38,15 +38,23 @@ metadata:
   model_policy: balanced-v1
   evaluation_policy: agents/recon/evals/release-policy.yaml
   # A runtime brake, not an operating target. max_requests and max_tool_calls are the
-  # operative limits: cumulative input grows with every turn, and max_output_tokens is
-  # set to max_requests x the per-call cap (the larger of model_settings.max_tokens and
-  # the backend's min_max_tokens). A lower output ceiling is not a brake but a coin
-  # flip that fires whenever the model is verbose. Enforced via UsageLimits; the
-  # relationship is asserted in tests/test_budgets.py.
+  # operative limits; both token ceilings are DERIVED from max_requests rather than set
+  # from observed usage, because a healthy run may legitimately make that many calls:
+  #   max_output_tokens = max_requests x the per-call output cap (the larger of
+  #     model_settings.max_tokens and the backend's min_max_tokens)
+  #   max_input_tokens  = max_requests x max_input_tokens_per_request, because
+  #     pydantic-ai's input_tokens_limit is CUMULATIVE over the run and every request
+  #     resends the whole history, so cumulative input grows quadratically in turns
+  # max_input_tokens_per_request is the ceiling that actually brakes an oversized context
+  # (UsageLimits.per_request_input_tokens_limit). A ceiling below its own arithmetic worst
+  # case is not a brake but a coin flip that fires whenever the model is verbose or
+  # explores. Enforced via UsageLimits; both derivations are asserted in
+  # tests/test_budgets.py.
   budgets:
     max_requests: 12
     max_tool_calls: 48
-    max_input_tokens: 60000
+    max_input_tokens_per_request: 60000
+    max_input_tokens: 720000
     max_output_tokens: 192000
     max_cost_usd: 0.4
   enabled_skills:
@@ -56,6 +64,11 @@ metadata:
     - lang-perl
   enabled_toolsets:
     - repo-read-only
+  # Bound the history, not just the ceiling: every request resends the whole conversation,
+  # so a retained tool result is paid for again on every later turn. See probe-author's spec
+  # for the measurement. Inert on a healthy run (the trigger is far above any observed
+  # history) and the agent can re-read anything it still needs.
+  clear_tool_results: true
 capabilities:
   - Skills:
       directories: skills

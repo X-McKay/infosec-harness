@@ -33,8 +33,8 @@ def test_a_spec_without_a_budget_fails_loudly():
 
 def test_a_zero_or_negative_ceiling_is_rejected():
     """A limit of zero is not a limit; it is a disabled agent, which is never intended."""
-    base = {"max_requests": 4, "max_tool_calls": 4, "max_input_tokens": 100,
-            "max_output_tokens": 100, "max_cost_usd": 0.1}
+    base = {"max_requests": 4, "max_tool_calls": 4, "max_input_tokens_per_request": 100,
+            "max_input_tokens": 400, "max_output_tokens": 100, "max_cost_usd": 0.1}
     for field in base:
         with pytest.raises(ValidationError):
             RunBudget.model_validate({**base, field: 0})
@@ -44,8 +44,30 @@ def test_budgets_reach_pydantic_ai_as_usage_limits():
     limits = usage_limits_for("probe-author", load_spec("probe-author").metadata)
     assert limits.request_limit == 16
     assert limits.tool_calls_limit == 64
-    assert limits.input_tokens_limit == 120_000
+    # The per-request ceiling is the context brake; the cumulative one is its worst case.
+    assert limits.per_request_input_tokens_limit == 120_000
+    assert limits.input_tokens_limit == 16 * 120_000
     assert float(limits.cost_limit) == pytest.approx(1.0)
+
+
+def test_the_per_request_input_ceiling_is_wired_to_the_per_request_limit():
+    """It must not land on `input_tokens_limit`, which pydantic-ai sums over the whole run.
+
+    This is the defect the Java corpus surfaced as `input_tokens_limit of 120000 exceeded`:
+    the numbers were calibrated against a single healthy call (see the companion test below)
+    but wired to the cumulative limit, which every request in a run adds to because each one
+    resends the whole conversation. A 16-request agent therefore had ~7.5k of cumulative
+    input per request, while its measured per-request floor on a Java case — instructions,
+    tool schemas and task input, before any tool result — is already ~3.2k.
+    """
+    for name in AGENT_BINDINGS:
+        budget = run_budget(name, load_spec(name).metadata)
+        limits = usage_limits_for(name, load_spec(name).metadata)
+        assert limits.per_request_input_tokens_limit == budget.max_input_tokens_per_request, name
+        assert limits.input_tokens_limit != budget.max_input_tokens_per_request, (
+            f"{name}: the per-request ceiling is on the cumulative limit, which every request "
+            "in the run adds to"
+        )
 
 
 def test_cost_ceiling_is_decimal_so_it_is_exact():
@@ -66,17 +88,49 @@ def test_limits_are_precomputed_for_every_agent_the_workflow_can_run():
 def test_a_budget_leaves_room_for_the_measured_worst_case():
     """A ceiling below observed normal operation would fail healthy runs.
 
-    The maxima are from the live-model corpus runs recorded in docs/LIVE_VALIDATION.md.
+    The maxima are from the live-model corpus runs recorded in docs/LIVE_VALIDATION.md, and
+    they are *single-call* observations — so the field they belong against is the per-request
+    ceiling. Comparing them with the cumulative ceiling is what made a 16-request agent look
+    like it had 12x headroom when it had less than half a request's worth per call.
     """
     observed_max_input = {"context": 3438, "env-planner": 6019, "probe-author": 9695,
                           "probe-diagnosis": 3718, "probe-planner": 6886, "recon": 2300,
                           "verdict": 6830}
     for name, observed in observed_max_input.items():
         budget = run_budget(name, load_spec(name).metadata)
-        assert budget.max_input_tokens > observed * 2, (
-            f"{name}: budget {budget.max_input_tokens} leaves little headroom over the "
-            f"{observed} tokens measured in a single healthy call"
+        assert budget.max_input_tokens_per_request > observed * 2, (
+            f"{name}: per-request budget {budget.max_input_tokens_per_request} leaves little "
+            f"headroom over the {observed} tokens measured in a single healthy call"
         )
+
+
+def test_the_cumulative_input_ceiling_is_not_below_the_runs_arithmetic_worst_case():
+    """`input_tokens_limit` is summed over the run, so it must be derived from max_requests.
+
+    Same shape as the output-ceiling invariant below, and the same root cause: a ceiling set
+    from what one call was observed to use, while the run is allowed `max_requests` of them.
+    Live on the Java corpus this fired as `input_tokens_limit of 120000` on a repository whose
+    entire source is 1.3 kB — not a runaway, just a run that used the turns it was given.
+    Deriving the ceiling keeps `max_requests` the operative brake and leaves the per-request
+    ceiling as the one that catches an oversized context.
+    """
+    for name in AGENT_BINDINGS:
+        budget = run_budget(name, load_spec(name).metadata)
+        assert budget.max_input_tokens >= budget.worst_case_input_tokens, (
+            f"{name}: max_input_tokens {budget.max_input_tokens} is below the worst case "
+            f"{budget.max_requests} requests x {budget.max_input_tokens_per_request} tokens = "
+            f"{budget.worst_case_input_tokens}, so the ceiling can fire on a healthy run"
+        )
+
+
+def test_raising_the_request_budget_is_caught_by_the_cumulative_input_invariant():
+    """The two are coupled; the invariant above must be load-bearing, not incidentally true."""
+    budget = run_budget("probe-author", load_spec("probe-author").metadata)
+    doubled = budget.model_copy(update={"max_requests": budget.max_requests * 2})
+    assert doubled.max_input_tokens < doubled.worst_case_input_tokens, (
+        "this test exists to show the derivation is enforced: raising max_requests without "
+        "raising max_input_tokens would put the ceiling back under its own worst case"
+    )
 
 
 def test_the_output_ceiling_is_not_below_the_runs_arithmetic_worst_case():
@@ -172,4 +226,42 @@ def test_an_agent_with_no_tools_keeps_a_tight_ceiling():
         budget = spec["metadata"]["budgets"]
         assert budget["max_tool_calls"] <= 8, (
             f"{name} exposes no tools; a large tool-call ceiling brakes nothing"
+        )
+
+
+# Toolsets that return content into the history, where it is resent on every later request.
+READ_TOOL_CAPABILITIES = {"RepoReadOnly", "SandboxShell"}
+
+
+def test_an_agent_that_accumulates_tool_results_bounds_its_history():
+    """A ceiling on input is not a bound on the history that produces it.
+
+    probe-author and probe-repair breached the cumulative input ceiling on the Java corpus
+    while build-repair and partial-build — same 16-request budget, strictly larger tool
+    surface, bigger tool results — did not, and the one thing that differed was compaction.
+    Without it, per-request input grows with turn count (measured on
+    eval-corpus/java/sqli/vulnerable: 12.8 kB at turn 1, 116 kB at turn 19, on a repository
+    whose entire source is 1.3 kB), so *any* per-request ceiling is eventually reached by a
+    run that merely keeps working. Raising the ceiling moves that point; bounding the history
+    removes it. The rule has no threshold on purpose — a cutoff would only say which agent is
+    allowed to grow unboundedly next.
+    """
+    import yaml
+
+    from infosec_harness.agents.registry import DEFAULT_CLEAR_TOOL_TOKENS, spec_path
+
+    for name in AGENT_BINDINGS:
+        spec = yaml.safe_load(spec_path(name).read_text())
+        meta = spec["metadata"]
+        if not (_capability_names(spec) & READ_TOOL_CAPABILITIES):
+            continue  # no tool results to accumulate
+        assert meta.get("clear_tool_results"), (
+            f"{name} may make {meta['budgets']['max_requests']} requests with read tools and "
+            "nothing bounds the history it resends on each one"
+        )
+        trigger = meta.get("clear_tool_tokens", DEFAULT_CLEAR_TOOL_TOKENS)
+        assert trigger < meta["budgets"]["max_input_tokens_per_request"], (
+            f"{name}: compaction triggers at {trigger} tokens, at or above the per-request "
+            f"ceiling {meta['budgets']['max_input_tokens_per_request']} — the ceiling fires "
+            "first and the compaction never runs"
         )

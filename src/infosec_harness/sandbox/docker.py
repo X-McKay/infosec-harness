@@ -325,6 +325,47 @@ def sink_returned(output: str, nonce: str) -> bool:
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
+# A runner that executed *no test at all* is categorically different from one that ran the
+# probe and saw the oracle stay silent -- the first is a probe defect, the second is evidence.
+# Both leave the three markers unprinted, so without naming the difference the diagnosis agent
+# has to guess from a bare exit code. Measured: perl-cmdi-vulnerable produced
+# `t/...t .. skipped: (no reason given)` with exit 255 and an EMPTY stderr; the agent guessed
+# "file not written correctly", repaired the wrong thing, and burned its whole repair budget to
+# `inconclusive` on a case that is genuinely exploitable. Each signature below is a phrase the
+# runner itself prints when it ran zero tests; they are quoted verbatim from real output.
+_NO_TESTS_SIGNATURES: tuple[tuple[str, str], ...] = (
+    # prove / TAP::Harness. "skipped: (no reason given)" is a `1..0` plan with no SKIP
+    # directive; "Result: NOTESTS" is prove's own summary for the same thing.
+    ("skipped: (no reason given)", "prove: the test file emitted a zero-test plan (1..0)"),
+    ("Result: NOTESTS", "prove: no tests were run"),
+    ("you planned 1 tests but ran 0", "prove: the plan promised tests that never ran"),
+    # pytest
+    ("no tests ran", "pytest: no tests ran"),
+    ("collected 0 items", "pytest: collected 0 items"),
+    # Maven Surefire
+    ("Tests run: 0", "surefire: ran 0 tests"),
+    ("No tests to run", "surefire: found no tests to run"),
+    # Jest
+    ("No tests found", "jest: found no test files"),
+    ("Tests:       0 total", "jest: ran 0 tests"),
+)
+
+
+def no_tests_executed(output: str) -> str | None:
+    """Name the runner's own evidence that it executed zero tests, or None.
+
+    Pure and deterministic, so the diagnosis agent is told *what happened* instead of inferring
+    it from an exit code. A zero-test run is never a negative result: nothing exercised the
+    sink, so it says nothing about exploitability. Callers put the returned phrase on
+    `ProbeExecution.runner_reported_no_tests`, which is serialised into the diagnosis, repair,
+    and verdict prompts.
+    """
+    for signature, reason in _NO_TESTS_SIGNATURES:
+        if signature in output:
+            return f"{reason} (matched {signature!r}). Zero tests ran, so this is not a negative result."
+    return None
+
+
 def tail(text: str, limit: int = 4000) -> str:
     text = _ANSI.sub("", text)
     return text[-limit:]
@@ -360,6 +401,7 @@ __all__ = [
     "docker_available",
     "image_exists",
     "image_tag_for",
+    "no_tests_executed",
     "oracle_signals",
     "render_dockerfile",
     "run_probe",

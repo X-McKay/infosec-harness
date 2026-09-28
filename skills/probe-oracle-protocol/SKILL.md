@@ -92,6 +92,20 @@ comments, or inside the payload text — emit each only at its real moment.
 - **Confine effects to the sandbox.** The probe runs with no network. Any file effect must
   stay under the sandbox temp dir (`/tmp`). Never target real hosts, credentials, or paths
   outside the sandbox.
+- **A run that executed zero tests is never a negative result.** If the runner reports it
+  ran nothing — `prove`'s `skipped: (no reason given)` (a bare `1..0` plan), pytest's
+  `collected 0 items`, Surefire's `Tests run: 0`, Jest's `No tests found` — then nothing
+  exercised the sink, so the run says nothing about exploitability. Classify it
+  `probe_defect`, never `valid_negative`. The harness detects these phrases deterministically
+  and puts the reason on `probe_execution.runner_reported_no_tests`; when that field is set,
+  believe it over any inference you would draw from the exit code. It is set precisely because
+  the alternative was measured to fail: on `perl-cmdi-vulnerable` the runner printed
+  `skipped: (no reason given)` with exit 255 and an **empty stderr**, the diagnosis guessed
+  "the file was not written correctly", the repair loop fixed the wrong thing, and a genuinely
+  exploitable finding came back `inconclusive`. A zero-test run has a short list of real
+  causes — the file is not where the runner looks, the selector matches no test, the plan was
+  emitted before the assertions, or the module failed to load — so say which and repair that.
+
 - **Judge the observable effect, not the payload.** The oracle condition is about what the
   code *did* with the input (query not parameterized, value returned unescaped, command
   executed), not merely that you sent a suspicious-looking string.

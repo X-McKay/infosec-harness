@@ -20,7 +20,8 @@ interactions:
     budget:
       max_requests: 4
       max_tool_calls: 16
-      max_input_tokens: 20000
+      max_input_tokens_per_request: 20000
+      max_input_tokens: 80000
       max_output_tokens: 64000
       max_cost_usd: 0.25
     retry:
@@ -46,7 +47,8 @@ interactions:
     budget:
       max_requests: 12
       max_tool_calls: 48
-      max_input_tokens: 60000
+      max_input_tokens_per_request: 60000
+      max_input_tokens: 720000
       max_output_tokens: 192000
       max_cost_usd: 0.4
     retry:
@@ -72,7 +74,8 @@ interactions:
     budget:
       max_requests: 12
       max_tool_calls: 48
-      max_input_tokens: 80000
+      max_input_tokens_per_request: 80000
+      max_input_tokens: 960000
       max_output_tokens: 192000
       max_cost_usd: 0.5
     retry:
@@ -98,7 +101,8 @@ interactions:
     budget:
       max_requests: 16
       max_tool_calls: 64
-      max_input_tokens: 250000
+      max_input_tokens_per_request: 250000
+      max_input_tokens: 4000000
       max_output_tokens: 256000
       max_cost_usd: 1.5
     retry:
@@ -124,7 +128,8 @@ interactions:
     budget:
       max_requests: 16
       max_tool_calls: 64
-      max_input_tokens: 250000
+      max_input_tokens_per_request: 250000
+      max_input_tokens: 4000000
       max_output_tokens: 256000
       max_cost_usd: 1.5
     retry:
@@ -150,7 +155,8 @@ interactions:
     budget:
       max_requests: 10
       max_tool_calls: 40
-      max_input_tokens: 60000
+      max_input_tokens_per_request: 60000
+      max_input_tokens: 600000
       max_output_tokens: 160000
       max_cost_usd: 0.5
     retry:
@@ -176,7 +182,8 @@ interactions:
     budget:
       max_requests: 8
       max_tool_calls: 32
-      max_input_tokens: 40000
+      max_input_tokens_per_request: 40000
+      max_input_tokens: 320000
       max_output_tokens: 128000
       max_cost_usd: 0.6
     retry:
@@ -202,7 +209,8 @@ interactions:
     budget:
       max_requests: 16
       max_tool_calls: 64
-      max_input_tokens: 120000
+      max_input_tokens_per_request: 120000
+      max_input_tokens: 1920000
       max_output_tokens: 256000
       max_cost_usd: 1.0
     retry:
@@ -228,7 +236,8 @@ interactions:
     budget:
       max_requests: 16
       max_tool_calls: 64
-      max_input_tokens: 120000
+      max_input_tokens_per_request: 120000
+      max_input_tokens: 1920000
       max_output_tokens: 256000
       max_cost_usd: 1.0
     retry:
@@ -254,7 +263,8 @@ interactions:
     budget:
       max_requests: 6
       max_tool_calls: 24
-      max_input_tokens: 30000
+      max_input_tokens_per_request: 30000
+      max_input_tokens: 180000
       max_output_tokens: 96000
       max_cost_usd: 0.5
     retry:
@@ -280,7 +290,8 @@ interactions:
     budget:
       max_requests: 8
       max_tool_calls: 4
-      max_input_tokens: 30000
+      max_input_tokens_per_request: 30000
+      max_input_tokens: 240000
       max_output_tokens: 128000
       max_cost_usd: 0.5
     retry:

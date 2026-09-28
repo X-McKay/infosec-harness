@@ -144,6 +144,10 @@ async def execute_probe_activity(args: dict) -> ProbeExecution:
     combined = res.stdout + "\n" + res.stderr
     oracle_fired, precondition = docker.oracle_signals(combined, nonce)
     returned = docker.sink_returned(combined, nonce)
+    # Only meaningful when the markers are absent: if the sink returned, tests plainly ran, and
+    # a runner phrase like "Tests run: 0" would be from an unrelated module in a multi-module
+    # build rather than evidence that this probe never executed.
+    no_tests = None if returned else docker.no_tests_executed(combined)
     return ProbeExecution(
         attempt=attempt,
         exit_code=res.exit_code,
@@ -151,6 +155,7 @@ async def execute_probe_activity(args: dict) -> ProbeExecution:
         oracle_fired=oracle_fired,
         precondition_reached=precondition,
         sink_returned=returned,
+        runner_reported_no_tests=no_tests,
         stdout_tail=docker.tail(res.stdout, 4000),
         stderr_tail=docker.tail(res.stderr, 4000),
         duration_s=res.duration_s,

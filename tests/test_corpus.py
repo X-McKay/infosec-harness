@@ -1,4 +1,5 @@
 """The seeded corpus stays internally consistent across all languages."""
+import pathlib
 import re
 
 import pytest
@@ -9,7 +10,9 @@ from infosec_harness.repo.detect import detect_stack
 CASES = load_corpus()
 SINK_PATTERN = {
     "CWE-89": re.compile(r"execute|selectall_arrayref|prepareStatement"),
-    "CWE-78": re.compile(r"subprocess\.run|exec|ProcessBuilder|system|`echo"),
+    # `'-|'` is Perl's list-form pipe open: still a command-execution sink, but argv-form,
+    # so it is what a correct CWE-78 fix looks like rather than an absence of a sink.
+    "CWE-78": re.compile(r"subprocess\.run|exec|ProcessBuilder|system|`echo|'-\|'"),
     "CWE-22": re.compile(r"open\("),
     "CWE-79": re.compile(r"<div"),
     "CWE-94": re.compile(r"eval\("),  # eval / ast.literal_eval
@@ -83,6 +86,50 @@ def test_paired_variants_differ_at_the_sink():
         vsrc = (v.repo_path / v.finding.file_path).read_text()
         fsrc = (f.repo_path / f.finding.file_path).read_text()
         assert vsrc != fsrc, f"{base}: vulnerable and fixed are identical"
+
+
+def test_fixed_variant_keeps_every_public_callable_the_vulnerable_one_exposes():
+    """A pair must differ only in the vulnerability, never in its callable contract.
+
+    One probe has to observe both variants: it establishes the precondition, calls the sink,
+    records that the sink returned, and lets the oracle decide. If `fixed` renames a sub,
+    changes its arity, or (the case this caught, in perl/cmdi) returns an exit status where
+    `vulnerable` returned the command's stdout, no single probe can call both. The probe that
+    is correct for one then fails on the other and is scored a probe defect -- the harness
+    blames the agent for the corpus's own asymmetry.
+
+    The check is deliberately one-directional: a real fix often *adds* a private helper
+    (python/deserialization adds an allowlisting Unpickler subclass), which breaks nothing.
+    What it may not do is drop, rename, or re-sign anything public. Reuses the extractors
+    behind the `describe_callables` tool, so this asserts what an agent is actually told.
+    """
+    from infosec_harness.agents.capabilities import _EXTRACTORS
+
+    def public(sigs):
+        return {(n, params) for n, params in sigs if not n.split(".")[-1].startswith("_")}
+
+    by = {c.name: c for c in CASES}
+    bases = sorted({c.name.rsplit("-", 1)[0] for c in CASES if c.name.endswith("-vulnerable")})
+    assert bases, "no vulnerable/fixed pairs found; the pairing convention changed"
+    for base in bases:
+        v, f = by[f"{base}-vulnerable"], by[f"{base}-fixed"]
+        extract = _EXTRACTORS[v.language]
+        sigs = []
+        for case in (v, f):
+            rel = pathlib.Path(case.finding.file_path)
+            symbols, _ = extract((case.repo_path / rel).read_text(), rel)
+            sigs.append({(sym.name, sym.params) for sym in symbols})
+        missing = public(sigs[0]) - sigs[1]
+        assert not missing, (
+            f"{base}: the fixed variant no longer exposes {sorted(missing)} the way the "
+            f"vulnerable one does, so no single probe can observe both. Fixed exposes: "
+            f"{sorted(sigs[1])}"
+        )
+        names = {n.split("::")[-1].split(".")[-1] for n, _ in sigs[1]}
+        assert v.target_callable in names, (
+            f"{base}: the manifest names target_callable {v.target_callable!r}, which a probe "
+            f"will try to call, but the fixed variant defines only {sorted(names)}"
+        )
 
 
 def test_expected_verdicts_follow_pairing():

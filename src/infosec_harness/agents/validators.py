@@ -425,8 +425,75 @@ def install_path_violations(spec: EnvironmentSpec) -> list[str]:
     return problems
 
 
+# The warm-up that populates the local repository has to *execute a test*, because Surefire
+# resolves its provider lazily -- at test-execution time, from the JUnit version it finds on the
+# test classpath -- and not during dependency resolution. Two flags turn "no test ran" into a
+# success, and they are exactly what makes a warm-up a silent no-op.
+_WARMUP_NO_OPS = ("-DfailIfNoTests=false", "-Dsurefire.failIfNoTests=false",
+                  "-DfailIfNoSpecifiedTests=false", "-Dsurefire.failIfNoSpecifiedTests=false")
+# A throwaway JUnit 5 test, written and removed inside one install step, so the warm-up has
+# something to run in a project whose test tree is empty. One line of Java on purpose:
+# render_dockerfile emits each install command as a single `RUN`, so a heredoc would not survive.
+MAVEN_WARMUP_COMMAND = (
+    "mkdir -p src/test/java && echo 'import org.junit.jupiter.api.Test; class HarnessWarmupTest "
+    "{ @Test void warm() {} }' > src/test/java/HarnessWarmupTest.java && "
+    f"mvn -B -Dmaven.repo.local={BUILD_HOME}/.m2/repository test-compile "
+    "org.apache.maven.plugins:maven-surefire-plugin:3.2.5:test -Dtest=HarnessWarmupTest && "
+    "rm -f src/test/java/HarnessWarmupTest.java target/test-classes/HarnessWarmupTest.class"
+)
+
+
+def _warms_the_surefire_provider(install_commands: list[str]) -> bool:
+    """Whether some install step really runs a test under a JUnit-Platform-capable Surefire.
+
+    Invoking the pinned plugin with nothing to run is not enough, which is the whole point: it
+    downloads the plugin and every one of its own dependencies and stops there.
+    """
+    for command in install_commands or ():
+        pinned = _SUREFIRE_PIN.search(command)
+        if not pinned or int(pinned.group(1)) < 3 or ":test" not in command:
+            continue
+        if not _has_class_selector_value(command):
+            continue
+        if any(flag in command for flag in _WARMUP_NO_OPS):
+            continue
+        return True
+    return False
+
+
+def offline_warmup_violations(spec: EnvironmentSpec) -> list[str]:
+    """A Maven probe runs with no network, so the build must have fetched *everything* first.
+
+    Sibling of ``install_path_violations``: same two-phase layout, but about what is in the
+    local repository rather than where it lives. Verified against the Java corpus, where the
+    naive warm-up (`surefire:3.2.5:test -DfailIfNoTests=false`, with an empty test tree) left
+    the offline probe dying on `surefire-junit-platform:jar:3.2.5 ... has not been downloaded
+    from it before` — a build that exits 0 and a probe that reports nothing, which is the
+    failure shape neither probe repair nor build repair can see the cause of.
+    """
+    problems: list[str] = []
+    command = spec.test_command or ""
+    if "mvn" not in command:
+        return problems
+    if not _warms_the_surefire_provider(spec.install_commands):
+        problems.append(
+            "the build must warm Surefire's JUnit Platform provider by *running* a test, not by "
+            f"invoking the plugin with nothing to run: add the install command {MAVEN_WARMUP_COMMAND!r}. "
+            "Surefire resolves its provider lazily at test-execution time, from the JUnit "
+            "version on the test classpath, so a warm-up with an empty test tree (or with "
+            "-DfailIfNoTests=false, which makes 'no tests ran' a success) fetches the plugin and "
+            "all of its own dependencies and never the provider. The offline probe then fails "
+            "with \"surefire-junit-platform:jar:3.2.5 (absent) ... has not been downloaded from "
+            "it before\". Pinning the provider with dependency:get does not fix it either: the "
+            "next missing artifact is junit-platform-launcher, whose version Surefire derives "
+            "from the project's own JUnit and which no fixed artifact list can predict."
+        )
+    return problems
+
+
 def validate_environment_spec(ctx: RunContext[AgentDeps], output: EnvironmentSpec) -> EnvironmentSpec:
-    problems = environment_spec_violations(output) + install_path_violations(output)
+    problems = (environment_spec_violations(output) + install_path_violations(output)
+                + offline_warmup_violations(output))
     if problems:
         raise ModelRetry("The environment spec cannot run a probe:\n- " + "\n- ".join(problems))
     return output

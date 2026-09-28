@@ -65,6 +65,11 @@ MAVEN_COMPLETION = [
     "and so discovers no JUnit 5 test at all.",
     "`test_command` uses `-B` and never `-q`, and passes "
     "`-Dmaven.test.redirectTestOutputToFile=false`, so the probe's markers reach stdout.",
+    "An install command warms Surefire's JUnit Platform provider by *running* a test — a "
+    "throwaway JUnit 5 class written, run under the pinned goal with `-Dtest=`, and deleted — "
+    "and not merely by invoking the plugin with `-DfailIfNoTests=false`. Surefire resolves the "
+    "provider at test-execution time, so a warm-up that runs no test fetches the plugin and none "
+    "of the provider, and the offline probe fails on `surefire-junit-platform:jar:… (absent)`.",
 ]
 GRADLE_COMPLETION = [
     "`test_command` runs at the INFO log level (`-i`): Gradle's `Test` task forwards a test's "

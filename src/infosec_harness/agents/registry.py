@@ -103,6 +103,16 @@ MODEL_ACTIVITY = ActivityConfig(start_to_close_timeout=timedelta(minutes=10),
 TOOL_ACTIVITY = {"sandbox_shell": ActivityConfig(start_to_close_timeout=timedelta(minutes=5),
                                                  retry_policy=ACTIVITY_RETRY)}
 
+# History size (estimated tokens) at which `ClearToolResults` starts blanking the oldest tool
+# results, for an agent whose spec sets `metadata.clear_tool_results`. This is a *shape*
+# control rather than a budget: every request resends the whole conversation, so without it
+# per-request input grows with the turn count and any ceiling is eventually reached by an
+# agent that merely keeps working. Bounding the history is what makes
+# `budgets.max_input_tokens_per_request` a ceiling a healthy long run stays under instead of
+# drifting into. Named here so the specs, the capability and tests/test_budgets.py read one
+# number; a spec may override it with `metadata.clear_tool_tokens`.
+DEFAULT_CLEAR_TOOL_TOKENS = 40_000
+
 
 def spec_path(name: str) -> Path:
     return get_settings().agents_dir / name / "agent.yaml"
@@ -211,7 +221,8 @@ def build_agent(name: str, overlay: Mapping[str, Any] | None = None, *, durable:
         capabilities.append(RepairToolArguments())
     metadata = spec.metadata or {}
     if metadata.get("clear_tool_results"):
-        capabilities.append(ClearToolResults(max_tokens=metadata.get("clear_tool_tokens", 40_000)))
+        capabilities.append(ClearToolResults(
+            max_tokens=metadata.get("clear_tool_tokens", DEFAULT_CLEAR_TOOL_TOKENS)))
     if durable:
         capabilities.append(TemporalDurability(model_activity_config=MODEL_ACTIVITY,
                                                toolset_activity_config=TOOL_ACTIVITY))

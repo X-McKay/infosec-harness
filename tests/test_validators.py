@@ -454,7 +454,11 @@ def test_a_jvm_command_with_no_selector_is_told_to_name_a_class_not_a_path():
 def test_the_stub_models_own_specs_satisfy_the_contract():
     """The stub is the offline stand-in; if the contract rejects it, every offline test lies."""
     from infosec_harness.agents.stubs import _env_plan
-    from infosec_harness.agents.validators import environment_spec_violations
+    from infosec_harness.agents.validators import (
+        environment_spec_violations,
+        install_path_violations,
+        offline_warmup_violations,
+    )
     from infosec_harness.domain.models import EnvironmentSpec, StackFingerprint
 
     for languages, manifests in (({"python": 1}, ["requirements.txt"]),
@@ -463,7 +467,9 @@ def test_the_stub_models_own_specs_satisfy_the_contract():
                                  ({"perl": 1}, ["cpanfile"])):
         stack = StackFingerprint(languages=languages, manifests=manifests)
         spec = EnvironmentSpec.model_validate(_env_plan(stack.model_dump(mode="json")))
-        assert environment_spec_violations(spec) == [], (languages, spec.test_command)
+        problems = (environment_spec_violations(spec) + install_path_violations(spec)
+                    + offline_warmup_violations(spec))
+        assert problems == [], (languages, spec.test_command, problems)
 
 
 def test_the_stub_models_own_probes_satisfy_the_contract():
@@ -537,3 +543,116 @@ def test_the_recipe_verified_against_the_corpus_passes():
         test_command="prove -v {test_file}")
     assert environment_spec_violations(spec) == []
     assert install_path_violations(spec) == []
+
+
+# --- Maven's lazily resolved Surefire provider --------------------------------------------
+
+MAVEN_PROBE_COMMAND = (
+    "mvn -B -o -Dmaven.repo.local=/work/home/.m2/repository test-compile "
+    "org.apache.maven.plugins:maven-surefire-plugin:3.2.5:test -Dtest=HarnessProbeTest "
+    "-Dmaven.test.redirectTestOutputToFile=false"
+)
+MAVEN_COMPILE_COMMAND = "mvn -B -Dmaven.repo.local=/opt/home/.m2/repository -DskipTests test-compile"
+
+
+def test_a_maven_warmup_that_runs_no_test_is_rejected():
+    """The exact spec that scored the Java corpus 0–25%, and the exact reason it did.
+
+    Surefire resolves its *provider* at test-execution time, so invoking the pinned goal with an
+    empty test tree fetches the plugin and all of its own dependencies and stops there. The build
+    exits 0; the offline probe then dies on `surefire-junit-platform:jar:3.2.5 (absent) ... has
+    not been downloaded from it before`. Build repair never sees that failure and probe repair
+    cannot fix it, because the probe is correct — so nothing downstream can recover.
+    """
+    from infosec_harness.agents.validators import (
+        MAVEN_WARMUP_COMMAND,
+        offline_warmup_violations,
+    )
+    from infosec_harness.domain.models import EnvironmentSpec
+
+    spec = EnvironmentSpec(
+        base_image="maven:3.9-eclipse-temurin-21",
+        install_commands=[
+            MAVEN_COMPILE_COMMAND,
+            "mvn -B -Dmaven.repo.local=/opt/home/.m2/repository "
+            "org.apache.maven.plugins:maven-surefire-plugin:3.2.5:test -DfailIfNoTests=false"],
+        test_command=MAVEN_PROBE_COMMAND)
+    problems = offline_warmup_violations(spec)
+    assert any("surefire-junit-platform" in p for p in problems)
+    assert any(MAVEN_WARMUP_COMMAND in p for p in problems), (
+        "the violation must name the corrected install command, not just the symptom"
+    )
+
+
+def test_failifnotests_disqualifies_a_warmup_even_with_a_selector():
+    """`-DfailIfNoTests=false` turns "no test ran" into a success, which is the whole defect.
+
+    A warm-up carrying both `-Dtest=` and that flag looks right and can still execute nothing —
+    and would then go green while leaving the provider unfetched, which is precisely the silent
+    shape this check exists to stop coming back.
+    """
+    from infosec_harness.agents.validators import offline_warmup_violations
+    from infosec_harness.domain.models import EnvironmentSpec
+
+    spec = EnvironmentSpec(
+        base_image="maven:3.9-eclipse-temurin-21",
+        install_commands=[
+            MAVEN_COMPILE_COMMAND,
+            "mvn -B -Dmaven.repo.local=/opt/home/.m2/repository "
+            "org.apache.maven.plugins:maven-surefire-plugin:3.2.5:test "
+            "-Dtest=HarnessWarmupTest -DfailIfNoTests=false"],
+        test_command=MAVEN_PROBE_COMMAND)
+    assert offline_warmup_violations(spec) != []
+
+
+def test_a_2_12_4_warmup_does_not_count_as_warming_the_provider():
+    """Surefire 2.12.4 has no JUnit Platform provider, so running a test under it warms nothing."""
+    from infosec_harness.agents.validators import offline_warmup_violations
+    from infosec_harness.domain.models import EnvironmentSpec
+
+    spec = EnvironmentSpec(
+        base_image="maven:3.9-eclipse-temurin-21",
+        install_commands=[
+            MAVEN_COMPILE_COMMAND,
+            "mvn -B -Dmaven.repo.local=/opt/home/.m2/repository "
+            "org.apache.maven.plugins:maven-surefire-plugin:2.12.4:test -Dtest=HarnessWarmupTest"],
+        test_command=MAVEN_PROBE_COMMAND)
+    assert offline_warmup_violations(spec) != []
+
+
+def test_a_non_maven_spec_is_not_asked_to_warm_surefire():
+    """The check must stay silent for every other stack, or it fails good specs."""
+    from infosec_harness.agents.validators import (
+        GRADLE_TEST_COMMAND,
+        offline_warmup_violations,
+    )
+    from infosec_harness.domain.models import EnvironmentSpec
+
+    for base, command in (("python:3.12-slim", "python -m pytest -q -s {test_file}"),
+                          ("perl:5.38-slim", "prove -v {test_file}"),
+                          ("gradle:8-jdk21", GRADLE_TEST_COMMAND)):
+        spec = EnvironmentSpec(base_image=base, test_command=command)
+        assert offline_warmup_violations(spec) == [], command
+
+
+def test_the_maven_recipe_verified_against_the_corpus_passes():
+    """This exact spec was built and probed for all four Java corpus cases.
+
+    The image came from the harness's own ``render_dockerfile``; the probe ran under gVisor with
+    ``--network=none`` and ``--read-only``, exited 0, and its HARNESS_ markers reached stdout.
+    """
+    from infosec_harness.agents.validators import (
+        MAVEN_WARMUP_COMMAND,
+        environment_spec_violations,
+        install_path_violations,
+        offline_warmup_violations,
+    )
+    from infosec_harness.domain.models import EnvironmentSpec
+
+    spec = EnvironmentSpec(
+        base_image="maven:3.9-eclipse-temurin-21",
+        install_commands=[MAVEN_COMPILE_COMMAND, MAVEN_WARMUP_COMMAND],
+        test_command=MAVEN_PROBE_COMMAND)
+    assert environment_spec_violations(spec) == []
+    assert install_path_violations(spec) == []
+    assert offline_warmup_violations(spec) == []

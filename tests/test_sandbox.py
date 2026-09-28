@@ -107,3 +107,47 @@ async def test_a_bare_image_tag_still_works(monkeypatch):
 
     monkeypatch.setattr(docker, "run_shell", fake_shell, raising=True)
     assert (await smoke_test_activity("img")).ok is True
+
+
+# Captured from a real `prove -v` run on a probe whose test file emitted a zero-test plan and
+# then died: this is verbatim what the harness saw on perl-cmdi-vulnerable, empty stderr and all.
+PROVE_ZERO_TESTS = """t/injection_os_command_runner.t .. skipped: (no reason given)
+
+Test Summary Report
+-------------------
+t/injection_os_command_runner.t (Wstat: 65280 Tests: 0 Failed: 0)
+  Non-zero exit status: 255
+Files=1, Tests=0,  0 wallclock secs
+Result: FAIL
+"""
+
+
+def test_a_zero_test_run_is_named_not_left_to_be_inferred():
+    reason = docker.no_tests_executed(PROVE_ZERO_TESTS)
+    assert reason is not None, "prove's own zero-plan phrasing must be recognised"
+    assert "zero-test plan" in reason
+    # The point of the field: say outright that this is not evidence of non-exploitability.
+    assert "not a negative result" in reason
+
+
+def test_a_probe_that_really_ran_reports_no_zero_test_signature():
+    nonce = "n0nce"
+    ran = (f"t/x.t .. ok\n{docker.PRECONDITION_PREFIX}{nonce}\n"
+           f"{docker.SINK_RETURNED_PREFIX}{nonce}\nFiles=1, Tests=2\nResult: PASS\n")
+    assert docker.no_tests_executed(ran) is None
+
+
+def test_every_supported_runner_has_a_zero_test_signature():
+    """Each runner the harness can drive must be recognisable when it runs nothing.
+
+    Without this the gap is silent: a new runner's zero-test output falls through and the
+    diagnosis agent goes back to guessing from the exit code.
+    """
+    samples = {
+        "prove": "t/x.t .. skipped: (no reason given)\nResult: FAIL\n",
+        "pytest": "collected 0 items\n\nno tests ran in 0.01s\n",
+        "surefire": "[INFO] Tests run: 0, Failures: 0, Errors: 0, Skipped: 0\n",
+        "jest": "No tests found, exiting with code 1\n",
+    }
+    for runner, output in samples.items():
+        assert docker.no_tests_executed(output) is not None, f"{runner} zero-test run unrecognised"
