@@ -14,6 +14,7 @@ from pydantic_ai import ModelRetry, RunContext
 from infosec_harness.agents.deps import AgentDeps
 from infosec_harness.domain.models import (
     DiagnosisKind,
+    EnvironmentSpec,
     InconclusiveReason,
     ProbeSource,
     Reachability,
@@ -73,8 +74,52 @@ def validate_probe(ctx: RunContext[AgentDeps], output: ProbeSource) -> ProbeSour
     return output
 
 
+# pytest buffers stdout unless told not to, and the oracle markers are stdout. Either of
+# these disables that capture.
+_PYTEST_UNBUFFERED = ("-s", "--capture=no", "--capture no")
+
+
+def environment_spec_violations(spec: EnvironmentSpec) -> list[str]:
+    """Deterministic requirements on a test command. Pure, so evals and tests can check it.
+
+    Both of these were produced by a live model and both silently destroyed a run, because
+    neither the probe nor the diagnosis can see the cause: the probe looks correct, exits
+    cleanly, and reports nothing.
+    """
+    problems: list[str] = []
+    command = spec.test_command or ""
+    if "{test_file}" not in command:
+        # The harness writes the probe to the path the author chose and substitutes it here.
+        # A hardcoded path means the probe file that was actually written is never run: pytest
+        # reports "file or directory not found" and exits 4, having executed no test.
+        problems.append(
+            "test_command must contain the literal placeholder {test_file}; the harness "
+            "substitutes the probe's real path into it. Replace the hardcoded test path with "
+            "{test_file}, e.g. 'python -m pytest -q -s {test_file}'."
+        )
+    if "pytest" in command and not any(flag in command for flag in _PYTEST_UNBUFFERED):
+        # Without this the probe runs, passes, and prints its markers into pytest's capture
+        # buffer, so the harness sees precondition_reached=false on a probe that was correct.
+        problems.append(
+            "a pytest test_command must disable output capture with -s (or --capture=no), "
+            "otherwise the probe's HARNESS_ markers never reach the runner and a correct "
+            "probe is recorded as having reached nothing."
+        )
+    return problems
+
+
+def validate_environment_spec(ctx: RunContext[AgentDeps], output: EnvironmentSpec) -> EnvironmentSpec:
+    problems = environment_spec_violations(output)
+    if problems:
+        raise ModelRetry("The environment spec cannot run a probe:\n- " + "\n- ".join(problems))
+    return output
+
+
 OUTPUT_VALIDATORS: dict[str, tuple[Callable[[RunContext[AgentDeps], Any], Any], ...]] = {
     "verdict": (validate_verdict,),
     "probe-author": (validate_probe,),
     "probe-repair": (validate_probe,),
+    "env-planner": (validate_environment_spec,),
+    "build-repair": (validate_environment_spec,),
+    "partial-build": (validate_environment_spec,),
 }

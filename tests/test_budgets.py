@@ -77,3 +77,47 @@ def test_a_budget_leaves_room_for_the_measured_worst_case():
             f"{name}: budget {budget.max_input_tokens} leaves little headroom over the "
             f"{observed} tokens measured in a single healthy call"
         )
+
+
+def test_the_output_ceiling_is_not_below_the_runs_arithmetic_worst_case():
+    """An output ceiling under max_requests x per-call cap fires on verbose runs, not runaway ones.
+
+    Every agent had this wrong at once, because the ceilings were set from *observed* output
+    while the per-call cap comes from the backend's min_max_tokens floor — added so a reasoning
+    model's thinking could not exhaust max_tokens before it answered. The result was an
+    intermittent UsageLimitExceeded that failed healthy prepares whenever the model happened to
+    be wordy. max_requests is the operative brake; this keeps the token ceiling consistent with
+    it rather than a lottery.
+    """
+    import yaml
+
+    from infosec_harness.agents.models import load_models_config
+    from infosec_harness.agents.registry import spec_path
+
+    floor = max(b.min_max_tokens for b in load_models_config().backends.values())
+    for name in AGENT_BINDINGS:
+        spec = yaml.safe_load(spec_path(name).read_text())
+        per_call = max((spec.get("model_settings") or {}).get("max_tokens", 0), floor)
+        budget = spec["metadata"]["budgets"]
+        worst = per_call * budget["max_requests"]
+        assert budget["max_output_tokens"] >= worst, (
+            f"{name}: max_output_tokens {budget['max_output_tokens']} is below the worst case "
+            f"{budget['max_requests']} requests x {per_call} tokens = {worst}, so the ceiling "
+            f"can fire on a healthy run"
+        )
+
+
+def test_raising_a_backends_token_floor_is_caught_by_the_invariant():
+    """The floor and the ceilings are coupled; a change to one must not silently break the other."""
+    import yaml
+
+    from infosec_harness.agents.registry import spec_path
+
+    spec = yaml.safe_load(spec_path("verdict").read_text())
+    budget = spec["metadata"]["budgets"]
+    inflated_floor = 64_000
+    worst = inflated_floor * budget["max_requests"]
+    assert budget["max_output_tokens"] < worst, (
+        "this test exists to show the invariant is load-bearing: raising a backend's "
+        "min_max_tokens without regenerating the budgets would make the ceilings too low again"
+    )

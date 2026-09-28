@@ -37,15 +37,17 @@ metadata:
   data_classification: confidential
   model_policy: balanced-v1
   evaluation_policy: agents/recon/evals/release-policy.yaml
-  # A runtime brake, not an operating target. For tool-using agents the meaningful
-  # limits are max_requests and max_tool_calls: cumulative input grows with every
-  # turn, so the token ceiling only needs to not fire in normal work. Calibrated
-  # against sandboxed runs (docs/LIVE_VALIDATION.md). Enforced via UsageLimits.
+  # A runtime brake, not an operating target. max_requests and max_tool_calls are the
+  # operative limits: cumulative input grows with every turn, and max_output_tokens is
+  # set to max_requests x the per-call cap (the larger of model_settings.max_tokens and
+  # the backend's min_max_tokens). A lower output ceiling is not a brake but a coin
+  # flip that fires whenever the model is verbose. Enforced via UsageLimits; the
+  # relationship is asserted in tests/test_budgets.py.
   budgets:
     max_requests: 12
     max_tool_calls: 30
     max_input_tokens: 60000
-    max_output_tokens: 24000
+    max_output_tokens: 192000
     max_cost_usd: 0.4
   enabled_skills:
     - lang-python

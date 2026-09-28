@@ -107,3 +107,70 @@ def test_coercion_applies_to_every_nested_object_field():
         "source": json.dumps(ref), "sink": json.dumps(ref),
     })
     assert ctx.source is not None and ctx.sink is not None
+
+
+# --- The environment spec must be able to run a probe at all -----------------------------
+
+def test_a_hardcoded_test_path_is_rejected():
+    """The harness substitutes {test_file}; a hardcoded path runs a file that does not exist.
+
+    Observed live: env-planner emitted `python -m pytest -q -s tests/test_app.py`, pytest
+    exited 4 with "file or directory not found", no test executed, and the finding was scored
+    inconclusive. Nothing downstream can diagnose this — the probe itself is fine.
+    """
+    from infosec_harness.agents.validators import environment_spec_violations
+    from infosec_harness.domain.models import EnvironmentSpec
+
+    spec = EnvironmentSpec(base_image="python:3.12-slim",
+                           test_command="python -m pytest -q -s tests/test_app.py")
+    problems = environment_spec_violations(spec)
+    assert any("{test_file}" in p for p in problems)
+
+
+def test_a_pytest_command_that_captures_output_is_rejected():
+    """Without -s the markers land in pytest's capture buffer, never in the runner's stdout.
+
+    The probe then passes, exits 0, and is recorded as having reached nothing — which
+    probe_diagnosis correctly calls a defect and probe_repair cannot fix, because the fault
+    is in the test command.
+    """
+    from infosec_harness.agents.validators import environment_spec_violations
+    from infosec_harness.domain.models import EnvironmentSpec
+
+    captured = EnvironmentSpec(base_image="python:3.12-slim",
+                              test_command="python -m pytest -q {test_file}")
+    assert any("-s" in p for p in environment_spec_violations(captured))
+    for ok in ("python -m pytest -q -s {test_file}",
+               "python -m pytest --capture=no {test_file}"):
+        spec = EnvironmentSpec(base_image="python:3.12-slim", test_command=ok)
+        assert environment_spec_violations(spec) == [], ok
+
+
+def test_non_pytest_runners_are_not_held_to_pytests_flag():
+    """Only invent a requirement where it is real: jest and prove do not capture like pytest."""
+    from infosec_harness.agents.validators import environment_spec_violations
+    from infosec_harness.domain.models import EnvironmentSpec
+
+    for command in ("npx jest {test_file}", "prove -v {test_file}",
+                    "mvn -q -Dtest={test_file} test"):
+        spec = EnvironmentSpec(base_image="node:22-slim", test_command=command)
+        assert environment_spec_violations(spec) == [], command
+
+
+def test_the_environment_agents_all_carry_the_contract():
+    """A spec from any of the three build agents reaches run_probe, so all three are bound."""
+    from infosec_harness.agents.validators import OUTPUT_VALIDATORS, validate_environment_spec
+
+    for agent in ("env-planner", "build-repair", "partial-build"):
+        assert validate_environment_spec in OUTPUT_VALIDATORS[agent], agent
+
+
+def test_the_retry_message_names_the_fix_rather_than_the_violation():
+    """A retry the model cannot act on just burns the budget (cf. verdict's inconclusive_reason)."""
+    from infosec_harness.agents.validators import environment_spec_violations
+    from infosec_harness.domain.models import EnvironmentSpec
+
+    spec = EnvironmentSpec(base_image="python:3.12-slim", test_command="python -m pytest tests/t.py")
+    joined = " ".join(environment_spec_violations(spec))
+    assert "{test_file}" in joined and "-s" in joined
+    assert "python -m pytest -q -s {test_file}" in joined  # shows the corrected command
