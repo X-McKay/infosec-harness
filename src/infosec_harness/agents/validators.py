@@ -164,10 +164,16 @@ _SUREFIRE_PIN = re.compile(r"maven-surefire-plugin:(\d+)[.:]")
 _PHASES_RUNNING_SUREFIRE = frozenset(
     {"test", "integration-test", "verify", "package", "install", "deploy"})
 _COMPILES_TESTS = "test-compile"
+# Every Maven retry message points the agent at this string, so it must itself satisfy every
+# check in this module. It did not: it omitted -Dmaven.repo.local, so an agent that copied it
+# verbatim was rejected for a *different* violation than the one it had just fixed. Measured on
+# java-sqli-vulnerable, which oscillated between the two and exhausted its output retries into
+# `environment_unbuildable`. test_validators.py now asserts the exemplars are clean.
 MAVEN_TEST_COMMAND = (
     "mvn -B -o test-compile "
     "org.apache.maven.plugins:maven-surefire-plugin:3.2.5:test "
-    "-Dtest=HarnessProbeTest -Dmaven.test.redirectTestOutputToFile=false"
+    "-Dtest=HarnessProbeTest -Dmaven.repo.local=/work/home/.m2/repository "
+    "-Dmaven.test.redirectTestOutputToFile=false"
 )
 GRADLE_TEST_COMMAND = "./gradlew --no-daemon --offline -i test --tests '*HarnessProbeTest'"
 # `cmd || true` makes a failed dependency install invisible: the image builds, the smoke test

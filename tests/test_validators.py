@@ -732,3 +732,33 @@ def test_surefires_own_no_match_wording_is_recognised_as_a_zero_test_run():
     reason = docker.no_tests_executed(output)
     assert reason is not None and "matched no test class" in reason
     assert "not a negative result" in reason
+
+
+def test_every_canonical_command_satisfies_every_validator():
+    """The commands the retry messages tell an agent to write must themselves be accepted.
+
+    This is the invariant that would have prevented the whole class of bug: `MAVEN_TEST_COMMAND`
+    is cited by name in several `ModelRetry` messages, but omitted `-Dmaven.repo.local`, so an
+    agent that copied it verbatim to fix the selector was immediately rejected for a *different*
+    violation. Measured on java-sqli-vulnerable: it oscillated between the two corrections and
+    burned its output retries into `environment_unbuildable`. An exemplar that fails the checker
+    it exemplifies does not teach, it traps.
+    """
+    from infosec_harness.agents.validators import (
+        GRADLE_TEST_COMMAND,
+        MAVEN_TEST_COMMAND,
+        MAVEN_WARMUP_COMMAND,
+        environment_spec_violations,
+        install_path_violations,
+    )
+    from infosec_harness.domain.models import EnvironmentSpec
+
+    for label, command in (("MAVEN_TEST_COMMAND", MAVEN_TEST_COMMAND),
+                           ("GRADLE_TEST_COMMAND", GRADLE_TEST_COMMAND)):
+        spec = EnvironmentSpec(base_image="maven:3.9-eclipse-temurin-17",
+                               install_commands=[MAVEN_WARMUP_COMMAND], test_command=command)
+        problems = environment_spec_violations(spec) + install_path_violations(spec)
+        assert not problems, (
+            f"{label} is what the retry messages tell the agent to write, but the validators "
+            f"reject it: {problems}"
+        )

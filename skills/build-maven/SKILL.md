@@ -88,11 +88,15 @@ metadata:
   ```
   mvn -B -o test-compile \
       org.apache.maven.plugins:maven-surefire-plugin:3.2.5:test \
-      -Dtest=<ProbeClassName> -Dmaven.test.redirectTestOutputToFile=false
+      -Dtest=<ProbeClassName> -Dmaven.repo.local=/work/home/.m2/repository \
+      -Dmaven.test.redirectTestOutputToFile=false
   ```
 
   Every part of that is load-bearing:
 
+  - **`-Dmaven.repo.local=/work/home/.m2/repository`.** The probe-time path, *not* the
+    build-time one — see the two-path rule above. Omitting it is the single easiest way to
+    turn a correct command into a rejected one, because the rest of the line looks right.
   - **`test-compile`, not `test`.** The probe file is written into the container at probe time,
     *after* the image is built, so the command has to compile it. But the `test` phase (and
     `verify`, `package`, `install`) also triggers the pom's own Surefire execution, which is

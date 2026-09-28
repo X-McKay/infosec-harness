@@ -67,7 +67,8 @@ class HarnessProbeTest {
 ```
 
 - Maven: `mvn -B -o test-compile org.apache.maven.plugins:maven-surefire-plugin:3.2.5:test
-  -Dtest=HarnessProbeTest -Dmaven.test.redirectTestOutputToFile=false`. Gradle:
+  -Dtest=HarnessProbeTest -Dmaven.repo.local=/work/home/.m2/repository
+  -Dmaven.test.redirectTestOutputToFile=false`. Gradle:
   `./gradlew --offline -i test --tests '*HarnessProbeTest'`. Both shapes are deliberate and the
   reasons are in build-maven and build-gradle: Maven's default Surefire cannot see a JUnit 5
   test at all, and both runners hide a test's stdout unless told not to.
