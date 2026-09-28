@@ -114,11 +114,10 @@ docker info --format '{{json .Runtimes}}'   # must list "runsc"
   registry allowlist via the `egress-proxy` service in compose.
 - Kubernetes manifests for the isolated probe namespace are under `deploy/k8s/`.
 
-**Validation pass still outstanding — needs a Linux host with `runsc`.** gVisor cannot run on
-macOS (it needs a Linux host kernel), so the sandboxed build/probe path has never executed:
-run `uv run harness eval corpus` with the sandbox on and confirm the Python vulnerable cases
-build, the probe fires its oracle, and the fixed variants do not. Then repeat for a
-Java/JS/Perl case to confirm those toolchains build under the buildx/gVisor path. Only that
-run can produce a real `potentially_exploitable` verdict, and therefore a real
-false-negative rate — see [`LIVE_VALIDATION.md`](LIVE_VALIDATION.md). The corpus's own ground
-truth *is* verified, in-process, by `tests/test_corpus_oracle.py`.
+**gVisor has now run, on a Mac, via a Linux VM.** `runsc` inside a dedicated podman
+machine with a `docker`->podman shim; the harness's fail-closed check passes on the real
+runtime with no `HARNESS_ALLOW_INSECURE_RUNTIME`. The Python corpus scores 90% with a 25%
+false-negative rate on exploitable cases — see
+[`LIVE_VALIDATION.md`](LIVE_VALIDATION.md) for the setup and the four defects it found.
+Still outstanding: **build-time** containment (buildah does not persist layers under
+runsc, so builds run under crun), and the production `docker` + `runsc` path.

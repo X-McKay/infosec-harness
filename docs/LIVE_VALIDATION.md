@@ -45,6 +45,44 @@ were about **unbounded or uncontained failure**:
   reports what the real sandbox-unavailable path reports. The Python corpus went from stalling
   to finishing in 16 minutes.
 
+## With the sandbox on
+
+gVisor now runs on a Mac (see [Sandbox](#the-sandbox-on-a-mac) below), so the pipeline has been
+measured end to end for the first time. Python corpus, 10 cases, live Qwen3.6-35B:
+
+| metric | `--no-sandbox` | **sandbox on** |
+| --- | --- | --- |
+| accuracy | 40% | **90%** (9/10) |
+| false negatives on exploitable cases | 100% *(structural)* | **25%** (1/4) |
+| `potentially_exploitable` verdicts | 0 — impossible | **3**, each oracle-backed |
+
+The 100% was never a judgement: with no oracle, `inconclusive` is the *correct* answer for an
+exploitable case, so that column could only ever read 100%. **25% is the first real
+false-negative rate this project has measured.**
+
+Getting there took three runs and fixed four defects, none of which a `--no-sandbox` run can
+show, because in that mode no probe ever executes:
+
+1. **A hardcoded test path.** env-planner emitted `pytest -q -s tests/test_app.py`. The harness
+   writes the probe where its author chose and substitutes `{test_file}`, so a hardcoded path
+   ran a file that did not exist: exit 4, no test, `inconclusive`. Now rejected by an output
+   validator — scoped to path-taking runners, since Maven and Gradle select by class name.
+2. **Markers captured away.** Without `-s`, pytest buffers the probe's stdout, so a correct
+   probe reports `precondition_reached=false` while exiting 0. Also now rejected.
+3. **Every output ceiling was below its own worst case.** A run's output is bounded by
+   `max_requests` x the per-call cap, and that cap is the backend's `min_max_tokens` floor —
+   added so a reasoning model's thinking could not exhaust its budget before answering. All 11
+   agents' ceilings were set from *observed* output, i.e. under the *possible* maximum. That is
+   not a brake but a coin flip, and it failed a healthy prepare.
+4. **The smoke test tested the wrong thing.** It ran `echo`, so a build that omitted pytest
+   passed preparation and the absence appeared at probe time as exit 127 — past build repair,
+   the only stage that could fix it. It now asks the runner for its version.
+
+The pattern in all four: **the failure was invisible to the agent that could have reported it.**
+A probe whose markers are buffered away looks like a probe that found nothing; a missing runner
+looks like a defective probe. Each is now a deterministic check at the point where it is
+knowable.
+
 ## Where the agents do well, and where they do not
 
 22 cases, four languages, `--no-sandbox`.
@@ -171,30 +209,53 @@ cases with a stochastic model, a single pass cannot separate a small effect from
 what `eval run` already had. Repeat both sides of any A/B; a one-case accuracy difference is
 not a result.
 
+## The sandbox on a Mac {#the-sandbox-on-a-mac}
+
+gVisor needs a Linux host kernel, so it cannot run on macOS directly. It can run *inside* a
+Linux VM, which is how these numbers were obtained:
+
+- `runsc` installed in a dedicated podman VM (Fedora CoreOS, aarch64), its sidecars beside the
+  binary and registered as the VM's default OCI runtime.
+- A `docker` -> podman translation shim. It reports `docker info`'s runtimes **truthfully**, so
+  the harness's fail-closed check passes on the real thing rather than on an override:
+  `HARNESS_ALLOW_INSECURE_RUNTIME` is not set for any of these runs.
+- Probes execute under `Linux version 4.19.0-gvisor`, with no network.
+
+Two limits to read with the numbers. **Builds run under crun, not gVisor**: under runsc, buildah
+does not persist a directory created by one `RUN` into the next layer — isolated by building the
+identical Dockerfile under both runtimes. So build-time containment is still unverified; probe
+time, where untrusted model-authored code actually executes, is what these runs cover. And this
+is podman-in-a-VM rather than Docker, so it validates the corpus and the isolation boundary, not
+the production `docker` + `runsc` path.
+
 ## Still unverified
 
-**The gVisor sandbox has never run.** This host has no Docker and no `runsc` — gVisor needs a
-Linux host kernel, so it cannot run on macOS at all. Podman is present, but podman-remote
-rejects the `--runtime` flag the hardening requires, and bending that would mean changing the
-thing under test. So nothing below is confirmed at runtime: the gVisor build/probe path, the
-buildx builder, the egress allowlist, read-only root, or a real probe firing a real oracle
-inside a container. `HARNESS_ALLOW_INSECURE_RUNTIME=true` exists for dev, and weakens
-isolation.
+**Build-time gVisor containment.** Probes run under gVisor; image builds do not, because under
+runsc buildah does not persist a directory created by one `RUN` into the next layer. The build
+step is where a repository's own `setup.py`, Gradle task or postinstall hook executes, so that
+is a real gap and the reason RISK-SEC-001 keeps `CTRL-SBX-001` at `implemented` rather than
+`verified`. Also unexercised: the buildx builder, the egress allowlist, and the Kubernetes
+probe namespace under `deploy/k8s/`.
 
-What *was* confirmed instead is the corpus's own ground truth, which was previously untested:
-`test_corpus.py` only checked structural consistency, so a "vulnerable" variant accidentally
-written safe would pass every test while silently invalidating the expected verdict all corpus
-scoring is measured against. `tests/test_corpus_oracle.py` now drives each paired Python
-variant with a reference probe written to the real marker protocol and reads the result
-through the harness's own `oracle_signals`. All eight behave: the vulnerable variant fires the
-oracle, the fixed one does not, and both reach the precondition. These run in-process, so they
-assert the corpus is sound — not that the isolation is.
+**The production `docker` + `runsc` path.** These runs go through a podman translation shim
+inside a Linux VM. That validates the corpus and the isolation boundary, not the deployment.
 
-**The remaining gVisor pass to do on a Linux host with `runsc`:** run
-`uv run harness eval corpus` with the sandbox on and confirm the Python vulnerable cases build
-and fire their oracle while the fixed variants do not, then repeat for a Java/JS/Perl case to
-exercise those toolchains through the buildx path. Only that run can produce a real
-`potentially_exploitable` verdict, and therefore a real false-negative rate.
+**Tier routing and prompt caching.** All 11 agents resolve to `sonnet`/`balanced-v1`, and the
+test endpoint serves one model, so `fast-v1` and `reasoning-v1` have never executed. Cache-hit
+is 0.0% in every run despite a prompt layout built for cache stability — unverified against a
+backend that reports cached tokens at all.
+
+**A second model.** Every accuracy number here is one mid-size open-weights model. The
+*mechanisms* found generalise — a hardcoded test path, buffered markers, an output ceiling below
+its own worst case, a smoke test that tests the wrong thing are all model-independent — but the
+rates do not. Running the corpus against Bedrock would separate "our prompts are weak" from
+"this model is weak", and would be the first real test of the caching claim.
+
+The corpus's own ground truth *is* verified independently of all this: `test_corpus.py` only
+checked structural consistency, so a "vulnerable" variant accidentally written safe would pass
+every test while invalidating the expected verdict all scoring is measured against.
+`tests/test_corpus_oracle.py` drives each paired Python variant with a reference probe and reads
+the result through the harness's own `oracle_signals`. All eight behave.
 
 ## Other things worth doing
 
