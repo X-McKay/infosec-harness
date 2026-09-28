@@ -92,11 +92,35 @@ async def build_environment_activity(args: dict) -> BuildResult:
 
 
 @activity.defn
-async def smoke_test_activity(image_tag: str) -> SmokeResult:
-    """Prove the image can run a trivial command (the test harness is usable)."""
+async def smoke_test_activity(args: dict | str) -> SmokeResult:
+    """Prove the image starts *and* that its test runner is installed.
+
+    Checking only that a shell runs left a missing runner to be discovered at probe time as
+    exit 127 ("pytest: not found"), where probe repair cannot help because the fault is in the
+    environment. Asking the runner for its version during preparation puts the failure in front
+    of build repair instead.
+
+    Accepts a bare image tag for backwards compatibility with recorded workflow histories.
+    """
+    image_tag = args if isinstance(args, str) else args["image_tag"]
+    test_command = "" if isinstance(args, str) else (args.get("test_command") or "")
+
     res = await docker.run_shell(image_tag, "echo harness-smoke-ok", network=False, timeout=60)
-    ok = res.exit_code == 0 and "harness-smoke-ok" in res.stdout
-    return SmokeResult(ok=ok, output_excerpt=docker.tail(res.stdout + res.stderr, 500))
+    if res.exit_code != 0 or "harness-smoke-ok" not in res.stdout:
+        return SmokeResult(ok=False, output_excerpt=docker.tail(res.stdout + res.stderr, 500))
+
+    check = docker.runner_check_command(test_command)
+    if check is None:
+        return SmokeResult(ok=True, output_excerpt=docker.tail(res.stdout, 500))
+    runner = await docker.run_shell(image_tag, check, network=False, timeout=120)
+    if runner.exit_code != 0:
+        return SmokeResult(
+            ok=False,
+            output_excerpt=f"the test runner is not installed: `{check}` exited "
+                           f"{runner.exit_code}\n"
+                           + docker.tail(runner.stdout + runner.stderr, 400),
+        )
+    return SmokeResult(ok=True, output_excerpt=docker.tail(runner.stdout or res.stdout, 500))
 
 
 @activity.defn

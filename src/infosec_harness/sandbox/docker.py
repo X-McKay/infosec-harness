@@ -264,6 +264,40 @@ async def run_probe(image: str, test_file_path: str, content: str, test_command:
     return await _run(argv, stdin=content.encode(), timeout=s.sandbox_probe_timeout_s)
 
 
+# How to ask each known test runner whether it is actually installed. Keyed on the token that
+# identifies the runner inside a test command. A runner absent from this table falls back to the
+# trivial shell check, so an unfamiliar command can never fail preparation spuriously.
+_RUNNER_VERSION_CHECKS: tuple[tuple[str, str], ...] = (
+    ("python -m pytest", "python -m pytest --version"),
+    ("pytest", "pytest --version"),
+    ("npx jest", "npx --no-install jest --version"),
+    ("jest", "jest --version"),
+    ("npx vitest", "npx --no-install vitest --version"),
+    ("prove", "prove --version"),
+    ("mvn", "mvn -v"),
+    ("gradlew", "./gradlew --offline --version"),
+    ("gradle", "gradle --version"),
+)
+
+
+def runner_check_command(test_command: str) -> str | None:
+    """A command that proves the test runner in ``test_command`` is installed and invocable.
+
+    The smoke test previously ran `echo`, which proves only that the image starts a shell. A
+    missing runner therefore surfaced at *probe* time as exit 127, where the graph routes to
+    probe repair — powerless, because the fault is in the environment. Checking it during
+    preparation puts the failure where build repair can act on it.
+
+    Returns None for a runner we do not recognise, so preparation is never failed by a command
+    this table simply has not learned.
+    """
+    command = (test_command or "").strip()
+    for token, check in _RUNNER_VERSION_CHECKS:
+        if token in command:
+            return check
+    return None
+
+
 def oracle_signals(output: str, nonce: str) -> tuple[bool, bool]:
     """Deterministic oracle detection: (oracle_fired, precondition_reached)."""
     fired = (f"{ORACLE_PREFIX}{nonce}" in output) or (f"{CANARY_PREFIX}{nonce}" in output)

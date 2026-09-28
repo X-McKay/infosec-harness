@@ -31,3 +31,79 @@ def test_image_tag_changes_with_spec():
     t1 = docker.image_tag_for("repohash", _spec())
     t2 = docker.image_tag_for("repohash", _spec(system_packages=["gcc"]))
     assert t1 != t2
+
+
+# --- The smoke test must smoke-test the thing that matters --------------------------------
+
+def test_a_known_runner_gets_a_real_installation_check():
+    """`echo` proves a shell starts, not that the test runner exists.
+
+    Observed live: a build that omitted pytest passed the smoke test, and the absence surfaced
+    at probe time as exit 127 "pytest: not found". probe_diagnosis correctly called it an
+    environment issue, but by then the graph is past build repair — the only stage that could
+    have fixed it.
+    """
+    from infosec_harness.sandbox.docker import runner_check_command
+
+    assert runner_check_command("python -m pytest -q -s {test_file}") == "python -m pytest --version"
+    assert runner_check_command("prove -v {test_file}") == "prove --version"
+    assert runner_check_command("mvn -q -B test -Dtest=HarnessProbeTest") == "mvn -v"
+    assert "jest" in (runner_check_command("npx jest --runTestsByPath {test_file}") or "")
+
+
+def test_an_unrecognised_runner_does_not_fail_preparation():
+    """A command this table has not learned must not be treated as a broken environment."""
+    from infosec_harness.sandbox.docker import runner_check_command
+
+    for command in ("sh {test_file}", "./run-my-tests {test_file}", ""):
+        assert runner_check_command(command) is None
+
+
+async def test_smoke_test_fails_when_the_runner_is_missing(monkeypatch):
+    from infosec_harness.sandbox import docker
+    from infosec_harness.workflows.activities import smoke_test_activity
+
+    calls = []
+
+    async def fake_shell(image, command, *, network, timeout=None):
+        calls.append(command)
+        if "harness-smoke-ok" in command:
+            return docker.ProcResult(exit_code=0, stdout="harness-smoke-ok\n", stderr="",
+                                     timed_out=False, duration_s=0.1)
+        return docker.ProcResult(exit_code=127, stdout="", stderr="pytest: not found",
+                                 timed_out=False, duration_s=0.1)
+
+    monkeypatch.setattr(docker, "run_shell", fake_shell, raising=True)
+    result = await smoke_test_activity({"image_tag": "img",
+                                        "test_command": "python -m pytest -q -s {test_file}"})
+    assert result.ok is False
+    assert "test runner is not installed" in result.output_excerpt
+    assert any("--version" in c for c in calls), "the runner was never actually invoked"
+
+
+async def test_smoke_test_passes_when_the_runner_answers(monkeypatch):
+    from infosec_harness.sandbox import docker
+    from infosec_harness.workflows.activities import smoke_test_activity
+
+    async def fake_shell(image, command, *, network, timeout=None):
+        out = "harness-smoke-ok\n" if "harness-smoke-ok" in command else "pytest 9.1.1\n"
+        return docker.ProcResult(exit_code=0, stdout=out, stderr="", timed_out=False,
+                                 duration_s=0.1)
+
+    monkeypatch.setattr(docker, "run_shell", fake_shell, raising=True)
+    result = await smoke_test_activity({"image_tag": "img",
+                                        "test_command": "python -m pytest -q -s {test_file}"})
+    assert result.ok is True
+
+
+async def test_a_bare_image_tag_still_works(monkeypatch):
+    """Recorded workflow histories pass the tag alone; replay must not break."""
+    from infosec_harness.sandbox import docker
+    from infosec_harness.workflows.activities import smoke_test_activity
+
+    async def fake_shell(image, command, *, network, timeout=None):
+        return docker.ProcResult(exit_code=0, stdout="harness-smoke-ok\n", stderr="",
+                                 timed_out=False, duration_s=0.1)
+
+    monkeypatch.setattr(docker, "run_shell", fake_shell, raising=True)
+    assert (await smoke_test_activity("img")).ok is True

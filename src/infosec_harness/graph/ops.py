@@ -33,7 +33,7 @@ class Ops(Protocol):
 
     async def build_environment(self, snapshot: RepoSnapshot, spec: EnvironmentSpec) -> BuildResult: ...
 
-    async def smoke_test(self, image_tag: str) -> SmokeResult: ...
+    async def smoke_test(self, image_tag: str, test_command: str = "") -> SmokeResult: ...
 
     async def execute_probe(
         self, image_tag: str, probe: ProbeSource, spec: EnvironmentSpec, nonce: str, attempt: int
@@ -105,12 +105,12 @@ class LocalOps:
             {"snapshot": snapshot.model_dump(), "spec": spec.model_dump()}
         )
 
-    async def smoke_test(self, image_tag) -> SmokeResult:
+    async def smoke_test(self, image_tag, test_command: str = "") -> SmokeResult:
         if not self._sandbox:
             return SmokeResult(ok=True)
         from infosec_harness.workflows.activities import smoke_test_activity
 
-        return await smoke_test_activity(image_tag)
+        return await smoke_test_activity({"image_tag": image_tag, "test_command": test_command})
 
     # Mirrors the shape `execute_probe_activity` returns when the isolation runtime is
     # missing, so the offline path stands in for the real one instead of contradicting it.

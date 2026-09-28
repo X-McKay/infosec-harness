@@ -108,8 +108,9 @@ async def run_prepare(ops: Ops, snapshot: RepoSnapshot, stack: StackFingerprint)
             invocations,
         )
 
-    # P6 smoke test
-    smoke = await ops.smoke_test(build.image_tag)
+    # P6 smoke test. The spec's own test command is passed so the runner it names is verified
+    # here, where build repair can still act, rather than at probe time as exit 127.
+    smoke = await ops.smoke_test(build.image_tag, build.spec.test_command)
     status = "ready" if smoke.ok else "failed"
     return PrepareOutcome(
         prepared(status=status, profile=profile, build=build, smoke=smoke, attempts=total_attempts,

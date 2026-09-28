@@ -86,10 +86,11 @@ class TemporalOps:
             retry_policy=_RETRY,
         )
 
-    async def smoke_test(self, image_tag: str) -> SmokeResult:
+    async def smoke_test(self, image_tag: str, test_command: str = "") -> SmokeResult:
         return await workflow.execute_activity(
-            activities.smoke_test_activity, image_tag, start_to_close_timeout=timedelta(minutes=3),
-            retry_policy=_RETRY,
+            activities.smoke_test_activity,
+            {"image_tag": image_tag, "test_command": test_command},
+            start_to_close_timeout=timedelta(minutes=3), retry_policy=_RETRY,
         )
 
     async def execute_probe(
