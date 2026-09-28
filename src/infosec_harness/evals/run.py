@@ -451,7 +451,9 @@ async def _score_corpus_once(*, language: str, sandbox: bool | None) -> dict:
         from infosec_harness.sandbox import docker
         sandbox = await docker.docker_available() and await docker.runtime_available()
     prepare_sink: dict[tuple[str, str], list] = {}
+    # Cache off: an eval must exercise every stage and give the same answer twice.
     outputs = await triage_batch_local([c.finding for c in cases], sandbox=sandbox,
+                                       recipe_cache=False,
                                        prepare_sink=prepare_sink)
     by_fp = {o.finding.fingerprint: o for o in outputs}
 

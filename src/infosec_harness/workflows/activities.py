@@ -179,6 +179,29 @@ async def new_nonce_activity() -> str:
     return secrets.token_hex(8)
 
 
+@activity.defn
+async def lookup_recipe_activity(stack: StackFingerprint) -> EnvironmentSpec | None:
+    """Read the recipe cache. An activity, not workflow code: it touches the filesystem, and a
+    workflow that read it directly would replay differently once the entry changed."""
+    from infosec_harness.persistence.recipes import get_recipe_store, stack_key
+
+    return get_recipe_store().lookup(stack_key(stack))
+
+
+@activity.defn
+async def record_recipe_activity(args: dict) -> None:
+    """Keep a spec that built and smoke-tested, drop one that did not."""
+    from infosec_harness.persistence.recipes import get_recipe_store, is_cacheable, stack_key
+
+    stack = StackFingerprint.model_validate(args["stack"])
+    spec = EnvironmentSpec.model_validate(args["spec"])
+    store, key = get_recipe_store(), stack_key(stack)
+    if args["worked"] and is_cacheable(spec):
+        store.record(key, spec)
+    elif not args["worked"]:
+        store.forget(key)
+
+
 ALL_ACTIVITIES = [
     normalize_finding_activity,
     checkout_activity,
@@ -188,4 +211,6 @@ ALL_ACTIVITIES = [
     execute_probe_activity,
     resolve_location_activity,
     new_nonce_activity,
+    lookup_recipe_activity,
+    record_recipe_activity,
 ]

@@ -22,6 +22,7 @@ from infosec_harness.domain.models import (
     ProbeSource,
     RepoSnapshot,
     SmokeResult,
+    StackFingerprint,
 )
 from infosec_harness.graph.ops import AgentOutcome
 
@@ -93,6 +94,24 @@ class TemporalOps:
             activities.smoke_test_activity,
             {"image_tag": image_tag, "test_command": test_command},
             start_to_close_timeout=timedelta(minutes=3), retry_policy=_RETRY,
+        )
+
+    async def lookup_recipe(self, stack: StackFingerprint) -> EnvironmentSpec | None:
+        return await workflow.execute_activity(
+            activities.lookup_recipe_activity,
+            stack,
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=_RETRY,
+        )
+
+    async def record_recipe(self, stack: StackFingerprint, spec: EnvironmentSpec,
+                            *, worked: bool) -> None:
+        await workflow.execute_activity(
+            activities.record_recipe_activity,
+            {"stack": stack.model_dump(mode="json"), "spec": spec.model_dump(mode="json"),
+             "worked": worked},
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=_RETRY,
         )
 
     async def execute_probe(

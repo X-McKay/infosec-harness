@@ -21,6 +21,7 @@ from infosec_harness.domain.models import (
     ProbeSource,
     RepoSnapshot,
     SmokeResult,
+    StackFingerprint,
 )
 
 
@@ -48,6 +49,11 @@ class Ops(Protocol):
 
     async def smoke_test(self, image_tag: str, test_command: str = "") -> SmokeResult: ...
 
+    async def lookup_recipe(self, stack: StackFingerprint) -> EnvironmentSpec | None: ...
+
+    async def record_recipe(self, stack: StackFingerprint, spec: EnvironmentSpec,
+                            *, worked: bool) -> None: ...
+
     async def execute_probe(
         self, image_tag: str, probe: ProbeSource, spec: EnvironmentSpec, nonce: str, attempt: int
     ) -> ProbeExecution: ...
@@ -56,8 +62,15 @@ class Ops(Protocol):
 class LocalOps:
     """Direct, in-process implementation for standalone runs, tests, and evals."""
 
-    def __init__(self, *, sandbox: bool = True):
+    def __init__(self, *, sandbox: bool = True, recipe_cache: bool = True):
         self._sandbox = sandbox
+        # Off during corpus scoring. The cache is a latency win, not an accuracy one, and with
+        # it on the first repository of a stack records a recipe that every later repository of
+        # that stack then reuses -- so env-planner runs once instead of eighteen times and the
+        # stage funnel loses the signal it exists to provide. Measured: the trajectory report
+        # dropped env-planner entirely, and whether it did so depended on what a previous run
+        # had left on disk.
+        self._recipe_cache = recipe_cache
 
     async def run_agent(self, name: str, prompt, deps: AgentDeps) -> AgentOutcome:
         import asyncio
@@ -126,6 +139,30 @@ class LocalOps:
         from infosec_harness.workflows.activities import smoke_test_activity
 
         return await smoke_test_activity({"image_tag": image_tag, "test_command": test_command})
+
+    async def lookup_recipe(self, stack: StackFingerprint) -> EnvironmentSpec | None:
+        if not self._recipe_cache:
+            return None
+        from infosec_harness.persistence.recipes import get_recipe_store, stack_key
+
+        return get_recipe_store().lookup(stack_key(stack))
+
+    async def record_recipe(self, stack: StackFingerprint, spec: EnvironmentSpec,
+                            *, worked: bool) -> None:
+        """Keep a spec that built, drop one that did not.
+
+        Eviction on first failure is the whole safety story: a stale recipe costs exactly one
+        build attempt, once, and then stops existing.
+        """
+        if not self._recipe_cache:
+            return
+        from infosec_harness.persistence.recipes import get_recipe_store, is_cacheable, stack_key
+
+        store, key = get_recipe_store(), stack_key(stack)
+        if worked and is_cacheable(spec):
+            store.record(key, spec)
+        elif not worked:
+            store.forget(key)
 
     # Mirrors the shape `execute_probe_activity` returns when the isolation runtime is
     # missing, so the offline path stands in for the real one instead of contradicting it.

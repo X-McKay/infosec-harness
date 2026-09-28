@@ -48,18 +48,38 @@ async def run_prepare(ops: Ops, snapshot: RepoSnapshot, stack: StackFingerprint)
     invocations.append(recon)
     profile: RepoProfile = recon.output
 
-    # P3 env planner
-    planned = await ops.run_agent(
-        "env-planner",
-        render_prompt("Design a container environment that can run one unit test of this repo.",
-                      {}, stack=stack, profile=profile),
-        deps,
-    )
-    invocations.append(planned)
-    spec: EnvironmentSpec = planned.output
+    # P3a a recipe that already built for this shape of repository, if there is one. The
+    # expensive parts of a spec -- the surefire warm-up, cpanm's --local-lib and its matching
+    # PERL5LIB, -Dmaven.repo.local on both sides of the two-path layout -- are properties of the
+    # stack, not the project, so re-deriving them per repo is both slow and a chance to get them
+    # wrong. A miss costs nothing; a bad hit costs one build and is then evicted.
+    spec: EnvironmentSpec | None = None
+    build: BuildResult | None = None
+    from_recipe = False
+    cached = await ops.lookup_recipe(stack)
+    if cached is not None:
+        build = await ops.build_environment(snapshot, cached)
+        if build.ok:
+            spec, from_recipe = cached, True
+        else:
+            # Evict before falling back, so the next repo of this shape does not pay for it too.
+            await ops.record_recipe(stack, cached, worked=False)
+            build = None
+
+    # P3b env planner, unless the recipe already produced a working image.
+    if spec is None:
+        planned = await ops.run_agent(
+            "env-planner",
+            render_prompt("Design a container environment that can run one unit test of this repo.",
+                          {}, stack=stack, profile=profile),
+            deps,
+        )
+        invocations.append(planned)
+        spec = planned.output
 
     attempts = 0
-    build: BuildResult = await ops.build_environment(snapshot, spec)
+    if build is None:
+        build = await ops.build_environment(snapshot, spec)
 
     # P5 full-build repair loop
     tried_specs = [spec]
@@ -112,6 +132,13 @@ async def run_prepare(ops: Ops, snapshot: RepoSnapshot, stack: StackFingerprint)
     # here, where build repair can still act, rather than at probe time as exit 127.
     smoke = await ops.smoke_test(build.image_tag, build.spec.test_command)
     status = "ready" if smoke.ok else "failed"
+    # Recorded only after the smoke test, because a built image whose runner is missing is not
+    # a working recipe -- that is the exact failure the smoke test was added to catch. The one
+    # case that needs nothing written is a cached spec that worked again: re-recording it would
+    # say nothing new. A cached spec that *failed* the smoke test still has to be evicted, so
+    # this cannot simply skip everything that came from the cache.
+    if not (from_recipe and smoke.ok):
+        await ops.record_recipe(stack, build.spec, worked=smoke.ok)
     return PrepareOutcome(
         prepared(status=status, profile=profile, build=build, smoke=smoke, attempts=total_attempts,
                  reason="" if smoke.ok else "smoke_test_failed"),

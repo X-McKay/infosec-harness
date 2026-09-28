@@ -86,6 +86,11 @@ class Settings(BaseSettings):
     # expensive edge in the graph, and a genuine missing dependency is nearly always fixed by
     # one install. A second attempt usually means the diagnosis was wrong, not the spec.
     max_environment_repairs: int = 1
+    # Reuse an EnvironmentSpec that already built for this *shape* of repository
+    # (persistence.recipes). A hit skips the planner and an uncertain build; a miss costs one
+    # build attempt and falls back to the normal path, so the downside is bounded and the entry
+    # is evicted the moment it stops working.
+    recipe_cache_enabled: bool = True
     per_repo_concurrency: int = 4
 
     # Azure DevOps (D13: comment-only write-back)
