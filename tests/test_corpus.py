@@ -159,3 +159,34 @@ async def test_trajectory_report_includes_prepare_agents():
     assert {"context", "probe-author"} <= set(traj), "per-finding agents missing from trajectory"
     # recon/env-planner run once per repo (10 python cases -> 10 repos).
     assert traj["recon"]["n"] == len(load_corpus("python"))
+
+
+async def test_a_label_reached_without_probing_is_reported_separately():
+    """`accuracy` counts labels; `accuracy_with_evidence` counts labels the pipeline earned.
+
+    An early exit the manifest did not ask for means no build, no probe and no oracle ran, so
+    the label came from reasoning alone. Measured on the Perl pair: both `fixed` cases returned
+    `likely_not_exploitable` via `unreachable_by_context` and scored as clean passes. That is
+    the same reasoning path that, applied to a vulnerable case, produces a false negative, so it
+    must not be invisible in the headline number.
+    """
+    from infosec_harness.evals.run import score_corpus
+
+    metrics = await score_corpus(language="python", sandbox=False)
+    assert "accuracy_with_evidence" in metrics
+    assert "unexpected_early_exits" in metrics
+    assert isinstance(metrics["unexpected_early_exits"], list)
+    # Only `testonly` declares an expected early exit, so an undeclared one is never silent.
+    declared = {c.name for c in load_corpus() if c.early_exit}
+    assert declared == {"testonly"}, (
+        f"the manifest's early-exit expectations changed ({declared}); this metric's meaning "
+        "depends on undeclared exits being the exception"
+    )
+
+
+def test_the_only_declared_early_exit_is_the_one_case_that_should_not_be_probed():
+    """`testonly` is test/vendored code: exiting before a probe is the correct behaviour there,
+    which is why it is declared. Every other case must earn its label by probing."""
+    by = {c.name: c for c in CASES}
+    assert by["testonly"].early_exit == "test_or_vendored"
+    assert all(c.early_exit is None for c in CASES if c.name != "testonly")

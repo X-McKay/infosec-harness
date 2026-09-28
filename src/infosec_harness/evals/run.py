@@ -413,6 +413,11 @@ async def _score_corpus_once(*, language: str, sandbox: bool | None) -> dict:
 
     rows, confusion = [], {}
     correct = fn = exploitable = 0
+    # Cases the manifest expects to run the full pipeline, and how many of those were right
+    # *and* actually got there. `accuracy` alone cannot distinguish a probed verdict from a
+    # label guessed before the build.
+    expected_to_probe = correct_with_evidence = 0
+    unexpected_exits: list[str] = []
     # Trajectory scoring: did the tool-using agents evoke the expected tools/skills?
     traj_totals: dict[str, dict[str, int]] = {}
     # Request counts and repeated identical tool calls, so a `request_limit` breach can be told
@@ -458,6 +463,18 @@ async def _score_corpus_once(*, language: str, sandbox: bool | None) -> dict:
         actual = out.result.verdict.label.value
         ok = actual == c.expected_verdict
         correct += int(ok)
+        # An early exit the manifest did not ask for means the label was reached without the
+        # mechanism under test: no build, no probe, no oracle. Measured on the Perl pair --
+        # both `fixed` cases came back `likely_not_exploitable` via `unreachable_by_context`,
+        # scoring as clean passes while never probing anything. Label accuracy stays label
+        # accuracy, but a pass with no evidence behind it must be visible, because the same
+        # reasoning applied to a vulnerable case is a false negative.
+        unexpected_exit = out.result.early_exit and out.result.early_exit != c.early_exit
+        if unexpected_exit:
+            unexpected_exits.append(f"{c.name} ({out.result.early_exit})")
+        if c.early_exit is None:
+            expected_to_probe += 1
+            correct_with_evidence += int(ok and not unexpected_exit)
         confusion[(c.expected_verdict, actual)] = confusion.get((c.expected_verdict, actual), 0) + 1
         if c.expected_verdict == "potentially_exploitable":
             exploitable += 1
@@ -465,6 +482,7 @@ async def _score_corpus_once(*, language: str, sandbox: bool | None) -> dict:
                 fn += 1  # missed a real vulnerability — the costliest error
         rows.append({"case": c.name, "expected": c.expected_verdict, "actual": actual,
                      "ok": ok, "early_exit": out.result.early_exit,
+                     "unexpected_early_exit": bool(unexpected_exit),
                      "priority": out.result.priority.value,
                      # Why, not just that: a table of `inconclusive` tells you nothing about
                      # whether the environment failed, the probe was unrepairable, or the
@@ -483,6 +501,9 @@ async def _score_corpus_once(*, language: str, sandbox: bool | None) -> dict:
         "n": len(cases), "accuracy": round(correct / len(cases), 4) if cases else 0.0,
         "false_negative_rate_on_exploitable": round(fn / exploitable, 4) if exploitable else 0.0,
         "sandbox": sandbox,
+        "accuracy_with_evidence": (round(correct_with_evidence / expected_to_probe, 4)
+                                   if expected_to_probe else 0.0),
+        "unexpected_early_exits": unexpected_exits,
         "confusion": {f"{k[0]}->{k[1]}": v for k, v in sorted(confusion.items())},
         "trajectory": trajectory,
         "budget": {a: {"n": v["n"],
@@ -502,6 +523,11 @@ async def _score_corpus_once(*, language: str, sandbox: bool | None) -> dict:
             print(f"        {r['rationale'][:600]}")
     print(f"accuracy={metrics['accuracy']:.0%}  FN-on-exploitable={metrics['false_negative_rate_on_exploitable']:.0%}  "
           f"sandbox={'on' if sandbox else 'off (verdicts not meaningful)'}")
+    if unexpected_exits:
+        print(f"accuracy-with-evidence={metrics['accuracy_with_evidence']:.0%}  "
+              f"({expected_to_probe - correct_with_evidence} of {expected_to_probe} cases that "
+              f"should have probed did not reach a probed verdict)")
+        print(f"  unexpected early exits: {', '.join(unexpected_exits)}")
     print("tool/skill evocation (per agent, rate across cases):")
     for agent, t in trajectory.items():
         skills = f"{t['skill_use_rate']:.0%}" if scores_skills(agent) else "n/a"
