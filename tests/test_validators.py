@@ -762,3 +762,56 @@ def test_every_canonical_command_satisfies_every_validator():
             f"{label} is what the retry messages tell the agent to write, but the validators "
             f"reject it: {problems}"
         )
+
+
+def test_a_pytest_probe_that_can_skip_itself_is_rejected():
+    """The protocol names `collected 0 items` as a zero-test run, but only the Perl and JUnit
+    idioms that cause one were detected. `importorskip` is what a model actually reaches for
+    when an import might fail — which is precisely the environment signal build repair needs.
+    """
+    from infosec_harness.agents.validators import _skipping_probe_violations
+    from infosec_harness.domain.models import ProbeSource
+
+    for idiom in ("pytest.importorskip('psycopg2')", "pytest.skip('no db')",
+                  "@pytest.mark.skipif(True, reason='x')"):
+        probe = ProbeSource(test_file_path="tests/test_probe.py",
+                            content=f"import pytest\n{idiom}\ndef test_probe():\n    pass\n")
+        problems = _skipping_probe_violations(probe)
+        assert any("zero-test run is never a negative result" in p for p in problems), (
+            f"{idiom} was not rejected: {problems}"
+        )
+
+
+def test_a_jest_probe_that_can_skip_itself_is_rejected():
+    from infosec_harness.agents.validators import _skipping_probe_violations
+    from infosec_harness.domain.models import ProbeSource
+
+    for idiom in ("test.skip('probe', () => {})", "describe.skip('x', () => {})"):
+        probe = ProbeSource(test_file_path="__tests__/probe.test.js", content=idiom)
+        assert _skipping_probe_violations(probe), f"{idiom} was not rejected"
+
+
+def test_test_only_is_rejected_because_it_excludes_every_other_test():
+    """Not skipping, and that is why it is worse: a probe placed after a `.only` never runs and
+    the file still exits 0."""
+    from infosec_harness.agents.validators import _skipping_probe_violations
+    from infosec_harness.domain.models import ProbeSource
+
+    probe = ProbeSource(test_file_path="probe.test.js",
+                        content="test.only('setup', () => {});\ntest('harness probe', () => {});")
+    problems = _skipping_probe_violations(probe)
+    assert any("excludes every other test" in p for p in problems), problems
+
+
+def test_an_honest_probe_in_either_language_is_accepted():
+    """Guards against over-firing: the word 'skip' appearing in a comment or a payload must not
+    reject a probe that runs to completion."""
+    from infosec_harness.agents.validators import _skipping_probe_violations
+    from infosec_harness.domain.models import ProbeSource
+
+    py = ProbeSource(test_file_path="tests/test_probe.py",
+                     content="def test_probe():\n    print('HARNESS_PRECONDITION::n')\n")
+    js = ProbeSource(test_file_path="probe.test.js",
+                     content="test('harness probe', () => { console.log('HARNESS_PRECONDITION::n'); });")
+    assert _skipping_probe_violations(py) == []
+    assert _skipping_probe_violations(js) == []

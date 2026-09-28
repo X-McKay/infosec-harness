@@ -101,6 +101,15 @@ _PERL_SKIPS = ("skip_all", "skip_rest", "SKIP:")
 _PERL_PLAN = ("done_testing", "tests =>", "tests=>", "no_plan")
 _JUNIT_SKIPS = ("@Disabled", "@Ignore", "assumeTrue", "assumeFalse", "assumingThat",
                 "Assumptions.", "assumeThat")
+# The protocol names pytest's `collected 0 items` and jest's `No tests found` as zero-test runs
+# that are never a negative result, but only the Perl and JUnit idioms that produce them were
+# detected. `importorskip` is the one a model actually reaches for when an import might fail --
+# which is exactly the environment signal build repair needs to see.
+_PYTEST_SKIPS = ("importorskip", "pytest.skip", "mark.skip", "mark.xfail", "@unittest.skip")
+# `test.only` is the subtle one: it is not skipping, it silently excludes every *other* test in
+# the file, so a probe placed after one never runs and the file still exits 0.
+_JEST_SKIPS = ("test.skip", "describe.skip", "it.skip", "test.todo", "xit(", "xdescribe(",
+               "test.only", "describe.only", "it.only")
 
 
 def _is_perl_probe(output: ProbeSource) -> bool:
@@ -110,6 +119,14 @@ def _is_perl_probe(output: ProbeSource) -> bool:
 
 def _is_junit_probe(output: ProbeSource) -> bool:
     return output.test_file_path.endswith(".java") or "org.junit" in output.content
+
+
+def _is_pytest_probe(output: ProbeSource) -> bool:
+    return output.test_file_path.endswith(".py")
+
+
+def _is_jest_probe(output: ProbeSource) -> bool:
+    return output.test_file_path.endswith((".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"))
 
 
 def _skipping_probe_violations(output: ProbeSource) -> list[str]:
@@ -139,6 +156,26 @@ def _skipping_probe_violations(output: ProbeSource) -> list[str]:
                 "and Surefire reports it as skipped, which the harness cannot tell from a "
                 "broken probe. Let a missing precondition surface as a failure with a message "
                 "instead; the probe must run to completion either way."
+            )
+    if _is_pytest_probe(output):
+        skips = [idiom for idiom in _PYTEST_SKIPS if idiom in output.content]
+        if skips:
+            problems.append(
+                f"Delete the {skips[0]} — a skipped pytest test prints no markers and pytest "
+                "reports `collected 0 items` or `1 skipped`, which the harness cannot tell from "
+                "a broken probe; a zero-test run is never a negative result. If a module the "
+                "probe needs is absent, let the import raise: an ImportError naming it is an "
+                "*environment* signal that build repair can act on, and importorskip converts "
+                "that signal into silence."
+            )
+    if _is_jest_probe(output):
+        skips = [idiom for idiom in _JEST_SKIPS if idiom in output.content]
+        if skips:
+            problems.append(
+                f"Delete the {skips[0]} — a skipped jest test prints no markers and jest reports "
+                "`No tests found`, which the harness cannot tell from a broken probe. "
+                "`test.only` is the same hazard wearing a different hat: it excludes every other "
+                "test in the file, so a probe after one never runs and the file still exits 0."
             )
     return problems
 

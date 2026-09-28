@@ -31,10 +31,14 @@ metadata:
 def test_probe():
     NONCE = "<nonce>"
     from mypkg.module import target_callable        # the real sink owner
-    import sys
     payload = build_input(NONCE)                     # per the cwe-* skill
-    print(f"HARNESS_PRECONDITION::{NONCE}", flush=True)   # reached the sink
-    result = target_callable(payload)
+    print(f"HARNESS_PRECONDITION::{NONCE}", flush=True)   # about to call the sink
+    try:
+        result = target_callable(payload)
+    except TargetRejectedInput:                      # the code refused it: that is a negative
+        print(f"HARNESS_SINK_RETURNED::{NONCE}", flush=True)
+        return
+    print(f"HARNESS_SINK_RETURNED::{NONCE}", flush=True)  # the sink ran and returned
     if exploit_condition_holds(result, NONCE):
         print(f"HARNESS_ORACLE::{NONCE}", flush=True)
 ```
@@ -42,6 +46,20 @@ def test_probe():
 - Run with `python -m pytest -q -s {test_file}` so stdout is not swallowed.
 - For a canary-file oracle, do not print the oracle marker; let the payload create
   `/tmp/harness_canary_<nonce>` and assert nothing.
+
+## Never skip or disable the probe
+
+**Do not use `pytest.importorskip`, `pytest.skip`, `@pytest.mark.skip`, `@pytest.mark.skipif`,
+or `@pytest.mark.xfail`.** A skipped test prints no markers, and pytest reports `collected 0
+items` or `1 skipped` — which the harness cannot tell from a probe that is broken. The
+probe-oracle-protocol names `collected 0 items` as a zero-test run, and a zero-test run is
+never a negative result: nothing exercised the sink, so it says nothing about exploitability.
+
+`importorskip` is the natural pytest way to say "this dependency isn't installed", and that is
+precisely the judgement a probe must not make. If a module the probe needs is absent, let the
+import fail: an `ImportError` naming the missing module is an *environment* signal that build
+repair can act on, and it now routes back to environment repair. `importorskip` converts that
+signal into silence, and the finding comes back inconclusive.
 
 <!-- generated: constraints (scripts/restructure_skills.py) -->
 

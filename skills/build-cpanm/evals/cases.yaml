@@ -1,0 +1,111 @@
+# Behavioural cases for build-cpanm.
+#
+# Perl's failure mode is that cpanm *succeeds* while installing nothing importable. As the
+# non-root sandbox user it cannot write perl's site directory, so it warns, exits 0, and the
+# build goes green with the dependency missing; the absence appears only inside the probe as
+# `Can't locate DBI.pm in @INC`, which probe repair cannot fix and build repair never sees.
+# --local-lib and the matching PERL5LIB are a pair: either alone reproduces the same silence.
+skill: build-cpanm
+
+# Commands the skill shows in order to discuss them, not to recommend them. Each needs a
+# reason: an unexplained exemption is indistinguishable from a bug being hidden.
+illustrative_commands:
+  - command: cpanm --installdeps .
+    reason: >
+      Appears mid-sentence in the prose explaining that --installdeps covers a cpanfile's
+      `on 'test'` block by default. It is naming the flag, not proposing an install command;
+      the skill's actual recipe is the complete YAML spec above it, which carries --local-lib
+      and is checked whole by the exemplar-spec check.
+
+cases:
+  - id: the-skill-s-own-recipe-is-accepted-whole
+    type: procedure_adherence
+    scenario: >
+      env-planner follows build-cpanm for a cpanfile project. The install path, the env, and
+      the test command have to agree with each other, so this is judged as one spec.
+    shown_in_skill:
+      - "--local-lib=/opt/home/perl5"
+      - "PERL5LIB"
+    environment_spec:
+      base_image: perl:5.38-slim
+      system_packages: [gcc, make, libc6-dev]
+      install_commands:
+        - cpanm --notest --local-lib=/opt/home/perl5 --installdeps .
+      env:
+        PERL5LIB: /work/home/perl5/lib/perl5
+      test_command: prove -v {test_file}
+
+  - id: a-cpanm-install-without-a-local-lib-is-rejected
+    type: safety
+    scenario: >
+      cpanm as the non-root sandbox user cannot write perl's site dir. It warns, "succeeds",
+      and installs nowhere on @INC, so the build exits 0 with the dependency absent.
+    expect_violations:
+      - "--local-lib"
+    environment_spec:
+      base_image: perl:5.38-slim
+      install_commands:
+        - cpanm --notest --installdeps .
+      env:
+        PERL5LIB: /work/home/perl5/lib/perl5
+      test_command: prove -v {test_file}
+
+  - id: a-local-lib-install-without-perl5lib-is-rejected
+    type: safety
+    scenario: >
+      The mirror image: the modules are installed somewhere real, and perl is never told where.
+      prove runs with the stock @INC and the probe dies on the modules that were just installed.
+    expect_violations:
+      - "PERL5LIB"
+    environment_spec:
+      base_image: perl:5.38-slim
+      install_commands:
+        - cpanm --notest --local-lib=/opt/home/perl5 --installdeps .
+      test_command: prove -v {test_file}
+
+  - id: a-local-lib-pointed-at-the-build-time-home-is-rejected
+    type: procedure_adherence
+    scenario: >
+      The image is built with HOME=/opt/home and the probe runs from a /work/home copy of it,
+      so an install writes under /opt and anything resolved at probe time reads from /work.
+      PERL5LIB pointing at the build-time path resolves to nothing at probe time.
+    expect_violations:
+      - "/work/home"
+    environment_spec:
+      base_image: perl:5.38-slim
+      install_commands:
+        - cpanm --notest --local-lib=/opt/home/perl5 --installdeps .
+      env:
+        PERL5LIB: /opt/home/perl5/lib/perl5
+      test_command: prove -v {test_file}
+
+  - id: a-non-verbose-prove-is-rejected
+    type: safety
+    scenario: >
+      prove is a TAP consumer: it parses the child's stream and discards everything that is not
+      TAP — which is every HARNESS_ marker — unless it is verbose. The Perl form of an un-'-s'ed
+      pytest, and just as invisible downstream.
+    expect_violations:
+      - "must be verbose"
+    environment_spec:
+      base_image: perl:5.38-slim
+      install_commands:
+        - cpanm --notest --local-lib=/opt/home/perl5 --installdeps .
+      env:
+        PERL5LIB: /work/home/perl5/lib/perl5
+      test_command: prove {test_file}
+
+  - id: an-install-writing-under-work-is-rejected
+    type: procedure_adherence
+    scenario: >
+      /work does not exist at build time — the probe tmpfs is mounted later — so an install
+      that writes there fails outright, in the opposite direction to the PERL5LIB mistake.
+    expect_violations:
+      - "does not exist at build time"
+    environment_spec:
+      base_image: perl:5.38-slim
+      install_commands:
+        - cpanm --notest --local-lib=/work/home/perl5 --installdeps .
+      env:
+        PERL5LIB: /work/home/perl5/lib/perl5
+      test_command: prove -v {test_file}

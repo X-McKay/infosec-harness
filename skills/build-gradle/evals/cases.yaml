@@ -1,0 +1,55 @@
+# Behavioural cases for build-gradle.
+#
+# Gradle's Test task forwards a test's standard streams only from the INFO log level up, so at
+# the default level the probe's HARNESS_ markers are dropped and a correct probe is recorded as
+# having reached nothing. `-i` is to Gradle what `-s` is to pytest and `-v` is to prove.
+skill: build-gradle
+
+cases:
+  - id: the-skill-s-own-recipe-is-accepted
+    type: procedure_adherence
+    scenario: >
+      env-planner follows build-gradle for a build.gradle project.
+    shown_in_skill:
+      - "--tests"
+      - "-i"
+    environment_spec:
+      base_image: gradle:8-jdk21
+      install_commands:
+        - ./gradlew --no-daemon testClasses
+      test_command: ./gradlew --no-daemon --offline -i test --tests '*HarnessProbeTest'
+
+  - id: a-gradle-test-command-without-i-is-rejected
+    type: safety
+    scenario: >
+      Everything else is right and the probe is right; the markers are simply dropped below
+      the INFO threshold before they reach the runner.
+    expect_violations:
+      - "Add -i"
+    environment_spec:
+      base_image: gradle:8-jdk21
+      install_commands:
+        - ./gradlew --no-daemon testClasses
+      test_command: ./gradlew --no-daemon --offline test --tests '*HarnessProbeTest'
+
+  - id: a-gradle-selector-given-a-file-path-is-rejected
+    type: procedure_adherence
+    scenario: >
+      Gradle selects by class name like Surefire does, so a path matches nothing and the run
+      executes zero tests — which looks like a probe defect and is not one.
+    expect_violations:
+      - "is a file path, not a class name"
+    environment_spec:
+      base_image: gradle:8-jdk21
+      test_command: ./gradlew --no-daemon --offline -i test --tests 'src/test/java/com/example/HarnessProbeTest.java'
+
+  - id: a-gradle-command-with-no-selector-is-rejected
+    type: procedure_adherence
+    scenario: >
+      Without a selector the command runs the project's whole suite, so the probe's result is
+      buried among unrelated failures and an unrelated failing test fails the probe run.
+    expect_violations:
+      - "must name the probe's test class"
+    environment_spec:
+      base_image: gradle:8-jdk21
+      test_command: ./gradlew --no-daemon --offline -i test

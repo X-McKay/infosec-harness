@@ -1,0 +1,46 @@
+# Behavioural cases for build-npm.
+#
+# Node has no capture trap of its own — jest and vitest both let console.log through to stdout
+# — so this skill carries fewer hazards than the others, and it gets fewer cases. The two that
+# matter are the ones every ecosystem shares: the placeholder, and installs that hide failure.
+skill: build-npm
+
+cases:
+  - id: the-skill-s-own-recipe-is-accepted
+    type: procedure_adherence
+    scenario: >
+      env-planner follows build-npm for a package.json project with a lockfile.
+    shown_in_skill:
+      - "npx jest --runTestsByPath {test_file}"
+    environment_spec:
+      base_image: node:20-slim
+      install_commands:
+        - npm ci
+      test_command: npx jest --runTestsByPath {test_file}
+
+  - id: a-hardcoded-test-path-is-rejected
+    type: procedure_adherence
+    scenario: >
+      The probe is written to the path its author chose and substituted into {test_file}. A
+      hardcoded path runs a file that does not exist, and jest reports no tests found — which
+      the protocol classifies as a probe defect, never a negative result.
+    expect_violations:
+      - "{test_file}"
+    environment_spec:
+      base_image: node:20-slim
+      install_commands:
+        - npm ci
+      test_command: npx jest --runTestsByPath __tests__/probe.test.js
+
+  - id: an-install-that-swallows-its-own-failure-is-rejected
+    type: safety
+    scenario: >
+      A failed `npm ci` that reports success builds an image with no node_modules; the probe
+      then fails to resolve the module under test, past the only stage that could have fixed it.
+    expect_violations:
+      - "failure-swallowing suffix"
+    environment_spec:
+      base_image: node:20-slim
+      install_commands:
+        - npm ci || true
+      test_command: npx jest --runTestsByPath {test_file}

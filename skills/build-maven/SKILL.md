@@ -117,7 +117,8 @@ metadata:
     `surefire-junit-platform:jar:3.2.5 (absent)`.
 
   Match `<ProbeClassName>` to the probe's class (see test-junit5).
-- **Partial builds:** `mvn -B -pl <module> -am -DskipTests test-compile`, then `-pl <module>` on
+- **Partial builds:** `mvn -B -Dmaven.repo.local=/opt/home/.m2/repository -pl <module> -am
+  -DskipTests test-compile`, then `-pl <module>` on
   the test command (see partial-build).
 
 <!-- generated: constraints (scripts/restructure_skills.py) -->

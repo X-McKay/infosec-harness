@@ -1,0 +1,122 @@
+# Behavioural cases for probe-oracle-protocol.
+#
+# This skill defines THREE markers, and the count has drifted before: two agent prompts said
+# "two markers" for long enough to be measured. The static suite checks that the skill's
+# stated count matches its own enumeration; these cases check the thing that actually matters,
+# which is that each of the three is independently load-bearing — a probe missing any one of
+# them is refused by the harness rather than quietly accepted.
+#
+# If one of these cases ever passes while expecting no violation, a marker has stopped being
+# required and the protocol has silently become a two-marker protocol again.
+skill: probe-oracle-protocol
+
+cases:
+  - id: a-probe-emitting-all-three-markers-is-accepted
+    type: procedure_adherence
+    scenario: >
+      The minimal shape from the skill, in a real language: precondition before the call,
+      sink-returned on both the normal and the rejected path, oracle only on the true branch.
+    shown_in_skill:
+      - "HARNESS_PRECONDITION::"
+      - "HARNESS_SINK_RETURNED::"
+      - "HARNESS_ORACLE::"
+    probe:
+      test_file_path: tests/test_harness_probe.py
+      content: |
+        def test_probe():
+            NONCE = "abc123"
+            import sys
+            from mypkg.module import target_callable
+            payload = build_input(NONCE)
+            print(f"HARNESS_PRECONDITION::{NONCE}", flush=True)
+            try:
+                result = target_callable(payload)
+            except ValueError:
+                print(f"HARNESS_SINK_RETURNED::{NONCE}", flush=True)
+                return
+            print(f"HARNESS_SINK_RETURNED::{NONCE}", flush=True)
+            if exploit_condition_holds(result, NONCE):
+                print(f"HARNESS_ORACLE::{NONCE}", flush=True)
+
+  - id: marker-one-the-precondition-is-required
+    type: safety
+    scenario: >
+      Without it the harness cannot tell that the test exercised the code path at all, so a
+      probe that never reached the sink is indistinguishable from one that reached it and
+      found nothing. The protocol treats its absence as a probe defect, never a clean negative.
+    expect_violations:
+      - "precondition"
+    probe:
+      test_file_path: tests/test_harness_probe.py
+      content: |
+        def test_probe():
+            NONCE = "abc123"
+            from mypkg.module import target_callable
+            result = target_callable(build_input(NONCE))
+            print(f"HARNESS_SINK_RETURNED::{NONCE}", flush=True)
+            if exploit_condition_holds(result, NONCE):
+                print(f"HARNESS_ORACLE::{NONCE}", flush=True)
+
+  - id: marker-two-the-sink-returned-is-required
+    type: safety
+    regression: >
+      This is the marker whose absence the protocol spells out at length: the precondition is
+      printed *before* the call, so by itself it proves only that the probe meant to make it.
+      A probe that threw on the way in — a wrong import, a bad signature, an exception
+      swallowed by a promise or a try — then looks exactly like a probe whose payload the code
+      resisted, and the harness records a false negative on an exploitable finding.
+    scenario: >
+      The probe brackets the sink call with the precondition and the oracle only.
+    expect_violations:
+      - "sink-returned"
+    probe:
+      test_file_path: tests/test_harness_probe.py
+      content: |
+        def test_probe():
+            NONCE = "abc123"
+            from mypkg.module import target_callable
+            print(f"HARNESS_PRECONDITION::{NONCE}", flush=True)
+            result = target_callable(build_input(NONCE))
+            if exploit_condition_holds(result, NONCE):
+                print(f"HARNESS_ORACLE::{NONCE}", flush=True)
+
+  - id: marker-three-the-oracle-signal-is-required
+    type: safety
+    scenario: >
+      A probe with no oracle signal can report that it reached the sink and never that the
+      exploit condition held, so every run it produces is a negative by construction. Either
+      form satisfies the requirement: the printed marker, or the canary file the plan names.
+    expect_violations:
+      - "oracle signal"
+    probe:
+      test_file_path: tests/test_harness_probe.py
+      content: |
+        def test_probe():
+            NONCE = "abc123"
+            from mypkg.module import target_callable
+            print(f"HARNESS_PRECONDITION::{NONCE}", flush=True)
+            result = target_callable(build_input(NONCE))
+            print(f"HARNESS_SINK_RETURNED::{NONCE}", flush=True)
+            assert NONCE not in result
+
+  - id: a-canary-oracle-satisfies-marker-three
+    type: procedure_adherence
+    scenario: >
+      When the only reliable evidence is a side effect — an injected OS command running — the
+      payload creates /tmp/harness_canary_<nonce> and the runner detects it. The probe must
+      never print the oracle marker itself in this mode, so the harness has to accept a probe
+      that carries the canary and no HARNESS_ORACLE line.
+    probe:
+      test_file_path: tests/test_harness_probe.py
+      content: |
+        def test_probe():
+            NONCE = "abc123"
+            from mypkg.module import run_report
+            payload = f"; touch /tmp/harness_canary_{NONCE}"
+            print(f"HARNESS_PRECONDITION::{NONCE}", flush=True)
+            try:
+                run_report(payload)
+            except OSError:
+                print(f"HARNESS_SINK_RETURNED::{NONCE}", flush=True)
+                return
+            print(f"HARNESS_SINK_RETURNED::{NONCE}", flush=True)

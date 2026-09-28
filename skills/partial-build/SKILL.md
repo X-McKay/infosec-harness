@@ -27,7 +27,10 @@ When a full build cannot be made to work within budget, build only the smallest 
 contains the file under investigation and can run one unit test. Set `scope: partial` and
 `module_path` to that unit's directory.
 
-- **Maven:** `mvn -q -B -pl <module> -am -DskipTests test-compile`; test with `-pl <module>`.
+- **Maven:** `mvn -B -Dmaven.repo.local=/opt/home/.m2/repository -pl <module> -am -DskipTests
+  test-compile`; test with `-pl <module>`. The repo-local flag goes on *every* install
+  command (see build-maven): build time writes under `/opt/home`, probe time reads the
+  tmpfs copy under `/work/home`, and a narrowed spec is where it is easiest to drop.
   `-am` also builds the modules it depends on.
 - **Gradle:** target the owning subproject: `:<subproject>:testClasses` then
   `:<subproject>:test --tests '<fqcn>'`.

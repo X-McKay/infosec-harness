@@ -1,0 +1,83 @@
+# Behavioural cases for test-perl-test-more.
+#
+# Perl has two ways to make a correct probe report nothing, and both are idiomatic: skipping,
+# and forgetting the plan. Both were measured against the corpus.
+skill: test-perl-test-more
+
+cases:
+  - id: the-skill-s-own-probe-exemplar-is-accepted
+    type: procedure_adherence
+    scenario: >
+      probe-author copies the worked example. It must satisfy validate_probe, or the agent is
+      rejected for following its own skill.
+    shown_in_skill:
+      - "done_testing();"
+      - "HARNESS_SINK_RETURNED::"
+    probe:
+      test_file_path: t/harness_probe.t
+      content: |
+        use strict; use warnings;
+        use lib 'lib';
+        use Test::More;
+        use MyModule qw(target_callable);
+
+        my $NONCE = 'abc123';
+        my $payload = build_input($NONCE);
+        print "HARNESS_PRECONDITION::$NONCE\n";
+        my $result = eval { target_callable($payload) };
+        print "HARNESS_SINK_RETURNED::$NONCE\n";
+        if (defined $result && exploit_condition_holds($result, $NONCE)) {
+            print "HARNESS_ORACLE::$NONCE\n";
+        }
+        pass('probe ran');
+        done_testing();
+
+  - id: a-probe-that-skips-itself-is-rejected
+    type: safety
+    regression: >
+      On perl-cmdi-vulnerable the runner printed `skipped: (no reason given)` with exit 255
+      and an empty stderr. The diagnosis guessed the file had not been written correctly, the
+      repair loop fixed the wrong thing, and a genuinely exploitable finding came back
+      inconclusive. Guarding a probe with `eval { require DBI; 1 } or plan skip_all => ...` is
+      ordinary Perl practice, which is exactly why a model reaches for it.
+    scenario: >
+      A module the probe needs might be absent, so the script declines to run rather than
+      letting the `use` fail where build repair could see the module name.
+    expect_violations:
+      - "skip_all"
+    probe:
+      test_file_path: t/harness_probe.t
+      content: |
+        use strict; use warnings;
+        use Test::More;
+        eval { require DBI; 1 } or plan skip_all => 'DBI not installed';
+        use MyModule qw(target_callable);
+
+        my $NONCE = 'abc123';
+        print "HARNESS_PRECONDITION::$NONCE\n";
+        my $result = target_callable(build_input($NONCE));
+        print "HARNESS_SINK_RETURNED::$NONCE\n";
+        print "HARNESS_ORACLE::$NONCE\n" if exploit_condition_holds($result, $NONCE);
+        done_testing();
+
+  - id: a-probe-with-no-plan-is-rejected
+    type: safety
+    scenario: >
+      Test::More needs a plan, before or after the assertions. Without one, prove reports a
+      bad plan and exits nonzero on a probe that printed every marker correctly — so a clean
+      negative or a fired oracle is thrown away as a failed run.
+    expect_violations:
+      - "done_testing"
+    probe:
+      test_file_path: t/harness_probe.t
+      content: |
+        use strict; use warnings;
+        use lib 'lib';
+        use Test::More;
+        use MyModule qw(target_callable);
+
+        my $NONCE = 'abc123';
+        print "HARNESS_PRECONDITION::$NONCE\n";
+        my $result = target_callable(build_input($NONCE));
+        print "HARNESS_SINK_RETURNED::$NONCE\n";
+        print "HARNESS_ORACLE::$NONCE\n" if exploit_condition_holds($result, $NONCE);
