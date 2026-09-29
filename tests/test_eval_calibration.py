@@ -9,6 +9,7 @@ from infosec_harness.evals.calibration import (
     CalibrationSpec,
     TrialResult,
     _passes_hard_gates,
+    _promotion_eligible,
     _selection_key,
     load_calibration,
     run_calibration,
@@ -61,6 +62,46 @@ def test_failed_or_missing_execution_evidence_fails_calibration_hard_gates():
     missing = dict(metrics)
     missing.pop("execution_failed_count")
     assert not _passes_hard_gates(missing)
+
+
+@pytest.mark.parametrize(
+    "model_mode, dirty, expected",
+    [
+        ("stub", False, False),
+        ("stub", True, False),
+        ("live", False, True),
+        ("live", True, False),
+    ],
+)
+def test_promotion_requires_live_evidence_from_a_clean_commit(model_mode, dirty, expected):
+    from infosec_harness.evals.provenance import CodeVersion
+
+    gates = {
+        "status": "complete",
+        "n": 1,
+        "n_planned": 1,
+        "schema_validity_rate": 1.0,
+        "budget_enforcement_violations": 0,
+        "unexpected_budget_stops": 0,
+        "unevidenced_safe_verdicts": 0,
+        "execution_not_checked_count": 0,
+        "execution_failed_count": 0,
+    }
+    selected = TrialResult(candidate=1, effective_config_digest="digest", status="complete")
+    code = CodeVersion("a" * 40, dirty, "test", "3.12", "b" * 64)
+    assert (
+        _promotion_eligible(
+            selected=selected,
+            held_out_metrics=gates,
+            selected_quality=True,
+            held_out_quality=True,
+            code=code,
+            model_mode=model_mode,
+            cost_is_unknown=False,
+            maximum_cost_usd=None,
+        )
+        is expected
+    )
 
 
 def test_calibration_schema_rejects_leakage_and_safety_variables():
@@ -205,7 +246,8 @@ async def test_runnable_calibration_executes_candidates_then_grouped_holdout(tmp
     assert report.baseline_config_digest == registry.config_hash(
         "verdict", registry.load_spec("verdict"), durable=True
     )
-    assert not report.promotion_eligible, "a dirty source snapshot must not be promoted"
+    assert not report.promotion_eligible, "stub evidence must never be promoted"
+    assert "stub-model results exercise calibration machinery only" in " ".join(report.limitations)
 
     output = tmp_path / "report.json"
     write_report(output, report)

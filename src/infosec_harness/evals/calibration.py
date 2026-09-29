@@ -23,7 +23,7 @@ from infosec_harness.agents.registry import (
     load_spec,
     resolve_agent_config,
 )
-from infosec_harness.evals.provenance import code_version
+from infosec_harness.evals.provenance import CodeVersion, code_version
 from infosec_harness.evals.run import case_group, run_experiment
 from infosec_harness.settings import get_settings
 
@@ -259,6 +259,29 @@ def _selection_key(trial: TrialResult) -> tuple[float, float, float]:
     )
 
 
+def _promotion_eligible(
+    *,
+    selected: TrialResult | None,
+    held_out_metrics: dict[str, Any] | None,
+    selected_quality: bool,
+    held_out_quality: bool,
+    code: CodeVersion,
+    model_mode: str,
+    cost_is_unknown: bool,
+    maximum_cost_usd: float | None,
+) -> bool:
+    """Promotion requires live evidence from immutable source plus every quality gate."""
+    return bool(
+        selected is not None
+        and _passes_hard_gates(held_out_metrics)
+        and selected_quality
+        and held_out_quality
+        and code.describes_a_commit
+        and model_mode == "live"
+        and not (cost_is_unknown and maximum_cost_usd is not None)
+    )
+
+
 async def _experiment_row(experiment_id: str) -> object:
     from infosec_harness.persistence import db
 
@@ -287,11 +310,12 @@ async def run_calibration(spec: CalibrationSpec) -> CalibrationReport:
     code = code_version()
     from infosec_harness.agents import models as model_factory
 
-    backend = model_factory.resolve_config(
+    resolved_model = model_factory.resolve_config(
         spec.subject,
         spec.model or base_spec.model or "sonnet",
         model_settings=dict(base_spec.model_settings or {}),
-    ).backend_name
+    )
+    backend = resolved_model.backend_name
     if spec.backend_profile and spec.backend_profile != backend:
         raise ValueError(
             f"experiment requires backend_profile={spec.backend_profile!r}, resolved {backend!r}"
@@ -441,13 +465,20 @@ async def run_calibration(spec: CalibrationSpec) -> CalibrationReport:
             "working tree was dirty; source_digest identifies the measured bytes but promotion "
             "requires an immutable clean revision"
         )
-    promotion_eligible = (
-        selected is not None
-        and _passes_hard_gates(held_out_metrics)
-        and selected_quality
-        and held_out_quality
-        and code.describes_a_commit
-        and not (cost_is_unknown and spec.constraints.maximum_cost_usd is not None)
+    if resolved_model.mode == "stub":
+        limitations.append(
+            "stub-model results exercise calibration machinery only; promotion requires live "
+            "provider evidence"
+        )
+    promotion_eligible = _promotion_eligible(
+        selected=selected,
+        held_out_metrics=held_out_metrics,
+        selected_quality=selected_quality,
+        held_out_quality=held_out_quality,
+        code=code,
+        model_mode=resolved_model.mode,
+        cost_is_unknown=cost_is_unknown,
+        maximum_cost_usd=spec.constraints.maximum_cost_usd,
     )
     return CalibrationReport(
         experiment=spec.experiment,

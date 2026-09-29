@@ -74,3 +74,18 @@ The secure Perl controls confirmed both manifest-based and explicit driver insta
 remain parseable for replay, but new candidates must pass the actual dependency query. No mount
 permissions changed. Captured replay and pending-activity replay passed; old workflows reaching
 an unscheduled revised output-contract agent fail before budget reservation and must restart.
+
+## First live token trial
+
+The serial trial completed on clean revision `8384bb94f478232157640b3f8d5be80d1f32aa30`
+(source digest `606ab9c30d98877715bdaf3136d052966af7e316507b887d5c0428c223fbaf8e`).
+It used 16 case attempts in 594.6 seconds. The 4,096 ceiling scored 6/7 with one budget stop;
+the existing 128,000 ceiling scored 7/7 and then 2/2 on the disjoint known regression groups.
+The current value is retained; this rejects 4,096, not proof that 128,000 is optimal.
+One baseline case reported 5,374 output tokens in a single request. No production setting
+was changed, and fresh holdouts remain unused.
+
+The clean-commit offline check exposed a separate eligibility bug: stub calibrations could
+be marked promotion-eligible. The next revision fixes that reporting predicate and adds
+deterministic clean/dirty tests. Agent behavior and the trial's settings remain unchanged.
+The all-agent repetition sweep and fresh holdouts will share that next clean revision.
