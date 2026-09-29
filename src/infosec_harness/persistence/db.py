@@ -92,6 +92,10 @@ class AgentInvocation(Base):
     cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     cost_estimated: Mapped[bool] = mapped_column(default=True)
     latency_s: Mapped[float] = mapped_column(Float, default=0.0)
+    # Request accounting: what a `request_limit` breach is measured against, and the
+    # repeated `tool(args)` calls that explain where the requests went.
+    requests: Mapped[int] = mapped_column(Integer, default=0)
+    repeated_tool_calls: Mapped[dict] = mapped_column(JSON, default=dict)
     tools_called: Mapped[list] = mapped_column(JSON, default=list)
     skills_loaded: Mapped[list] = mapped_column(JSON, default=list)
     run: Mapped[TriageRun] = relationship(back_populates="invocations")
@@ -174,6 +178,94 @@ def session() -> AsyncSession:
     return _sessionmaker()()
 
 
+def alembic_config():
+    """Alembic pointed at the packaged migrations, whether this runs from a checkout or a wheel.
+
+    Built in code rather than read from ``alembic.ini``: an installed wheel has no repository
+    to find the ini in, and the migrations ship inside the package precisely so that
+    ``harness migrate`` works wherever the harness does. The ini at the repository root is
+    for running the ``alembic`` CLI directly and points at the same directory.
+    """
+    from alembic.config import Config
+
+    from infosec_harness.resources import package_root
+
+    cfg = Config()
+    cfg.set_main_option("script_location", str(package_root() / "persistence" / "migrations"))
+    cfg.set_main_option("path_separator", "os")
+    return cfg
+
+
+def _bootstrap(connection) -> None:
+    """Create missing tables, and stamp head only when this database is brand new.
+
+    A database created here has exactly the schema the migrations produce, so stamping it
+    lets a later ``alembic upgrade head`` be the no-op it should be instead of trying to
+    re-create tables that already exist.
+
+    A database that already has tables but no version row predates alembic. Stamping it at
+    head would claim it has columns it does not, so it is left alone: bring it in with
+    ``alembic stamp 0001`` (the baseline is exactly what ``create_all`` used to build) and
+    then ``alembic upgrade head``.
+    """
+    from alembic.runtime.migration import MigrationContext
+    from alembic.script import ScriptDirectory
+    from sqlalchemy import inspect
+
+    existing = set(inspect(connection).get_table_names())
+    Base.metadata.create_all(connection)
+    if existing - {"alembic_version"}:
+        return
+    ctx = MigrationContext.configure(connection)
+    if ctx.get_current_revision() is None:
+        ctx.stamp(ScriptDirectory.from_config(alembic_config()), "head")
+
+
 async def create_all() -> None:
+    """Bootstrap the schema for tests, CI, and a fresh local database.
+
+    Deployments migrate instead (``upgrade_to_head``); see ``_bootstrap`` for how the two
+    are kept from diverging.
+    """
     async with _engine().begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(_bootstrap)
+
+
+def _schema_state(connection) -> tuple[set[str], str | None]:
+    from alembic.runtime.migration import MigrationContext
+    from sqlalchemy import inspect
+
+    tables = set(inspect(connection).get_table_names())
+    return tables, MigrationContext.configure(connection).get_current_revision()
+
+
+def upgrade_to_head(url: str | None = None) -> str:
+    """Migrate the database to the latest revision, adopting a pre-alembic one on the way.
+
+    A database with tables but no version row was built by the old ``create_all``, which
+    produced exactly what revision 0001 produces — so stamping it there and upgrading is
+    both safe and the only way such a database can pick up later revisions. Synchronous
+    because alembic drives its own event loop through ``migrations/env.py``.
+    """
+    import asyncio
+
+    from alembic import command
+
+    target = url or get_settings().database_url
+
+    async def _state():
+        engine = create_async_engine(target)
+        try:
+            async with engine.connect() as conn:
+                return await conn.run_sync(_schema_state)
+        finally:
+            await engine.dispose()
+
+    tables, revision = asyncio.run(_state())
+    cfg = alembic_config()
+    cfg.set_main_option("sqlalchemy.url", target)
+    if revision is None and tables - {"alembic_version"}:
+        command.stamp(cfg, "0001")
+    command.upgrade(cfg, "head")
+    _, revision = asyncio.run(_state())
+    return revision or ""

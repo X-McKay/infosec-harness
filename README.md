@@ -97,7 +97,8 @@ harness eval compare --agent <name>      # latest run per model, side by side
 harness eval compare <exp-a> <exp-b> […]  # named experiments, accuracy / cost / latency
 harness eval baseline save <exp-id>      # record the accepted result under evals/baselines/
 harness eval baseline list
-harness worker | harness api | harness init-db
+harness worker | harness api
+harness migrate                          # alembic upgrade head (adopts a pre-alembic DB); init-db bootstraps a fresh one
 harness agents validate | agents schema
 ```
 
@@ -120,7 +121,7 @@ src/infosec_harness/
   workflows/      # Temporal workflows, activities, TemporalOps, worker, runner
   sandbox/        # gVisor-capable Docker runner
   telemetry.py    # OTel resource attributes and agent-run spans
-  persistence/    # SQLAlchemy models, store, artifact store (MinIO/filesystem)
+  persistence/    # SQLAlchemy models, store, artifact store (MinIO/filesystem), alembic migrations/
   intake/ integrations/ado  # generic JSON + Azure DevOps intake and comment-only write-back
   evals/          # per-agent eval runner and compare
   api/ cli.py     # FastAPI service and Typer CLI

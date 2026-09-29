@@ -98,7 +98,7 @@ services:
 
   api:
     build: .
-    command: ["sh", "-c", "harness init-db && harness api --host 0.0.0.0 --port 8000"]
+    command: ["sh", "-c", "harness migrate && harness api --host 0.0.0.0 --port 8000"]
     depends_on:
       postgres: {condition: service_healthy}
     environment: *backend-env

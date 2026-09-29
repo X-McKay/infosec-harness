@@ -19,7 +19,8 @@ def _output(fp="fp1", label=VerdictLabel.potentially_exploitable):
     verdict = Verdict(label=label, confidence=0.8, rationale="r")
     result = TriageResult(fingerprint=fp, verdict=verdict, priority_score=0.5, priority=PriorityBand.p2)
     inv = AgentOutcome(output=None, agent="verdict", model_name="stub", config_hash="abc",
-                       input_tokens=100, output_tokens=20, cache_read_tokens=40, cost_usd=0.01)
+                       input_tokens=100, output_tokens=20, cache_read_tokens=40, cost_usd=0.01,
+                       requests=7, repeated_tool_calls={"read_file({'path': 'app.py'})": 3})
     return TriageRunOutput(finding=finding, result=result, prepared_status="ready", invocations=[inv])
 
 
@@ -33,6 +34,10 @@ async def test_save_and_query_run():
     assert detail["cost_usd"] == pytest.approx(0.01)
     assert detail["invocations"][0]["agent"] == "verdict"
     assert detail["cache_read_tokens"] == 40
+    # Request accounting survives the round trip, so a request_limit breach stays
+    # diagnosable from the stored run rather than needing a live re-run.
+    assert detail["invocations"][0]["requests"] == 7
+    assert detail["invocations"][0]["repeated_tool_calls"] == {"read_file({'path': 'app.py'})": 3}
 
 
 async def test_review_roundtrip():

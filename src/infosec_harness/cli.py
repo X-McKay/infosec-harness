@@ -91,11 +91,19 @@ def api(host: str = "0.0.0.0", port: int = 8000):
 
 @app.command("init-db")
 def init_db():
-    """Create database tables."""
+    """Create database tables (bootstrap; deployments use `harness migrate`)."""
     from infosec_harness.persistence import db
 
     asyncio.run(db.create_all())
     typer.echo("database tables created")
+
+
+@app.command("migrate")
+def migrate():
+    """Migrate the database to the latest revision."""
+    from infosec_harness.persistence import db
+
+    typer.echo(f"database at revision {db.upgrade_to_head()}")
 
 
 @agents_app.command("validate")
