@@ -32,7 +32,7 @@ from infosec_harness.evals.provenance import code_version
 from infosec_harness.evals.trajectory import summarize_calls
 from infosec_harness.settings import get_settings
 
-EVALUATOR_VERSION = "deterministic-agent-output-v5"
+EVALUATOR_VERSION = "deterministic-agent-output-v6"
 EVAL_EXECUTION_MODE = "local-eval-production-transport-v1"
 
 
@@ -257,7 +257,7 @@ async def run_experiment(
     )
 
     total = passed = invalid_output = budget_exhausted = unevidenced_safe = 0
-    execution_not_checked = execution_failed = 0
+    execution_not_checked_outcomes = execution_checks_passed = execution_failed = 0
     completed_cases = 0
     cost = cache_read = tokens = 0.0
     cost_unknown = usage_unknown = 0
@@ -274,8 +274,12 @@ async def run_experiment(
     confusion: dict[tuple[str, str], int] = {}
     attempts: list[dict[str, object]] = []
     planned_runs = len(cases) * repeat
+    execution_checks_planned = sum(bool(case.get("execution_check")) for case in cases) * repeat
 
     def build_metrics(status: str, truncation: dict | None = None) -> dict:
+        execution_not_checked = max(
+            0, execution_checks_planned - execution_checks_passed - execution_failed
+        )
         complete_cost = round(cost, 6) if cost_unknown == 0 else None
         per_case_cost = round(cost / total, 6) if total and cost_unknown == 0 else None
         usage_metrics = _usage_metrics(attempts, tokens, cache_read)
@@ -312,12 +316,12 @@ async def run_experiment(
                         - passed
                         - budget_exhausted
                         - invalid_output
-                        - execution_not_checked
+                        - execution_not_checked_outcomes
                         - execution_failed
                     ),
                     "budget_exhausted": budget_exhausted,
                     "invalid_output": invalid_output,
-                    "execution_not_checked": execution_not_checked,
+                    "execution_not_checked": execution_not_checked_outcomes,
                     "execution_failed": execution_failed,
                 },
             },
@@ -348,6 +352,8 @@ async def run_experiment(
             # stub mode is unknown evidence and must remain a failing hard-gate value.
             "execution_not_checked_count": execution_not_checked,
             "execution_failed_count": execution_failed,
+            "execution_checks_planned": execution_checks_planned,
+            "execution_checks_passed": execution_checks_passed,
             # Coverage travels with the numbers: every metric above is over `n` of
             # `n_planned` case runs, and only `status == "complete"` means they are equal.
             # `harness eval compare` refuses to read anything else as a like-for-like run.
@@ -449,10 +455,12 @@ async def run_experiment(
                         diagnostic["execution_check"] = execution.as_score()
                         if execution.status == "not_checked":
                             outcome = "execution_not_checked"
-                            execution_not_checked += 1
+                            execution_not_checked_outcomes += 1
                         elif execution.status == "failed":
                             outcome = "execution_failed"
                             execution_failed += 1
+                        elif execution.status == "passed":
+                            execution_checks_passed += 1
                     from infosec_harness.evals.probe_execution import evaluate_probe_execution
 
                     probe_check = await evaluate_probe_execution(
@@ -466,7 +474,6 @@ async def run_experiment(
                     requests = result.usage.requests or 0
                     model_requests.append(requests)
                     messages = result.all_messages()
-                    tool_calls.append(summarize_calls(messages)["tool_call_count"])
                     c, _ = model_factory.estimate_cost(model_name, result.usage)
                     if c is None and pricing in {"stub", "zero_priced"}:
                         c = 0.0
@@ -493,6 +500,13 @@ async def run_experiment(
                         (0.0 if pricing in {"stub", "zero_priced"} else None),
                     )
                     outcome = "budget_exhausted"
+                    if check := case.get("execution_check"):
+                        diagnostic["execution_check"] = {
+                            "status": "not_checked",
+                            "check": check,
+                            "reason": "agent output unavailable after budget stop",
+                            "execution_mode": "not-run-no-typed-output-v1",
+                        }
                     budget_exhausted += 1
                     usage_unknown += 1
                     cost_unknown += int(c is None)
@@ -511,6 +525,13 @@ async def run_experiment(
                         (0.0 if pricing in {"stub", "zero_priced"} else None),
                     )
                     outcome = "invalid_output"
+                    if check := case.get("execution_check"):
+                        diagnostic["execution_check"] = {
+                            "status": "not_checked",
+                            "check": check,
+                            "reason": "agent output unavailable after no accepted output",
+                            "execution_mode": "not-run-no-typed-output-v1",
+                        }
                     invalid_output += 1
                     usage_unknown += 1
                     cost_unknown += int(c is None)
@@ -543,6 +564,7 @@ async def run_experiment(
                 # that was stopped by its budget still took time, and excluding it would make
                 # the latency distribution describe only the cases that behaved.
                 diagnostic["call_summary"] = summarize_calls(messages)
+                tool_calls.append(diagnostic["call_summary"]["tool_call_count"])
                 latency = time.monotonic() - started
                 latencies.append(latency)
                 if c is not None:

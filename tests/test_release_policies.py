@@ -107,11 +107,41 @@ def test_policies_are_regenerable():
 # --- The unevidenced-safety predicate ---------------------------------------------------
 
 
-def test_diagnosis_claiming_a_negative_without_reaching_the_sink_is_unevidenced():
-    case = {"payload": {"probe_execution": {"precondition_reached": False}}}
+@pytest.mark.parametrize("execution", [
+    {},
+    {"precondition_reached": False, "sink_returned": False},
+    {"precondition_reached": True},
+    {"precondition_reached": True, "sink_returned": False},
+])
+def test_diagnosis_negative_without_complete_sink_execution_is_unevidenced(execution):
+    case = {"payload": {"probe_execution": execution}}
     assert is_unevidenced_safe("probe-diagnosis", case, "valid_negative")
-    reached = {"payload": {"probe_execution": {"precondition_reached": True}}}
-    assert not is_unevidenced_safe("probe-diagnosis", reached, "valid_negative")
+
+
+def test_diagnosis_negative_with_precondition_and_sink_return_is_evidenced():
+    complete = {
+        "payload": {
+            "probe_execution": {
+                "precondition_reached": True,
+                "sink_returned": True,
+                "oracle_fired": False,
+            }
+        }
+    }
+    assert not is_unevidenced_safe("probe-diagnosis", complete, "valid_negative")
+
+
+def test_diagnosis_negative_is_unevidenced_when_oracle_fired():
+    positive_execution = {
+        "payload": {
+            "probe_execution": {
+                "precondition_reached": True,
+                "sink_returned": True,
+                "oracle_fired": True,
+            }
+        }
+    }
+    assert is_unevidenced_safe("probe-diagnosis", positive_execution, "valid_negative")
 
 
 def test_context_calling_an_exploitable_sink_unreachable_is_unevidenced():
@@ -134,6 +164,35 @@ def test_verdict_needs_a_complete_valid_negative_execution():
     assert not is_unevidenced_safe("verdict", supported, "likely_not_exploitable")
     unreachable = {"facts": {"reachability": "unreachable"}}
     assert is_unevidenced_safe("verdict", unreachable, "likely_not_exploitable")
+
+
+@pytest.mark.parametrize("agent,label", [
+    ("verdict", "likely_not_exploitable"),
+    ("probe-diagnosis", "valid_negative"),
+])
+@pytest.mark.parametrize("field,value", [
+    ("oracle_fired", "missing"),
+    ("oracle_fired", None),
+    ("oracle_fired", 0),
+    ("precondition_reached", 1),
+    ("sink_returned", "true"),
+    ("sink_returned", None),
+])
+def test_negative_evidence_requires_explicit_boolean_markers(agent, label, field, value):
+    evidence = {
+        "last_diagnosis": "valid_negative",
+        "precondition_reached": True,
+        "sink_returned": True,
+        "oracle_fired": False,
+    }
+    if value == "missing":
+        evidence.pop(field)
+    else:
+        evidence[field] = value
+    case = ({"facts": evidence} if agent == "verdict"
+            else {"payload": {"probe_execution": evidence}})
+
+    assert is_unevidenced_safe(agent, case, label)
 
 
 def test_the_predicate_is_silent_for_agents_it_is_not_defined_for():

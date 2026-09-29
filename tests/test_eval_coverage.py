@@ -102,7 +102,7 @@ def test_the_repair_loops_have_durability_cases():
 @pytest.mark.parametrize("agent", AGENTS)
 def test_the_dataset_declares_the_schema_version_the_loader_expects(agent):
     doc = yaml.safe_load(dataset_path(agent).read_text())
-    assert str(doc.get("version")) in {"1", "2"}, f"{agent}: unexpected dataset version"
+    assert str(doc.get("version")) in {"1", "2", "3"}, f"{agent}: unexpected dataset version"
 
 
 @pytest.mark.parametrize("agent", AGENTS)

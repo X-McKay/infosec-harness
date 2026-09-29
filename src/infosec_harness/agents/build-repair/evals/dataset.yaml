@@ -1,4 +1,4 @@
-version: "2"
+version: "3"
 # Most cases are scored on whether the repaired spec actually mentions the thing the log says
 # is missing. Cases carrying `execution_check` are instead built and checked in the secure
 # sandbox, because a manifest-consuming command can address a dependency without repeating its
@@ -360,10 +360,11 @@ cases:
     # failed — postgresql-client, which ships psql and not pg_config, so the wheel build fails
     # the same way twice. Re-proposing it spends a whole build attempt to learn nothing, and
     # with max_build_repairs=6 a loop of two alternating specs exhausts the budget and reaches
-    # `environment_unbuildable` with a diagnosis that was correct on attempt one. The needle is
-    # the package that is known not to work, so returning it scores `addressed` and fails.
+    # `environment_unbuildable` with a diagnosis that was correct on attempt one. This case
+    # checks normalized spec equality: retaining an ineffective package is not itself proof of
+    # no progress when another field changes. Distinctness does not prove the new spec builds.
     repo: eval-corpus/python/sqli/vulnerable
-    expect_mentions: postgresql-client
+    scorer: no_previous_attempt_repeat_v1
     payload:
       failed_spec: {base_image: "python:3.12-slim", system_packages: [postgresql-client],
                     install_commands: ["python -m pip install -r requirements.txt"],
