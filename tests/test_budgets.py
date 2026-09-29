@@ -8,13 +8,12 @@ reading a trace. A budget turns that into a bounded, named failure.
 
 from __future__ import annotations
 
-import pathlib
-
 import pytest
 from pydantic import ValidationError
 
 from infosec_harness.agents.budgets import MissingBudget, RunBudget, run_budget, usage_limits_for
 from infosec_harness.agents.registry import AGENT_BINDINGS, agent_usage_limits, load_spec
+from infosec_harness.resources import agents_dir
 
 
 def test_every_agent_declares_a_run_budget():
@@ -283,7 +282,7 @@ def _recon_budget():
 
     from infosec_harness.agents.budgets import RunBudget
 
-    md = yaml.safe_load(pathlib.Path("agents/recon/agent.yaml").read_text())
+    md = yaml.safe_load((agents_dir() / "recon" / "agent.yaml").read_text())
     return RunBudget.model_validate(md["metadata"]["budgets"])
 
 
@@ -353,7 +352,7 @@ def test_the_repo_size_reaches_the_limits_a_run_is_given():
 
     from infosec_harness.agents.budgets import usage_limits_for
 
-    md = yaml.safe_load(pathlib.Path("agents/recon/agent.yaml").read_text())["metadata"]
+    md = yaml.safe_load((agents_dir() / "recon" / "agent.yaml").read_text())["metadata"]
     small = usage_limits_for("recon", md, source_files=3)
     large = usage_limits_for("recon", md, source_files=500)
     assert large.request_limit > small.request_limit

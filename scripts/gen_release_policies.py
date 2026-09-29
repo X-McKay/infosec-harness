@@ -21,6 +21,10 @@ from risk_scenarios import AGENT_SCENARIOS  # noqa: E402
 UNEVIDENCED_SAFETY_AGENTS = ("context", "probe-diagnosis", "verdict")
 
 REPO = Path(__file__).resolve().parents[1]
+# Agent specs, skills and the model catalogue live inside the package so they ship in
+# the wheel (agent-playbook 02, Build and packaging). Reviewable project files -- risk
+# assessments, the system spec -- stay at the repository root.
+PACKAGE = REPO / "src" / "infosec_harness"
 
 # A hard gate is binary and may never be traded against average quality (§7). These two apply
 # to every agent: an output that does not validate is not a wrong answer, it is no answer, and
@@ -97,7 +101,7 @@ def _render(data: dict, subject: str) -> str:
 
 def main() -> int:
     for agent in AGENT_SCENARIOS:
-        out = REPO / "agents" / agent / "evals" / "release-policy.yaml"
+        out = PACKAGE / "agents" / agent / "evals" / "release-policy.yaml"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(_render(policy_for(agent), agent))
         print(f"wrote {out.relative_to(REPO)}")

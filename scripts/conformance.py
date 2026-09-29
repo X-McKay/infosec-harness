@@ -1,14 +1,20 @@
 """Check this repository against the Agent and Multi-Agent Playbooks using `agentctl`.
 
-`agentctl` discovers artifacts on its golden-path layout — `src/<package>/agents/<name>/`,
-`src/<package>/systems/<name>/`, `src/<package>/activities/` — while this repository keeps
-agent specs, skills, and systems at the top level, next to each other, because they are
-reviewed together as data (see the Layout section of README.md). That is a deliberate
-difference in filing, not in contract.
+`agentctl` discovers artifacts on the playbook's golden-path layout, which this repository now
+uses directly: agent specs live at `src/infosec_harness/agents/<name>/agent.yaml` and skills at
+`src/infosec_harness/skills/<name>/SKILL.md`, so they ship in the wheel as the playbook's Build
+and packaging section requires.
 
-So rather than relocating the repository to satisfy a discovery convention, this builds a
-throwaway mirror in the expected shape and validates that. The contracts checked are the real
-ones: the same YAML files, the same schemas, the same semantic rules.
+Two differences remain, and both are naming rather than structure, so a throwaway mirror still
+stands between the repository and `agentctl`:
+
+* Agent and system directories are named as they are written (`probe-author`), while
+  `agentctl` expects the module-normalized form (`probe_author`).
+* Durable systems are expected to have an `activities/` package beside `workflows/`; ours is
+  one module, `workflows/activities.py`.
+
+The contracts checked are the real ones: the same YAML files, the same schemas, the same
+semantic rules. Only the filenames are rearranged.
 
     uv run python scripts/conformance.py             # summary
     uv run python scripts/conformance.py --verbose    # every diagnostic
@@ -42,31 +48,41 @@ WAIVERS = {
         "rely on. Worth raising upstream against agentctl."
     ),
 }
-# Mirrored as-is: these paths are already what the specs reference relative to the root.
-COPY_AS_IS = ("agents", "skills", "docs", "evals", "config")
+PACKAGE_DIR = REPO / "src" / PACKAGE
+_IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc")
+
+# Reviewable project files, which stay at the repository root by design and are what the specs'
+# `risk_assessment` and `threat_model` metadata point at.
+PROJECT_DIRS = ("docs", "evals")
 
 
 def build_mirror(destination: Path) -> None:
-    for name in COPY_AS_IS:
+    for name in PROJECT_DIRS:
         source = REPO / name
         if source.is_dir():
-            shutil.copytree(source, destination / name, dirs_exist_ok=True,
-                            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+            shutil.copytree(source, destination / name, dirs_exist_ok=True, ignore=_IGNORE)
+    # The package, copied whole except for the agent directories, which are *renamed* below
+    # rather than duplicated: leaving both spellings in place makes every agent resolve twice
+    # and `agentctl` reports the members as ambiguous.
     package = destination / "src" / PACKAGE
-    (package / "agents").mkdir(parents=True, exist_ok=True)
-    for spec in sorted((REPO / "agents").glob("*/agent.yaml")):
-        # agentctl expects the directory to be the agent name normalized to a module name.
-        target = package / "agents" / spec.parent.name.replace("-", "_")
-        target.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(spec, target / "agent.yaml")
-    # Skills and tool policies are discovered beside the package.
-    shutil.copytree(REPO / "skills", package / "skills", dirs_exist_ok=True,
-                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-    shutil.copytree(REPO / "src" / PACKAGE / "tools", package / "tools", dirs_exist_ok=True,
-                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    shutil.copytree(PACKAGE_DIR, package, dirs_exist_ok=True,
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "agents"))
+    for spec in sorted((PACKAGE_DIR / "agents").glob("*/agent.yaml")):
+        shutil.copytree(spec.parent, package / "agents" / spec.parent.name.replace("-", "_"),
+                        dirs_exist_ok=True, ignore=_IGNORE)
+    for module in sorted(PACKAGE_DIR.glob("agents/*.py")):
+        shutil.copy2(module, package / "agents" / module.name)
+    # Two root-level copies, because `agentctl` resolves these from the project root while the
+    # runtime resolves them from the package: skills are discovered there, and a spec's
+    # `evaluation_policy` is written `agents/<name>/evals/...` -- the path inside the
+    # distribution, which is the package root at runtime and the project root to agentctl.
+    shutil.copytree(PACKAGE_DIR / "skills", destination / "skills", dirs_exist_ok=True,
+                    ignore=_IGNORE)
+    shutil.copytree(PACKAGE_DIR / "agents", destination / "agents", dirs_exist_ok=True,
+                    ignore=_IGNORE)
     for system in sorted((REPO / "systems").glob("*/system.yaml")):
         target = package / "systems" / system.parent.name.replace("-", "_")
-        shutil.copytree(system.parent, target, dirs_exist_ok=True)
+        shutil.copytree(system.parent, target, dirs_exist_ok=True, ignore=_IGNORE)
     # agentctl requires a durable system to have both directories beside the package. Ours are
     # one module (workflows/activities.py) rather than a package, so mirror the shape.
     for directory in ("workflows", "activities"):

@@ -9,7 +9,20 @@ from typing import Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+from infosec_harness.resources import (
+    agents_dir,
+    models_config,
+    package_root,
+    skills_dir,
+    source_checkout,
+)
+
+# The repository root when this runs from a checkout, and the package directory otherwise.
+# Kept for the tooling that reads reviewable *project* files -- risk assessments, the eval
+# corpus, the system spec -- which are deliberately not packaged. Runtime resources go through
+# `infosec_harness.resources` instead, because those must resolve inside an installed wheel
+# where no repository exists at all. See that module for the distinction.
+REPO_ROOT = source_checkout() or package_root()
 
 
 class Settings(BaseSettings):
@@ -36,9 +49,11 @@ class Settings(BaseSettings):
     workspace_dir: Path = Path(".harness/workspace")
 
     # Agents and models
-    agents_dir: Path = REPO_ROOT / "agents"
-    skills_dir: Path = REPO_ROOT / "skills"
-    models_config: Path = REPO_ROOT / "config" / "models.yaml"
+    # Packaged with the code (agent-playbook 02, Build and packaging), not read from the
+    # working directory: an installed wheel has no repository root to look beside.
+    agents_dir: Path = Field(default_factory=agents_dir)
+    skills_dir: Path = Field(default_factory=skills_dir)
+    models_config: Path = Field(default_factory=models_config)
     # ``live`` resolves model tiers through config/models.yaml; ``stub`` uses
     # deterministic in-process models (tests, offline demos, CI).
     model_mode: Literal["live", "stub"] = "live"

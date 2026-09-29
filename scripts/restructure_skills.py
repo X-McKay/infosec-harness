@@ -98,7 +98,7 @@ def _drop_region(body: str, begin: str, end: str) -> str:
 
 
 def restructure(name: str) -> bool:
-    path = REPO / "skills" / name / "SKILL.md"
+    path = REPO / "src" / "infosec_harness" / "skills" / name / "SKILL.md"
     spec = SKILLS[name]
     original = path.read_text()
     _, body = _split_frontmatter(original)

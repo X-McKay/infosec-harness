@@ -32,10 +32,28 @@ class GovernanceError(ValueError):
     """A spec cannot be governed as written, so it must not become a running agent."""
 
 
-def _repo_root() -> Path:
-    from infosec_harness.settings import REPO_ROOT
+def _resolve_reference(value: str) -> Path | None:
+    """Locate a path a spec's metadata references, or ``None`` when nothing here can see it.
 
-    return REPO_ROOT
+    Two bases are legitimate, and which one holds a given reference is a packaging decision
+    rather than something the spec should have to spell out:
+
+    * ``agents/<name>/evals/release-policy.yaml`` ships in the wheel beside the spec it gates,
+      so it resolves under the package root.
+    * ``docs/risk-assessments/<name>.yaml`` is a reviewable project file that is deliberately
+      not packaged, so it resolves only in a source checkout.
+
+    ``None`` means "this deployment cannot check that", which is different from "missing". On
+    an installed wheel the docs tree is absent by design; treating that as a governance
+    violation would make every agent unconstructible in production for a reason that is purely
+    an artifact of where reviewers keep their files.
+    """
+    from infosec_harness.resources import package_root, source_checkout
+
+    for base in (package_root(), source_checkout()):
+        if base is not None and (candidate := base / value).exists():
+            return candidate
+    return None if source_checkout() is None else source_checkout() / value
 
 
 def violations(agent_name: str, metadata: dict[str, Any] | None, *,
@@ -101,8 +119,8 @@ def _reference_violations(agent_name: str, meta: dict[str, Any]) -> list[str]:
     """A risk assessment or eval policy that is only a path is not evidence of anything."""
     problems = []
     for field in ("risk_assessment", "evaluation_policy"):
-        path = _repo_root() / str(meta[field])
-        if not path.exists():
+        path = _resolve_reference(str(meta[field]))
+        if path is not None and not path.exists():
             problems.append(f"metadata.{field} points at {meta[field]!r}, which does not exist")
     return problems
 
@@ -120,7 +138,11 @@ def tier_matches_assessment(agent_name: str, metadata: dict[str, Any]) -> list[s
     """The spec's risk tier must equal the governance tier its assessment records."""
     import yaml
 
-    path = _repo_root() / str(metadata["risk_assessment"])
+    path = _resolve_reference(str(metadata["risk_assessment"]))
+    if path is None:
+        return [f"risk assessment {metadata['risk_assessment']!r} cannot be read here: risk "
+                f"assessments are project files and are not packaged, so this check needs a "
+                f"source checkout"]
     if not path.exists():
         return [f"risk assessment {metadata['risk_assessment']!r} does not exist"]
     assessment = yaml.safe_load(path.read_text()) or {}

@@ -77,7 +77,8 @@ from infosec_harness.agents.validators import (
     validate_probe,
 )
 from infosec_harness.domain.models import EnvironmentSpec, ProbeSource
-from infosec_harness.settings import REPO_ROOT
+from infosec_harness.resources import agents_dir as _agents_dir
+from infosec_harness.resources import skills_dir as _skills_dir
 
 __all__ = [
     "AMBIGUITY_RESIDUE",
@@ -125,8 +126,8 @@ __all__ = [
     "spec_violations",
 ]
 
-SKILLS_DIR = REPO_ROOT / "skills"
-AGENTS_DIR = REPO_ROOT / "agents"
+SKILLS_DIR = _skills_dir()
+AGENTS_DIR = _agents_dir()
 
 # The nine case types the playbook names. Every one is accounted for by `coverage_summary`,
 # which is the point: an unnamed gap is indistinguishable from an oversight.

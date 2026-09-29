@@ -2,6 +2,7 @@
 import json
 
 from infosec_harness.agents import registry
+from infosec_harness.resources import agents_dir, skills_dir
 
 
 def test_all_specs_valid():
@@ -170,7 +171,6 @@ def test_no_spec_asks_for_more_thinking_than_its_own_token_ceiling_allows():
     Asserts the derivation, not the numbers: a spec may declare any thinking level, but its
     ceiling must leave a real answer behind it.
     """
-    import pathlib
 
     import yaml
     from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP
@@ -179,7 +179,7 @@ def test_no_spec_asks_for_more_thinking_than_its_own_token_ceiling_allows():
     # enough to call the spec coherent.
     MIN_ANSWER_TOKENS = 1024
     checked = 0
-    for path in sorted(pathlib.Path("agents").glob("*/agent.yaml")):
+    for path in sorted(agents_dir().glob("*/agent.yaml")):
         settings = yaml.safe_load(path.read_text()).get("model_settings") or {}
         max_tokens, thinking = settings.get("max_tokens"), settings.get("thinking")
         level = thinking.get("effort") if isinstance(thinking, dict) else thinking
@@ -209,12 +209,11 @@ def test_the_probe_writing_agents_are_told_about_the_sink_returned_marker():
     Deliberately checks the prompts rather than the skill: the skill was always correct, and it
     is the prompt that told them otherwise.
     """
-    import pathlib
 
     import yaml
 
     for name in ("probe-author", "probe-repair"):
-        spec = yaml.safe_load(pathlib.Path(f"agents/{name}/agent.yaml").read_text())
+        spec = yaml.safe_load((agents_dir() / name / "agent.yaml").read_text())
         text = " ".join(spec["instructions"]).lower()
         assert "two markers" not in text, (
             f"{name}: says 'two markers', but probe-oracle-protocol defines three "
@@ -229,9 +228,8 @@ def test_the_probe_writing_agents_are_told_about_the_sink_returned_marker():
 def test_the_protocol_skill_still_defines_exactly_the_three_markers_the_prompts_promise():
     """Guards the other direction: if the protocol ever changes its marker set, the test above
     stops meaning anything, so tie the prompts' promise to the skill's own text."""
-    import pathlib
 
-    protocol = pathlib.Path("skills/probe-oracle-protocol/SKILL.md").read_text()
+    protocol = (skills_dir() / "probe-oracle-protocol" / "SKILL.md").read_text()
     assert "## The three markers" in protocol
     for marker in ("HARNESS_PRECONDITION::", "HARNESS_SINK_RETURNED::", "HARNESS_ORACLE::"):
         assert marker in protocol, f"{marker} missing from the protocol skill"

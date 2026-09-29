@@ -15,9 +15,10 @@ import yaml
 
 from infosec_harness.agents.registry import AGENT_BINDINGS
 from infosec_harness.evals.adapters import UNEVIDENCED_SAFETY_AGENTS, is_unevidenced_safe
+from infosec_harness.resources import agents_dir
 from infosec_harness.settings import REPO_ROOT
 
-POLICIES = {name: REPO_ROOT / "agents" / name / "evals" / "release-policy.yaml"
+POLICIES = {name: agents_dir() / name / "evals" / "release-policy.yaml"
             for name in AGENT_BINDINGS}
 
 

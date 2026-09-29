@@ -97,24 +97,39 @@ harness agents validate | agents schema
 
 ## Layout
 
+The split is the one agent-playbook 02 draws: anything an agent needs *in order to run* is
+package data and ships in the wheel; anything reviewers and CI read *about* the system stays at
+the repository root and is absent from a deployment.
+
 ```
-agents/<name>/agent.yaml   # the 11 agent specs (+ evals/dataset.yaml, evals/release-policy.yaml)
-skills/                    # SKILL.md libraries: probe-oracle-protocol, cwe-*, lang-*, build-*, test-*
-systems/triage-system/     # System Spec + delegation / data-flow / termination policies
-docs/risk-assessments/     # one per agent + the system; generated from scripts/risk_scenarios.py
-scripts/                   # generators for the governance artifacts, and the conformance check
 src/infosec_harness/
+  agents/<name>/agent.yaml  # the 11 agent specs (+ evals/dataset.yaml, evals/release-policy.yaml)
+  skills/                   # SKILL.md libraries: probe-oracle-protocol, cwe-*, lang-*, build-*, test-*
+  config/models.yaml        # the approved-model catalogue — governance data, so it ships with the code
+  tools/          # per-toolset tool.yaml: effect, retry safety, timeout, output bound
+  resources.py    # where the above are, whether this runs from a checkout or a wheel
   domain/         # typed contracts (Finding, EnvironmentSpec, ProbePlan, Verdict, …)
-  agents/         # loader, model factory, custom capabilities, stubs, validators
+  agents/*.py     # loader, model factory, custom capabilities, stubs, validators
   graph/          # pydantic-graph triage flow, prepare orchestrator, Ops interface, scoring
   workflows/      # Temporal workflows, activities, TemporalOps, worker, runner
   sandbox/        # gVisor-capable Docker runner
-  tools/          # per-toolset tool.yaml: effect, retry safety, timeout, output bound
   telemetry.py    # OTel resource attributes and agent-run spans
   persistence/    # SQLAlchemy models, store, artifact store (MinIO/filesystem)
   intake/ integrations/ado  # generic JSON + Azure DevOps intake and comment-only write-back
   evals/          # per-agent eval runner and compare
   api/ cli.py     # FastAPI service and Typer CLI
-web/              # React + shadcn triage UI (client generated from the API's OpenAPI)
-deploy/           # compose support (postgres init, otel collector)
+
+systems/triage-system/     # System Spec + delegation / data-flow / termination policies
+docs/risk-assessments/     # one per agent + the system; generated from scripts/risk_scenarios.py
+eval-corpus/               # paired vulnerable/fixed fixture repositories
+scripts/                   # generators for the governance artifacts, and the conformance check
+tests/
+web/                       # React + shadcn triage UI (client generated from the API's OpenAPI)
+deploy/                    # compose support (postgres init, otel collector)
 ```
+
+A spec addresses its resources by their path *inside the distribution* — `directories: skills`,
+`evaluation_policy: agents/<name>/evals/release-policy.yaml` — and
+`infosec_harness.resources` resolves them through `importlib.resources`. Nothing reads them
+relative to the process working directory; `tests/test_packaging.py` builds the real wheel,
+installs it, and asserts all 11 agents construct from an unrelated directory.

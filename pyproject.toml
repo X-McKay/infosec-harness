@@ -42,6 +42,12 @@ harness = "infosec_harness.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/infosec_harness"]
+# agent-playbook 02: "Agent specifications, instruction files, and runtime `SKILL.md` files
+# MUST be included as package data." They live under the package precisely so this holds
+# without a force-include list that could silently fall out of date; artifacts are excluded so
+# a stale local run does not end up in a release.
+artifacts = []
+exclude = ["**/__pycache__", "**/*.pyc"]
 
 [tool.ruff]
 line-length = 100

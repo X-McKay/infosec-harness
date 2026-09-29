@@ -21,8 +21,12 @@ sys.path.insert(0, str(Path(__file__).parent))
 from risk_scenarios import max_tier  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
+# Agent specs, skills and the model catalogue live inside the package so they ship in
+# the wheel (agent-playbook 02, Build and packaging). Reviewable project files -- risk
+# assessments, the system spec -- stay at the repository root.
+PACKAGE = REPO / "src" / "infosec_harness"
 OUT = REPO / "systems" / "triage-system"
-AGENTS = REPO / "agents"
+AGENTS = PACKAGE / "agents"
 
 # Role in this system. There is deliberately no `coordinator`: the topology is fixed code, so
 # no agent ever chooses what runs next. That is the strongest form of the playbook's

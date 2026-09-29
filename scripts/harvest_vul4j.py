@@ -196,7 +196,7 @@ def parse_dataset(text: str) -> list[Entry]:
 
 def covered_cwes() -> tuple[str, ...]:
     """The CWE classes `skills/cwe-*` covers, read from disk when available."""
-    skills = REPO / "skills"
+    skills = REPO / "src" / "infosec_harness" / "skills"
     if not skills.is_dir():
         return FALLBACK_COVERED_CWES
     found = sorted(

@@ -19,9 +19,10 @@ import re
 
 import pytest
 
+from infosec_harness.resources import skills_dir
 from infosec_harness.settings import REPO_ROOT
 
-SKILLS = REPO_ROOT / "skills"
+SKILLS = skills_dir()
 PROTOCOL = SKILLS / "probe-oracle-protocol" / "SKILL.md"
 # A skill may only talk about substituting the sink in order to rule it out.
 SUBSTITUTE = re.compile(r"fake|stub|mock", re.I)

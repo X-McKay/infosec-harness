@@ -22,6 +22,10 @@ from risk_scenarios import (  # noqa: E402
 )
 
 REPO = Path(__file__).resolve().parents[1]
+# Agent specs, skills and the model catalogue live inside the package so they ship in
+# the wheel (agent-playbook 02, Build and packaging). Reviewable project files -- risk
+# assessments, the system spec -- stay at the repository root.
+PACKAGE = REPO / "src" / "infosec_harness"
 OUT = REPO / "docs" / "risk-assessments"
 ASSESSED_AT = "2026-09-26"
 # Review cadence from agent-playbook §13: 1 month critical, 3 high, 6 medium, 12 low.
@@ -168,7 +172,7 @@ def _member_assessments() -> list[dict]:
 
     members = []
     for agent in AGENT_SCENARIOS:
-        spec = _yaml.safe_load((REPO / "agents" / agent / "agent.yaml").read_text())
+        spec = _yaml.safe_load((PACKAGE / "agents" / agent / "agent.yaml").read_text())
         members.append({
             "agent": agent,
             "agent_version": spec["metadata"]["version"],

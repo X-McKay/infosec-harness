@@ -59,7 +59,7 @@ eval-run agent="probe-diagnosis":
 # so read nothing into the numbers.
 eval-adapters:
     mkdir -p .harness
-    for dataset in agents/*/evals/dataset.yaml; do \
+    for dataset in src/infosec_harness/agents/*/evals/dataset.yaml; do \
       agent="$(basename "$(dirname "$(dirname "$dataset")")")"; \
       echo "--- $agent"; \
       HARNESS_MODEL_MODE=stub HARNESS_DATABASE_URL="sqlite+aiosqlite:///.harness/demo.db" \

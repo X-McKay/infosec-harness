@@ -44,6 +44,7 @@ from infosec_harness.domain.models import (
     Verdict,
     canonical_json,
 )
+from infosec_harness.resources import package_root
 from infosec_harness.settings import get_settings
 
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
@@ -158,8 +159,18 @@ def _skills_hash(spec: AgentSpec) -> str:
 
 
 def _abs(path: str | Path) -> Path:
+    """Resolve a spec-relative resource path against the package, never the working directory.
+
+    ``skills`` is the shared library's name in every spec, so it resolves to the configured
+    ``skills_dir`` -- which keeps ``HARNESS_SKILLS_DIR`` meaningful instead of quietly ignored.
+    Anything else is taken as a path under the package root.
+    """
     p = Path(path)
-    return p if p.is_absolute() else (get_settings().agents_dir.parent / p)
+    if p.is_absolute():
+        return p
+    if str(p) == "skills":
+        return get_settings().skills_dir
+    return package_root() / p
 
 
 def config_hash(name: str, spec: AgentSpec) -> str:
@@ -174,14 +185,35 @@ def config_hash(name: str, spec: AgentSpec) -> str:
 
 
 def _absolutize_skill_dirs(spec: AgentSpec) -> AgentSpec:
-    """Skill directories in specs are repo-relative; make them absolute for the worker."""
+    """Resolve a spec's skill directories against the package, not the working directory.
+
+    ``agent.yaml`` writes ``directories: skills`` because a spec should name the library, not
+    the deployment's filesystem. Left relative, ``load_skill_libraries`` resolves it against
+    the process CWD -- so the agents loaded their skills only when something happened to
+    launch the worker from the repository root, and raised ``Skill library directory does not
+    exist: skills`` from anywhere else. That is exactly the working-directory assumption
+    agent-playbook 02 rules out, and an installed wheel is where it surfaces.
+
+    The shape matters: ``model_dump(by_alias=True)`` renders a capability as
+    ``{"name": "Skills", "arguments": {...}}``, never as the ``{"Skills": {...}}`` shorthand
+    that appears in the YAML source. An earlier version of this function looked only for the
+    shorthand, matched nothing, and silently rewrote no spec at all.
+    """
     data = spec.model_dump(by_alias=True, exclude_none=True, mode="json")
     for cap in data.get("capabilities", []):
-        if isinstance(cap, dict) and "Skills" in cap and isinstance(cap["Skills"], dict):
-            dirs = cap["Skills"].get("directories", "skills")
-            cap["Skills"]["directories"] = (
-                str(_abs(dirs)) if isinstance(dirs, str) else [str(_abs(d)) for d in dirs]
-            )
+        if not isinstance(cap, dict):
+            continue
+        # Both renderings, so this keeps working whichever one a caller hands us.
+        if cap.get("name") == "Skills":
+            arguments = cap.setdefault("arguments", {})
+        elif isinstance(cap.get("Skills"), dict):
+            arguments = cap["Skills"]
+        else:
+            continue
+        dirs = arguments.get("directories", "skills")
+        arguments["directories"] = (
+            str(_abs(dirs)) if isinstance(dirs, str) else [str(_abs(d)) for d in dirs]
+        )
     return AgentSpec.from_dict(data)
 
 

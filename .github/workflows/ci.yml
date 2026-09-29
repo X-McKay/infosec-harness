@@ -27,9 +27,9 @@ jobs:
         run: |
           mkdir -p .harness
           shopt -s nullglob
-          datasets=(agents/*/evals/dataset.yaml)
+          datasets=(src/infosec_harness/agents/*/evals/dataset.yaml)
           if [ ${#datasets[@]} -eq 0 ]; then
-            echo "no agents/*/evals/dataset.yaml found - adapter coverage would be silently empty"
+            echo "no src/infosec_harness/agents/*/evals/dataset.yaml found - adapter coverage would be silently empty"
             exit 1
           fi
           for dataset in "${datasets[@]}"; do

@@ -25,7 +25,7 @@ from typing import Any
 
 import yaml
 
-from infosec_harness.settings import REPO_ROOT
+from infosec_harness.resources import agents_dir, project_file
 
 # The dataset categories the playbook names. Every case declares exactly one, so a dataset can
 # be read for what it actually exercises rather than inferred from case names.
@@ -37,12 +37,14 @@ CATEGORIES = ("smoke", "regression", "capability", "safety", "adversarial", "dur
 MATERIAL_TIERS = ("high", "critical")
 
 
-def risk_assessment_path(agent: str) -> Path:
-    return REPO_ROOT / "docs" / "risk-assessments" / f"{agent}.yaml"
+def risk_assessment_path(agent: str) -> Path | None:
+    """A reviewable project file, so it is absent from a deployment rather than packaged."""
+    return project_file("docs", "risk-assessments", f"{agent}.yaml")
 
 
 def dataset_path(agent: str) -> Path:
-    return REPO_ROOT / "agents" / agent / "evals" / "dataset.yaml"
+    """Packaged beside the spec it grades, so a release check can run against the wheel."""
+    return agents_dir() / agent / "evals" / "dataset.yaml"
 
 
 @dataclass
@@ -85,7 +87,7 @@ class Coverage:
 def scenarios_for(agent: str) -> list[ScenarioRef]:
     """The scenarios an agent's risk assessment declares."""
     path = risk_assessment_path(agent)
-    if not path.is_file():
+    if path is None or not path.is_file():
         return []
     doc = yaml.safe_load(path.read_text()) or {}
     raw = doc.get("scenarios", []) if isinstance(doc, dict) else doc
@@ -136,6 +138,6 @@ def coverage_for(agent: str) -> Coverage:
 
 
 def agents_with_datasets() -> list[str]:
-    root = REPO_ROOT / "agents"
+    root = agents_dir()
     return sorted(p.name for p in root.iterdir()
                   if (p / "evals" / "dataset.yaml").is_file())

@@ -22,7 +22,7 @@ from infosec_harness.evals.inert_gates import (
     format_inert_notice,
     pricing_status,
 )
-from infosec_harness.settings import REPO_ROOT
+from infosec_harness.resources import agents_dir
 
 POLICY = {
     "schema_version": 1,
@@ -209,7 +209,7 @@ def test_the_shipped_policies_audit_cleanly_against_a_priced_report(agent):
     """The shipped thresholds are all live *given* a priced model — the inertness is the
     deployment's, not the policy's. This is what makes the cost ceiling worth keeping."""
     policy = yaml.safe_load(
-        (REPO_ROOT / "agents" / agent / "evals" / "release-policy.yaml").read_text())
+        (agents_dir() / agent / "evals" / "release-policy.yaml").read_text())
     report = _report(model="anthropic:claude-sonnet-5", cost=0.08,
                      gates={"unevidenced_safe_verdicts": 0})
     assert find_inert_checks(report, policy, pricing=_priced) == []
