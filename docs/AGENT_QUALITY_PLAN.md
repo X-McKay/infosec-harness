@@ -87,9 +87,8 @@ One baseline case reported 5,374 output tokens in a single request. No productio
 was changed, and fresh holdouts remain unused.
 
 The clean-commit offline check exposed a separate eligibility bug: stub calibrations could
-be marked promotion-eligible. The next revision fixes that reporting predicate and adds
-deterministic clean/dirty tests. Agent behavior and the trial's settings remain unchanged.
-The all-agent repetition sweep and fresh holdouts will share that next clean revision.
+be marked promotion-eligible. Revision `f8aabf5` fixed that predicate with deterministic
+clean/dirty tests. Agent behavior and the trial's settings remained unchanged.
 
 ## Evaluator production-parity correction
 
@@ -116,3 +115,32 @@ The previously amended six-hour aggregate wall-clock ceiling, two-suite concurre
 production invocation limits, and quality gates remain unchanged. The corrected full sweep
 retains the original full-sweep absolute deadline; missing coverage cannot clear qualification.
 Fresh holdouts remain unopened by the candidate developer and unused for tuning.
+
+## Closed qualification and next candidate
+
+The corrected evaluator-v5 sweep on clean `2d823a0` closed incomplete after 13 suites and
+141 scored cases. All eleven agents completed one pass; build-repair and partial-build also
+completed a second pass. Build-repair, partial-build, and probe-diagnosis failed first-pass
+policies. A one-token completion then timed out after 45 seconds with no evaluation suites
+in flight. The provider cause is unknown. Twenty remaining repeated suites and the ten fresh
+holdout cases are `not_checked`; holdouts remain unused. No passed qualification is claimed.
+
+Four evaluator accounting/scoring corrections plus explicit boolean negative-evidence checks
+passed 1,623 deterministic tests, with zero failures or skips, and were committed as `50e3564`.
+Original v5 scores remain immutable. The separate read-only v6 reassessment is offline-derived
+evidence and cannot authorize promotion. See [the review](AGENT_QUALITY_REVIEW.md) and
+`docs/validation/agent-quality/` for exact identities, gates, counts, and limitations.
+
+The 450-attempt envelope used 210 attempts, including two readiness diagnostics. The attempt
+cap was not exhausted. Agent request, token, tool, cost, and ten-minute time limits remain
+unchanged. Before increasing them, the next candidate should record the binding SDK limit
+with safe structured diagnostics and bounded partial usage observations, preserving unknowns.
+Then test minimal build-tool exploration/stopping guidance, diagnosis evidence guidance, and
+canonical language/version naming on public cases, serially. If request limits demonstrably
+bind useful work, compare 16 versus 20 requests with consistent derived cumulative input,
+output, and tool ceilings. Retain per-request context, safety, latency, and quality gates.
+A larger allowance that merely extends exploration or violates p95 requests is not an improvement.
+
+Verify bounded provider readiness before spending further live attempts. Any adopted change
+requires a new frozen candidate, complete repeated public qualification, and fresh holdouts.
+No settings were promoted and this body of work has not been pushed to `develop`.

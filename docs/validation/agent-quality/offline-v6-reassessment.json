@@ -1,0 +1,533 @@
+{
+  "classification": "offline_derived_reassessment_not_live_evaluation",
+  "coverage_reporting_annotation": {
+    "original_database_sha256": "b9a65d89ffe117e7e2f2f89230d8ef1acedee008bde4a57f4459b540b92b4071",
+    "original_generated_reassessment_sha256": "b80e54789f8d88e4d9c82e82fd53bfa6f1fe727243e4b6d77f8bb9f36c1bfe61",
+    "reason": "Closed phase indexes omit per-attempt arrays. Count persisted attempt records from the original read-only database rather than treating absent index arrays as zero.",
+    "scoring_unchanged": true
+  },
+  "current_grader": {
+    "code_identity": {
+      "git_commit": "50e3564bb45622a73f0bd366a68f37479262d053",
+      "git_dirty": false,
+      "harness_version": "2.0.0.dev0",
+      "python": "3.12.14",
+      "source_digest": "676c78093ed4bd17127143becd6f82d27844e49ae39f3cd6e954e881f15153fa"
+    },
+    "evaluator_version": "deterministic-agent-output-v6",
+    "file_hashes": {
+      ".harness/validation/quality-gates/execution-check-accounting-v6.patch": "1894bf31895bb1f224d0829a3351d6bf86d56ed6992d0814899b898d46933829",
+      ".harness/validation/quality-gates/no-progress-scorer.patch": "4a9a787d24f9a228e74878ec557abb43fa936fffaca9bab3a21f4385a0d2178c",
+      ".harness/validation/quality-gates/probe-diagnosis-unevidenced-safe-v6.patch": "d27f303a3cf9d63ea19f9401fcfb630aabbc7078517475ac6777c2c0ebcd962f",
+      ".harness/validation/quality-gates/tool-call-accounting-v6.patch": "b8e925eaaa89d6a108f71aef9e66c83ce5f7030d4a5d13e763c2118fb033a11c",
+      "src/infosec_harness/evals/adapters.py": "18598a6cb094d7785597099707bfb5247bc06ecdfdf8db8ef577f6c645e12b65",
+      "src/infosec_harness/evals/run.py": "7a6fe1ee7690cd7aa7b1be2cb21d935b32f1efaf0663affbe45e26af4d3db09c"
+    }
+  },
+  "derived": {
+    "all_agents_tool_call_accounting": {
+      "experiment_count": 13,
+      "missing_tool_call_summaries_not_checked": 0,
+      "observed_tool_call_summaries": 141,
+      "rows": [
+        {
+          "derived_p50_tool_calls": 2,
+          "derived_p95_tool_calls": 3,
+          "experiment_id": "exp-425ad34e9461b3fb",
+          "missing_tool_call_summaries_not_checked": 0,
+          "observed_tool_call_summaries": 9,
+          "original_p50_tool_calls": 2,
+          "original_p95_tool_calls": 3,
+          "percentile_method": "nearest-rank-v1",
+          "scored_rows": 9,
+          "unscored_attempts_excluded": 0
+        },
+        {
+          "derived_p50_tool_calls": 0,
+          "derived_p95_tool_calls": 1,
+          "experiment_id": "exp-5735c2b0c797690b",
+          "missing_tool_call_summaries_not_checked": 0,
+          "observed_tool_call_summaries": 9,
+          "original_p50_tool_calls": 0,
+          "original_p95_tool_calls": 1,
+          "percentile_method": "nearest-rank-v1",
+          "scored_rows": 9,
+          "unscored_attempts_excluded": 0
+        },
+        {
+          "derived_p50_tool_calls": 2,
+          "derived_p95_tool_calls": 2,
+          "experiment_id": "exp-57e3978bcbc29438",
+          "missing_tool_call_summaries_not_checked": 0,
+          "observed_tool_call_summaries": 10,
+          "original_p50_tool_calls": 2,
+          "original_p95_tool_calls": 2,
+          "percentile_method": "nearest-rank-v1",
+          "scored_rows": 10,
+          "unscored_attempts_excluded": 0
+        },
+        {
+          "derived_p50_tool_calls": 0,
+          "derived_p95_tool_calls": 0,
+          "experiment_id": "exp-60c572f9553b2a3d",
+          "missing_tool_call_summaries_not_checked": 0,
+          "observed_tool_call_summaries": 13,
+          "original_p50_tool_calls": 0,
+          "original_p95_tool_calls": 0,
+          "percentile_method": "nearest-rank-v1",
+          "scored_rows": 13,
+          "unscored_attempts_excluded": 0
+        },
+        {
+          "derived_p50_tool_calls": 3,
+          "derived_p95_tool_calls": 6,
+          "experiment_id": "exp-60dd4c157ec4eff4",
+          "missing_tool_call_summaries_not_checked": 0,
+          "observed_tool_call_summaries": 10,
+          "original_p50_tool_calls": 3,
+          "original_p95_tool_calls": 6,
+          "percentile_method": "nearest-rank-v1",
+          "scored_rows": 10,
+          "unscored_attempts_excluded": 0
+        },
+        {
+          "derived_p50_tool_calls": 16,
+          "derived_p95_tool_calls": 23,
+          "experiment_id": "exp-819ab39e5725e3d4",
+          "missing_tool_call_summaries_not_checked": 0,
+          "observed_tool_call_summaries": 9,
+          "original_p50_tool_calls": 8,
+          "original_p95_tool_calls": 17,
+          "percentile_method": "nearest-rank-v1",
+          "scored_rows": 9,
+          "unscored_attempts_excluded": 0
+        },
+        {
+          "derived_p50_tool_calls": 5,
+          "derived_p95_tool_calls": 8,
+          "experiment_id": "exp-a2db8c8d323bc397",
+          "missing_tool_call_summaries_not_checked": 0,
+          "observed_tool_call_summaries": 15,
+          "original_p50_tool_calls": 5,
+          "original_p95_tool_calls": 8,
+          "percentile_method": "nearest-rank-v1",
+          "scored_rows": 15,
+          "unscored_attempts_excluded": 0
+        },
+        {
+          "derived_p50_tool_calls": 6,
+          "derived_p95_tool_calls": 19,
+          "experiment_id": "exp-a84e30032192570e",
+          "missing_tool_call_summaries_not_checked": 0,
+          "observed_tool_call_summaries": 14,
+          "original_p50_tool_calls": 6,
+          "original_p95_tool_calls": 8,
+          "percentile_method": "nearest-rank-v1",
+          "scored_rows": 14,
+          "unscored_attempts_excluded": 0
+        },
+        {
+          "derived_p50_tool_calls": 5,
+          "derived_p95_tool_calls": 8,
+          "experiment_id": "exp-cde6e2ba5be640db",
+          "missing_tool_call_summaries_not_checked": 0,
+          "observed_tool_call_summaries": 10,
+          "original_p50_tool_calls": 5,
+          "original_p95_tool_calls": 8,
+          "percentile_method": "nearest-rank-v1",
+          "scored_rows": 10,
+          "unscored_attempts_excluded": 0
+        },
+        {
+          "derived_p50_tool_calls": 4,
+          "derived_p95_tool_calls": 21,
+          "experiment_id": "exp-ce4c4f2b91a83c0a",
+          "missing_tool_call_summaries_not_checked": 0,
+          "observed_tool_call_summaries": 14,
+          "original_p50_tool_calls": 4,
+          "original_p95_tool_calls": 6,
+          "percentile_method": "nearest-rank-v1",
+          "scored_rows": 14,
+          "unscored_attempts_excluded": 0
+        },
+        {
+          "derived_p50_tool_calls": 0,
+          "derived_p95_tool_calls": 0,
+          "experiment_id": "exp-d244f3d59939c434",
+          "missing_tool_call_summaries_not_checked": 0,
+          "observed_tool_call_summaries": 9,
+          "original_p50_tool_calls": 0,
+          "original_p95_tool_calls": 0,
+          "percentile_method": "nearest-rank-v1",
+          "scored_rows": 9,
+          "unscored_attempts_excluded": 0
+        },
+        {
+          "derived_p50_tool_calls": 6,
+          "derived_p95_tool_calls": 21,
+          "experiment_id": "exp-d680d3c10608e8c9",
+          "missing_tool_call_summaries_not_checked": 0,
+          "observed_tool_call_summaries": 9,
+          "original_p50_tool_calls": 8,
+          "original_p95_tool_calls": 12,
+          "percentile_method": "nearest-rank-v1",
+          "scored_rows": 9,
+          "unscored_attempts_excluded": 0
+        },
+        {
+          "derived_p50_tool_calls": 7,
+          "derived_p95_tool_calls": 10,
+          "experiment_id": "exp-ea313eada8f51d0b",
+          "missing_tool_call_summaries_not_checked": 0,
+          "observed_tool_call_summaries": 10,
+          "original_p50_tool_calls": 7,
+          "original_p95_tool_calls": 10,
+          "percentile_method": "nearest-rank-v1",
+          "scored_rows": 10,
+          "unscored_attempts_excluded": 0
+        }
+      ],
+      "scored_rows": 141,
+      "unscored_attempts_excluded": 0
+    },
+    "build_repair_execution_check_accounting": {
+      "execution_checks_passed": 0,
+      "execution_checks_planned": 2,
+      "execution_failed_count": 0,
+      "execution_not_checked_count": 2,
+      "experiment_count": 2,
+      "original_execution_failed_count": 0,
+      "original_execution_not_checked_count": 0,
+      "rows": [
+        {
+          "execution_checks_passed": 0,
+          "execution_checks_planned": 1,
+          "execution_failed_count": 0,
+          "execution_not_checked_count": 1,
+          "experiment_id": "exp-a84e30032192570e",
+          "mismatched_check_records": 0,
+          "observed_not_checked_records": 0,
+          "omitted_or_unreached_checks": 1,
+          "original_execution_failed_count": 0,
+          "original_execution_not_checked_count": 0,
+          "original_primary_failure_categories": {
+            "budget_exhausted": 3,
+            "invalid_output": 0
+          }
+        },
+        {
+          "execution_checks_passed": 0,
+          "execution_checks_planned": 1,
+          "execution_failed_count": 0,
+          "execution_not_checked_count": 1,
+          "experiment_id": "exp-ce4c4f2b91a83c0a",
+          "mismatched_check_records": 0,
+          "observed_not_checked_records": 0,
+          "omitted_or_unreached_checks": 1,
+          "original_execution_failed_count": 0,
+          "original_execution_not_checked_count": 0,
+          "original_primary_failure_categories": {
+            "budget_exhausted": 7,
+            "invalid_output": 0
+          }
+        }
+      ]
+    },
+    "build_repair_no_progress": {
+      "case_count": 2,
+      "changed_count": 1,
+      "checked_count": 1,
+      "derived_passed": 1,
+      "not_checked_count": 1,
+      "original_passed": 0,
+      "rows": [
+        {
+          "derived_passed": true,
+          "experiment_id": "exp-a84e30032192570e",
+          "original_passed": false,
+          "reassessment_status": "checked",
+          "repetition": 0,
+          "score_changed": true
+        },
+        {
+          "derived_passed": false,
+          "experiment_id": "exp-ce4c4f2b91a83c0a",
+          "original_passed": false,
+          "reason": "persisted_typed_output_unavailable",
+          "reassessment_status": "not_checked",
+          "repetition": 0,
+          "score_changed": false
+        }
+      ]
+    },
+    "probe_diagnosis_unevidenced_safe": {
+      "checked_rows": 13,
+      "derived_unevidenced_safe_count": 1,
+      "flagged_rows": [
+        {
+          "case_id": "the_sink_call_threw_between_the_two_markers",
+          "experiment_id": "exp-60c572f9553b2a3d",
+          "reassessment_status": "checked",
+          "repetition": 0,
+          "unevidenced_safe": true
+        }
+      ],
+      "not_checked_rows": 0,
+      "persisted_rows": 13
+    }
+  },
+  "ground_truth_validation": {
+    "build_repair_execution_declarations_and_facts_unchanged": true,
+    "build_repair_payload_and_expected_unchanged": true,
+    "frozen_commit": "2d823a0115ba1dec115eeb71aae86798ae0cea7e",
+    "probe_diagnosis_cases_unchanged": true
+  },
+  "limitations": [
+    "Original v5 scores and failures remain authoritative historical records.",
+    "Only four named deterministic scoring/accounting corrections are recomputed.",
+    "No model inference, provider request, or new execution occurred.",
+    "Coverage gaps, deadline skips, and the retained zero-inference startup failure remain gaps.",
+    "Attached build/context records may have no driver exit code; persisted DB/report rows define available evidence."
+  ],
+  "original_identities": {
+    "build_repair": [
+      {
+        "case_set_digest": "60bc49d25bb2da91ced6ed9824393e6c69f96b59f39c7599b5a2777d51e9460a",
+        "config_hash": "31bcf8f87d9d2c1b",
+        "dataset": "dataset.yaml",
+        "dataset_version": "2",
+        "evaluator_version": "deterministic-agent-output-v5",
+        "experiment_id": "exp-a84e30032192570e",
+        "git_dirty": false,
+        "git_sha": "2d823a0115ba1dec115eeb71aae86798ae0cea7e",
+        "model_name": "gateway:Qwen3.6-35B-A3B-NVFP4",
+        "source_digest": "3a39a085fb65b884a1fd5b57fedfc12b633852500a2acdecdc4a31dfcd049ce0"
+      },
+      {
+        "case_set_digest": "60bc49d25bb2da91ced6ed9824393e6c69f96b59f39c7599b5a2777d51e9460a",
+        "config_hash": "31bcf8f87d9d2c1b",
+        "dataset": "dataset.yaml",
+        "dataset_version": "2",
+        "evaluator_version": "deterministic-agent-output-v5",
+        "experiment_id": "exp-ce4c4f2b91a83c0a",
+        "git_dirty": false,
+        "git_sha": "2d823a0115ba1dec115eeb71aae86798ae0cea7e",
+        "model_name": "gateway:Qwen3.6-35B-A3B-NVFP4",
+        "source_digest": "3a39a085fb65b884a1fd5b57fedfc12b633852500a2acdecdc4a31dfcd049ce0"
+      }
+    ],
+    "context": [
+      {
+        "case_set_digest": "757024115ac732a0b1a4e8cf71fbbe4668fd9e41014bc20a14e168f6e08f57c3",
+        "config_hash": "096d6d9290e13de1",
+        "dataset": "dataset.yaml",
+        "dataset_version": "1",
+        "evaluator_version": "deterministic-agent-output-v5",
+        "experiment_id": "exp-a2db8c8d323bc397",
+        "git_dirty": false,
+        "git_sha": "2d823a0115ba1dec115eeb71aae86798ae0cea7e",
+        "model_name": "gateway:Qwen3.6-35B-A3B-NVFP4",
+        "source_digest": "3a39a085fb65b884a1fd5b57fedfc12b633852500a2acdecdc4a31dfcd049ce0"
+      }
+    ],
+    "env_planner": [
+      {
+        "case_set_digest": "6c6942341f7c19b85c2b4e817461ecabd8023b57d11da8006db89979a8340da0",
+        "config_hash": "6d5836a0765d9128",
+        "dataset": "dataset.yaml",
+        "dataset_version": "1",
+        "evaluator_version": "deterministic-agent-output-v5",
+        "experiment_id": "exp-60dd4c157ec4eff4",
+        "git_dirty": false,
+        "git_sha": "2d823a0115ba1dec115eeb71aae86798ae0cea7e",
+        "model_name": "gateway:Qwen3.6-35B-A3B-NVFP4",
+        "source_digest": "3a39a085fb65b884a1fd5b57fedfc12b633852500a2acdecdc4a31dfcd049ce0"
+      }
+    ],
+    "intake": [
+      {
+        "case_set_digest": "b4222aba9b29ba34135dc6e2d05c8daceab48e6fdae86b946d8bc21dd5957024",
+        "config_hash": "4b7af8260d426131",
+        "dataset": "dataset.yaml",
+        "dataset_version": "1",
+        "evaluator_version": "deterministic-agent-output-v5",
+        "experiment_id": "exp-5735c2b0c797690b",
+        "git_dirty": false,
+        "git_sha": "2d823a0115ba1dec115eeb71aae86798ae0cea7e",
+        "model_name": "gateway:Qwen3.6-35B-A3B-NVFP4",
+        "source_digest": "3a39a085fb65b884a1fd5b57fedfc12b633852500a2acdecdc4a31dfcd049ce0"
+      }
+    ],
+    "partial_build": [
+      {
+        "case_set_digest": "6cd532c6b074075e127a430b10b5bfddd4d8c755e52d4cb4ba9be1c9262541eb",
+        "config_hash": "69cdcd3a53b37318",
+        "dataset": "dataset.yaml",
+        "dataset_version": "1",
+        "evaluator_version": "deterministic-agent-output-v5",
+        "experiment_id": "exp-819ab39e5725e3d4",
+        "git_dirty": false,
+        "git_sha": "2d823a0115ba1dec115eeb71aae86798ae0cea7e",
+        "model_name": "gateway:Qwen3.6-35B-A3B-NVFP4",
+        "source_digest": "3a39a085fb65b884a1fd5b57fedfc12b633852500a2acdecdc4a31dfcd049ce0"
+      },
+      {
+        "case_set_digest": "6cd532c6b074075e127a430b10b5bfddd4d8c755e52d4cb4ba9be1c9262541eb",
+        "config_hash": "69cdcd3a53b37318",
+        "dataset": "dataset.yaml",
+        "dataset_version": "1",
+        "evaluator_version": "deterministic-agent-output-v5",
+        "experiment_id": "exp-d680d3c10608e8c9",
+        "git_dirty": false,
+        "git_sha": "2d823a0115ba1dec115eeb71aae86798ae0cea7e",
+        "model_name": "gateway:Qwen3.6-35B-A3B-NVFP4",
+        "source_digest": "3a39a085fb65b884a1fd5b57fedfc12b633852500a2acdecdc4a31dfcd049ce0"
+      }
+    ],
+    "probe_author": [
+      {
+        "case_set_digest": "63a622d85dd874fc92759376734ba77c73c604d41d076410e5038e1cb1311aba",
+        "config_hash": "4707a3d5dfc11303",
+        "dataset": "dataset.yaml",
+        "dataset_version": "2",
+        "evaluator_version": "deterministic-agent-output-v5",
+        "experiment_id": "exp-ea313eada8f51d0b",
+        "git_dirty": false,
+        "git_sha": "2d823a0115ba1dec115eeb71aae86798ae0cea7e",
+        "model_name": "gateway:Qwen3.6-35B-A3B-NVFP4",
+        "source_digest": "3a39a085fb65b884a1fd5b57fedfc12b633852500a2acdecdc4a31dfcd049ce0"
+      }
+    ],
+    "probe_diagnosis": [
+      {
+        "case_set_digest": "f4c7289cd6d88af2dae0f29ae823f4b17be80102269243453619980670dfa4c1",
+        "config_hash": "bd60efee4a2e3f9c",
+        "dataset": "dataset.yaml",
+        "dataset_version": "2",
+        "evaluator_version": "deterministic-agent-output-v5",
+        "experiment_id": "exp-60c572f9553b2a3d",
+        "git_dirty": false,
+        "git_sha": "2d823a0115ba1dec115eeb71aae86798ae0cea7e",
+        "model_name": "gateway:Qwen3.6-35B-A3B-NVFP4",
+        "source_digest": "3a39a085fb65b884a1fd5b57fedfc12b633852500a2acdecdc4a31dfcd049ce0"
+      }
+    ],
+    "probe_planner": [
+      {
+        "case_set_digest": "f5828e2397804df8f44a1df942b5df6581b3cb449a22eaf14b14574e4ecdc838",
+        "config_hash": "a6cb17a1505840dd",
+        "dataset": "dataset.yaml",
+        "dataset_version": "1",
+        "evaluator_version": "deterministic-agent-output-v5",
+        "experiment_id": "exp-57e3978bcbc29438",
+        "git_dirty": false,
+        "git_sha": "2d823a0115ba1dec115eeb71aae86798ae0cea7e",
+        "model_name": "gateway:Qwen3.6-35B-A3B-NVFP4",
+        "source_digest": "3a39a085fb65b884a1fd5b57fedfc12b633852500a2acdecdc4a31dfcd049ce0"
+      }
+    ],
+    "probe_repair": [
+      {
+        "case_set_digest": "1572f3d92baf5f6b2594cb62b584f2011030de0cb3707a4bafbd0db46de767c0",
+        "config_hash": "67372a2a38aa3c67",
+        "dataset": "dataset.yaml",
+        "dataset_version": "2",
+        "evaluator_version": "deterministic-agent-output-v5",
+        "experiment_id": "exp-cde6e2ba5be640db",
+        "git_dirty": false,
+        "git_sha": "2d823a0115ba1dec115eeb71aae86798ae0cea7e",
+        "model_name": "gateway:Qwen3.6-35B-A3B-NVFP4",
+        "source_digest": "3a39a085fb65b884a1fd5b57fedfc12b633852500a2acdecdc4a31dfcd049ce0"
+      }
+    ],
+    "recon": [
+      {
+        "case_set_digest": "2aaafaa5141962ef324ef185df4d126a9c0343ee6095f276d8b4062d6930cbc0",
+        "config_hash": "5e16c4f8da55d711",
+        "dataset": "dataset.yaml",
+        "dataset_version": "1",
+        "evaluator_version": "deterministic-agent-output-v5",
+        "experiment_id": "exp-425ad34e9461b3fb",
+        "git_dirty": false,
+        "git_sha": "2d823a0115ba1dec115eeb71aae86798ae0cea7e",
+        "model_name": "gateway:Qwen3.6-35B-A3B-NVFP4",
+        "source_digest": "3a39a085fb65b884a1fd5b57fedfc12b633852500a2acdecdc4a31dfcd049ce0"
+      }
+    ],
+    "verdict": [
+      {
+        "case_set_digest": "932f6677f0430127d00fc63edfba992ec2d31bfb61dee62aac83e382e7061393",
+        "config_hash": "0a375c189824692e",
+        "dataset": "dataset.yaml",
+        "dataset_version": "1",
+        "evaluator_version": "deterministic-agent-output-v5",
+        "experiment_id": "exp-d244f3d59939c434",
+        "git_dirty": false,
+        "git_sha": "2d823a0115ba1dec115eeb71aae86798ae0cea7e",
+        "model_name": "gateway:Qwen3.6-35B-A3B-NVFP4",
+        "source_digest": "3a39a085fb65b884a1fd5b57fedfc12b633852500a2acdecdc4a31dfcd049ce0"
+      }
+    ]
+  },
+  "original_indexes": {
+    "full_live_v5_sha256": "309655b66116a923824f16cceb753496298440005ca72bd5b38b1ef62746a95d",
+    "full_source_stable": true,
+    "heldout_live_sha256": "acccce1f976e55a6b7762c5a99258e5a6a4d5d1663d0d83ccfb80030240e30c1",
+    "heldout_source_stable": true
+  },
+  "phase_coverage": {
+    "full_live_v5": {
+      "attempted_runs": 141,
+      "complete_experiments": 13,
+      "coverage_complete": false,
+      "deadline_or_skipped_driver_records": 20,
+      "declared_planned_case_attempts": 354,
+      "declared_unattempted_case_attempts": 213,
+      "driver_attached_without_exit_code_count": 4,
+      "driver_nonzero_exit_count": 1,
+      "driver_status_counts": {
+        "finished": 14,
+        "skipped_provider_readiness": 20
+      },
+      "incomplete_experiments": 0,
+      "indexed_attempt_records": 0,
+      "missing_experiments": 20,
+      "persisted_attempt_records": 141,
+      "persisted_attempt_records_source": "read-only SQLite experiment metrics; zero for manifest-confirmed unstarted phase",
+      "persisted_experiments": 13,
+      "persisted_planned_attempts": 141,
+      "persisted_planned_but_unattempted_runs": 0,
+      "planned_experiments": 33,
+      "scored_attempts": 141,
+      "status": "failed",
+      "unscored_attempted_runs": 0
+    },
+    "heldout_live": {
+      "attempted_runs": 0,
+      "complete_experiments": 0,
+      "coverage_complete": false,
+      "deadline_or_skipped_driver_records": 5,
+      "declared_planned_case_attempts": 10,
+      "declared_unattempted_case_attempts": 10,
+      "driver_attached_without_exit_code_count": 0,
+      "driver_nonzero_exit_count": 0,
+      "driver_status_counts": {
+        "skipped_provider_readiness": 5
+      },
+      "incomplete_experiments": 0,
+      "indexed_attempt_records": 0,
+      "missing_experiments": 5,
+      "persisted_attempt_records": 0,
+      "persisted_attempt_records_source": "read-only SQLite experiment metrics; zero for manifest-confirmed unstarted phase",
+      "persisted_experiments": 0,
+      "persisted_planned_attempts": 0,
+      "persisted_planned_but_unattempted_runs": 0,
+      "planned_experiments": 5,
+      "scored_attempts": 0,
+      "status": "not_checked",
+      "unscored_attempted_runs": 0
+    }
+  },
+  "promotion_eligible": false,
+  "schema_version": 1
+}

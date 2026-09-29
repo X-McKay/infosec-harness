@@ -1,0 +1,2026 @@
+{
+  "experiments": [
+    {
+      "agent": "build-repair",
+      "backend": "gateway",
+      "case_set_digest": "60bc49d25bb2da91ced6ed9824393e6c69f96b59f39c7599b5a2777d51e9460a",
+      "config_hash": null,
+      "dataset": "dataset.yaml",
+      "dataset_version": "2",
+      "distributions": {
+        "failure_categories": {
+          "budget_exhausted": 3,
+          "execution_failed": 0,
+          "execution_not_checked": 0,
+          "invalid_output": 0,
+          "wrong_answer": 2
+        },
+        "p50_cost_usd": 0.0,
+        "p50_latency_s": 51.979,
+        "p50_model_requests": 6,
+        "p50_tool_calls": 6,
+        "p95_cost_usd": 0.0,
+        "p95_latency_s": 300.062,
+        "p95_model_requests": 8,
+        "p95_tool_calls": 8,
+        "worst_repetition_pass_rate": 0.6429
+      },
+      "effective_configuration": {
+        "agent_name": "build-repair",
+        "budget": {
+          "baseline_source_files": 16,
+          "binding_root_fields": [],
+          "effective": {
+            "max_cost_usd": 1.5,
+            "max_input_tokens": 4000000,
+            "max_input_tokens_per_request": 250000,
+            "max_output_tokens": 256000,
+            "max_requests": 16,
+            "max_tool_calls": 64
+          },
+          "growth_per_doubling": 0.25,
+          "maximum_size_factor": 3.0,
+          "provider_output_floor": 16000,
+          "requested": {
+            "max_cost_usd": 1.5,
+            "max_input_tokens": 4000000,
+            "max_input_tokens_per_request": 250000,
+            "max_output_tokens": 256000,
+            "max_requests": 16,
+            "max_tool_calls": 64
+          },
+          "scaled": {
+            "max_cost_usd": 1.5,
+            "max_input_tokens": 4000000,
+            "max_input_tokens_per_request": 250000,
+            "max_output_tokens": 256000,
+            "max_requests": 16,
+            "max_tool_calls": 64
+          },
+          "size_factor": 1.0
+        },
+        "model": {
+          "backend_kind": "openai_compatible",
+          "backend_name": "gateway",
+          "capability_profile": {
+            "message_layout": "single_system",
+            "prompt_caching": "provider_managed",
+            "reasoning_accounting": "inside_output",
+            "structured_output": "tool",
+            "tool_calling": true,
+            "usage_reporting": "observed"
+          },
+          "durable": true,
+          "effective_settings": {
+            "max_tokens": 16000
+          },
+          "mode": "live",
+          "pricing_status": "known_zero",
+          "provider_output_floor": 16000,
+          "requested_model": "sonnet",
+          "requested_settings": {
+            "max_tokens": 16000
+          },
+          "resolved_model": "gateway:Qwen3.6-35B-A3B-NVFP4",
+          "transport_retries": 1
+        },
+        "skills_digest": "5b4ab0b5fecfe98f18846f946c4766117f7b9d13fd358ab7d1e5e0f3467ef9bf"
+      },
+      "evaluator_version": "deterministic-agent-output-v5",
+      "execution_mode": "local-eval-production-transport-v1",
+      "experiment_id": "exp-a84e30032192570e",
+      "git_dirty": false,
+      "git_sha": "2d823a0115ba1dec115eeb71aae86798ae0cea7e",
+      "metrics": {
+        "accuracy": 0.6429,
+        "attempted_runs": 14,
+        "average_cost_usd": 0.0,
+        "avg_tokens": null,
+        "budget_enforcement_violations": 0,
+        "budget_exhausted_count": 3,
+        "cache_hit_ratio": null,
+        "cases_completed": 14,
+        "cases_planned": 14,
+        "cost_unknown": 0,
+        "cost_usd_per_case": 0.0,
+        "cost_usd_total": 0.0,
+        "execution_failed_count": 0,
+        "execution_not_checked_count": 0,
+        "expected_budget_stops": 0,
+        "n": 14,
+        "n_planned": 14,
+        "p95_model_requests": 8,
+        "passed": 9,
+        "schema_validity_rate": 1.0,
+        "task_success_rate": 0.6429,
+        "unevidenced_safe_verdicts": 0,
+        "unexpected_budget_stops": 3,
+        "usage_unknown": 3
+      },
+      "model_name": "gateway:Qwen3.6-35B-A3B-NVFP4",
+      "phase": "full_live_v5",
+      "repetitions": 1,
+      "source_digest": "3a39a085fb65b884a1fd5b57fedfc12b633852500a2acdecdc4a31dfcd049ce0",
+      "status": "complete",
+      "usage_observations": {
+        "attempt_coverage_rate": 0.7857,
+        "attempts_observed": 11,
+        "attempts_total": 14,
+        "observed_avg_tokens": 25706.4,
+        "observed_cache_hit_ratio": 0.0,
+        "observed_cache_read_tokens": 0.0,
+        "observed_tokens_total": 282770.0
+      }
+    },
+    {
+      "agent": "context",
+      "backend": "gateway",
+      "case_set_digest": "757024115ac732a0b1a4e8cf71fbbe4668fd9e41014bc20a14e168f6e08f57c3",
+      "config_hash": null,
+      "dataset": "dataset.yaml",
+      "dataset_version": "1",
+      "distributions": {
+        "failure_categories": {
+          "budget_exhausted": 0,
+          "execution_failed": 0,
+          "execution_not_checked": 0,
+          "invalid_output": 0,
+          "wrong_answer": 1
+        },
+        "p50_cost_usd": 0.0,
+        "p50_latency_s": 39.684,
+        "p50_model_requests": 3,
+        "p50_tool_calls": 5,
+        "p95_cost_usd": 0.0,
+        "p95_latency_s": 50.68,
+        "p95_model_requests": 5,
+        "p95_tool_calls": 8,
+        "worst_repetition_pass_rate": 0.9333
+      },
+      "effective_configuration": {
+        "agent_name": "context",
+        "budget": {
+          "baseline_source_files": 16,
+          "binding_root_fields": [],
+          "effective": {
+            "max_cost_usd": 0.5,
+            "max_input_tokens": 600000,
+            "max_input_tokens_per_request": 60000,
+            "max_output_tokens": 180000,
+            "max_requests": 10,
+            "max_tool_calls": 40
+          },
+          "growth_per_doubling": 0.25,
+          "maximum_size_factor": 3.0,
+          "provider_output_floor": 16000,
+          "requested": {
+            "max_cost_usd": 0.5,
+            "max_input_tokens": 600000,
+            "max_input_tokens_per_request": 60000,
+            "max_output_tokens": 180000,
+            "max_requests": 10,
+            "max_tool_calls": 40
+          },
+          "scaled": {
+            "max_cost_usd": 0.5,
+            "max_input_tokens": 600000,
+            "max_input_tokens_per_request": 60000,
+            "max_output_tokens": 180000,
+            "max_requests": 10,
+            "max_tool_calls": 40
+          },
+          "size_factor": 1.0
+        },
+        "model": {
+          "backend_kind": "openai_compatible",
+          "backend_name": "gateway",
+          "capability_profile": {
+            "message_layout": "single_system",
+            "prompt_caching": "provider_managed",
+            "reasoning_accounting": "inside_output",
+            "structured_output": "tool",
+            "tool_calling": true,
+            "usage_reporting": "observed"
+          },
+          "durable": true,
+          "effective_settings": {
+            "max_tokens": 18000
+          },
+          "mode": "live",
+          "pricing_status": "known_zero",
+          "provider_output_floor": 16000,
+          "requested_model": "sonnet",
+          "requested_settings": {
+            "max_tokens": 18000
+          },
+          "resolved_model": "gateway:Qwen3.6-35B-A3B-NVFP4",
+          "transport_retries": 1
+        },
+        "skills_digest": "3b136c200e5ec8dc7ae432d6f5808ec268772c6c39ff6a2cc35e4a32462eb38c"
+      },
+      "evaluator_version": "deterministic-agent-output-v5",
+      "execution_mode": "local-eval-production-transport-v1",
+      "experiment_id": "exp-a2db8c8d323bc397",
+      "git_dirty": false,
+      "git_sha": "2d823a0115ba1dec115eeb71aae86798ae0cea7e",
+      "metrics": {
+        "accuracy": 0.9333,
+        "attempted_runs": 15,
+        "average_cost_usd": 0.0,
+        "avg_tokens": 19029.3,
+        "budget_enforcement_violations": 0,
+        "budget_exhausted_count": 0,
+        "cache_hit_ratio": 0.0,
+        "cases_completed": 15,
+        "cases_planned": 15,
+        "cost_unknown": 0,
+        "cost_usd_per_case": 0.0,
+        "cost_usd_total": 0.0,
+        "execution_failed_count": 0,
+        "execution_not_checked_count": 0,
+        "expected_budget_stops": 0,
+        "n": 15,
+        "n_planned": 15,
+        "p95_model_requests": 5,
+        "passed": 14,
+        "schema_validity_rate": 1.0,
+        "task_success_rate": 0.9333,
+        "unevidenced_safe_verdicts": 0,
+        "unexpected_budget_stops": 0,
+        "usage_unknown": 0
+      },
+      "model_name": "gateway:Qwen3.6-35B-A3B-NVFP4",
+      "phase": "full_live_v5",
+      "repetitions": 1,
+      "source_digest": "3a39a085fb65b884a1fd5b57fedfc12b633852500a2acdecdc4a31dfcd049ce0",
+      "status": "complete",
+      "usage_observations": {
+        "attempt_coverage_rate": 1.0,
+        "attempts_observed": 15,
+        "attempts_total": 15,
+        "observed_avg_tokens": 19029.3,
+        "observed_cache_hit_ratio": 0.0,
+        "observed_cache_read_tokens": 0.0,
+        "observed_tokens_total": 285439.0
+      }
+    },
+    {
+      "agent": "partial-build",
+      "backend": "gateway",
+      "case_set_digest": "6cd532c6b074075e127a430b10b5bfddd4d8c755e52d4cb4ba9be1c9262541eb",
+      "config_hash": null,
+      "dataset": "dataset.yaml",
+      "dataset_version": "1",
+      "distributions": {
+        "failure_categories": {
+          "budget_exhausted": 4,
+          "execution_failed": 0,
+          "execution_not_checked": 0,
+          "invalid_output": 0,
+          "wrong_answer": 0
+        },
+        "p50_cost_usd": 0.0,
+        "p50_latency_s": 86.762,
+        "p50_model_requests": 7,
+        "p50_tool_calls": 8,
+        "p95_cost_usd": 0.0,
+        "p95_latency_s": 262.368,
+        "p95_model_requests": 15,
+        "p95_tool_calls": 17,
+        "worst_repetition_pass_rate": 0.5556
+      },
+      "effective_configuration": {
+        "agent_name": "partial-build",
+        "budget": {
+          "baseline_source_files": 16,
+          "binding_root_fields": [],
+          "effective": {
+            "max_cost_usd": 1.5,
+            "max_input_tokens": 4000000,
+            "max_input_tokens_per_request": 250000,
+            "max_output_tokens": 256000,
+            "max_requests": 16,
+            "max_tool_calls": 64
+          },
+          "growth_per_doubling": 0.25,
+          "maximum_size_factor": 3.0,
+          "provider_output_floor": 16000,
+          "requested": {
+            "max_cost_usd": 1.5,
+            "max_input_tokens": 4000000,
+            "max_input_tokens_per_request": 250000,
+            "max_output_tokens": 256000,
+            "max_requests": 16,
+            "max_tool_calls": 64
+          },
+          "scaled": {
+            "max_cost_usd": 1.5,
+            "max_input_tokens": 4000000,
+            "max_input_tokens_per_request": 250000,
+            "max_output_tokens": 256000,
+            "max_requests": 16,
+            "max_tool_calls": 64
+          },
+          "size_factor": 1.0
+        },
+        "model": {
+          "backend_kind": "openai_compatible",
+          "backend_name": "gateway",
+          "capability_profile": {
+            "message_layout": "single_system",
+            "prompt_caching": "provider_managed",
+            "reasoning_accounting": "inside_output",
+            "structured_output": "tool",
+            "tool_calling": true,
+            "usage_reporting": "observed"
+          },
+          "durable": true,
+          "effective_settings": {
+            "max_tokens": 16000
+          },
+          "mode": "live",
+          "pricing_status": "known_zero",
+          "provider_output_floor": 16000,
+          "requested_model": "sonnet",
+          "requested_settings": {
+            "max_tokens": 16000
+          },
+          "resolved_model": "gateway:Qwen3.6-35B-A3B-NVFP4",
+          "transport_retries": 1
+        },
+        "skills_digest": "079c46841a50432a5c6fbfc5091ab871277edbd74557a6b269aa4dc45e55ce51"
+      },
+      "evaluator_version": "deterministic-agent-output-v5",
+      "execution_mode": "local-eval-production-transport-v1",
+      "experiment_id": "exp-819ab39e5725e3d4",
+      "git_dirty": false,
+      "git_sha": "2d823a0115ba1dec115eeb71aae86798ae0cea7e",
+      "metrics": {
+        "accuracy": 0.5556,
+        "attempted_runs": 9,
+        "average_cost_usd": 0.0,
+        "avg_tokens": null,
+        "budget_enforcement_violations": 0,
+        "budget_exhausted_count": 4,
+        "cache_hit_ratio": null,
+        "cases_completed": 9,
+        "cases_planned": 9,
+        "cost_unknown": 0,
+        "cost_usd_per_case": 0.0,
+        "cost_usd_total": 0.0,
+        "execution_failed_count": 0,
+        "execution_not_checked_count": 0,
+        "expected_budget_stops": 0,
+        "n": 9,
+        "n_planned": 9,
+        "p95_model_requests": 15,
+        "passed": 5,
+        "schema_validity_rate": 1.0,
+        "task_success_rate": 0.5556,
+        "unevidenced_safe_verdicts": 0,
+        "unexpected_budget_stops": 4,
+        "usage_unknown": 4
+      },
+      "model_name": "gateway:Qwen3.6-35B-A3B-NVFP4",
+      "phase": "full_live_v5",
+      "repetitions": 1,
+      "source_digest": "3a39a085fb65b884a1fd5b57fedfc12b633852500a2acdecdc4a31dfcd049ce0",
+      "status": "complete",
+      "usage_observations": {
+        "attempt_coverage_rate": 0.5556,
+        "attempts_observed": 5,
+        "attempts_total": 9,
+        "observed_avg_tokens": 56962.6,
+        "observed_cache_hit_ratio": 0.0,
+        "observed_cache_read_tokens": 0.0,
+        "observed_tokens_total": 284813.0
+      }
+    },
+    {
+      "agent": "verdict",
+      "backend": "gateway",
+      "case_set_digest": "932f6677f0430127d00fc63edfba992ec2d31bfb61dee62aac83e382e7061393",
+      "config_hash": null,
+      "dataset": "dataset.yaml",
+      "dataset_version": "1",
+      "distributions": {
+        "failure_categories": {
+          "budget_exhausted": 0,
+          "execution_failed": 0,
+          "execution_not_checked": 0,
+          "invalid_output": 0,
+          "wrong_answer": 0
+        },
+        "p50_cost_usd": 0.0,
+        "p50_latency_s": 62.416,
+        "p50_model_requests": 1,
+        "p50_tool_calls": 0,
+        "p95_cost_usd": 0.0,
+        "p95_latency_s": 275.725,
+        "p95_model_requests": 2,
+        "p95_tool_calls": 0,
+        "worst_repetition_pass_rate": 1.0
+      },
+      "effective_configuration": {
+        "agent_name": "verdict",
+        "budget": {
+          "baseline_source_files": 16,
+          "binding_root_fields": [],
+          "effective": {
+            "max_cost_usd": 0.5,
+            "max_input_tokens": 240000,
+            "max_input_tokens_per_request": 30000,
+            "max_output_tokens": 128000,
+            "max_requests": 8,
+            "max_tool_calls": 4
+          },
+          "growth_per_doubling": 0.25,
+          "maximum_size_factor": 3.0,
+          "provider_output_floor": 16000,
+          "requested": {
+            "max_cost_usd": 0.5,
+            "max_input_tokens": 240000,
+            "max_input_tokens_per_request": 30000,
+            "max_output_tokens": 128000,
+            "max_requests": 8,
+            "max_tool_calls": 4
+          },
+          "scaled": {
+            "max_cost_usd": 0.5,
+            "max_input_tokens": 240000,
+            "max_input_tokens_per_request": 30000,
+            "max_output_tokens": 128000,
+            "max_requests": 8,
+            "max_tool_calls": 4
+          },
+          "size_factor": 1.0
+        },
+        "model": {
+          "backend_kind": "openai_compatible",
+          "backend_name": "gateway",
+          "capability_profile": {
+            "message_layout": "single_system",
+            "prompt_caching": "provider_managed",
+            "reasoning_accounting": "inside_output",
+            "structured_output": "tool",
+            "tool_calling": true,
+            "usage_reporting": "observed"
+          },
+          "durable": true,
+          "effective_settings": {
+            "max_tokens": 16000
+          },
+          "mode": "live",
+          "pricing_status": "known_zero",
+          "provider_output_floor": 16000,
+          "requested_model": "sonnet",
+          "requested_settings": {
+            "max_tokens": 14000
+          },
+          "resolved_model": "gateway:Qwen3.6-35B-A3B-NVFP4",
+          "transport_retries": 1
+        },
+        "skills_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "evaluator_version": "deterministic-agent-output-v5",
+      "execution_mode": "local-eval-production-transport-v1",
+      "experiment_id": "exp-d244f3d59939c434",
+      "git_dirty": false,
+      "git_sha": "2d823a0115ba1dec115eeb71aae86798ae0cea7e",
+      "metrics": {
+        "accuracy": 1.0,
+        "attempted_runs": 9,
+        "average_cost_usd": 0.0,
+        "avg_tokens": 6059.1,
+        "budget_enforcement_violations": 0,
+        "budget_exhausted_count": 0,
+        "cache_hit_ratio": 0.0,
+        "cases_completed": 9,
+        "cases_planned": 9,
+        "cost_unknown": 0,
+        "cost_usd_per_case": 0.0,
+        "cost_usd_total": 0.0,
+        "execution_failed_count": 0,
+        "execution_not_checked_count": 0,
+        "expected_budget_stops": 0,
+        "n": 9,
+        "n_planned": 9,
+        "p95_model_requests": 2,
+        "passed": 9,
+        "schema_validity_rate": 1.0,
+        "task_success_rate": 1.0,
+        "unevidenced_safe_verdicts": 0,
+        "unexpected_budget_stops": 0,
+        "usage_unknown": 0
+      },
+      "model_name": "gateway:Qwen3.6-35B-A3B-NVFP4",
+      "phase": "full_live_v5",
+      "repetitions": 1,
+      "source_digest": "3a39a085fb65b884a1fd5b57fedfc12b633852500a2acdecdc4a31dfcd049ce0",
+      "status": "complete",
+      "usage_observations": {
+        "attempt_coverage_rate": 1.0,
+        "attempts_observed": 9,
+        "attempts_total": 9,
+        "observed_avg_tokens": 6059.1,
+        "observed_cache_hit_ratio": 0.0,
+        "observed_cache_read_tokens": 0.0,
+        "observed_tokens_total": 54532.0
+      }
+    },
+    {
+      "agent": "probe-author",
+      "backend": "gateway",
+      "case_set_digest": "63a622d85dd874fc92759376734ba77c73c604d41d076410e5038e1cb1311aba",
+      "config_hash": null,
+      "dataset": "dataset.yaml",
+      "dataset_version": "2",
+      "distributions": {
+        "failure_categories": {
+          "budget_exhausted": 0,
+          "execution_failed": 0,
+          "execution_not_checked": 0,
+          "invalid_output": 0,
+          "wrong_answer": 0
+        },
+        "p50_cost_usd": 0.0,
+        "p50_latency_s": 44.221,
+        "p50_model_requests": 5,
+        "p50_tool_calls": 7,
+        "p95_cost_usd": 0.0,
+        "p95_latency_s": 86.943,
+        "p95_model_requests": 6,
+        "p95_tool_calls": 10,
+        "worst_repetition_pass_rate": 1.0
+      },
+      "effective_configuration": {
+        "agent_name": "probe-author",
+        "budget": {
+          "baseline_source_files": 16,
+          "binding_root_fields": [],
+          "effective": {
+            "max_cost_usd": 1.0,
+            "max_input_tokens": 1920000,
+            "max_input_tokens_per_request": 120000,
+            "max_output_tokens": 256000,
+            "max_requests": 16,
+            "max_tool_calls": 64
+          },
+          "growth_per_doubling": 0.25,
+          "maximum_size_factor": 3.0,
+          "provider_output_floor": 16000,
+          "requested": {
+            "max_cost_usd": 1.0,
+            "max_input_tokens": 1920000,
+            "max_input_tokens_per_request": 120000,
+            "max_output_tokens": 256000,
+            "max_requests": 16,
+            "max_tool_calls": 64
+          },
+          "scaled": {
+            "max_cost_usd": 1.0,
+            "max_input_tokens": 1920000,
+            "max_input_tokens_per_request": 120000,
+            "max_output_tokens": 256000,
+            "max_requests": 16,
+            "max_tool_calls": 64
+          },
+          "size_factor": 1.0
+        },
+        "model": {
+          "backend_kind": "openai_compatible",
+          "backend_name": "gateway",
+          "capability_profile": {
+            "message_layout": "single_system",
+            "prompt_caching": "provider_managed",
+            "reasoning_accounting": "inside_output",
+            "structured_output": "tool",
+            "tool_calling": true,
+            "usage_reporting": "observed"
+          },
+          "durable": true,
+          "effective_settings": {
+            "max_tokens": 16000
+          },
+          "mode": "live",
+          "pricing_status": "known_zero",
+          "provider_output_floor": 16000,
+          "requested_model": "sonnet",
+          "requested_settings": {
+            "max_tokens": 12000
+          },
+          "resolved_model": "gateway:Qwen3.6-35B-A3B-NVFP4",
+          "transport_retries": 1
+        },
+        "skills_digest": "1697216fe71bd0fdb4caf09d8fd2e22d2eb35107d667a623958fb42f8a866bec"
+      },
+      "evaluator_version": "deterministic-agent-output-v5",
+      "execution_mode": "local-eval-production-transport-v1",
+      "experiment_id": "exp-ea313eada8f51d0b",
+      "git_dirty": false,
+      "git_sha": "2d823a0115ba1dec115eeb71aae86798ae0cea7e",
+      "metrics": {
+        "accuracy": 1.0,
+        "attempted_runs": 10,
+        "average_cost_usd": 0.0,
+        "avg_tokens": 31175.5,
+        "budget_enforcement_violations": 0,
+        "budget_exhausted_count": 0,
+        "cache_hit_ratio": 0.0,
+        "cases_completed": 10,
+        "cases_planned": 10,
+        "cost_unknown": 0,
+        "cost_usd_per_case": 0.0,
+        "cost_usd_total": 0.0,
+        "execution_failed_count": 0,
+        "execution_not_checked_count": 0,
+        "expected_budget_stops": 0,
+        "n": 10,
+        "n_planned": 10,
+        "p95_model_requests": 6,
+        "passed": 10,
+        "schema_validity_rate": 1.0,
+        "task_success_rate": 1.0,
+        "unevidenced_safe_verdicts": 0,
+        "unexpected_budget_stops": 0,
+        "usage_unknown": 0
+      },
+      "model_name": "gateway:Qwen3.6-35B-A3B-NVFP4",
+      "phase": "full_live_v5",
+      "repetitions": 1,
+      "source_digest": "3a39a085fb65b884a1fd5b57fedfc12b633852500a2acdecdc4a31dfcd049ce0",
+      "status": "complete",
+      "usage_observations": {
+        "attempt_coverage_rate": 1.0,
+        "attempts_observed": 10,
+        "attempts_total": 10,
+        "observed_avg_tokens": 31175.5,
+        "observed_cache_hit_ratio": 0.0,
+        "observed_cache_read_tokens": 0.0,
+        "observed_tokens_total": 311755.0
+      }
+    },
+    {
+      "agent": "probe-repair",
+      "backend": "gateway",
+      "case_set_digest": "1572f3d92baf5f6b2594cb62b584f2011030de0cb3707a4bafbd0db46de767c0",
+      "config_hash": null,
+      "dataset": "dataset.yaml",
+      "dataset_version": "2",
+      "distributions": {
+        "failure_categories": {
+          "budget_exhausted": 0,
+          "execution_failed": 0,
+          "execution_not_checked": 0,
+          "invalid_output": 0,
+          "wrong_answer": 0
+        },
+        "p50_cost_usd": 0.0,
+        "p50_latency_s": 53.155,
+        "p50_model_requests": 5,
+        "p50_tool_calls": 5,
+        "p95_cost_usd": 0.0,
+        "p95_latency_s": 73.839,
+        "p95_model_requests": 7,
+        "p95_tool_calls": 8,
+        "worst_repetition_pass_rate": 1.0
+      },
+      "effective_configuration": {
+        "agent_name": "probe-repair",
+        "budget": {
+          "baseline_source_files": 16,
+          "binding_root_fields": [],
+          "effective": {
+            "max_cost_usd": 1.0,
+            "max_input_tokens": 1920000,
+            "max_input_tokens_per_request": 120000,
+            "max_output_tokens": 256000,
+            "max_requests": 16,
+            "max_tool_calls": 64
+          },
+          "growth_per_doubling": 0.25,
+          "maximum_size_factor": 3.0,
+          "provider_output_floor": 16000,
+          "requested": {
+            "max_cost_usd": 1.0,
+            "max_input_tokens": 1920000,
+            "max_input_tokens_per_request": 120000,
+            "max_output_tokens": 256000,
+            "max_requests": 16,
+            "max_tool_calls": 64
+          },
+          "scaled": {
+            "max_cost_usd": 1.0,
+            "max_input_tokens": 1920000,
+            "max_input_tokens_per_request": 120000,
+            "max_output_tokens": 256000,
+            "max_requests": 16,
+            "max_tool_calls": 64
+          },
+          "size_factor": 1.0
+        },
+        "model": {
+          "backend_kind": "openai_compatible",
+          "backend_name": "gateway",
+          "capability_profile": {
+            "message_layout": "single_system",
+            "prompt_caching": "provider_managed",
+            "reasoning_accounting": "inside_output",
+            "structured_output": "tool",
+            "tool_calling": true,
+            "usage_reporting": "observed"
+          },
+          "durable": true,
+          "effective_settings": {
+            "max_tokens": 16000
+          },
+          "mode": "live",
+          "pricing_status": "known_zero",
+          "provider_output_floor": 16000,
+          "requested_model": "sonnet",
+          "requested_settings": {
+            "max_tokens": 12000
+          },
+          "resolved_model": "gateway:Qwen3.6-35B-A3B-NVFP4",
+          "transport_retries": 1
+        },
+        "skills_digest": "1697216fe71bd0fdb4caf09d8fd2e22d2eb35107d667a623958fb42f8a866bec"
+      },
+      "evaluator_version": "deterministic-agent-output-v5",
+      "execution_mode": "local-eval-production-transport-v1",
+      "experiment_id": "exp-cde6e2ba5be640db",
+      "git_dirty": false,
+      "git_sha": "2d823a0115ba1dec115eeb71aae86798ae0cea7e",
+      "metrics": {
+        "accuracy": 1.0,
+        "attempted_runs": 10,
+        "average_cost_usd": 0.0,
+        "avg_tokens": 28336.1,
+        "budget_enforcement_violations": 0,
+        "budget_exhausted_count": 0,
+        "cache_hit_ratio": 0.0,
+        "cases_completed": 10,
+        "cases_planned": 10,
+        "cost_unknown": 0,
+        "cost_usd_per_case": 0.0,
+        "cost_usd_total": 0.0,
+        "execution_failed_count": 0,
+        "execution_not_checked_count": 0,
+        "expected_budget_stops": 0,
+        "n": 10,
+        "n_planned": 10,
+        "p95_model_requests": 7,
+        "passed": 10,
+        "schema_validity_rate": 1.0,
+        "task_success_rate": 1.0,
+        "unevidenced_safe_verdicts": 0,
+        "unexpected_budget_stops": 0,
+        "usage_unknown": 0
+      },
+      "model_name": "gateway:Qwen3.6-35B-A3B-NVFP4",
+      "phase": "full_live_v5",
+      "repetitions": 1,
+      "source_digest": "3a39a085fb65b884a1fd5b57fedfc12b633852500a2acdecdc4a31dfcd049ce0",
+      "status": "complete",
+      "usage_observations": {
+        "attempt_coverage_rate": 1.0,
+        "attempts_observed": 10,
+        "attempts_total": 10,
+        "observed_avg_tokens": 28336.1,
+        "observed_cache_hit_ratio": 0.0,
+        "observed_cache_read_tokens": 0.0,
+        "observed_tokens_total": 283361.0
+      }
+    },
+    {
+      "agent": "probe-planner",
+      "backend": "gateway",
+      "case_set_digest": "f5828e2397804df8f44a1df942b5df6581b3cb449a22eaf14b14574e4ecdc838",
+      "config_hash": null,
+      "dataset": "dataset.yaml",
+      "dataset_version": "1",
+      "distributions": {
+        "failure_categories": {
+          "budget_exhausted": 0,
+          "execution_failed": 0,
+          "execution_not_checked": 0,
+          "invalid_output": 0,
+          "wrong_answer": 1
+        },
+        "p50_cost_usd": 0.0,
+        "p50_latency_s": 60.409,
+        "p50_model_requests": 2,
+        "p50_tool_calls": 2,
+        "p95_cost_usd": 0.0,
+        "p95_latency_s": 114.623,
+        "p95_model_requests": 2,
+        "p95_tool_calls": 2,
+        "worst_repetition_pass_rate": 0.9
+      },
+      "effective_configuration": {
+        "agent_name": "probe-planner",
+        "budget": {
+          "baseline_source_files": 16,
+          "binding_root_fields": [],
+          "effective": {
+            "max_cost_usd": 0.6,
+            "max_input_tokens": 320000,
+            "max_input_tokens_per_request": 40000,
+            "max_output_tokens": 192000,
+            "max_requests": 8,
+            "max_tool_calls": 32
+          },
+          "growth_per_doubling": 0.25,
+          "maximum_size_factor": 3.0,
+          "provider_output_floor": 16000,
+          "requested": {
+            "max_cost_usd": 0.6,
+            "max_input_tokens": 320000,
+            "max_input_tokens_per_request": 40000,
+            "max_output_tokens": 192000,
+            "max_requests": 8,
+            "max_tool_calls": 32
+          },
+          "scaled": {
+            "max_cost_usd": 0.6,
+            "max_input_tokens": 320000,
+            "max_input_tokens_per_request": 40000,
+            "max_output_tokens": 192000,
+            "max_requests": 8,
+            "max_tool_calls": 32
+          },
+          "size_factor": 1.0
+        },
+        "model": {
+          "backend_kind": "openai_compatible",
+          "backend_name": "gateway",
+          "capability_profile": {
+            "message_layout": "single_system",
+            "prompt_caching": "provider_managed",
+            "reasoning_accounting": "inside_output",
+            "structured_output": "tool",
+            "tool_calling": true,
+            "usage_reporting": "observed"
+          },
+          "durable": true,
+          "effective_settings": {
+            "max_tokens": 24000
+          },
+          "mode": "live",
+          "pricing_status": "known_zero",
+          "provider_output_floor": 16000,
+          "requested_model": "sonnet",
+          "requested_settings": {
+            "max_tokens": 24000
+          },
+          "resolved_model": "gateway:Qwen3.6-35B-A3B-NVFP4",
+          "transport_retries": 1
+        },
+        "skills_digest": "f09bedae61e4d3ca36ddbc349b6d14e2723550d7a2917df4f2f328f0dc6aa091"
+      },
+      "evaluator_version": "deterministic-agent-output-v5",
+      "execution_mode": "local-eval-production-transport-v1",
+      "experiment_id": "exp-57e3978bcbc29438",
+      "git_dirty": false,
+      "git_sha": "2d823a0115ba1dec115eeb71aae86798ae0cea7e",
+      "metrics": {
+        "accuracy": 0.9,
+        "attempted_runs": 10,
+        "average_cost_usd": 0.0,
+        "avg_tokens": 9353.2,
+        "budget_enforcement_violations": 0,
+        "budget_exhausted_count": 0,
+        "cache_hit_ratio": 0.0,
+        "cases_completed": 10,
+        "cases_planned": 10,
+        "cost_unknown": 0,
+        "cost_usd_per_case": 0.0,
+        "cost_usd_total": 0.0,
+        "execution_failed_count": 0,
+        "execution_not_checked_count": 0,
+        "expected_budget_stops": 0,
+        "n": 10,
+        "n_planned": 10,
+        "p95_model_requests": 2,
+        "passed": 9,
+        "schema_validity_rate": 1.0,
+        "task_success_rate": 0.9,
+        "unevidenced_safe_verdicts": 0,
+        "unexpected_budget_stops": 0,
+        "usage_unknown": 0
+      },
+      "model_name": "gateway:Qwen3.6-35B-A3B-NVFP4",
+      "phase": "full_live_v5",
+      "repetitions": 1,
+      "source_digest": "3a39a085fb65b884a1fd5b57fedfc12b633852500a2acdecdc4a31dfcd049ce0",
+      "status": "complete",
+      "usage_observations": {
+        "attempt_coverage_rate": 1.0,
+        "attempts_observed": 10,
+        "attempts_total": 10,
+        "observed_avg_tokens": 9353.2,
+        "observed_cache_hit_ratio": 0.0,
+        "observed_cache_read_tokens": 0.0,
+        "observed_tokens_total": 93532.0
+      }
+    },
+    {
+      "agent": "probe-diagnosis",
+      "backend": "gateway",
+      "case_set_digest": "f4c7289cd6d88af2dae0f29ae823f4b17be80102269243453619980670dfa4c1",
+      "config_hash": null,
+      "dataset": "dataset.yaml",
+      "dataset_version": "2",
+      "distributions": {
+        "failure_categories": {
+          "budget_exhausted": 0,
+          "execution_failed": 0,
+          "execution_not_checked": 0,
+          "invalid_output": 0,
+          "wrong_answer": 2
+        },
+        "p50_cost_usd": 0.0,
+        "p50_latency_s": 39.697,
+        "p50_model_requests": 1,
+        "p50_tool_calls": 0,
+        "p95_cost_usd": 0.0,
+        "p95_latency_s": 216.975,
+        "p95_model_requests": 1,
+        "p95_tool_calls": 0,
+        "worst_repetition_pass_rate": 0.8462
+      },
+      "effective_configuration": {
+        "agent_name": "probe-diagnosis",
+        "budget": {
+          "baseline_source_files": 16,
+          "binding_root_fields": [],
+          "effective": {
+            "max_cost_usd": 0.5,
+            "max_input_tokens": 180000,
+            "max_input_tokens_per_request": 30000,
+            "max_output_tokens": 96000,
+            "max_requests": 6,
+            "max_tool_calls": 24
+          },
+          "growth_per_doubling": 0.25,
+          "maximum_size_factor": 3.0,
+          "provider_output_floor": 16000,
+          "requested": {
+            "max_cost_usd": 0.5,
+            "max_input_tokens": 180000,
+            "max_input_tokens_per_request": 30000,
+            "max_output_tokens": 96000,
+            "max_requests": 6,
+            "max_tool_calls": 24
+          },
+          "scaled": {
+            "max_cost_usd": 0.5,
+            "max_input_tokens": 180000,
+            "max_input_tokens_per_request": 30000,
+            "max_output_tokens": 96000,
+            "max_requests": 6,
+            "max_tool_calls": 24
+          },
+          "size_factor": 1.0
+        },
+        "model": {
+          "backend_kind": "openai_compatible",
+          "backend_name": "gateway",
+          "capability_profile": {
+            "message_layout": "single_system",
+            "prompt_caching": "provider_managed",
+            "reasoning_accounting": "inside_output",
+            "structured_output": "tool",
+            "tool_calling": true,
+            "usage_reporting": "observed"
+          },
+          "durable": true,
+          "effective_settings": {
+            "max_tokens": 16000
+          },
+          "mode": "live",
+          "pricing_status": "known_zero",
+          "provider_output_floor": 16000,
+          "requested_model": "sonnet",
+          "requested_settings": {
+            "max_tokens": 5120
+          },
+          "resolved_model": "gateway:Qwen3.6-35B-A3B-NVFP4",
+          "transport_retries": 1
+        },
+        "skills_digest": "a36fac422147d3ac3693f9f15cda29c2c655375356ab3a53fe77edc9ba89f3c6"
+      },
+      "evaluator_version": "deterministic-agent-output-v5",
+      "execution_mode": "local-eval-production-transport-v1",
+      "experiment_id": "exp-60c572f9553b2a3d",
+      "git_dirty": false,
+      "git_sha": "2d823a0115ba1dec115eeb71aae86798ae0cea7e",
+      "metrics": {
+        "accuracy": 0.8462,
+        "attempted_runs": 13,
+        "average_cost_usd": 0.0,
+        "avg_tokens": 3974.4,
+        "budget_enforcement_violations": 0,
+        "budget_exhausted_count": 0,
+        "cache_hit_ratio": 0.0,
+        "cases_completed": 13,
+        "cases_planned": 13,
+        "cost_unknown": 0,
+        "cost_usd_per_case": 0.0,
+        "cost_usd_total": 0.0,
+        "execution_failed_count": 0,
+        "execution_not_checked_count": 0,
+        "expected_budget_stops": 0,
+        "n": 13,
+        "n_planned": 13,
+        "p95_model_requests": 1,
+        "passed": 11,
+        "schema_validity_rate": 1.0,
+        "task_success_rate": 0.8462,
+        "unevidenced_safe_verdicts": 0,
+        "unexpected_budget_stops": 0,
+        "usage_unknown": 0
+      },
+      "model_name": "gateway:Qwen3.6-35B-A3B-NVFP4",
+      "phase": "full_live_v5",
+      "repetitions": 1,
+      "source_digest": "3a39a085fb65b884a1fd5b57fedfc12b633852500a2acdecdc4a31dfcd049ce0",
+      "status": "complete",
+      "usage_observations": {
+        "attempt_coverage_rate": 1.0,
+        "attempts_observed": 13,
+        "attempts_total": 13,
+        "observed_avg_tokens": 3974.4,
+        "observed_cache_hit_ratio": 0.0,
+        "observed_cache_read_tokens": 0.0,
+        "observed_tokens_total": 51667.0
+      }
+    },
+    {
+      "agent": "intake",
+      "backend": "gateway",
+      "case_set_digest": "b4222aba9b29ba34135dc6e2d05c8daceab48e6fdae86b946d8bc21dd5957024",
+      "config_hash": null,
+      "dataset": "dataset.yaml",
+      "dataset_version": "1",
+      "distributions": {
+        "failure_categories": {
+          "budget_exhausted": 0,
+          "execution_failed": 0,
+          "execution_not_checked": 0,
+          "invalid_output": 0,
+          "wrong_answer": 1
+        },
+        "p50_cost_usd": 0.0,
+        "p50_latency_s": 31.389,
+        "p50_model_requests": 1,
+        "p50_tool_calls": 0,
+        "p95_cost_usd": 0.0,
+        "p95_latency_s": 71.205,
+        "p95_model_requests": 2,
+        "p95_tool_calls": 1,
+        "worst_repetition_pass_rate": 0.8889
+      },
+      "effective_configuration": {
+        "agent_name": "intake",
+        "budget": {
+          "baseline_source_files": 16,
+          "binding_root_fields": [],
+          "effective": {
+            "max_cost_usd": 0.25,
+            "max_input_tokens": 80000,
+            "max_input_tokens_per_request": 20000,
+            "max_output_tokens": 64000,
+            "max_requests": 4,
+            "max_tool_calls": 16
+          },
+          "growth_per_doubling": 0.25,
+          "maximum_size_factor": 3.0,
+          "provider_output_floor": 16000,
+          "requested": {
+            "max_cost_usd": 0.25,
+            "max_input_tokens": 80000,
+            "max_input_tokens_per_request": 20000,
+            "max_output_tokens": 64000,
+            "max_requests": 4,
+            "max_tool_calls": 16
+          },
+          "scaled": {
+            "max_cost_usd": 0.25,
+            "max_input_tokens": 80000,
+            "max_input_tokens_per_request": 20000,
+            "max_output_tokens": 64000,
+            "max_requests": 4,
+            "max_tool_calls": 16
+          },
+          "size_factor": 1.0
+        },
+        "model": {
+          "backend_kind": "openai_compatible",
+          "backend_name": "gateway",
+          "capability_profile": {
+            "message_layout": "single_system",
+            "prompt_caching": "provider_managed",
+            "reasoning_accounting": "inside_output",
+            "structured_output": "tool",
+            "tool_calling": true,
+            "usage_reporting": "observed"
+          },
+          "durable": true,
+          "effective_settings": {
+            "max_tokens": 16000
+          },
+          "mode": "live",
+          "pricing_status": "known_zero",
+          "provider_output_floor": 16000,
+          "requested_model": "sonnet",
+          "requested_settings": {
+            "max_tokens": 4000
+          },
+          "resolved_model": "gateway:Qwen3.6-35B-A3B-NVFP4",
+          "transport_retries": 1
+        },
+        "skills_digest": "e6fb3f0e39d9bf8a753774b019506011da47af2776d677465cc5d4de4e5d4d57"
+      },
+      "evaluator_version": "deterministic-agent-output-v5",
+      "execution_mode": "local-eval-production-transport-v1",
+      "experiment_id": "exp-5735c2b0c797690b",
+      "git_dirty": false,
+      "git_sha": "2d823a0115ba1dec115eeb71aae86798ae0cea7e",
+      "metrics": {
+        "accuracy": 0.8889,
+        "attempted_runs": 9,
+        "average_cost_usd": 0.0,
+        "avg_tokens": 3801.2,
+        "budget_enforcement_violations": 0,
+        "budget_exhausted_count": 0,
+        "cache_hit_ratio": 0.0,
+        "cases_completed": 9,
+        "cases_planned": 9,
+        "cost_unknown": 0,
+        "cost_usd_per_case": 0.0,
+        "cost_usd_total": 0.0,
+        "execution_failed_count": 0,
+        "execution_not_checked_count": 0,
+        "expected_budget_stops": 0,
+        "n": 9,
+        "n_planned": 9,
+        "p95_model_requests": 2,
+        "passed": 8,
+        "schema_validity_rate": 1.0,
+        "task_success_rate": 0.8889,
+        "unevidenced_safe_verdicts": 0,
+        "unexpected_budget_stops": 0,
+        "usage_unknown": 0
+      },
+      "model_name": "gateway:Qwen3.6-35B-A3B-NVFP4",
+      "phase": "full_live_v5",
+      "repetitions": 1,
+      "source_digest": "3a39a085fb65b884a1fd5b57fedfc12b633852500a2acdecdc4a31dfcd049ce0",
+      "status": "complete",
+      "usage_observations": {
+        "attempt_coverage_rate": 1.0,
+        "attempts_observed": 9,
+        "attempts_total": 9,
+        "observed_avg_tokens": 3801.2,
+        "observed_cache_hit_ratio": 0.0,
+        "observed_cache_read_tokens": 0.0,
+        "observed_tokens_total": 34211.0
+      }
+    },
+    {
+      "agent": "recon",
+      "backend": "gateway",
+      "case_set_digest": "2aaafaa5141962ef324ef185df4d126a9c0343ee6095f276d8b4062d6930cbc0",
+      "config_hash": null,
+      "dataset": "dataset.yaml",
+      "dataset_version": "1",
+      "distributions": {
+        "failure_categories": {
+          "budget_exhausted": 0,
+          "execution_failed": 0,
+          "execution_not_checked": 0,
+          "invalid_output": 0,
+          "wrong_answer": 1
+        },
+        "p50_cost_usd": 0.0,
+        "p50_latency_s": 395.315,
+        "p50_model_requests": 3,
+        "p50_tool_calls": 2,
+        "p95_cost_usd": 0.0,
+        "p95_latency_s": 412.724,
+        "p95_model_requests": 4,
+        "p95_tool_calls": 3,
+        "worst_repetition_pass_rate": 0.8889
+      },
+      "effective_configuration": {
+        "agent_name": "recon",
+        "budget": {
+          "baseline_source_files": 16,
+          "binding_root_fields": [],
+          "effective": {
+            "max_cost_usd": 0.4,
+            "max_input_tokens": 720000,
+            "max_input_tokens_per_request": 60000,
+            "max_output_tokens": 192000,
+            "max_requests": 12,
+            "max_tool_calls": 48
+          },
+          "growth_per_doubling": 0.25,
+          "maximum_size_factor": 3.0,
+          "provider_output_floor": 16000,
+          "requested": {
+            "max_cost_usd": 0.4,
+            "max_input_tokens": 720000,
+            "max_input_tokens_per_request": 60000,
+            "max_output_tokens": 192000,
+            "max_requests": 12,
+            "max_tool_calls": 48
+          },
+          "scaled": {
+            "max_cost_usd": 0.4,
+            "max_input_tokens": 720000,
+            "max_input_tokens_per_request": 60000,
+            "max_output_tokens": 192000,
+            "max_requests": 12,
+            "max_tool_calls": 48
+          },
+          "size_factor": 1.0
+        },
+        "model": {
+          "backend_kind": "openai_compatible",
+          "backend_name": "gateway",
+          "capability_profile": {
+            "message_layout": "single_system",
+            "prompt_caching": "provider_managed",
+            "reasoning_accounting": "inside_output",
+            "structured_output": "tool",
+            "tool_calling": true,
+            "usage_reporting": "observed"
+          },
+          "durable": true,
+          "effective_settings": {
+            "max_tokens": 16000
+          },
+          "mode": "live",
+          "pricing_status": "known_zero",
+          "provider_output_floor": 16000,
+          "requested_model": "sonnet",
+          "requested_settings": {
+            "max_tokens": 6000
+          },
+          "resolved_model": "gateway:Qwen3.6-35B-A3B-NVFP4",
+          "transport_retries": 1
+        },
+        "skills_digest": "81051db40dd7ef17926ed47c4793dd04981398d2e1634fc7b21e4c6b16e13225"
+      },
+      "evaluator_version": "deterministic-agent-output-v5",
+      "execution_mode": "local-eval-production-transport-v1",
+      "experiment_id": "exp-425ad34e9461b3fb",
+      "git_dirty": false,
+      "git_sha": "2d823a0115ba1dec115eeb71aae86798ae0cea7e",
+      "metrics": {
+        "accuracy": 0.8889,
+        "attempted_runs": 9,
+        "average_cost_usd": 0.0,
+        "avg_tokens": 20268.9,
+        "budget_enforcement_violations": 0,
+        "budget_exhausted_count": 0,
+        "cache_hit_ratio": 0.0,
+        "cases_completed": 9,
+        "cases_planned": 9,
+        "cost_unknown": 0,
+        "cost_usd_per_case": 0.0,
+        "cost_usd_total": 0.0,
+        "execution_failed_count": 0,
+        "execution_not_checked_count": 0,
+        "expected_budget_stops": 0,
+        "n": 9,
+        "n_planned": 9,
+        "p95_model_requests": 4,
+        "passed": 8,
+        "schema_validity_rate": 1.0,
+        "task_success_rate": 0.8889,
+        "unevidenced_safe_verdicts": 0,
+        "unexpected_budget_stops": 0,
+        "usage_unknown": 0
+      },
+      "model_name": "gateway:Qwen3.6-35B-A3B-NVFP4",
+      "phase": "full_live_v5",
+      "repetitions": 1,
+      "source_digest": "3a39a085fb65b884a1fd5b57fedfc12b633852500a2acdecdc4a31dfcd049ce0",
+      "status": "complete",
+      "usage_observations": {
+        "attempt_coverage_rate": 1.0,
+        "attempts_observed": 9,
+        "attempts_total": 9,
+        "observed_avg_tokens": 20268.9,
+        "observed_cache_hit_ratio": 0.0,
+        "observed_cache_read_tokens": 0.0,
+        "observed_tokens_total": 182420.0
+      }
+    },
+    {
+      "agent": "env-planner",
+      "backend": "gateway",
+      "case_set_digest": "6c6942341f7c19b85c2b4e817461ecabd8023b57d11da8006db89979a8340da0",
+      "config_hash": null,
+      "dataset": "dataset.yaml",
+      "dataset_version": "1",
+      "distributions": {
+        "failure_categories": {
+          "budget_exhausted": 0,
+          "execution_failed": 0,
+          "execution_not_checked": 0,
+          "invalid_output": 0,
+          "wrong_answer": 0
+        },
+        "p50_cost_usd": 0.0,
+        "p50_latency_s": 95.283,
+        "p50_model_requests": 5,
+        "p50_tool_calls": 3,
+        "p95_cost_usd": 0.0,
+        "p95_latency_s": 423.691,
+        "p95_model_requests": 8,
+        "p95_tool_calls": 6,
+        "worst_repetition_pass_rate": 1.0
+      },
+      "effective_configuration": {
+        "agent_name": "env-planner",
+        "budget": {
+          "baseline_source_files": 16,
+          "binding_root_fields": [],
+          "effective": {
+            "max_cost_usd": 0.5,
+            "max_input_tokens": 960000,
+            "max_input_tokens_per_request": 80000,
+            "max_output_tokens": 192000,
+            "max_requests": 12,
+            "max_tool_calls": 48
+          },
+          "growth_per_doubling": 0.25,
+          "maximum_size_factor": 3.0,
+          "provider_output_floor": 16000,
+          "requested": {
+            "max_cost_usd": 0.5,
+            "max_input_tokens": 960000,
+            "max_input_tokens_per_request": 80000,
+            "max_output_tokens": 192000,
+            "max_requests": 12,
+            "max_tool_calls": 48
+          },
+          "scaled": {
+            "max_cost_usd": 0.5,
+            "max_input_tokens": 960000,
+            "max_input_tokens_per_request": 80000,
+            "max_output_tokens": 192000,
+            "max_requests": 12,
+            "max_tool_calls": 48
+          },
+          "size_factor": 1.0
+        },
+        "model": {
+          "backend_kind": "openai_compatible",
+          "backend_name": "gateway",
+          "capability_profile": {
+            "message_layout": "single_system",
+            "prompt_caching": "provider_managed",
+            "reasoning_accounting": "inside_output",
+            "structured_output": "tool",
+            "tool_calling": true,
+            "usage_reporting": "observed"
+          },
+          "durable": true,
+          "effective_settings": {
+            "max_tokens": 16000
+          },
+          "mode": "live",
+          "pricing_status": "known_zero",
+          "provider_output_floor": 16000,
+          "requested_model": "sonnet",
+          "requested_settings": {
+            "max_tokens": 16000
+          },
+          "resolved_model": "gateway:Qwen3.6-35B-A3B-NVFP4",
+          "transport_retries": 1
+        },
+        "skills_digest": "73a64e830b8808773e5ee6648b625a837104f764b35727a961b441b8abe1155d"
+      },
+      "evaluator_version": "deterministic-agent-output-v5",
+      "execution_mode": "local-eval-production-transport-v1",
+      "experiment_id": "exp-60dd4c157ec4eff4",
+      "git_dirty": false,
+      "git_sha": "2d823a0115ba1dec115eeb71aae86798ae0cea7e",
+      "metrics": {
+        "accuracy": 1.0,
+        "attempted_runs": 10,
+        "average_cost_usd": 0.0,
+        "avg_tokens": 30834.2,
+        "budget_enforcement_violations": 0,
+        "budget_exhausted_count": 0,
+        "cache_hit_ratio": 0.0,
+        "cases_completed": 10,
+        "cases_planned": 10,
+        "cost_unknown": 0,
+        "cost_usd_per_case": 0.0,
+        "cost_usd_total": 0.0,
+        "execution_failed_count": 0,
+        "execution_not_checked_count": 0,
+        "expected_budget_stops": 0,
+        "n": 10,
+        "n_planned": 10,
+        "p95_model_requests": 8,
+        "passed": 10,
+        "schema_validity_rate": 1.0,
+        "task_success_rate": 1.0,
+        "unevidenced_safe_verdicts": 0,
+        "unexpected_budget_stops": 0,
+        "usage_unknown": 0
+      },
+      "model_name": "gateway:Qwen3.6-35B-A3B-NVFP4",
+      "phase": "full_live_v5",
+      "repetitions": 1,
+      "source_digest": "3a39a085fb65b884a1fd5b57fedfc12b633852500a2acdecdc4a31dfcd049ce0",
+      "status": "complete",
+      "usage_observations": {
+        "attempt_coverage_rate": 1.0,
+        "attempts_observed": 10,
+        "attempts_total": 10,
+        "observed_avg_tokens": 30834.2,
+        "observed_cache_hit_ratio": 0.0,
+        "observed_cache_read_tokens": 0.0,
+        "observed_tokens_total": 308342.0
+      }
+    },
+    {
+      "agent": "build-repair",
+      "backend": "gateway",
+      "case_set_digest": "60bc49d25bb2da91ced6ed9824393e6c69f96b59f39c7599b5a2777d51e9460a",
+      "config_hash": null,
+      "dataset": "dataset.yaml",
+      "dataset_version": "2",
+      "distributions": {
+        "failure_categories": {
+          "budget_exhausted": 7,
+          "execution_failed": 0,
+          "execution_not_checked": 0,
+          "invalid_output": 0,
+          "wrong_answer": 0
+        },
+        "p50_cost_usd": 0.0,
+        "p50_latency_s": 69.923,
+        "p50_model_requests": 5,
+        "p50_tool_calls": 4,
+        "p95_cost_usd": 0.0,
+        "p95_latency_s": 600.006,
+        "p95_model_requests": 8,
+        "p95_tool_calls": 6,
+        "worst_repetition_pass_rate": 0.5
+      },
+      "effective_configuration": {
+        "agent_name": "build-repair",
+        "budget": {
+          "baseline_source_files": 16,
+          "binding_root_fields": [],
+          "effective": {
+            "max_cost_usd": 1.5,
+            "max_input_tokens": 4000000,
+            "max_input_tokens_per_request": 250000,
+            "max_output_tokens": 256000,
+            "max_requests": 16,
+            "max_tool_calls": 64
+          },
+          "growth_per_doubling": 0.25,
+          "maximum_size_factor": 3.0,
+          "provider_output_floor": 16000,
+          "requested": {
+            "max_cost_usd": 1.5,
+            "max_input_tokens": 4000000,
+            "max_input_tokens_per_request": 250000,
+            "max_output_tokens": 256000,
+            "max_requests": 16,
+            "max_tool_calls": 64
+          },
+          "scaled": {
+            "max_cost_usd": 1.5,
+            "max_input_tokens": 4000000,
+            "max_input_tokens_per_request": 250000,
+            "max_output_tokens": 256000,
+            "max_requests": 16,
+            "max_tool_calls": 64
+          },
+          "size_factor": 1.0
+        },
+        "model": {
+          "backend_kind": "openai_compatible",
+          "backend_name": "gateway",
+          "capability_profile": {
+            "message_layout": "single_system",
+            "prompt_caching": "provider_managed",
+            "reasoning_accounting": "inside_output",
+            "structured_output": "tool",
+            "tool_calling": true,
+            "usage_reporting": "observed"
+          },
+          "durable": true,
+          "effective_settings": {
+            "max_tokens": 16000
+          },
+          "mode": "live",
+          "pricing_status": "known_zero",
+          "provider_output_floor": 16000,
+          "requested_model": "sonnet",
+          "requested_settings": {
+            "max_tokens": 16000
+          },
+          "resolved_model": "gateway:Qwen3.6-35B-A3B-NVFP4",
+          "transport_retries": 1
+        },
+        "skills_digest": "5b4ab0b5fecfe98f18846f946c4766117f7b9d13fd358ab7d1e5e0f3467ef9bf"
+      },
+      "evaluator_version": "deterministic-agent-output-v5",
+      "execution_mode": "local-eval-production-transport-v1",
+      "experiment_id": "exp-ce4c4f2b91a83c0a",
+      "git_dirty": false,
+      "git_sha": "2d823a0115ba1dec115eeb71aae86798ae0cea7e",
+      "metrics": {
+        "accuracy": 0.5,
+        "attempted_runs": 14,
+        "average_cost_usd": 0.0,
+        "avg_tokens": null,
+        "budget_enforcement_violations": 0,
+        "budget_exhausted_count": 7,
+        "cache_hit_ratio": null,
+        "cases_completed": 14,
+        "cases_planned": 14,
+        "cost_unknown": 0,
+        "cost_usd_per_case": 0.0,
+        "cost_usd_total": 0.0,
+        "execution_failed_count": 0,
+        "execution_not_checked_count": 0,
+        "expected_budget_stops": 0,
+        "n": 14,
+        "n_planned": 14,
+        "p95_model_requests": 8,
+        "passed": 7,
+        "schema_validity_rate": 1.0,
+        "task_success_rate": 0.5,
+        "unevidenced_safe_verdicts": 0,
+        "unexpected_budget_stops": 7,
+        "usage_unknown": 7
+      },
+      "model_name": "gateway:Qwen3.6-35B-A3B-NVFP4",
+      "phase": "full_live_v5",
+      "repetitions": 1,
+      "source_digest": "3a39a085fb65b884a1fd5b57fedfc12b633852500a2acdecdc4a31dfcd049ce0",
+      "status": "complete",
+      "usage_observations": {
+        "attempt_coverage_rate": 0.5,
+        "attempts_observed": 7,
+        "attempts_total": 14,
+        "observed_avg_tokens": 19006.1,
+        "observed_cache_hit_ratio": 0.0,
+        "observed_cache_read_tokens": 0.0,
+        "observed_tokens_total": 133043.0
+      }
+    },
+    {
+      "agent": "partial-build",
+      "backend": "gateway",
+      "case_set_digest": "6cd532c6b074075e127a430b10b5bfddd4d8c755e52d4cb4ba9be1c9262541eb",
+      "config_hash": null,
+      "dataset": "dataset.yaml",
+      "dataset_version": "1",
+      "distributions": {
+        "failure_categories": {
+          "budget_exhausted": 5,
+          "execution_failed": 0,
+          "execution_not_checked": 0,
+          "invalid_output": 0,
+          "wrong_answer": 0
+        },
+        "p50_cost_usd": 0.0,
+        "p50_latency_s": 190.998,
+        "p50_model_requests": 10,
+        "p50_tool_calls": 8,
+        "p95_cost_usd": 0.0,
+        "p95_latency_s": 600.008,
+        "p95_model_requests": 12,
+        "p95_tool_calls": 12,
+        "worst_repetition_pass_rate": 0.4444
+      },
+      "effective_configuration": {
+        "agent_name": "partial-build",
+        "budget": {
+          "baseline_source_files": 16,
+          "binding_root_fields": [],
+          "effective": {
+            "max_cost_usd": 1.5,
+            "max_input_tokens": 4000000,
+            "max_input_tokens_per_request": 250000,
+            "max_output_tokens": 256000,
+            "max_requests": 16,
+            "max_tool_calls": 64
+          },
+          "growth_per_doubling": 0.25,
+          "maximum_size_factor": 3.0,
+          "provider_output_floor": 16000,
+          "requested": {
+            "max_cost_usd": 1.5,
+            "max_input_tokens": 4000000,
+            "max_input_tokens_per_request": 250000,
+            "max_output_tokens": 256000,
+            "max_requests": 16,
+            "max_tool_calls": 64
+          },
+          "scaled": {
+            "max_cost_usd": 1.5,
+            "max_input_tokens": 4000000,
+            "max_input_tokens_per_request": 250000,
+            "max_output_tokens": 256000,
+            "max_requests": 16,
+            "max_tool_calls": 64
+          },
+          "size_factor": 1.0
+        },
+        "model": {
+          "backend_kind": "openai_compatible",
+          "backend_name": "gateway",
+          "capability_profile": {
+            "message_layout": "single_system",
+            "prompt_caching": "provider_managed",
+            "reasoning_accounting": "inside_output",
+            "structured_output": "tool",
+            "tool_calling": true,
+            "usage_reporting": "observed"
+          },
+          "durable": true,
+          "effective_settings": {
+            "max_tokens": 16000
+          },
+          "mode": "live",
+          "pricing_status": "known_zero",
+          "provider_output_floor": 16000,
+          "requested_model": "sonnet",
+          "requested_settings": {
+            "max_tokens": 16000
+          },
+          "resolved_model": "gateway:Qwen3.6-35B-A3B-NVFP4",
+          "transport_retries": 1
+        },
+        "skills_digest": "079c46841a50432a5c6fbfc5091ab871277edbd74557a6b269aa4dc45e55ce51"
+      },
+      "evaluator_version": "deterministic-agent-output-v5",
+      "execution_mode": "local-eval-production-transport-v1",
+      "experiment_id": "exp-d680d3c10608e8c9",
+      "git_dirty": false,
+      "git_sha": "2d823a0115ba1dec115eeb71aae86798ae0cea7e",
+      "metrics": {
+        "accuracy": 0.4444,
+        "attempted_runs": 9,
+        "average_cost_usd": 0.0,
+        "avg_tokens": null,
+        "budget_enforcement_violations": 0,
+        "budget_exhausted_count": 5,
+        "cache_hit_ratio": null,
+        "cases_completed": 9,
+        "cases_planned": 9,
+        "cost_unknown": 0,
+        "cost_usd_per_case": 0.0,
+        "cost_usd_total": 0.0,
+        "execution_failed_count": 0,
+        "execution_not_checked_count": 0,
+        "expected_budget_stops": 0,
+        "n": 9,
+        "n_planned": 9,
+        "p95_model_requests": 12,
+        "passed": 4,
+        "schema_validity_rate": 1.0,
+        "task_success_rate": 0.4444,
+        "unevidenced_safe_verdicts": 0,
+        "unexpected_budget_stops": 5,
+        "usage_unknown": 5
+      },
+      "model_name": "gateway:Qwen3.6-35B-A3B-NVFP4",
+      "phase": "full_live_v5",
+      "repetitions": 1,
+      "source_digest": "3a39a085fb65b884a1fd5b57fedfc12b633852500a2acdecdc4a31dfcd049ce0",
+      "status": "complete",
+      "usage_observations": {
+        "attempt_coverage_rate": 0.4444,
+        "attempts_observed": 4,
+        "attempts_total": 9,
+        "observed_avg_tokens": 45818.5,
+        "observed_cache_hit_ratio": 0.0,
+        "observed_cache_read_tokens": 0.0,
+        "observed_tokens_total": 183274.0
+      }
+    }
+  ],
+  "junit": [
+    {
+      "errors": 0,
+      "failures": 1,
+      "file": "candidate-tests.xml",
+      "sha256": "e1f8ba701c5047f862d3a3758bcdb910ae9131aa548ab5806be39469d372da5b",
+      "skipped": 0,
+      "tests": 1581,
+      "time_s": 93.404
+    },
+    {
+      "errors": 0,
+      "failures": 0,
+      "file": "evaluator-v5-tests.xml",
+      "sha256": "2c326f9bf0ff88d488a3386e786ae138d5b298866cc36cc390f91de11e29205e",
+      "skipped": 0,
+      "tests": 1595,
+      "time_s": 107.788
+    },
+    {
+      "errors": 0,
+      "failures": 1,
+      "file": "frozen-tests.xml",
+      "sha256": "61b8f9d00286080cf8c69aa181ec833b10eedcee1fd70ce5250464b9d682d819",
+      "skipped": 0,
+      "tests": 1581,
+      "time_s": 91.767
+    },
+    {
+      "errors": 0,
+      "failures": 0,
+      "file": "full-tests-final.xml",
+      "sha256": "2608f030bf73152cf2c38a712d5de040581dac4704b561d838ed34204f878d40",
+      "skipped": 0,
+      "tests": 1578,
+      "time_s": 102.388
+    },
+    {
+      "errors": 0,
+      "failures": 8,
+      "file": "full-tests.xml",
+      "sha256": "24c4142f1a563f7349b142335e87823077a294a79f321d3364e2bfa121bdd42c",
+      "skipped": 0,
+      "tests": 1572,
+      "time_s": 100.626
+    },
+    {
+      "errors": 0,
+      "failures": 0,
+      "file": "qualified-tests.xml",
+      "sha256": "c680c58e46b4323c5d6e8685d6e01c99f2d65e17e39c6ed3ccaf210f7147683c",
+      "skipped": 0,
+      "tests": 1585,
+      "time_s": 90.033
+    }
+  ],
+  "phase_closures": [
+    {
+      "completed_experiments": 13,
+      "persisted_scored_attempts": 141,
+      "phase": "full_live_v5",
+      "planned_experiments": 33,
+      "qualification_eligible": false,
+      "status": "INCOMPLETE_PROVIDER_READINESS",
+      "unstarted_experiments": 20
+    },
+    {
+      "completed_experiments": 0,
+      "persisted_scored_attempts": 0,
+      "phase": "heldout_live",
+      "planned_experiments": 5,
+      "qualification_eligible": false,
+      "status": "skipped_provider_readiness",
+      "unstarted_experiments": 5
+    }
+  ],
+  "raw_local_evidence": [
+    {
+      "bytes": 6568,
+      "file": "build-partial-budget-causal-review.json",
+      "phase": "full_live_v5",
+      "sha256": "b860c44c5e76c24c2a4794da8ed56befca46564b159f4ea67decff4dff86f329"
+    },
+    {
+      "bytes": 2509,
+      "file": "build-repair-r0.json",
+      "phase": "full_live_v5",
+      "sha256": "47a5ad7e91a2ba49dd11c55f18313f443355844f9a48d8e8b9a80a2819829786"
+    },
+    {
+      "bytes": 3968,
+      "file": "build-repair-r0.log",
+      "phase": "full_live_v5",
+      "sha256": "ba71167b206401ad2f1d6fdd9d4a29411b12fce943a118b051c628248e1b4e73"
+    },
+    {
+      "bytes": 2503,
+      "file": "build-repair-r1.json",
+      "phase": "full_live_v5",
+      "sha256": "ea541f3f541a7aecf8a3658f8eff43d84776dd352f3fc8c8558e755f2a474901"
+    },
+    {
+      "bytes": 2324,
+      "file": "build-repair-r1.log",
+      "phase": "full_live_v5",
+      "sha256": "be7726a70aa37faff4b6a932019647438f9a79ee8ac756bc01fe81ba4c2dcd44"
+    },
+    {
+      "bytes": 2453,
+      "file": "context-r0.json",
+      "phase": "full_live_v5",
+      "sha256": "9a42d904dc50001469d186e51d9c7562c969e2a3ab9d51722227c6187f0f2eef"
+    },
+    {
+      "bytes": 1490,
+      "file": "context-r0.log",
+      "phase": "full_live_v5",
+      "sha256": "a12e0615294668409d893d1e8f596118245c33b5c1574f2f285a21dd27e1ccd6"
+    },
+    {
+      "bytes": 5573,
+      "file": "diagnostic-v5.json",
+      "phase": "full_live_v5",
+      "sha256": "da212736b3b0a63c37c336c0dcaa8ff80407355ee7bf8d82b391d42dde2672dc"
+    },
+    {
+      "bytes": 2405,
+      "file": "env-planner-r0.json",
+      "phase": "full_live_v5",
+      "sha256": "052c6fdfac60069555c0b961da864dbae914d46317a8a61b442b8ed6b4050de4"
+    },
+    {
+      "bytes": 1499,
+      "file": "env-planner-r0.log",
+      "phase": "full_live_v5",
+      "sha256": "0bdfb0eb92ce57634cd684a987e6805b8245c99aec7baa64f7a8e87a0fffe82e"
+    },
+    {
+      "bytes": 1097728,
+      "file": "evals.db",
+      "phase": "full_live_v5",
+      "sha256": "b9a65d89ffe117e7e2f2f89230d8ef1acedee008bde4a57f4459b540b92b4071"
+    },
+    {
+      "bytes": 230,
+      "file": "identity.json",
+      "phase": "full_live_v5",
+      "sha256": "25d34bcb9134bd3613525a9e4d14cb15c0d29dcdd442d6e74091af3249d3e9c5"
+    },
+    {
+      "bytes": 15769,
+      "file": "index.json",
+      "phase": "full_live_v5",
+      "sha256": "309655b66116a923824f16cceb753496298440005ca72bd5b38b1ef62746a95d"
+    },
+    {
+      "bytes": 2350,
+      "file": "intake-r0.json",
+      "phase": "full_live_v5",
+      "sha256": "f4ce70ed24b6792e5c88b988a52cc8da146ada5dbf2cd4982c436e8141366bf0"
+    },
+    {
+      "bytes": 1488,
+      "file": "intake-r0.log",
+      "phase": "full_live_v5",
+      "sha256": "b6acab14489ce3e97a002761b34033ceb89808bdace638211f8d71ec927ad021"
+    },
+    {
+      "bytes": 1835,
+      "file": "monitor-state.json",
+      "phase": "full_live_v5",
+      "sha256": "6e00445ae7c782c05e1f7228add921738f997d2b847b22f6748544873ff77df7"
+    },
+    {
+      "bytes": 46109,
+      "file": "partial-build-r0-startup-failure.log",
+      "phase": "full_live_v5",
+      "sha256": "4b5c2bdeb039688f83e503351b270fb996b390b08c169a2e1703c4c4fe37f74a"
+    },
+    {
+      "bytes": 2445,
+      "file": "partial-build-r0.json",
+      "phase": "full_live_v5",
+      "sha256": "c2562bfcf2e67c585e8556e5bf999dfbcc7651e519858158290b56c298122eaf"
+    },
+    {
+      "bytes": 2326,
+      "file": "partial-build-r0.log",
+      "phase": "full_live_v5",
+      "sha256": "d1a912365b31164f9728e89aa4e64fc7dd40e2f4d832e10ce169d01702f45369"
+    },
+    {
+      "bytes": 2447,
+      "file": "partial-build-r1.json",
+      "phase": "full_live_v5",
+      "sha256": "96f8ddb868beee2ce4472faac3d7a7de41d49161d6e54ebebd56818eb21e6c19"
+    },
+    {
+      "bytes": 2737,
+      "file": "partial-build-r1.log",
+      "phase": "full_live_v5",
+      "sha256": "0307b430c0f5dd72636f62967951f38bada52f79a85211a300c13b3f2fab235a"
+    },
+    {
+      "bytes": 2455,
+      "file": "probe-author-r0.json",
+      "phase": "full_live_v5",
+      "sha256": "9213e94142e57e21615a151d9ea5fd804b5449a90a48bdf14c72abb2e2304dd5"
+    },
+    {
+      "bytes": 1912,
+      "file": "probe-author-r0.log",
+      "phase": "full_live_v5",
+      "sha256": "c98d3db313c2368e8b6c6dcfb468e9b72f0bc114f1e070fdfe86a44ce3fb1c64"
+    },
+    {
+      "bytes": 2399,
+      "file": "probe-diagnosis-r0.json",
+      "phase": "full_live_v5",
+      "sha256": "d78eeababc960bb3a99204e9c37ff393428be928386f9dec957092574d411594"
+    },
+    {
+      "bytes": 1506,
+      "file": "probe-diagnosis-r0.log",
+      "phase": "full_live_v5",
+      "sha256": "55d94e7db13bf2df1e3312f72cda168b5016c05bae13e4325101cc490b4d9220"
+    },
+    {
+      "bytes": 2373,
+      "file": "probe-planner-r0.json",
+      "phase": "full_live_v5",
+      "sha256": "f803f6136d355f1a882be5a49a192bd9aaea9e4a1f4a24e907958ef57c558845"
+    },
+    {
+      "bytes": 1502,
+      "file": "probe-planner-r0.log",
+      "phase": "full_live_v5",
+      "sha256": "b7490c7dc4c29edb7570e0438cbb04d665873ed4bc70b27e9ad929531a5b6aeb"
+    },
+    {
+      "bytes": 2453,
+      "file": "probe-repair-r0.json",
+      "phase": "full_live_v5",
+      "sha256": "1a0ac6592e813413853acb3289923227c71c16c489079a259e5a0c860d61aab6"
+    },
+    {
+      "bytes": 2323,
+      "file": "probe-repair-r0.log",
+      "phase": "full_live_v5",
+      "sha256": "8c6b6b6a70de415017acacbe0da8e23507c2eb9a63da17e0a43cc2a5d45de386"
+    },
+    {
+      "bytes": 3941,
+      "file": "progress.json",
+      "phase": "full_live_v5",
+      "sha256": "ae138f533f77a74c1e77eb79ae8183fc7ad9b75d7582abc8184e2f422c9b8406"
+    },
+    {
+      "bytes": 847,
+      "file": "provider-admission-pause.json",
+      "phase": "full_live_v5",
+      "sha256": "a0ea1c6638f95003862fa858bc71e861f124ddc6a268d7d7f2516bb6358f04cf"
+    },
+    {
+      "bytes": 46030,
+      "file": "provisional-aggregate.json",
+      "phase": "full_live_v5",
+      "sha256": "7111106082e620d7b8675a955f5e24f181f67d4d66633259ebbfd543516bc774"
+    },
+    {
+      "bytes": 2386,
+      "file": "recon-r0.json",
+      "phase": "full_live_v5",
+      "sha256": "732cf1e74627ce98283d60db81c9346a46638d6143f2e1711bf5da2c4b6dd035"
+    },
+    {
+      "bytes": 1486,
+      "file": "recon-r0.log",
+      "phase": "full_live_v5",
+      "sha256": "d9b5257db7db2e0405bb6eb4faadc8e83a55536045668ccab3b693d654704c2f"
+    },
+    {
+      "bytes": 2365,
+      "file": "verdict-r0.json",
+      "phase": "full_live_v5",
+      "sha256": "d1e976e8f3237dcc39bd513c3369f11c3fabe09e05b755344da6ec7bc45a73b4"
+    },
+    {
+      "bytes": 1491,
+      "file": "verdict-r0.log",
+      "phase": "full_live_v5",
+      "sha256": "b49993de966caf807b5fb78042a34aefded8c7294dccb69bb482b94fdf04acc4"
+    },
+    {
+      "bytes": 2081,
+      "file": "index.json",
+      "phase": "heldout_live",
+      "sha256": "acccce1f976e55a6b7762c5a99258e5a6a4d5d1663d0d83ccfb80030240e30c1"
+    }
+  ],
+  "schema_version": 1,
+  "stopped_predecessor": {
+    "attempts": 51,
+    "classification": "retained_diagnostic_not_qualification",
+    "experiments": 4
+  }
+}

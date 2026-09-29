@@ -1,0 +1,261 @@
+{
+  "artifact_availability": "Raw ignored databases/logs/JUnit and diagnostic helper scripts remain local; a fresh clone contains these sanitized summaries and source/tests, not the raw model outputs.",
+  "attempt_budget": {
+    "calibration": 16,
+    "corrected_live_v5": 141,
+    "declared_aggregate_wall_ceiling_s": 21600,
+    "elapsed_first_persisted_experiment_to_closure_s": 12245.988,
+    "elapsed_scope": "First persisted experiment to phase closure; excludes earlier setup.",
+    "first_persisted_experiment": "2026-09-29T19:17:34.282991+00:00",
+    "fresh_holdouts": 0,
+    "health_diagnostics": 2,
+    "live_phase_closed": "2026-09-29T22:41:40.271326+00:00",
+    "maximum": 450,
+    "maximum_concurrent_suites": 2,
+    "production_limits_changed": false,
+    "stopped_predecessor": 51,
+    "used": 210
+  },
+  "baseline_develop": "1fdef7d7d20485346cdb9a59d0b49fc38ee196a3",
+  "cost_interpretation": {
+    "configured_token_price_zero": true,
+    "hardware_electricity_opportunity_cost_measured": false,
+    "unknown_failed_run_usage_preserved": true
+  },
+  "created_at": "2026-09-29T22:57:57.281887+00:00",
+  "durability": {
+    "captured_history_and_pending_activity_replays": "Passed under original candidate; retained separately, not rerun live on v6.",
+    "final_suite_temporal_tests_passed": 11,
+    "legacy_unscheduled_changed_agent_recovery": "Fails before budget reservation; restart a new workflow.",
+    "v6_changes_persisted_domain_schema": false,
+    "v6_changes_workflow_or_activity_commands": false
+  },
+  "failed_test_invocations_retained": {
+    "explanation": "Offline UV cache omitted hatchling; rerun used populated cache.",
+    "explicit_boolean_regression_before_fix": {
+      "failed": 10,
+      "passed": 2,
+      "tests": 12
+    },
+    "v6_empty_build_cache": {
+      "duration_s": 88.753,
+      "errors": 7,
+      "failures": 0,
+      "sha256": "42632e87363b3c9db6f2ecdb095b69ec37f28763641419799d32a34a827fcf08",
+      "skipped": 0,
+      "tests": 1611
+    }
+  },
+  "files": {
+    "live-v5-aggregate.json": {
+      "bytes": 48603,
+      "sha256": "61a3a71f4623cd1901918ae5649bb64f75c9a8cada300c76e9e82e4ce26e80ac"
+    },
+    "live-v5-attempts.csv": {
+      "bytes": 26714,
+      "sha256": "daaf0dfa24e9f241a9bd800df0d6ce7a434138acfbb9c6c320c9d19f3db20dba"
+    },
+    "live-v5-summary.json": {
+      "bytes": 67031,
+      "sha256": "0d59ebb9f392d88b61af4ac07f7e10798649a68707ff27b4710358379bd6bf1d"
+    },
+    "offline-v6-reassessment.json": {
+      "bytes": 21465,
+      "sha256": "572091a27602765b9a11f7b6111225d64c37a0d96025b366648fd33140e93de6"
+    }
+  },
+  "gates": {
+    "deterministic_tests": {
+      "duration_s": 95.519,
+      "errors": 0,
+      "failures": 0,
+      "sha256": "8c8b5a6074bca448b1ea7bd7e0c3db96bc659a7e194fe88a233b9867a334fa5c",
+      "skipped": 0,
+      "status": "passed",
+      "tests": 1623
+    },
+    "fresh_holdouts": {
+      "attempts": 0,
+      "planned_cases": 10,
+      "planned_groups": 5,
+      "reason": "skipped after bounded idle provider readiness timeout",
+      "status": "not_checked"
+    },
+    "independent_target_attestation": {
+      "deferred_item": "EVID-03",
+      "limitation": "In-process candidate-readable markers are forgeable diagnostics.",
+      "status": "not_checked"
+    },
+    "live_bedrock": {
+      "reason": "explicitly excluded by user; component roundtrips remain mocked evidence",
+      "status": "not_applicable"
+    },
+    "live_generated_perl_dependency_checks": {
+      "declared": 2,
+      "original_v5_counter_limitation": "No-output budget stops omitted these checks; corrected only in separate offline v6 accounting.",
+      "passed": 0,
+      "status": "not_checked",
+      "unperformed": 2
+    },
+    "observed_live_agent_policies": {
+      "eight_first_pass_policies_passed": true,
+      "failed_agents": [
+        "build-repair",
+        "partial-build",
+        "probe-diagnosis"
+      ],
+      "not_a_qualification_claim": true,
+      "status": "failed"
+    },
+    "playbook_conformance": {
+      "existing_waiver": "AGENT029: SDK AgentRetries mapping; 11 agent and 11 system representations",
+      "status": "passed",
+      "warnings_present": true
+    },
+    "provider_readiness": {
+      "diagnostics": [
+        {
+          "completed": false,
+          "concurrent_evaluation_suites": 2,
+          "duration_s": 20.289,
+          "error_type": "TimeoutError",
+          "kind": "bounded_provider_health_diagnostic",
+          "max_tokens": 1,
+          "maximum_attempts": 1,
+          "not_qualification_evidence": true,
+          "note": "One extra diagnostic request within the 450-attempt envelope; existing suite measurements are shared-endpoint latency observations.",
+          "started_at": "2026-09-29T22:20:54.050433+00:00",
+          "timeout_s": 20
+        },
+        {
+          "authentication": "production-compatible bearer header; value not retained",
+          "completed": false,
+          "concurrent_evaluation_suites": 0,
+          "duration_s": 45.114,
+          "error_type": "TimeoutError",
+          "kind": "bounded_provider_health_diagnostic",
+          "max_tokens": 1,
+          "maximum_attempts": 1,
+          "not_qualification_evidence": true,
+          "note": "Second health diagnostic within the declared 450-attempt envelope; no retries.",
+          "started_at": "2026-09-29T22:39:25.571804+00:00",
+          "timeout_s": 45
+        }
+      ],
+      "root_cause": "unknown",
+      "status": "failed"
+    },
+    "static_and_generated_checks": {
+      "checks": [
+        "Ruff",
+        "compileall",
+        "all agent specs",
+        "OpenAPI drift",
+        "AGENTS/CLAUDE sync",
+        "development skills sync",
+        "git diff --check"
+      ],
+      "status": "passed"
+    },
+    "three_pass_public_coverage": {
+      "completed_suites": 13,
+      "planned_case_attempts": 354,
+      "planned_suites": 33,
+      "scored_case_attempts": 141,
+      "status": "not_checked",
+      "unattempted_case_attempts": 213
+    }
+  },
+  "git_delivery": {
+    "branch": "codex/agent-quality-gates",
+    "pushed_to_develop": false,
+    "reason": "Required live gates and coverage incomplete."
+  },
+  "local_validation_files": {
+    ".harness/validation/quality-gates/aggregate-full-live.py": {
+      "bytes": 16772,
+      "sha256": "786723472e8604fe78ce58b964df38a45b634e3aed96b7358f6de13c6afe07f8"
+    },
+    ".harness/validation/quality-gates/evaluator-v6-conformance.log": {
+      "bytes": 1226,
+      "sha256": "0345837f3296e1606519a50d7498f9eff3668d2feacd3b867a717bbc36a61e53"
+    },
+    ".harness/validation/quality-gates/evaluator-v6-final-checks.log": {
+      "bytes": 159,
+      "sha256": "0758d82f70b2782411b3dc7ee783131f31735d23f8244de772effa933f4bd2be"
+    },
+    ".harness/validation/quality-gates/evaluator-v6-final-dev-skills.log": {
+      "bytes": 89,
+      "sha256": "af441ab2a43758d06b311431102967715c0158ad32498e5696fd99d26566a9dc"
+    },
+    ".harness/validation/quality-gates/evaluator-v6-final-generated.log": {
+      "bytes": 294,
+      "sha256": "59313abb0290b0f42e94aaa5c07f324b4f93c94f2c46f7935fb3f732cc3add68"
+    },
+    ".harness/validation/quality-gates/evaluator-v6-tests.log": {
+      "bytes": 4362,
+      "sha256": "8fc6a635f537efbf7c79c9319d05ab91026e9da7e97f17ae1eb1275723533218"
+    },
+    ".harness/validation/quality-gates/export-review-evidence.py": {
+      "bytes": 20027,
+      "sha256": "347bf2e77d59834dc5480563a360afca1fd6aa4f409bb4b8fffb61b9c10a93a4"
+    },
+    ".harness/validation/quality-gates/reassess-v5-with-v6.py": {
+      "bytes": 31222,
+      "sha256": "328783aa461ff032d9a5389ed7633bdaa5ce6c7070f8b6e25893e4d44d52fe81"
+    }
+  },
+  "next_budget_experiment": {
+    "automatic_promotion": false,
+    "derived_input_allowances": [
+      4000000,
+      5000000
+    ],
+    "derived_output_allowances": [
+      256000,
+      320000
+    ],
+    "derived_tool_allowances": [
+      64,
+      80
+    ],
+    "per_request_input_allowance": 250000,
+    "prerequisites": [
+      "provider readiness",
+      "safe binding-limit diagnostic",
+      "minimal exploration guidance"
+    ],
+    "request_allowance_if_requests_bind": [
+      16,
+      20
+    ],
+    "status": "proposed_not_run",
+    "time_limit_increase_proposed": false
+  },
+  "offline_grader_identity": {
+    "git_commit": "50e3564bb45622a73f0bd366a68f37479262d053",
+    "git_dirty": false,
+    "harness_version": "2.0.0.dev0",
+    "python": "3.12.14",
+    "source_digest": "676c78093ed4bd17127143becd6f82d27844e49ae39f3cd6e954e881f15153fa"
+  },
+  "original_live_identity": {
+    "git_commit": "2d823a0115ba1dec115eeb71aae86798ae0cea7e",
+    "git_dirty": false,
+    "harness_version": "2.0.0.dev0",
+    "python": "3.12.14",
+    "source_digest": "3a39a085fb65b884a1fd5b57fedfc12b633852500a2acdecdc4a31dfcd049ce0"
+  },
+  "overall_qualification_status": "failed",
+  "playbook_revision": "9e7fc03f2e1253be3e2adea10663ddf429646cea",
+  "promotion_eligible": false,
+  "schema_version": 1,
+  "test_source_identity": {
+    "git_commit": "2d823a0115ba1dec115eeb71aae86798ae0cea7e",
+    "git_dirty": true,
+    "harness_version": "2.0.0.dev0",
+    "python": "3.12.14",
+    "source_digest": "676c78093ed4bd17127143becd6f82d27844e49ae39f3cd6e954e881f15153fa"
+  },
+  "test_source_matches_committed_grader_digest": true
+}
