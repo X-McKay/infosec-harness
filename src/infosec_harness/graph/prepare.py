@@ -135,7 +135,12 @@ async def run_prepare(ops: Ops, snapshot: RepoSnapshot, stack: StackFingerprint)
 
     # P6 smoke test. The spec's own test command is passed so the runner it names is verified
     # here, where build repair can still act, rather than at probe time as exit 127.
-    smoke = await ops.smoke_test(build.image_tag, build.spec.test_command)
+    # The canary inside the smoke test needs to know which language to write, and which
+    # module to run in for a partial build.
+    top_language = max(stack.languages, key=lambda k: (stack.languages[k], k)) if stack.languages else ""
+    smoke = await ops.smoke_test(build.image_tag, build.spec.test_command,
+                                 language=top_language,
+                                 module_path=build.spec.module_path or "")
     status = "ready" if smoke.ok else "failed"
     # Recorded only after the smoke test, because a built image whose runner is missing is not
     # a working recipe -- that is the exact failure the smoke test was added to catch. The one

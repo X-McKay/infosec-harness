@@ -29,7 +29,7 @@ from infosec_harness.intake.adapters import to_finding
 from infosec_harness.persistence.artifacts import get_store
 from infosec_harness.repo.checkout import checkout
 from infosec_harness.repo.detect import detect_stack
-from infosec_harness.sandbox import docker
+from infosec_harness.sandbox import canary, docker
 
 DEFAULT_TIMEOUTS = {"start_to_close_timeout": timedelta(minutes=5)}
 
@@ -104,6 +104,8 @@ async def smoke_test_activity(args: dict | str) -> SmokeResult:
     """
     image_tag = args if isinstance(args, str) else args["image_tag"]
     test_command = "" if isinstance(args, str) else (args.get("test_command") or "")
+    language = "" if isinstance(args, str) else (args.get("language") or "")
+    module_path = "" if isinstance(args, str) else (args.get("module_path") or "")
 
     res = await docker.run_shell(image_tag, "echo harness-smoke-ok", network=False, timeout=60)
     if res.exit_code != 0 or "harness-smoke-ok" not in res.stdout:
@@ -120,7 +122,38 @@ async def smoke_test_activity(args: dict | str) -> SmokeResult:
                            f"{runner.exit_code}\n"
                            + docker.tail(runner.stdout + runner.stderr, 400),
         )
-    return SmokeResult(ok=True, output_excerpt=docker.tail(runner.stdout or res.stdout, 500))
+    return await _canary_result(image_tag, test_command, language, module_path,
+                                docker.tail(runner.stdout or res.stdout, 500))
+
+
+async def _canary_result(image_tag: str, test_command: str, language: str, module_path: str,
+                         runner_excerpt: str) -> SmokeResult:
+    """Prove a test *we* wrote is discovered here and its markers reach stdout.
+
+    The runner answering `--version` proves it exists, not that it will find and report a file
+    we author. Everything between those -- discovery rules, the provider selected, the selector
+    syntax, a project config that re-enables capture -- was assumed, per framework. A recipe
+    that cannot carry a marker cannot carry a probe, and a probe whose markers vanish is
+    recorded as having reached nothing: a false negative rather than an error.
+
+    Checked by execution rather than by a table, so a framework nobody encoded fails here
+    instead of silently at probe time.
+    """
+    written = canary.canary_for(language, test_command)
+    if written is None:
+        # Not checked is not the same as passed. A language this module has not learned must
+        # not fail preparation, and preparation must not claim it was verified.
+        return SmokeResult(ok=True, output_excerpt=runner_excerpt
+                           + f"\n(canary not run: no template for language {language!r})")
+    path, content = written
+    res = await docker.run_probe(image_tag, path, content, test_command, canary.CANARY_NONCE,
+                                 module_path=module_path)
+    combined = res.stdout + "\n" + res.stderr
+    missing = canary.missing_markers(combined)
+    if missing:
+        return SmokeResult(ok=False,
+                           output_excerpt=canary.explain(language, test_command, missing, combined))
+    return SmokeResult(ok=True, output_excerpt=runner_excerpt + "\n(canary markers observed)")
 
 
 @activity.defn

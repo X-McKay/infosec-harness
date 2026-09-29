@@ -339,7 +339,11 @@ class RepairEnvironment(BaseNode[TriageState, TriageDeps, TriageResult]):
             return Decide()
         # The runner is re-verified because a revised spec may change the base image, and a
         # missing runner at probe time reads as exit 127 -- a probe defect that is not one.
-        smoke = await ctx.deps.ops.smoke_test(build.image_tag, build.spec.test_command)
+        top_language = (max(s.stack().languages, key=lambda k: (s.stack().languages[k], k))
+                        if s.stack().languages else "")
+        smoke = await ctx.deps.ops.smoke_test(build.image_tag, build.spec.test_command,
+                                              language=top_language,
+                                              module_path=build.spec.module_path or "")
         if not smoke.ok:
             s.early_exit = "environment_repair_failed"
             return Decide()

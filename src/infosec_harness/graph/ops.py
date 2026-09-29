@@ -47,7 +47,8 @@ class Ops(Protocol):
 
     async def build_environment(self, snapshot: RepoSnapshot, spec: EnvironmentSpec) -> BuildResult: ...
 
-    async def smoke_test(self, image_tag: str, test_command: str = "") -> SmokeResult: ...
+    async def smoke_test(self, image_tag: str, test_command: str = "", *,
+                         language: str = "", module_path: str = "") -> SmokeResult: ...
 
     async def lookup_recipe(self, stack: StackFingerprint) -> EnvironmentSpec | None: ...
 
@@ -134,12 +135,14 @@ class LocalOps:
             {"snapshot": snapshot.model_dump(), "spec": spec.model_dump()}
         )
 
-    async def smoke_test(self, image_tag, test_command: str = "") -> SmokeResult:
+    async def smoke_test(self, image_tag, test_command: str = "", *,
+                         language: str = "", module_path: str = "") -> SmokeResult:
         if not self._sandbox:
             return SmokeResult(ok=True)
         from infosec_harness.workflows.activities import smoke_test_activity
 
-        return await smoke_test_activity({"image_tag": image_tag, "test_command": test_command})
+        return await smoke_test_activity({"image_tag": image_tag, "test_command": test_command,
+                                         "language": language, "module_path": module_path})
 
     async def lookup_recipe(self, stack: StackFingerprint) -> EnvironmentSpec | None:
         if not self._recipe_cache:

@@ -92,11 +92,15 @@ class TemporalOps:
             retry_policy=_RETRY,
         )
 
-    async def smoke_test(self, image_tag: str, test_command: str = "") -> SmokeResult:
+    async def smoke_test(self, image_tag: str, test_command: str = "", *,
+                         language: str = "", module_path: str = "") -> SmokeResult:
         return await workflow.execute_activity(
             activities.smoke_test_activity,
-            {"image_tag": image_tag, "test_command": test_command},
-            start_to_close_timeout=timedelta(minutes=3), retry_policy=_RETRY,
+            {"image_tag": image_tag, "test_command": test_command,
+             "language": language, "module_path": module_path},
+            # Longer than the runner check alone: this also compiles and runs a canary test
+            # inside the image, which on a JVM project means a Maven invocation.
+            start_to_close_timeout=timedelta(minutes=8), retry_policy=_RETRY,
         )
 
     async def lookup_recipe(self, stack: StackFingerprint) -> EnvironmentSpec | None:

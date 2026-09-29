@@ -41,14 +41,23 @@ async def _fake_probe(image, test_file_path, content, test_command, nonce, modul
 
     Both markers matter: without the sink-returned one the graph would correctly treat this as
     a probe defect and enter its repair loop.
+
+    The prepare-phase canary comes through the same door and is asking a different question --
+    can a test written by the harness run here and be heard at all -- so for its nonce the
+    double echoes all three markers. Answering the canary with a clean negative would say "this
+    environment cannot carry a marker", which is not what this fixture is modelling.
     """
+    from infosec_harness.sandbox.canary import CANARY_NONCE
     from infosec_harness.sandbox.docker import (
+        ORACLE_PREFIX,
         PRECONDITION_PREFIX,
         SINK_RETURNED_PREFIX,
         ProcResult,
     )
 
     stdout = f"{PRECONDITION_PREFIX}{nonce}\n{SINK_RETURNED_PREFIX}{nonce}\n"
+    if nonce == CANARY_NONCE:
+        stdout += f"{ORACLE_PREFIX}{nonce}\n"
     return ProcResult(exit_code=0, stdout=stdout, stderr="", timed_out=False, duration_s=0.1)
 
 
