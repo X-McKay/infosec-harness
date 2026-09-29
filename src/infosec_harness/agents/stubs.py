@@ -17,6 +17,12 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, User
 from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
+# The warm-up commands and the image table the validators enforce. Sharing them is the point: a
+# stub plan the validators would reject makes every offline test a lie, and a stub that carried
+# its own copy of the Maven recipe is exactly how the JUnit-5-only warm-up survived here after
+# being found wrong for the corpus.
+from infosec_harness.agents.validators import MAVEN_WARMUP_COMMANDS, maven_image_for_release
+
 
 def _prompt_text(messages: list[ModelMessage]) -> str:
     parts: list[str] = []
@@ -88,6 +94,32 @@ def _node_plan(stack: dict, manifests: set[str], typescript: bool) -> dict:
             "test_command": command, "rationale": note}
 
 
+def _jvm_framework(stack: dict | None) -> str:
+    """The JVM test framework the fingerprint reports, defaulting the way the corpus does.
+
+    JUnit 4 rather than JUnit 5 when nothing is declared: of the 51 Maven entries harvested from
+    Vul4J, 50 are JUnit 4 (or JUnit 3 on the JUnit 4 artifact) and one is JUnit 5.
+    """
+    declared = set((stack or {}).get("test_frameworks") or ())
+    for name in ("junit5", "junit4", "testng"):
+        if name in declared:
+            return name
+    return "junit4"
+
+
+def _maven_image(stack: dict | None) -> str:
+    """A base image whose javac still accepts the level the project declares.
+
+    temurin-21 unconditionally was wrong: JDK 21 refuses -source 7, which 14 of the 58 harvested
+    Vul4J entries declare, and JDK 17 refuses -source 6, which some of the rest declare. Measured
+    with Zulu 8/11/17/21 under Maven 3.9.16 -- see skills/build-maven for the table.
+    """
+    release = (stack or {}).get("java_release")
+    if release is None:
+        return "maven:3.9-eclipse-temurin-17"
+    return maven_image_for_release(release)
+
+
 def _env_plan(stack: dict | None) -> dict:
     stack = stack or {}
     manifests = set(stack.get("manifests") or [])
@@ -109,33 +141,33 @@ def _env_plan(stack: dict | None) -> dict:
         # 3.x binds to the `test` phase is 2.12.4, which has no JUnit Platform provider, and a
         # phase-bound plugin version cannot be overridden from the command line. The build warms
         # the pinned plugin and its provider into the local repo so the probe run can be offline.
-        # The second install command writes a throwaway JUnit 5 test and *runs* it, then removes
-        # it. Merely invoking the plugin with nothing to run (`-DfailIfNoTests=false`) is not
-        # enough: surefire resolves its provider lazily at test-execution time, from the JUnit
-        # version on the test classpath, so the warm-up downloaded the plugin and all of its own
-        # dependencies and the offline probe still died on `surefire-junit-platform:jar:3.2.5
-        # (absent)`. Verified against eval-corpus/java: with the real run, the offline probe
-        # passes in a --network=none container; without it, all four cases fail.
-        return {"base_image": "maven:3.9-eclipse-temurin-21",
+        # The second install command writes a throwaway test and *runs* it, then removes it.
+        # Merely invoking the plugin with nothing to run (`-DfailIfNoTests=false`) is not enough:
+        # surefire resolves its provider lazily at test-execution time, from the framework on the
+        # test classpath, so the warm-up downloaded the plugin and all of its own dependencies and
+        # the offline probe still died on `surefire-junit-platform:jar:3.2.5 (absent)`. Verified
+        # against eval-corpus/java: with the real run, the offline probe passes in a
+        # --network=none container; without it, all four cases fail.
+        #
+        # The warm-up's framework and the base image are *read*, not assumed. The stub used to
+        # emit a JUnit 5 warm-up and temurin-21 unconditionally, and both are wrong for most real
+        # Java: a jupiter warm-up in a JUnit 4 project fails test-compile ("cannot find symbol:
+        # class Test") so no image is ever built, and JDK 21's javac rejects -source 7, which 14
+        # of the harvested Vul4J entries declare. Both were executed; see skills/build-maven.
+        framework = _jvm_framework(stack)
+        return {"base_image": _maven_image(stack),
                 # -Dmaven.repo.local is not optional: Maven reads user.home, which is /root for
                 # the sandbox user's unmapped uid. Build writes under /opt/home; the probe reads
                 # the /work/home copy of it.
                 "install_commands": [
                     "mvn -B -Dmaven.repo.local=/opt/home/.m2/repository -DskipTests test-compile",
-                    "mkdir -p src/test/java && echo 'import org.junit.jupiter.api.Test; class "
-                    "HarnessWarmupTest { @Test void warm() {} }' > "
-                    "src/test/java/HarnessWarmupTest.java && "
-                    "mvn -B -Dmaven.repo.local=/opt/home/.m2/repository test-compile "
-                    "org.apache.maven.plugins:maven-surefire-plugin:3.2.5:test "
-                    "-Dtest=HarnessWarmupTest && "
-                    "rm -f src/test/java/HarnessWarmupTest.java "
-                    "target/test-classes/HarnessWarmupTest.class"],
+                    MAVEN_WARMUP_COMMANDS[framework]],
                 "test_command": ("mvn -B -o -Dmaven.repo.local=/work/home/.m2/repository "
                                  "test-compile "
                                  "org.apache.maven.plugins:maven-surefire-plugin:3.2.5:test "
                                  "-Dtest=HarnessProbeTest "
                                  "-Dmaven.test.redirectTestOutputToFile=false"),
-                "rationale": "stub heuristic: maven"}
+                "rationale": f"stub heuristic: maven, {framework}"}
     if lang == "perl":
         # The shape verified against the corpus (see skills/build-cpanm): --local-lib because the
         # sandbox user cannot write perl's site dir and cpanm would otherwise report success and
@@ -197,7 +229,43 @@ _PROBE_TEMPLATES = {
 }
 
 
+def _java_probe(annotation_import: str, annotation: str, modifier: str, method: str) -> str:
+    """A stub Java probe in one framework's shape.
+
+    JUnit 4 and TestNG need `public` on both the class and the method: with either left
+    package-private Surefire's JUnit4Provider reports `initializationError` and prints no markers,
+    so a stub written in the JUnit 5 shape would fail on exactly the repositories this stub is
+    meant to exercise. The `-Dtest=HarnessProbeTest` selector names the class, so the file's name,
+    its class and the selector all have to be HarnessProbeTest.
+    """
+    return (f"{annotation_import}\n\n"
+            f"public class HarnessProbeTest {{\n"
+            f"    {annotation}\n"
+            f"    {modifier} void {method}() throws Exception {{\n"
+            f"        System.out.println(\"HARNESS_PRECONDITION::{{nonce}}\");\n"
+            f"        System.out.println(\"HARNESS_SINK_RETURNED::{{nonce}}\");\n"
+            f"        boolean observed = false;  // the stub never observes the condition\n"
+            f"        if (observed) {{\n"
+            f"            System.out.println(\"HARNESS_ORACLE::{{nonce}}\");\n"
+            f"        }}\n"
+            f"    }}\n"
+            f"}}\n")
+
+
+# Java has no single shape: which annotation compiles, and whether package-private is allowed,
+# depends on the framework on the project's test classpath. The stub used to fall through to the
+# shell fallback for Java entirely, so a stub Java run wrote `harness_probe.sh` and handed it to
+# `mvn -Dtest=HarnessProbeTest`, which runs nothing.
+_JAVA_PROBES = {
+    "junit4": _java_probe("import org.junit.Test;", "@Test", "public", "probe"),
+    "junit5": _java_probe("import org.junit.jupiter.api.Test;", "@Test", "public", "probe"),
+    "testng": _java_probe("import org.testng.annotations.Test;", "@Test", "public", "probe"),
+}
+_JAVA_PROBE_PATH = "src/test/java/HarnessProbeTest.java"
+
+
 def _probe(text: str) -> dict:
+    # `or {}` because both branches below call `.get()` on it.
     stack = _tag(text, "stack_fingerprint") or {}
     lang = _primary_language(stack)
     nonce = _tag(text, "oracle_nonce") or "none"
@@ -206,7 +274,13 @@ def _probe(text: str) -> dict:
                 "echo HARNESS_PRECONDITION::{nonce}\n"
                 "echo HARNESS_SINK_RETURNED::{nonce}\n"
                 "if false; then echo HARNESS_ORACLE::{nonce}; fi\n")
-    path, body = _PROBE_TEMPLATES.get(lang, fallback)
+    # The probe body is per *runner*, not per language: a jest-shaped body throws
+    # `ReferenceError: test is not defined` under vitest, and a jupiter-shaped body does not
+    # compile against the JUnit 4 artifact. Both were measured.
+    if lang == "java":
+        path, body = _JAVA_PROBE_PATH, _JAVA_PROBES[_jvm_framework(stack)]
+    else:
+        path, body = _PROBE_TEMPLATES.get(lang, fallback)
     if lang in {"javascript", "typescript"}:
         runner = next((f for f in (stack.get("test_frameworks") or []) if f in _JS_PROBE_TEMPLATES),
                       "jest")

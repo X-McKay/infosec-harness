@@ -206,6 +206,10 @@ class StackFingerprint(_Model):
         default_factory=list, description="Package registry hosts declared by the repo (D14)"
     )
     test_dirs: list[str] = Field(default_factory=list)
+    java_release: int | None = Field(
+        default=None,
+        description="Oldest Java language level the build files declare; binds the JDK choice",
+    )
 
 
 class RepoProfile(_Model):

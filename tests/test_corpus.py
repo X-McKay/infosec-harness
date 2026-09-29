@@ -40,6 +40,16 @@ EXPECTED_STACK = {
     "javascript": ({"javascript", "typescript"}, "npm", {"jest", "vitest", "mocha", "node:test"}),
     "perl": ({"perl"}, "cpanm", {"Test::More", "Test2::V0"}),
 }
+# Per-pair overrides, because the JVM is the one place where the corpus deliberately carries two
+# frameworks. The seeded Java cases were 100% JUnit 5 on release 17, and 50 of the 51 Maven
+# entries harvested from Vul4J are JUnit 4 on Java 7 or 8 — so every Java case here used to
+# exercise a recipe that fits one harvested entry in 51. `java-xxe` is the JUnit 4 / source 1.7
+# shape. The override is a map rather than a widened set on purpose: a widened set would let a
+# JUnit 5 case pass while being detected as JUnit 4, which is the mistake being guarded against.
+# A set, because the surrounding assertion intersects. Still exact per case: `{"junit4"}`
+# fails if the case is detected as junit5, which is the mistake being guarded against --
+# 50 of the 51 harvested Maven entries are JUnit 4 and were being reported as JUnit 5.
+EXPECTED_TEST_FRAMEWORK = {"java-xxe": {"junit4"}}
 
 
 def test_all_four_languages_present():
@@ -80,6 +90,7 @@ def test_sink_line_matches_weakness(case):
 def test_stack_detects_expected_toolchain(case):
     st = detect_stack(str(case.repo_path))
     langs, build, testfw = EXPECTED_STACK[case.language]
+    testfw = EXPECTED_TEST_FRAMEWORK.get(case.name.rsplit("-", 1)[0], testfw)
     top = max(st.languages, key=st.languages.get) if st.languages else None
     assert top in langs, f"{case.name}: detected {top}, expected one of {langs}"
     assert build in st.build_systems, f"{case.name}: build {st.build_systems} lacks {build}"

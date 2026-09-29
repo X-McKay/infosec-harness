@@ -76,6 +76,7 @@ metadata:
   enabled_skills:
     - probe-oracle-protocol
     - test-pytest
+    - test-junit4
     - test-junit5
     - test-jest
     - test-perl-test-more
@@ -100,7 +101,7 @@ metadata:
 capabilities:
   - Skills:
       directories: skills
-      include: [probe-oracle-protocol, test-pytest, test-junit5, test-jest, test-perl-test-more,
+      include: [probe-oracle-protocol, test-pytest, test-junit4, test-junit5, test-jest, test-perl-test-more,
                 lang-python, lang-java, lang-javascript, lang-perl]
   - RepoReadOnly:
       # No `repo_digest`: this agent is given the repository profile in its prompt, so a

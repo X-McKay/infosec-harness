@@ -12,10 +12,14 @@ cases:
     scenario: >
       probe-author copies the worked example and fills in the target. The exemplar has to be
       something validate_probe accepts, or the agent is rejected for following its own skill —
-      which costs an output retry every time and, at the budget's end, the case.
+      which costs an output retry every time and, at the budget's end, the case. The declaration
+      is spelled out rather than `var` on purpose: `var` needs Java 10 and a jupiter project
+      pinned to maven.compiler.source 8 is ordinary, where javac fails the whole build with
+      `cannot find symbol: class var` (measured).
     shown_in_skill:
       - "HARNESS_SINK_RETURNED::"
       - "class HarnessProbeTest"
+      - "String payload = buildInput(NONCE);"
     probe:
       test_file_path: src/test/java/com/example/HarnessProbeTest.java
       content: |
@@ -28,7 +32,7 @@ cases:
 
             @Test
             void probe() throws Exception {
-                var payload = buildInput(NONCE);
+                String payload = buildInput(NONCE);
                 System.out.println("HARNESS_PRECONDITION::" + NONCE);
                 String result;
                 try {

@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "note": "Harvested from the Vul4J dataset (CC-BY-4.0) by scripts/harvest_vul4j.py. Paired like the seeded corpus: `-vulnerable` is the fix commit's parent and should come out potentially_exploitable, `-fixed` is the fix commit and should come out likely_not_exploitable. `finding.repo_url` is a remote git URL and `finding.revision` is a commit SHA. LEAKAGE RULE: `truth.pov` names the upstream proof-of-vulnerability test. It is ground truth for scoring and MUST NOT be exposed to any agent. On every `-fixed` case the PoV is present in the checkout by construction, because the fix commit added it, so consumers must remove `truth.pov.mask_paths` from the tree the agent reads before the probe-author stage runs. Cases whose PoV already existed at the vulnerable revision are not in `cases` at all; they are listed under `quarantined` with the reason. `truth.sink_file`/`sink_line` are a heuristic taken from the fix commit's largest non-test hunk, not an analysed sink; `truth.sink_confidence` says so. Vul4J's pinned Docker images and build/test commands are deliberately not carried over: deriving the build is what env-planner and build-repair exist to measure.",
+  "note": "Harvested from the Vul4J dataset (CC-BY-4.0) by scripts/harvest_vul4j.py. Paired like the seeded corpus: `-vulnerable` is the fix commit's parent and should come out potentially_exploitable, `-fixed` is the fix commit and should come out likely_not_exploitable. `finding.repo_url` is a remote git URL and `finding.revision` is a commit SHA. LEAKAGE RULE: `truth.pov` names the upstream proof-of-vulnerability test. It is ground truth for scoring and MUST NOT be exposed to any agent. On every `-fixed` case the PoV is present in the checkout by construction, because the fix commit added it, so consumers must remove `truth.pov.mask_paths` from the tree the agent reads before the probe-author stage runs. Cases whose PoV already existed at the vulnerable revision are not in `cases` at all; they are listed under `quarantined` with the reason. `truth.sink_file`/`sink_line` are a heuristic taken from the fix commit's largest non-test hunk, not an analysed sink; `truth.sink_confidence` says so. `build.test_framework` is read from the module's build file and each pom enclosing it, innermost first; `null` means none of them declares one (a parent pom outside the repository does), so a consumer must detect it in the checkout rather than assume. It is recorded because it decides the *build*, not just the probe: the Maven warm-up is compiled against the project's own test classpath, so a JUnit 5 warm-up in a JUnit 4 project fails test-compile and no image is built at all. Vul4J's pinned Docker images and build/test commands are deliberately not carried over: deriving the build is what env-planner and build-repair exist to measure.",
   "source_dataset": {
     "dataset": "vul4j",
     "name": "Vul4J: A Dataset of Reproducible Java Vulnerabilities",
@@ -54,7 +54,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "batik-dom",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": null
       },
       "source": {
         "dataset": "vul4j",
@@ -116,7 +117,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "batik-dom",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": null
       },
       "source": {
         "dataset": "vul4j",
@@ -183,7 +185,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "camel-core",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -250,7 +253,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "camel-core",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -314,7 +318,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -378,7 +383,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -440,7 +446,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -502,7 +509,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -568,7 +576,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -634,7 +643,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -698,7 +708,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -762,7 +773,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -828,7 +840,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -894,7 +907,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -960,7 +974,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -1026,7 +1041,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -1090,7 +1106,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -1154,7 +1171,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -1218,7 +1236,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -1282,7 +1301,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -1346,7 +1366,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -1410,7 +1431,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -1476,7 +1498,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "rt/rs/extensions/providers",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -1542,7 +1565,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "rt/rs/extensions/providers",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -1606,7 +1630,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "rt/rs/security/sso/saml",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -1670,7 +1695,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "rt/rs/security/sso/saml",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -1734,7 +1760,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "httpclient",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -1798,7 +1825,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "httpclient",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -1864,7 +1892,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "jspwiki-main",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit5"
       },
       "source": {
         "dataset": "vul4j",
@@ -1930,7 +1959,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "jspwiki-main",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit5"
       },
       "source": {
         "dataset": "vul4j",
@@ -1994,7 +2024,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "pdfbox",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -2058,7 +2089,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "pdfbox",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -2124,7 +2156,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -2190,7 +2223,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -2255,7 +2289,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "web",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -2320,7 +2355,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "web",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -2384,7 +2420,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "core",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -2448,7 +2485,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "core",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -2512,7 +2550,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "core",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -2576,7 +2615,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "core",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -2640,7 +2680,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "core",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -2704,7 +2745,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "core",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -2766,7 +2808,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "tika-parsers",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -2828,7 +2871,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "tika-parsers",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -2892,7 +2936,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "container/openejb-core",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -2956,7 +3001,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "container/openejb-core",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -3020,7 +3066,8 @@
         "system": "gradle",
         "jdk": "8",
         "module": "server",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -3084,7 +3131,8 @@
         "system": "gradle",
         "jdk": "8",
         "module": "server",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -3148,7 +3196,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -3212,7 +3261,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -3276,7 +3326,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "util",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -3340,7 +3391,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "util",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -3419,7 +3471,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -3498,7 +3551,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -3560,7 +3614,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": null
       },
       "source": {
         "dataset": "vul4j",
@@ -3622,7 +3677,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": null
       },
       "source": {
         "dataset": "vul4j",
@@ -3686,7 +3742,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": null
       },
       "source": {
         "dataset": "vul4j",
@@ -3750,7 +3807,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": null
       },
       "source": {
         "dataset": "vul4j",
@@ -3814,7 +3872,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "testng"
       },
       "source": {
         "dataset": "vul4j",
@@ -3878,7 +3937,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "testng"
       },
       "source": {
         "dataset": "vul4j",
@@ -3942,7 +4002,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "testng"
       },
       "source": {
         "dataset": "vul4j",
@@ -4006,7 +4067,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "testng"
       },
       "source": {
         "dataset": "vul4j",
@@ -4070,7 +4132,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "javamelody-core",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -4134,7 +4197,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "javamelody-core",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -4198,7 +4262,8 @@
         "system": "maven",
         "jdk": "11",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": null
       },
       "source": {
         "dataset": "vul4j",
@@ -4262,7 +4327,8 @@
         "system": "maven",
         "jdk": "11",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": null
       },
       "source": {
         "dataset": "vul4j",
@@ -4326,7 +4392,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -4390,7 +4457,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -4454,7 +4522,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "core",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -4518,7 +4587,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "core",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -4582,7 +4652,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "core",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -4646,7 +4717,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "core",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -4710,7 +4782,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "core",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -4774,7 +4847,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "core",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -4838,7 +4912,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -4902,7 +4977,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -4966,7 +5042,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": null
       },
       "source": {
         "dataset": "vul4j",
@@ -5030,7 +5107,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": null
       },
       "source": {
         "dataset": "vul4j",
@@ -5097,7 +5175,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": null
       },
       "source": {
         "dataset": "vul4j",
@@ -5164,7 +5243,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": null
       },
       "source": {
         "dataset": "vul4j",
@@ -5228,7 +5308,8 @@
         "system": "gradle",
         "jdk": "8",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -5292,7 +5373,8 @@
         "system": "gradle",
         "jdk": "8",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -5356,7 +5438,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "enterprise/security",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -5420,7 +5503,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "enterprise/security",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -5484,7 +5568,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "protocols/ovsdb/rfc",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -5548,7 +5633,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "protocols/ovsdb/rfc",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -5612,7 +5698,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "main",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -5676,7 +5763,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "main",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -5740,7 +5828,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "main",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -5804,7 +5893,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "main",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -5868,7 +5958,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "testsuite/unit-tests",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": null
       },
       "source": {
         "dataset": "vul4j",
@@ -5932,7 +6023,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "testsuite/unit-tests",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": null
       },
       "source": {
         "dataset": "vul4j",
@@ -5996,7 +6088,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": null
       },
       "source": {
         "dataset": "vul4j",
@@ -6060,7 +6153,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": null
       },
       "source": {
         "dataset": "vul4j",
@@ -6124,7 +6218,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "spring-data-rest-webmvc",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": null
       },
       "source": {
         "dataset": "vul4j",
@@ -6188,7 +6283,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "spring-data-rest-webmvc",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": null
       },
       "source": {
         "dataset": "vul4j",
@@ -6255,7 +6351,8 @@
         "system": "gradle",
         "jdk": "8",
         "module": "spring-webmvc",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -6322,7 +6419,8 @@
         "system": "gradle",
         "jdk": "8",
         "module": "spring-webmvc",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -6388,7 +6486,8 @@
         "system": "gradle",
         "jdk": "8",
         "module": "spring-web",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit5"
       },
       "source": {
         "dataset": "vul4j",
@@ -6454,7 +6553,8 @@
         "system": "gradle",
         "jdk": "8",
         "module": "spring-web",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit5"
       },
       "source": {
         "dataset": "vul4j",
@@ -6518,7 +6618,8 @@
         "system": "gradle",
         "jdk": "8",
         "module": "spring-core",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -6582,7 +6683,8 @@
         "system": "gradle",
         "jdk": "8",
         "module": "spring-core",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -6646,7 +6748,8 @@
         "system": "gradle",
         "jdk": "8",
         "module": "oauth2/oauth2-jose",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": null
       },
       "source": {
         "dataset": "vul4j",
@@ -6710,7 +6813,8 @@
         "system": "gradle",
         "jdk": "8",
         "module": "oauth2/oauth2-jose",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": null
       },
       "source": {
         "dataset": "vul4j",
@@ -6774,7 +6878,8 @@
         "system": "gradle",
         "jdk": "8",
         "module": "core",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": null
       },
       "source": {
         "dataset": "vul4j",
@@ -6838,7 +6943,8 @@
         "system": "gradle",
         "jdk": "8",
         "module": "core",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": null
       },
       "source": {
         "dataset": "vul4j",
@@ -6904,7 +7010,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "spring-security-oauth2",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -6970,7 +7077,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "spring-security-oauth2",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -7037,7 +7145,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "retrofit",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -7104,7 +7213,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "retrofit",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -7168,7 +7278,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "modules/swagger-parser",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -7232,7 +7343,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "modules/swagger-parser",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -7296,7 +7408,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "xstream",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -7360,7 +7473,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "xstream",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -7426,7 +7540,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -7492,7 +7607,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -7558,7 +7674,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "camel-core",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -7623,7 +7740,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "camel-core",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -7690,7 +7808,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -7757,7 +7876,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -7824,7 +7944,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -7891,7 +8012,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -7956,7 +8078,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "core",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -8021,7 +8144,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "core",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -8086,7 +8210,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "core",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -8151,7 +8276,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "core",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -8216,7 +8342,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "core",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -8281,7 +8408,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "core",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -8346,7 +8474,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "xwork-core",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -8411,7 +8540,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "xwork-core",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -8476,7 +8606,8 @@
         "system": "gradle",
         "jdk": "8",
         "module": "server",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit5"
       },
       "source": {
         "dataset": "vul4j",
@@ -8541,7 +8672,8 @@
         "system": "gradle",
         "jdk": "8",
         "module": "server",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit5"
       },
       "source": {
         "dataset": "vul4j",
@@ -8618,7 +8750,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": null
       },
       "source": {
         "dataset": "vul4j",
@@ -8695,7 +8828,8 @@
         "system": "maven",
         "jdk": "7",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": null
       },
       "source": {
         "dataset": "vul4j",
@@ -8760,7 +8894,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -8825,7 +8960,8 @@
         "system": "maven",
         "jdk": "8",
         "module": "root",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": "junit4"
       },
       "source": {
         "dataset": "vul4j",
@@ -8890,7 +9026,8 @@
         "system": "gradle",
         "jdk": "8",
         "module": "core",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": null
       },
       "source": {
         "dataset": "vul4j",
@@ -8955,7 +9092,8 @@
         "system": "gradle",
         "jdk": "8",
         "module": "core",
-        "note": "Vul4J's pinned build and test commands are intentionally not carried over."
+        "note": "Vul4J's pinned build and test commands are intentionally not carried over.",
+        "test_framework": null
       },
       "source": {
         "dataset": "vul4j",

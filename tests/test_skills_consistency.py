@@ -151,7 +151,7 @@ def test_a_skill_has_a_procedure_and_not_only_generated_sections(skill):
     """Structure is added around the content, never instead of it.
 
     An earlier generator inferred its regions from heading positions, and on a second run it
-    deleted the body of every skill whose procedure had no `## ` heading of its own — all 23
+    deleted the body of every skill whose procedure had no `## ` heading of its own — all 24
     of them to some degree, and the build-*, lang-* and test-* skills entirely. Nothing
     failed: the tests checked that the required sections were present, which they were.
     """
