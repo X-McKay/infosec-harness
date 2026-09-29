@@ -30,9 +30,47 @@ class PrepareOutcome:
     invocations: list[AgentOutcome] = field(default_factory=list)
 
 
+class PrepareFailed(Exception):
+    """A preparation that raised, carrying the agent calls it had already completed.
+
+    Preparation makes up to a dozen agent calls, and until this existed the list of them was a
+    local variable that died with the exception. Measured: a live run over harvested
+    repositories failed all six cases in the prepare phase and its metrics contained
+    ``"trajectory": {}`` and ``"budget": {}`` -- nothing at all about what recon and env-planner
+    had done, on precisely the failures that most needed explaining. The two instruments built
+    to diagnose this (the per-agent request/loop report and the stage funnel) were blind
+    exactly where they were needed.
+
+    The partial list *is* the evidence, so it travels with the failure. ``cause`` is the
+    original exception: callers classify on its type, and wrapping must not hide it.
+    """
+
+    def __init__(self, cause: BaseException, invocations: list[AgentOutcome]) -> None:
+        self.cause = cause
+        self.invocations = invocations
+        super().__init__(f"{type(cause).__name__}: {cause}")
+
+
 async def run_prepare(ops: Ops, snapshot: RepoSnapshot, stack: StackFingerprint) -> PrepareOutcome:
-    s = get_settings()
+    """Prepare one repository, or raise :class:`PrepareFailed` with the calls that did run.
+
+    Every exception from the body is wrapped, because the caller's decision (which
+    ``InconclusiveReason`` this deserves) is made on the type of the *cause*, not on this
+    wrapper. ``BaseException`` deliberately passes through unwrapped: a cancellation or a
+    Ctrl-C is not a statement about the repository and must keep its own semantics.
+    """
     invocations: list[AgentOutcome] = []
+    try:
+        return await _run_prepare(ops, snapshot, stack, invocations)
+    except Exception as e:
+        raise PrepareFailed(e, invocations) from e
+
+
+async def _run_prepare(ops: Ops, snapshot: RepoSnapshot, stack: StackFingerprint,
+                       invocations: list[AgentOutcome]) -> PrepareOutcome:
+    """The preparation itself. ``invocations`` is owned by :func:`run_prepare` so that the
+    calls completed before a failure survive it."""
+    s = get_settings()
     # Sum of the stack's per-language file counts: how much repository the agents have to
     # explore, which is what their request budgets scale on.
     source_files = sum((stack.languages or {}).values()) or None

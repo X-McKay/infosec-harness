@@ -250,9 +250,51 @@ async def test_a_repo_that_cannot_be_prepared_does_not_sink_the_batch(repo, monk
     assert len(outputs) == 2, "the healthy repo's finding must still be reported"
     failed = outputs[0]
     assert failed.result.verdict.label is VerdictLabel.inconclusive
-    assert failed.result.verdict.inconclusive_reason is InconclusiveReason.environment_unbuildable
+    # `budget_exhausted`, not `environment_unbuildable`: this repository may build perfectly
+    # well, and an agent that ran out of tokens is a different problem with a different fix.
+    # Lumping the two together is what made a live run's failures unreadable -- six cases filed
+    # as "unbuildable" when every one of them had hit a request limit.
+    assert failed.result.verdict.inconclusive_reason is InconclusiveReason.budget_exhausted
     assert "input_tokens_limit" in failed.result.verdict.rationale
     assert outputs[1].result.verdict.label in set(VerdictLabel)
+
+
+async def test_a_failed_preparation_still_reports_the_agent_calls_it_made(repo):
+    """The evidence must survive the failure that needs explaining.
+
+    Preparation makes up to a dozen agent calls. A live run over harvested repositories failed
+    all six cases in this phase and its metrics contained `"trajectory": {}` and `"budget": {}` —
+    nothing about what recon or env-planner had done. The per-agent request/loop report and the
+    stage funnel were built to answer "is this a loop or is it large work", and they were blind
+    on exactly the failures that raised the question.
+    """
+    from infosec_harness.graph import local
+    from infosec_harness.graph.prepare import PrepareFailed
+
+    real_prepare = local.run_prepare
+
+    async def fail_after_recon(ops, snapshot, stack):
+        outcome = await real_prepare(ops, snapshot, stack)
+        raise PrepareFailed(RuntimeError("boom after recon"), outcome.invocations)
+
+    # Recorded in `prepare_sink`, keyed per repo, exactly as the success path does: preparation
+    # is shared across a repo's findings, so attaching it to each finding would count it twice.
+    # This is the dict `score_corpus` reads prepare-phase invocations from.
+    sink: dict[tuple[str, str], list] = {}
+    local.run_prepare = fail_after_recon
+    try:
+        outputs = await local.triage_batch_local(
+            [FindingInput(title="SQLi", repo_url=repo, file_path="app.py", start_line=2,
+                          cwe="CWE-89", severity="high")], sandbox=False, prepare_sink=sink)
+    finally:
+        local.run_prepare = real_prepare
+
+    assert len(outputs) == 1
+    assert sink, "a failed preparation recorded nothing in the prepare sink"
+    agents = [i.agent for calls in sink.values() for i in calls]
+    assert "recon" in agents, f"the calls that did run must survive the failure (got {agents})"
+    # And the wrapper must not hide the cause: classification keys on the original type.
+    assert isinstance(PrepareFailed(ValueError("x"), []).cause, ValueError)
 
 
 async def test_a_hung_agent_run_is_bounded(repo, monkeypatch):

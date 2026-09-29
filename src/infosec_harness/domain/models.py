@@ -501,3 +501,28 @@ class TriageRunOutput(_Model):
     # failed, the context misread reachability, or the probe never reached the sink.
     context: FindingContext | None = None
     executions: list[ProbeExecution] = Field(default_factory=list)
+
+
+class RepoPreparation(_Model):
+    """What one repository's preparation produced, including a failure's partial evidence.
+
+    ``RepoPreparationWorkflow`` returned a bare ``PreparedEnvironment``, which cannot express
+    either of the two things a caller needs when preparation goes wrong. The prepare-phase agent
+    calls never crossed the workflow boundary, so a durable run's recon and env-planner work was
+    unrecoverable; and a preparation that *raised* returned nothing at all, failing the child
+    workflow, which ``TriageBatchWorkflow`` had no handler for -- so one bad repository failed
+    the entire batch, the very containment the local path was hardened against.
+
+    ``prepared`` is None only when the failure came before there was a snapshot and a stack to
+    describe (a checkout that could not complete). ``failure_reason`` is set on every failure,
+    and ``invocations`` carries whatever preparation had already done.
+    """
+
+    prepared: PreparedEnvironment | None = None
+    invocations: list[AgentOutcome] = Field(default_factory=list)
+    failure_reason: InconclusiveReason | None = None
+    failure_detail: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return self.failure_reason is None and self.prepared is not None

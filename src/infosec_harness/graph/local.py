@@ -21,8 +21,8 @@ from infosec_harness.domain.models import (
     Verdict,
     VerdictLabel,
 )
-from infosec_harness.graph.ops import LocalOps, is_infrastructure_failure
-from infosec_harness.graph.prepare import run_prepare
+from infosec_harness.graph.ops import LocalOps, classify_pipeline_failure
+from infosec_harness.graph.prepare import PrepareFailed, run_prepare
 from infosec_harness.graph.triage import TRIAGE_GRAPH, PreFilter, TriageDeps, TriageState
 from infosec_harness.intake import adapters
 from infosec_harness.repo.checkout import checkout
@@ -87,27 +87,39 @@ async def triage_batch_local(findings: list[FindingInput], *, sandbox: bool = Tr
     results: dict[int, TriageRunOutput] = {}
     order = {id(f): i for i, f in enumerate(findings)}
     for (repo_url, revision), group in groups.items():
-        snapshot = await checkout(RepoRef(
-            repo_url=repo_url, revision=revision,
-            exclude_paths=(mask_paths or {}).get((repo_url, revision), [])))
-        stack = detect_stack(snapshot.path)
         try:
+            snapshot = await checkout(RepoRef(
+                repo_url=repo_url, revision=revision,
+                exclude_paths=(mask_paths or {}).get((repo_url, revision), [])))
+            stack = detect_stack(snapshot.path)
             prep = await run_prepare(ops, snapshot, stack)
         except Exception as e:  # noqa: BLE001 - one repo must not sink the batch either
             # Preparation is shared by a repo's findings, so a failure here decides all of
             # them — but only theirs. Observed live: build-repair exhausted its token budget
             # on real build logs and the exception left this loop, discarding every finding in
-            # the run including repos already triaged. `environment_unbuildable` is what the
-            # contract reserves for "no usable environment", which is exactly the situation.
-            # A provider outage is not a statement about this repository, so it must not be
-            # filed as `environment_unbuildable` -- an eval reading that cannot tell an endpoint
-            # being down from a pipeline regression.
-            reason = (InconclusiveReason.infrastructure_error if is_infrastructure_failure(e)
-                      else InconclusiveReason.environment_unbuildable)
+            # the run including repos already triaged.
+            #
+            # The checkout and stack detection are inside the guard too. They are the only
+            # per-repo work that was still outside it, and a repository that cannot be cloned
+            # is the likeliest failure of all on a harvested manifest — it would have taken the
+            # whole batch with it for the same reason preparation used to.
+            #
+            # The calls preparation had already made are the only evidence about a repository
+            # that failed to prepare, so they are recorded rather than discarded: a run whose
+            # every case died here used to report nothing about which agents ran, how many
+            # requests they made, or whether one was looping.
+            partial = e.invocations if isinstance(e, PrepareFailed) else []
+            cause = e.cause if isinstance(e, PrepareFailed) else e
+            if prepare_sink is not None:
+                # Keyed and counted exactly like the success path: once per repo, because
+                # preparation is shared across a repo's findings.
+                prepare_sink[(repo_url, revision)] = partial
+            ran = ", ".join(i.agent for i in partial) or "none"
             for f in group:
                 results[order[id(f)]] = _inconclusive(
-                    adapters.to_finding(f), reason,
-                    f"Preparing {repo_url} failed: {type(e).__name__}: {e}", "failed")
+                    adapters.to_finding(f), classify_pipeline_failure(cause),
+                    f"Preparing {repo_url} failed after {len(partial)} agent call(s) ({ran}): "
+                    f"{type(cause).__name__}: {cause}", "failed")
             continue
         if prepare_sink is not None:
             prepare_sink[(repo_url, revision)] = prep.invocations
@@ -118,12 +130,12 @@ async def triage_batch_local(findings: list[FindingInput], *, sandbox: bool = Tr
                 # In the durable path each finding is its own child workflow, so a failure is
                 # already contained. Here the batch shares a process, and an agent that
                 # exhausts a retry budget on one finding used to discard every result in the
-                # run — including findings already triaged. Record it as inconclusive/error,
-                # which is what the three-way contract reserves for exactly this, and go on.
+                # run — including findings already triaged. Record why it failed and go on,
+                # through the same classifier the prepare phase uses so one taxonomy covers
+                # both: a finding stopped by its own budget is not the same event as a
+                # provider outage, and neither is a bug in the harness.
                 results[order[id(f)]] = _inconclusive(
-                    adapters.to_finding(f),
-                    InconclusiveReason.infrastructure_error if is_infrastructure_failure(e)
-                    else InconclusiveReason.error,
+                    adapters.to_finding(f), classify_pipeline_failure(e),
                     f"Triage failed for this finding: {type(e).__name__}: {e}",
                     prep.prepared.status)
     return [results[i] for i in sorted(results)]

@@ -25,13 +25,15 @@ with workflow.unsafe.imports_passed_through():
         InconclusiveReason,
         PreparedEnvironment,
         PriorityBand,
+        RepoPreparation,
         RepoRef,
         TriageResult,
         TriageRunOutput,
         Verdict,
         VerdictLabel,
     )
-    from infosec_harness.graph.prepare import run_prepare
+    from infosec_harness.graph.ops import classify_pipeline_failure
+    from infosec_harness.graph.prepare import PrepareFailed, run_prepare
     from infosec_harness.graph.triage import TRIAGE_GRAPH, PreFilter, TriageDeps, TriageState
     from infosec_harness.intake import adapters
     from infosec_harness.workflows import activities
@@ -53,11 +55,28 @@ def _inconclusive(finding: Finding, reason: InconclusiveReason, rationale: str, 
 @workflow.defn
 class RepoPreparationWorkflow:
     @workflow.run
-    async def run(self, ref: RepoRef) -> PreparedEnvironment:
+    async def run(self, ref: RepoRef) -> RepoPreparation:
+        """Prepare one repository, returning the outcome rather than failing on a bad one.
+
+        A preparation that raises is a result about this repository, not a reason to fail the
+        workflow: the batch has other repositories, and the agent calls this one already made
+        are the only evidence about why it failed. Both used to be lost -- the child workflow
+        failed, taking the batch with it, and the invocations never crossed the boundary.
+        """
         snapshot = await workflow.execute_activity(activities.checkout_activity, ref, **_ACT)
         stack = await workflow.execute_activity(activities.detect_stack_activity, snapshot, **_ACT)
-        outcome = await run_prepare(TemporalOps(), snapshot, stack)
-        return outcome.prepared
+        try:
+            outcome = await run_prepare(TemporalOps(), snapshot, stack)
+        except PrepareFailed as e:
+            return RepoPreparation(
+                # `failed` rather than `unbuildable`: preparation never finished, so it never
+                # reached a judgement on whether this repository can be built.
+                prepared=PreparedEnvironment(snapshot=snapshot, stack=stack, status="failed",
+                                             reason=f"prepare_failed: {type(e.cause).__name__}"),
+                invocations=e.invocations,
+                failure_reason=classify_pipeline_failure(e.cause),
+                failure_detail=f"{type(e.cause).__name__}: {e.cause}")
+        return RepoPreparation(prepared=outcome.prepared, invocations=outcome.invocations)
 
 
 @workflow.defn
@@ -120,15 +139,54 @@ class TriageBatchWorkflow:
 
         for (repo_url, revision), group in groups.items():
             group.sort(key=lambda f: (f.cwe or "", f.file_path or ""))
-            prepared = await workflow.execute_child_workflow(
-                RepoPreparationWorkflow.run, RepoRef(repo_url=repo_url, revision=revision),
-                id=f"prep:{repo_url}:{revision}", task_queue=workflow.info().task_queue,
-            )
-            for f, out in zip(group, await self._triage_group(group, prepared.model_dump(), concurrency),
+            try:
+                prep = await workflow.execute_child_workflow(
+                    RepoPreparationWorkflow.run, RepoRef(repo_url=repo_url, revision=revision),
+                    id=f"prep:{repo_url}:{revision}", task_queue=workflow.info().task_queue,
+                )
+            except Exception as e:  # noqa: BLE001 - one repo must not sink the batch
+                # The child workflow itself failed (its checkout activity exhausted its
+                # attempts, say), which `RepoPreparation` cannot express because it never got
+                # to return one. Temporal wraps the cause, so classify on that.
+                cause = getattr(e, "cause", None) or e
+                prep = RepoPreparation(
+                    failure_reason=classify_pipeline_failure(cause),
+                    failure_detail=f"{type(cause).__name__}: {cause}")
+            if not prep.ok:
+                results.update(await self._abandon_group(group, order, prep, repo_url))
+                continue
+            for f, out in zip(group,
+                              await self._triage_group(group, prep.prepared.model_dump(), concurrency),
                               strict=True):
                 results[order[id(f)]] = out
 
         return [results[i] for i in sorted(results)]
+
+    async def _abandon_group(self, group, order: dict, prep: RepoPreparation,
+                             repo_url: str) -> dict[int, TriageRunOutput]:
+        """Report every finding of a repository whose preparation failed, and no others.
+
+        Mirrors ``triage_batch_local``: preparation is shared by a repo's findings, so its
+        failure decides all of them and nothing else in the batch.
+
+        The shared preparation's invocations are attributed to the *first* finding of the group
+        only. Attributing them to all of them would multiply one repository's spend by its
+        finding count in every cost figure downstream; attributing them to none would lose the
+        per-agent record entirely, which is the defect this exists to fix. Naming the agents in
+        each rationale keeps the failure legible on the others.
+        """
+        ran = ", ".join(i.agent for i in prep.invocations) or "none"
+        rationale = (f"Preparing {repo_url} failed after {len(prep.invocations)} agent call(s) "
+                     f"({ran}): {prep.failure_detail}")
+        status = prep.prepared.status if prep.prepared else "failed"
+        out: dict[int, TriageRunOutput] = {}
+        for i, f in enumerate(group):
+            finding = await workflow.execute_activity(
+                activities.normalize_finding_activity, f, **_ACT)
+            out[order[id(f)]] = _inconclusive(
+                finding, prep.failure_reason, rationale, status,
+                prep.invocations if i == 0 else [])
+        return out
 
     async def _triage_group(self, group, prepared_dump: dict, concurrency: int) -> list[TriageRunOutput]:
         async def triage(f: FindingInput) -> TriageRunOutput:

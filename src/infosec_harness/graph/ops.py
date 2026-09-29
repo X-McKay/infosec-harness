@@ -10,6 +10,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Protocol
 
+import httpx
+from pydantic_ai.exceptions import ModelAPIError, UsageLimitExceeded
 from pydantic_ai.messages import UserContent
 
 from infosec_harness.agents.deps import AgentDeps
@@ -17,6 +19,7 @@ from infosec_harness.domain.models import (
     AgentOutcome,
     BuildResult,
     EnvironmentSpec,
+    InconclusiveReason,
     ProbeExecution,
     ProbeSource,
     RepoSnapshot,
@@ -32,10 +35,40 @@ def is_infrastructure_failure(e: BaseException) -> bool:
     the finding, so it must not be recorded as `environment_unbuildable` -- an eval reading
     that cannot tell an endpoint being down from a pipeline regression.
     """
-    import httpx
-    from pydantic_ai.exceptions import ModelAPIError
-
     return isinstance(e, ModelAPIError | httpx.TransportError | TimeoutError)
+
+
+def classify_pipeline_failure(e: BaseException) -> InconclusiveReason:
+    """Which ``InconclusiveReason`` an exception escaping a pipeline stage deserves.
+
+    Classified by exception *type*, extending :func:`is_infrastructure_failure` rather than
+    matching on message text: a provider's or a library's wording is not a contract, and a
+    taxonomy built on strings silently reclassifies itself when one of them is reworded.
+
+    Three outcomes the pipeline used to file under one reason, each with a different fix:
+
+    - ``budget_exhausted`` -- a ceiling *we* set stopped the run; it was not answered. The fix
+      is ours: raise the limit, or find the loop that burned it (which is what the per-agent
+      ``repeated_tool_calls`` record exists to show). ``UsageLimitExceeded`` means exactly this,
+      and the enum member already existed while nothing on this path ever produced it, so a
+      budget breach during preparation was indistinguishable from a repository that will not
+      build.
+    - ``infrastructure_error`` -- our own dependency failed (provider outage, transport error,
+      run timeout). Says nothing about the finding at all.
+    - ``error`` -- the harness fell over some other way, which is a bug report, not a triage
+      result.
+
+    ``environment_unbuildable`` is deliberately *not* reachable from here. It is a claim about
+    the repository -- "preparation ran to completion and produced no usable environment" -- and
+    a completed ``run_prepare`` makes that claim itself by returning ``status != "ready"``. An
+    exception is not that claim: a preparation that crashed never reached a verdict on the
+    repository, so recording one put the blame on a stage that had not finished being tried.
+    """
+    if isinstance(e, UsageLimitExceeded):
+        return InconclusiveReason.budget_exhausted
+    if is_infrastructure_failure(e):
+        return InconclusiveReason.infrastructure_error
+    return InconclusiveReason.error
 
 
 class Ops(Protocol):
