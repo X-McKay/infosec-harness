@@ -84,6 +84,23 @@ Jaeger (:16686), the worker, the API (:8000, docs at `/docs`), and the web app (
 > Building the images requires normal registry/PyPI access. Behind a TLS-inspecting proxy,
 > drop the proxy CA at `deploy/extra-ca.crt` (gitignored) and it is trusted in the build.
 
+### Database schema
+
+The run store's schema is versioned with Alembic. The revisions ship inside the package
+(`src/infosec_harness/persistence/migrations/`) so `harness migrate` works from an installed
+wheel — the API container runs it on startup — and the URL always comes from
+`HARNESS_DATABASE_URL`, so a migration and the harness that reads the result can never
+disagree about which database they mean.
+
+- `harness migrate` — upgrade to the latest revision. A database built by `init-db` before
+  migrations existed is adopted automatically (stamped at the baseline, then upgraded).
+- `harness init-db` — bootstrap a fresh database from the models and stamp it at head. This
+  is what tests, CI and `just demo` use; it never alters an existing table.
+- Changing a model in `persistence/db.py` means adding a revision:
+  `uv run alembic revision --autogenerate -m "…"`, then review it — a `NOT NULL` column needs
+  a server default so the `ALTER` succeeds on populated tables (see `0002` for the pattern).
+  `tests/test_migrations.py` fails if the revisions and the models ever disagree.
+
 ## CLI
 
 ```bash

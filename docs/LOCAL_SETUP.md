@@ -98,6 +98,24 @@ Jaeger (:16686), the worker, the API (:8000, docs at `/docs`), and the web app (
 Set the same `HARNESS_MODEL_MODE`/`HARNESS_MODEL_BACKEND` env before `up` for a live stack;
 default is stub, so it also runs with nothing configured.
 
+## 4. Database migrations
+
+The API container runs `harness migrate` before it serves, so a `docker compose up` after a
+schema change is enough. Outside compose:
+
+```bash
+uv run harness migrate            # against HARNESS_DATABASE_URL; adopts a pre-alembic database
+just migrate                      # the same, against the local .harness/demo.db
+uv run alembic current            # which revision a database is at
+uv run alembic upgrade head --sql # print the SQL instead of running it (for a DBA-applied change)
+```
+
+A database created by `harness init-db` (or `just demo`) before this existed has tables but no
+`alembic_version` row. `harness migrate` recognises that shape, stamps it at revision `0001` —
+which is exactly what the old `init-db` built — and upgrades from there. A brand-new database
+is stamped at head by `init-db` itself, so either entry point leaves it in a state the other
+understands. If a local `.harness/demo.db` fails with *no such column*, run `just migrate`.
+
 ## Sandbox (gVisor) {#sandbox-gvisor}
 
 Real builds and probes run under gVisor. Install `runsc` and register it as a Docker

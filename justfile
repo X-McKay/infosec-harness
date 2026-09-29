@@ -49,6 +49,11 @@ demo findings="examples/findings.sample.json":
     HARNESS_MODEL_MODE=stub HARNESS_DATABASE_URL="sqlite+aiosqlite:///.harness/demo.db" \
       uv run harness submit {{findings}} --local --label demo
 
+# Upgrade the demo database to the latest revision (adopts one built before migrations existed).
+migrate:
+    HARNESS_MODEL_MODE=stub HARNESS_DATABASE_URL="sqlite+aiosqlite:///.harness/demo.db" \
+      uv run harness migrate
+
 # --- Evals ---
 eval-run agent="probe-diagnosis":
     HARNESS_MODEL_MODE=stub HARNESS_DATABASE_URL="sqlite+aiosqlite:///.harness/demo.db" \

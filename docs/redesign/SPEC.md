@@ -480,7 +480,7 @@ The Temporal server uses its own Postgres database/schema. The application schem
 | `environments` | `EnvironmentSpec`, build status, image digest, build logs (artifact ref) |
 | `batches`, `findings` | External finding (raw + normalized), source tool, fingerprint |
 | `triage_runs` | One per (finding × config). Temporal workflow ID, status, verdict, confidence, priority, timings |
-| `agent_invocations` | One per agent call: agent name, model, agent config hash, input/output (JSONB), input/output tokens, **cache read/write tokens**, cost USD, latency, retries, memo hit, trace ID |
+| `agent_invocations` | One per agent call: agent name, model, agent config hash, input/output (JSONB), input/output tokens, **cache read/write tokens**, cost USD, latency, retries, **model requests and repeated `tool(args)` calls** (so a `request_limit` breach is attributable from the record), tools called, skills loaded, memo hit, trace ID |
 | `probe_executions` | Probe source ref, exit code, oracle signals, duration, sandbox profile |
 | `artifacts` | Content-addressed blob refs (sha256, size, media type). The bytes live in S3-compatible object storage: MinIO locally, S3 or an equivalent in k8s **[D5]** |
 | `verdict_reviews` | Analyst confirm/override, reason, reviewer, timestamp. Exported to eval datasets |
@@ -489,6 +489,12 @@ The Temporal server uses its own Postgres database/schema. The application schem
 
 Pydantic models are the single source of truth. JSONB columns store `model_dump()`
 output, and SQL columns hold what we filter and aggregate on.
+
+Schema changes are Alembic revisions under `persistence/migrations/`, packaged with the code
+so `harness migrate` runs from an installed wheel; revision `0001` is the schema as
+`create_all` first built it, so a pre-Alembic database is adopted by stamping it there.
+`create_all` remains the bootstrap for tests and a fresh local database and stamps head, and
+a test asserts the revisions and the models produce the same schema.
 
 ## 10. Evaluation strategy
 
