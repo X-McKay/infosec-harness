@@ -79,6 +79,14 @@ class Settings(BaseSettings):
     # Build egress allowlist (D14): the egress proxy the build is pinned to, and the base
     # ecosystem registries allowed in addition to whatever the repo declares.
     build_egress_proxy: str = ""  # e.g. http://egress-proxy:3128; empty = no proxy wired
+    # Static IPv4 of that proxy on the internal builder network. gVisor cannot use Docker's
+    # embedded DNS on an Internal=true bridge, so secure builders use and verify the numeric
+    # address for both controller pulls and Dockerfile RUN steps.
+    build_egress_host_ip: str = ""
+    # Pre-created Docker network marked Internal=true, with only the allowlisting proxy attached
+    # to an external network as well. Build RUN steps join this network, so direct proxy bypass
+    # has no route. Empty fails closed outside the explicit insecure-development mode.
+    build_egress_network: str = ""
     default_registry_allowlist: list[str] = [
         "pypi.org", "files.pythonhosted.org",           # pip
         "registry.npmjs.org",                            # npm
@@ -88,8 +96,14 @@ class Settings(BaseSettings):
     ]
     # Base-image allowlist (registries an EnvironmentSpec.base_image may be pulled from).
     allowed_base_registries: list[str] = ["docker.io/library", "docker.io", "public.ecr.aws"]
-    # Image garbage collection: keep at most N cached target images, evicting oldest.
+    # Manual, quiesced-maintenance target. Automatic eviction is unsafe until prepared images
+    # have durable leases spanning build, smoke, and every finding probe.
     image_cache_max: int = 50
+
+    # Deployment safety ceilings; provisional until calibrated on representative batches.
+    root_max_requests: int = Field(default=10000, gt=0)
+    root_max_tokens: int = Field(default=100_000_000, gt=0)
+    root_max_cost_usd: float = Field(default=100.0, gt=0)
 
     # Budgets (D6)
     max_build_repairs: int = 6

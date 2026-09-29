@@ -12,6 +12,8 @@ declarative contract and move with an overlay during experiments.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 from decimal import Decimal
 from typing import Any
@@ -105,6 +107,35 @@ class RunBudget(BaseModel):
         )
 
 
+class BudgetResolution(BaseModel):
+    """Requested, scaled, and finally enforced limits for one invocation."""
+
+    model_config = {"frozen": True}
+
+    agent_name: str
+    source_files: int | None
+    formula_version: str
+    baseline_source_files: int
+    growth_per_doubling: float
+    maximum_size_factor: float
+    size_factor: float
+    rounding: str = "python-round-nearest-even"
+    requested: RunBudget
+    scaled: RunBudget
+    root_ceiling: RunBudget | None = None
+    effective: RunBudget
+    binding_root_fields: tuple[str, ...] = ()
+    provider_output_floor: int = 0
+
+    @property
+    def digest(self) -> str:
+        payload = json.dumps(self.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+    def to_usage_limits(self) -> UsageLimits:
+        return self.effective.to_usage_limits()
+
+
 class MissingBudget(ValueError):
     """Raised when a spec declares no run budget.
 
@@ -129,6 +160,16 @@ GROWTH_PER_DOUBLING = 0.25
 # The brake has to stay a brake. Three times the declared budget bounds the worst case at a
 # number that is still obviously wrong for one agent run, so a genuine runaway is still caught.
 MAX_SIZE_FACTOR = 3.0
+SIZE_FORMULA_VERSION = "repo-source-files-log2-v1"
+
+_BUDGET_FIELDS = (
+    "max_requests",
+    "max_tool_calls",
+    "max_input_tokens_per_request",
+    "max_input_tokens",
+    "max_output_tokens",
+    "max_cost_usd",
+)
 
 
 def size_factor(source_files: int | None) -> float:
@@ -144,5 +185,77 @@ def size_factor(source_files: int | None) -> float:
 
 
 def usage_limits_for(agent_name: str, metadata: dict[str, Any] | None,
-                     *, source_files: int | None = None) -> UsageLimits:
-    return run_budget(agent_name, metadata).scaled_for(source_files).to_usage_limits()
+                     *, source_files: int | None = None,
+                     root_ceiling: RunBudget | None = None) -> UsageLimits:
+    return resolve_budget(
+        agent_name,
+        metadata,
+        source_files=source_files,
+        root_ceiling=root_ceiling,
+    ).to_usage_limits()
+
+
+def resolve_budget(
+    agent_name: str,
+    metadata: dict[str, Any] | None,
+    *,
+    source_files: int | None = None,
+    root_ceiling: RunBudget | None = None,
+    provider_output_floor: int = 0,
+) -> BudgetResolution:
+    """Resolve the limits passed to PydanticAI and retain every adjustment as provenance.
+
+    A root ceiling can only tighten a member budget. This helper is shared by production and
+    eval callers so a calibration overlay changes the limits that execute, not just a report.
+    """
+    requested = run_budget(agent_name, metadata)
+    return resolve_declared_budget(
+        agent_name,
+        requested,
+        source_files=source_files,
+        root_ceiling=root_ceiling,
+        provider_output_floor=provider_output_floor,
+    )
+
+
+def resolve_declared_budget(
+    agent_name: str,
+    requested: RunBudget,
+    *,
+    source_files: int | None = None,
+    root_ceiling: RunBudget | None = None,
+    provider_output_floor: int = 0,
+) -> BudgetResolution:
+    """Resolve an already-loaded budget without file or environment access.
+
+    Temporal workflows use this form so scaling remains replay-safe after the worker has
+    loaded the declaration outside workflow execution.
+    """
+    factor = size_factor(source_files)
+    scaled = requested.scaled_for(source_files)
+    effective = scaled
+    binding: list[str] = []
+    if root_ceiling is not None:
+        updates: dict[str, int | float] = {}
+        for field in _BUDGET_FIELDS:
+            value = getattr(scaled, field)
+            ceiling = getattr(root_ceiling, field)
+            updates[field] = min(value, ceiling)
+            if ceiling < value:
+                binding.append(field)
+        effective = scaled.model_copy(update=updates)
+    return BudgetResolution(
+        agent_name=agent_name,
+        source_files=source_files,
+        formula_version=SIZE_FORMULA_VERSION,
+        baseline_source_files=BASELINE_SOURCE_FILES,
+        growth_per_doubling=GROWTH_PER_DOUBLING,
+        maximum_size_factor=MAX_SIZE_FACTOR,
+        size_factor=factor,
+        requested=requested,
+        scaled=scaled,
+        root_ceiling=root_ceiling,
+        effective=effective,
+        binding_root_fields=tuple(binding),
+        provider_output_floor=provider_output_floor,
+    )

@@ -66,7 +66,7 @@ async def test_triage_prefilter_missing_file(repo):
     finding = to_finding(FindingInput(title="x", repo_url=repo, file_path="ghost.py", cwe="CWE-89"))
     state = TriageState(finding=finding, prepared=prepared)
     result = await TRIAGE_GRAPH.run(state=state, deps=TriageDeps(ops=ops), inputs=PreFilter())
-    assert result.verdict.label == VerdictLabel.likely_not_exploitable
+    assert result.verdict.label == VerdictLabel.inconclusive
     assert result.early_exit == "file_missing"
     assert state.invocations == []
 
@@ -77,7 +77,8 @@ async def test_triage_prefilter_test_dir(repo):
     finding = to_finding(FindingInput(title="x", repo_url=repo, file_path="tests/t_probe.py", cwe="CWE-89"))
     state = TriageState(finding=finding, prepared=prepared)
     result = await TRIAGE_GRAPH.run(state=state, deps=TriageDeps(ops=ops), inputs=PreFilter())
-    assert result.early_exit == "test_or_vendored"
+    assert result.early_exit != "test_or_vendored"
+    assert state.invocations, "a directory name alone must not establish a safety verdict"
 
 
 def _probe_source():
@@ -498,6 +499,22 @@ def _diagnosis_ops(ops, kinds):
     return seen
 
 
+def _make_build_repair_change_the_plan(ops):
+    """The stub may repeat the old plan; these tests specifically exercise the rebuild path."""
+    from infosec_harness.domain.models import AgentOutcome
+
+    real = ops.run_agent
+
+    async def run_agent(name, prompt, deps):
+        outcome = await real(name, prompt, deps)
+        if name == "build-repair":
+            output = outcome.output.model_copy(update={"env": {"HARNESS_REPAIRED": "1"}})
+            return AgentOutcome(**{**outcome.model_dump(), "output": output})
+        return outcome
+
+    ops.run_agent = run_agent
+
+
 async def test_an_environment_issue_found_at_probe_time_rebuilds_and_retries(repo):
     """The edge that did not exist: a probe-time environment failure used to end the finding.
 
@@ -506,6 +523,7 @@ async def test_an_environment_issue_found_at_probe_time_rebuilds_and_retries(rep
     """
     ops, prepared = await _prepared(repo)
     seen = _diagnosis_ops(ops, ["environment_issue", "valid_negative"])
+    _make_build_repair_change_the_plan(ops)
     rebuilt = []
     real_build = ops.build_environment
 
@@ -567,6 +585,7 @@ async def test_a_failed_environment_rebuild_ends_the_finding_honestly(repo):
     """If the rebuild does not work, say so rather than re-running against the old image."""
     ops, prepared = await _prepared(repo)
     _diagnosis_ops(ops, ["environment_issue"])
+    _make_build_repair_change_the_plan(ops)
     original_image = prepared.build.image_tag
 
     async def failed_build(snapshot, spec):
@@ -629,7 +648,7 @@ def test_a_neutralized_finding_must_name_the_control_it_rests_on():
                        reachability_rationale="a sanitizer handles it")
 
 
-async def test_neutralized_code_is_probed_while_unreachable_code_is_not(repo):
+async def test_context_only_reachability_claims_are_probed(repo):
     """The behavioural half of the split, and the measured defect it fixes.
 
     Both Java `fixed` cases returned likely_not_exploitable through `unreachable_by_context` —
@@ -680,8 +699,8 @@ async def test_neutralized_code_is_probed_while_unreachable_code_is_not(repo):
     assert neutralized.early_exit != "unreachable_by_context"
 
     unreachable, probed = await run_with(Reachability.unreachable, [])
-    assert not probed, "an unreachable finding has nothing to probe"
-    assert unreachable.early_exit == "unreachable_by_context"
+    assert probed, "a static model assertion must not create a negative security verdict"
+    assert unreachable.early_exit != "unreachable_by_context"
 
 
 def test_a_neutralized_finding_outranks_an_unreachable_one():
@@ -694,3 +713,50 @@ def test_a_neutralized_finding_outranks_an_unreachable_one():
             > REACHABILITY_WEIGHT[Reachability.unknown]
             > REACHABILITY_WEIGHT[Reachability.neutralized]
             > REACHABILITY_WEIGHT[Reachability.unreachable])
+
+
+def test_infrastructure_uncertainty_does_not_demote_critical_security_priority():
+    from infosec_harness.domain.models import (
+        InconclusiveReason,
+        PriorityBand,
+        Reachability,
+        Verdict,
+    )
+    from infosec_harness.graph.scoring import (
+        priority_band,
+        priority_for_inconclusive,
+        priority_score,
+    )
+
+    finding = to_finding(FindingInput(title="critical", repo_url="repo", severity="critical"))
+    verdict = Verdict(label=VerdictLabel.inconclusive, confidence=0.0,
+                      rationale="provider unavailable",
+                      inconclusive_reason=InconclusiveReason.infrastructure_error)
+    score, band = priority_for_inconclusive(finding)
+    assert band is PriorityBand.p1
+    assert priority_band(priority_score(finding, verdict, Reachability.unknown)) is PriorityBand.p1
+    assert score >= 0.6
+
+
+async def test_context_citations_are_validated_against_snapshot_bytes(repo):
+    from infosec_harness.domain.models import CodeRef, FindingContext, Reachability
+    from infosec_harness.graph.triage import _validate_context_citations
+
+    _, prepared = await _prepared(repo)
+    finding = to_finding(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
+                                      start_line=2, cwe="CWE-89"))
+    state = TriageState(finding=finding, prepared=prepared)
+    context = FindingContext(
+        summary="claimed path",
+        sink=CodeRef(file_path="app.py", start_line=2, end_line=2),
+        source=CodeRef(file_path="ghost.py", start_line=1, end_line=1),
+        reachability=Reachability.unreachable,
+        reachability_rationale="the model says so",
+    )
+
+    validated = _validate_context_citations(state, context)
+
+    assert validated.sink and validated.sink.source_digest
+    assert validated.source is None
+    assert validated.reachability is Reachability.unknown
+    assert "Citation validation failed" in validated.reachability_rationale

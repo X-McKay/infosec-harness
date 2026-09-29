@@ -122,3 +122,109 @@ async def test_batch_workflow_end_to_end(fixture_repo, monkeypatch):
 
 async def _true():
     return True
+
+
+async def test_durable_acceptance_restart_results_and_history_replay(fixture_repo, monkeypatch):
+    """A submitter can disappear; a replacement worker persists outputs and replays history."""
+    from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
+    from temporalio.client import Client
+    from temporalio.testing import WorkflowEnvironment
+    from temporalio.worker import Replayer, Worker
+
+    from infosec_harness.domain.models import FindingInput
+    from infosec_harness.persistence import db, lifecycle, store
+    from infosec_harness.sandbox import docker
+    from infosec_harness.settings import get_settings
+    from infosec_harness.workflows.activities import ALL_ACTIVITIES
+    from infosec_harness.workflows.worker import WORKFLOWS
+    from infosec_harness.workflows.workflows import TriageBatchWorkflow
+
+    monkeypatch.setattr(get_settings(), "recipe_cache_enabled", False)
+    monkeypatch.setattr(get_settings(), "root_max_tokens", 100_000_000)
+    monkeypatch.setattr(get_settings(), "root_max_requests", 10000)
+    monkeypatch.setattr(docker, "image_exists", lambda tag: _true())
+    monkeypatch.setattr(docker, "run_probe", _fake_probe)
+    monkeypatch.setattr(docker, "run_shell", _fake_shell)
+    monkeypatch.setattr(docker, "runtime_available", lambda runtime=None: _true())
+    await db.create_all()
+    batch_id = f"recovery-{uuid.uuid4().hex[:10]}"
+    finding = FindingInput(title="Recovery fixture", repo_url=fixture_repo, file_path="app.py",
+                           start_line=2, cwe="CWE-89", severity="high")
+    payload = {"batch_id": batch_id, "findings": [finding.model_dump(mode="json")]}
+    await lifecycle.accept_batch(batch_id, [finding, finding], "Recovery", payload)
+    env = await WorkflowEnvironment.start_local(dev_server_existing_path=temporal_bin)
+    try:
+        client = await Client.connect(env.client.service_client.config.target_host,
+                                      plugins=[PydanticAIPlugin()])
+        # Start with no worker. Acceptance survives; a new worker can pick up the queue.
+        handle = await client.start_workflow(TriageBatchWorkflow.run, payload,
+            id=f"batch:{batch_id}", task_queue="durability-test")
+        async with Worker(client, task_queue="durability-test", workflows=WORKFLOWS,
+                          activities=ALL_ACTIVITIES):
+            outputs = await handle.result()
+        detail = await store.get_run(store._run_id(batch_id, outputs[0].finding.fingerprint))
+        assert detail["status"] == "complete"
+        assert detail["telemetry"]["wall_time_s"] > 0
+        assert detail["evidence"]["executions"]
+        assert {"recon", "env-planner", "context", "verdict"} <= {
+            i["agent"] for i in detail["invocations"]}
+        assert len(await store.list_runs(batch_id=batch_id)) == 1
+        assert (await store.batch_summary(batch_id))["status"] == "complete"
+        history = await handle.fetch_history()
+        await Replayer(workflows=WORKFLOWS, plugins=[PydanticAIPlugin()]).replay_workflow(history)
+    finally:
+        await env.shutdown()
+
+
+async def test_durable_polyglot_components_prepare_independent_environments(fixture_repo, monkeypatch):
+    import json
+
+    from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
+    from temporalio.client import Client
+    from temporalio.testing import WorkflowEnvironment
+    from temporalio.worker import Worker
+
+    from infosec_harness.domain.models import FindingInput
+    from infosec_harness.persistence import db, lifecycle, store
+    from infosec_harness.sandbox import docker
+    from infosec_harness.settings import get_settings
+    from infosec_harness.workflows.activities import ALL_ACTIVITIES
+    from infosec_harness.workflows.worker import WORKFLOWS
+    from infosec_harness.workflows.workflows import TriageBatchWorkflow
+
+    root = Path(fixture_repo)
+    (root / "services/api").mkdir(parents=True)
+    (root / "services/api/requirements.txt").write_text("pytest\n")
+    (root / "services/api/app.py").write_text("def target():\n    return 1\n")
+    (root / "web").mkdir()
+    (root / "web/package.json").write_text(json.dumps({"devDependencies": {"jest": "29.7.0"}}))
+    (root / "web/app.js").write_text("export function target() { return 1; }\n")
+    monkeypatch.setattr(get_settings(), "recipe_cache_enabled", False)
+    monkeypatch.setattr(docker, "image_exists", lambda tag: _true())
+    monkeypatch.setattr(docker, "run_probe", _fake_probe)
+    monkeypatch.setattr(docker, "run_shell", _fake_shell)
+    monkeypatch.setattr(docker, "runtime_available", lambda runtime=None: _true())
+    await db.create_all()
+    batch_id = f"components-{uuid.uuid4().hex[:10]}"
+    findings = [FindingInput(title=path, repo_url=fixture_repo, file_path=path, start_line=1,
+                              cwe="CWE-89", severity="high")
+                for path in ("services/api/app.py", "web/app.js")]
+    payload = {"batch_id": batch_id, "findings": [f.model_dump(mode="json") for f in findings]}
+    await lifecycle.accept_batch(batch_id, findings, "Component fixture", payload)
+    env = await WorkflowEnvironment.start_local(dev_server_existing_path=temporal_bin)
+    try:
+        client = await Client.connect(env.client.service_client.config.target_host,
+                                      plugins=[PydanticAIPlugin()])
+        async with Worker(client, task_queue="components-test", workflows=WORKFLOWS,
+                          activities=ALL_ACTIVITIES):
+            outputs = await client.execute_workflow(TriageBatchWorkflow.run, payload,
+                id=f"batch:{batch_id}", task_queue="components-test")
+        environments = [output.manifest["environment"] for output in outputs]
+        assert [environment["module_path"] for environment in environments] == ["services/api", "web"]
+        assert environments[0]["base_image"].startswith("python:")
+        assert environments[1]["base_image"].startswith("node:")
+        assert all(output.prepared_status == "ready" for output in outputs)
+        assert all(sum(inv.agent == "recon" for inv in output.invocations) == 1 for output in outputs)
+        assert len(await store.list_runs(batch_id=batch_id)) == 2
+    finally:
+        await env.shutdown()

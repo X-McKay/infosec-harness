@@ -13,7 +13,11 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from functools import lru_cache
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from opentelemetry.trace import TracerProvider
+    from pydantic_ai.models.instrumented import InstrumentationSettings
 
 from infosec_harness.settings import get_settings
 
@@ -76,8 +80,15 @@ def configure(component: str = "harness") -> bool:
     # Agent specs set `instrument: true`; that only produces spans once a provider exists.
     from pydantic_ai.agent import Agent
 
-    Agent.instrument_all()
+    Agent.instrument_all(private_instrumentation())
     return True
+
+
+def private_instrumentation(tracer_provider: TracerProvider | None = None) -> InstrumentationSettings:
+    """Export operational metadata without prompts, completions, or binary content."""
+    from pydantic_ai.models.instrumented import InstrumentationSettings
+    return InstrumentationSettings(tracer_provider=tracer_provider, include_content=False,
+                                   include_binary_content=False)
 
 
 def agent_run_attributes(agent: str, model_name: str, config_hash: str,

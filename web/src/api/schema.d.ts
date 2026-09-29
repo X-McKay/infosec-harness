@@ -4,6 +4,57 @@
  */
 
 export interface paths {
+    "/api/run-page": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Run Page */
+        get: operations["run_page_api_run_page_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Metrics */
+        get: operations["metrics_api_metrics_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/experiments/{experiment_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Experiment Detail */
+        get: operations["experiment_detail_api_experiments__experiment_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/batches": {
         parameters: {
             query?: never;
@@ -158,10 +209,55 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/batches/{batch_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Batch */
+        post: operations["cancel_batch_api_batches__batch_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** Bin */
+        Bin: {
+            /** Lower */
+            lower: number;
+            /** Upper */
+            upper: number;
+            /** Count */
+            count: number;
+        };
+        /** Distribution */
+        Distribution: {
+            /** Count */
+            count: number;
+            /** Population */
+            population: number;
+            /** Coverage */
+            coverage: number | null;
+            /** Mean */
+            mean?: number | null;
+            /** P50 */
+            p50?: number | null;
+            /** P95 */
+            p95?: number | null;
+            /** Maximum */
+            maximum?: number | null;
+            /** Bins */
+            bins?: components["schemas"]["Bin"][];
+        };
         /**
          * FindingInput
          * @description The published generic JSON schema an external process submits (D1).
@@ -193,6 +289,8 @@ export interface components {
              * @default HEAD
              */
             revision: string;
+            /** @description Explicit source identity mode; omitted for backwards-compatible inference */
+            source_mode?: components["schemas"]["SourceMode"] | null;
             /** File Path */
             file_path?: string | null;
             /** Start Line */
@@ -225,6 +323,42 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /** MetricsResponse */
+        MetricsResponse: {
+            /**
+             * Schema Version
+             * @default 1
+             */
+            schema_version: number;
+            /** As Of */
+            as_of: string;
+            /** Population */
+            population: string;
+            /** Total Runs */
+            total_runs: number;
+            /** Status Counts */
+            status_counts: {
+                [key: string]: number;
+            };
+            /** Verdict Counts */
+            verdict_counts: {
+                [key: string]: number;
+            };
+            tokens: components["schemas"]["Distribution"];
+            input_tokens: components["schemas"]["Distribution"];
+            output_tokens: components["schemas"]["Distribution"];
+            cost_usd: components["schemas"]["Distribution"];
+            wall_time_s: components["schemas"]["Distribution"];
+            agent_time_s: components["schemas"]["Distribution"];
+            /** Trends */
+            trends: components["schemas"]["TrendPoint"][];
+            /** Stages */
+            stages: components["schemas"]["StageMetric"][];
+            /** Definitions */
+            definitions: {
+                [key: string]: string;
+            };
+        };
         /** ReviewRequest */
         ReviewRequest: {
             /**
@@ -241,11 +375,95 @@ export interface components {
              */
             reason: string;
         };
+        /** RunPage */
+        RunPage: {
+            /** Items */
+            items: components["schemas"]["RunSummary"][];
+            /** Total */
+            total: number;
+            /** Offset */
+            offset: number;
+            /** Limit */
+            limit: number;
+            /** As Of */
+            as_of: string;
+        };
+        /** RunSummary */
+        RunSummary: {
+            /** Id */
+            id: string;
+            /** Batch Id */
+            batch_id: string;
+            /** Fingerprint */
+            fingerprint: string;
+            /** Title */
+            title: string;
+            /** Repo Url */
+            repo_url: string;
+            /** Revision */
+            revision: string;
+            /** Cwe */
+            cwe: string | null;
+            /** Severity */
+            severity: string;
+            /** Status */
+            status: string;
+            /** Verdict */
+            verdict: string | null;
+            /** Confidence */
+            confidence: number | null;
+            /** Inconclusive Reason */
+            inconclusive_reason: string | null;
+            /** Priority */
+            priority: string | null;
+            /** Priority Score */
+            priority_score: number | null;
+            /** Environment Scope */
+            environment_scope: string;
+            /** Early Exit */
+            early_exit: string | null;
+            /** Cost Usd */
+            cost_usd: number | null;
+            /** Total Tokens */
+            total_tokens: number;
+            /** Cache Read Tokens */
+            cache_read_tokens: number;
+            /** Latency S */
+            latency_s: number;
+            /** Created At */
+            created_at: string;
+            /** Telemetry */
+            telemetry: {
+                [key: string]: unknown;
+            } | null;
+            /** Phase */
+            phase: string;
+        };
         /**
          * Severity
          * @enum {string}
          */
         Severity: "critical" | "high" | "medium" | "low" | "info" | "unknown";
+        /**
+         * SourceMode
+         * @enum {string}
+         */
+        SourceMode: "git_revision" | "working_snapshot";
+        /** StageMetric */
+        StageMetric: {
+            /** Agent */
+            agent: string;
+            /** Invocations */
+            invocations: number;
+            /** Agent Time S */
+            agent_time_s: number;
+            /** Tokens */
+            tokens: number;
+            /** Known Cost Usd */
+            known_cost_usd: number;
+            /** Cost Coverage */
+            cost_coverage: number;
+        };
         /** SubmitADORequest */
         SubmitADORequest: {
             /** Work Item Ids */
@@ -268,8 +486,22 @@ export interface components {
             /**
              * Mode
              * @default auto
+             * @enum {string}
              */
-            mode: string;
+            mode: "auto" | "local" | "temporal";
+        };
+        /** TrendPoint */
+        TrendPoint: {
+            /** Date */
+            date: string;
+            /** Runs */
+            runs: number;
+            /** Tokens */
+            tokens: number | null;
+            /** Cost Usd */
+            cost_usd: number | null;
+            /** Wall Time S */
+            wall_time_s: number | null;
         };
         /** ValidationError */
         ValidationError: {
@@ -298,6 +530,113 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    run_page_api_run_page_get: {
+        parameters: {
+            query?: {
+                batch_id?: string | null;
+                verdict?: string | null;
+                population?: ("operational" | "demo" | "legacy") | null;
+                metric?: ("total_tokens" | "input_tokens" | "output_tokens" | "cost_usd" | "wall_time_s") | null;
+                lower?: number | null;
+                upper?: number | null;
+                upper_inclusive?: boolean;
+                search?: string;
+                offset?: number;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    metrics_api_metrics_get: {
+        parameters: {
+            query?: {
+                batch_id?: string | null;
+                population?: "operational" | "demo" | "legacy";
+                since?: string | null;
+                until?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MetricsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    experiment_detail_api_experiments__experiment_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                experiment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     batches_api_batches_get: {
         parameters: {
             query?: never;
@@ -590,6 +929,39 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    cancel_batch_api_batches__batch_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

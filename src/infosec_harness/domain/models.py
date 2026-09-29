@@ -86,6 +86,11 @@ class Severity(StrEnum):
     unknown = "unknown"
 
 
+class SourceMode(StrEnum):
+    git_revision = "git_revision"
+    working_snapshot = "working_snapshot"
+
+
 class FindingInput(_Model):
     """The published generic JSON schema an external process submits (D1).
 
@@ -98,6 +103,9 @@ class FindingInput(_Model):
     description: str = ""
     repo_url: str = Field(description="Git URL or a local path visible to the worker")
     revision: str = Field("HEAD", description="Commit SHA, tag, or branch")
+    source_mode: SourceMode | None = Field(
+        None, description="Explicit source identity mode; omitted for backwards-compatible inference"
+    )
     file_path: str | None = None
     start_line: int | None = None
     end_line: int | None = None
@@ -147,6 +155,7 @@ class Finding(_Model):
     description: str = ""
     repo_url: str
     revision: str
+    source_mode: SourceMode | None = None
     location: CodeLocation | None = None
     cwe: str | None = None
     vulnerability_class: str | None = None
@@ -159,17 +168,21 @@ class Finding(_Model):
 
     @staticmethod
     def compute_fingerprint(inp: FindingInput) -> str:
-        key = canonical_json(
-            {
-                "repo": inp.repo_url,
-                "rev": inp.revision,
-                "file": inp.file_path,
-                "line": inp.start_line,
-                "cwe": inp.cwe,
-                "title": inp.title,
-                "ext": inp.external_id,
-            }
-        )
+        identity = {
+            "repo": inp.repo_url,
+            "rev": inp.revision,
+            "file": inp.file_path,
+            "line": inp.start_line,
+            "cwe": inp.cwe,
+            "title": inp.title,
+            "ext": inp.external_id,
+        }
+        # Preserve existing finding IDs and Temporal child-workflow IDs for inputs which predate
+        # source modes. An explicit mode is identity-bearing because a captured working tree and
+        # a Git revision with the same spelling need not contain the same bytes.
+        if inp.source_mode is not None:
+            identity["source_mode"] = inp.source_mode
+        key = canonical_json(identity)
         return sha256_text(key)[:24]
 
 
@@ -181,6 +194,13 @@ class Finding(_Model):
 class RepoRef(_Model):
     repo_url: str
     revision: str = "HEAD"
+    source_mode: SourceMode | None = Field(
+        None,
+        description=(
+            "How source is identified. Omitted only for backwards compatibility: Git inputs "
+            "become git_revision and non-Git local directories become working_snapshot."
+        ),
+    )
     # Benchmark hygiene, empty in production. Harvested corpora carry the proof-of-vulnerability
     # test that established the ground truth, and on a `-fixed` revision it is in the tree by
     # construction, because the fix commit added it. An agent handed that checkout can copy the
@@ -195,6 +215,36 @@ class RepoSnapshot(_Model):
     resolved_commit: str | None = None
     path: str = Field(description="Absolute path of the snapshot on the worker's shared volume")
     content_hash: str
+    # Older callers construct snapshots directly from a local fixture path. Treat an omitted
+    # mode as a captured working tree; claiming it is a resolved commit would invent provenance.
+    source_mode: SourceMode = SourceMode.working_snapshot
+    exclusion_policy_hash: str = ""
+    file_count: int = 0
+    git_dirty: bool | None = Field(
+        None, description="Working-tree dirty state when the source is a local Git snapshot"
+    )
+    submodule_policy: Literal["excluded"] = "excluded"
+    lfs_policy: Literal["pointer_only"] = "pointer_only"
+
+
+class SupportStatus(StrEnum):
+    tested = "tested"
+    experimental = "experimental"
+    unsupported = "unsupported"
+    not_checked = "not_checked"
+
+
+class ComponentProfile(_Model):
+    """A deterministic build/test boundary discovered within a repository."""
+
+    root: str
+    languages: dict[str, int] = Field(default_factory=dict)
+    manifest_paths: list[str] = Field(default_factory=list)
+    build_systems: list[str] = Field(default_factory=list)
+    test_frameworks: list[str] = Field(default_factory=list)
+    java_release: int | None = None
+    dependencies: list[str] = Field(default_factory=list)
+    support: SupportStatus = SupportStatus.not_checked
 
 
 class StackFingerprint(_Model):
@@ -210,6 +260,7 @@ class StackFingerprint(_Model):
         default=None,
         description="Oldest Java language level the build files declare; binds the JDK choice",
     )
+    components: list[ComponentProfile] = Field(default_factory=list)
 
 
 class RepoProfile(_Model):
@@ -280,6 +331,9 @@ class CodeRef(_Model):
     start_line: int
     end_line: int
     note: str = ""
+    source_digest: str | None = Field(
+        None, description="SHA-256 of the cited file bytes in the immutable snapshot"
+    )
 
 
 class Reachability(StrEnum):
@@ -445,6 +499,7 @@ class VerdictFacts(_Model):
     environment_ready: bool
     oracle_fired: bool = False
     precondition_reached: bool = False
+    sink_returned: bool = False
     last_diagnosis: DiagnosisKind | None = None
     reachability: Reachability = Reachability.unknown
     probe_repairs_exhausted: bool = False
@@ -473,6 +528,7 @@ class AgentOutcome(_Model):
     agent: str
     model_name: str = ""
     config_hash: str = ""
+    effective_config: dict[str, Any] = Field(default_factory=dict)
     input_tokens: int = 0
     output_tokens: int = 0
     cache_read_tokens: int = 0
@@ -498,6 +554,7 @@ class TriageRunOutput(_Model):
     finding: Finding
     result: TriageResult
     prepared_status: str
+    manifest: dict[str, Any] = Field(default_factory=dict)
     invocations: list[AgentOutcome] = Field(default_factory=list)
     needs_info: bool = False
     # The per-stage evidence. Without these a run records only its final label, so a failure

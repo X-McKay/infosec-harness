@@ -62,6 +62,20 @@ def test_a_probes_nonce_is_never_mistaken_for_the_canarys():
     assert canary.missing_markers(other) == ["precondition", "sink_returned", "oracle"]
 
 
+def test_negative_control_has_no_oracle_and_control_records_are_versioned():
+    _, content = canary.canary_for(
+        "python", "pytest -q -s {test_file}", nonce=canary.NEGATIVE_CANARY_NONCE,
+        oracle=False,
+    )
+    assert f"HARNESS_PRECONDITION::{canary.NEGATIVE_CANARY_NONCE}" in content
+    assert f"HARNESS_SINK_RETURNED::{canary.NEGATIVE_CANARY_NONCE}" in content
+    assert "HARNESS_ORACLE::" not in content
+    encoded = canary.encode_control_result(canary.ControlResult(positive=True, negative=True))
+    decoded = canary.parse_control_result("runner output\n" + encoded)
+    assert decoded is not None and decoded.passed
+    assert canary.parse_control_result("old workflow output") is None
+
+
 def test_the_explanation_blames_the_environment_rather_than_a_probe():
     """Build repair can act on this; probe repair cannot, and sending it there wastes the whole
     repair budget on a probe that was never the problem."""
@@ -103,8 +117,9 @@ async def test_the_smoke_test_passes_when_the_canary_is_heard(monkeypatch):
                                  stderr="", timed_out=False, duration_s=0.0)
 
     async def heard_probe(image, path, content, test_command, nonce, module_path=""):
-        n = canary_mod.CANARY_NONCE
-        out = (f"HARNESS_PRECONDITION::{n}\nHARNESS_SINK_RETURNED::{n}\nHARNESS_ORACLE::{n}\n")
+        out = f"HARNESS_PRECONDITION::{nonce}\nHARNESS_SINK_RETURNED::{nonce}\n"
+        if nonce == canary_mod.CANARY_NONCE:
+            out += f"HARNESS_ORACLE::{nonce}\n"
         return docker.ProcResult(exit_code=0, stdout=out, stderr="", timed_out=False, duration_s=0.1)
 
     monkeypatch.setattr(docker, "run_shell", ok_shell, raising=True)
@@ -112,7 +127,9 @@ async def test_the_smoke_test_passes_when_the_canary_is_heard(monkeypatch):
     result = await smoke_test_activity({"image_tag": "img", "test_command": "pytest -q -s {test_file}",
                                        "language": "python"})
     assert result.ok
-    assert "canary markers observed" in result.output_excerpt
+    assert "canary positive and negative controls observed" in result.output_excerpt
+    controls = canary_mod.parse_control_result(result.output_excerpt)
+    assert controls is not None and controls.passed
 
 
 @pytest.mark.parametrize("language", ["python", "perl", "javascript", "java"])

@@ -6,12 +6,16 @@ front-end's typed client.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from contextlib import asynccontextmanager
+from typing import Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from infosec_harness.api.observations import router
 from infosec_harness.domain.models import FindingInput, VerdictLabel
 from infosec_harness.persistence import db, store
 from infosec_harness.settings import get_settings
@@ -20,7 +24,7 @@ from infosec_harness.settings import get_settings
 class SubmitRequest(BaseModel):
     findings: list[FindingInput]
     label: str = ""
-    mode: str = "auto"  # auto -> temporal if reachable else local; or "local"/"temporal"
+    mode: Literal["auto", "local", "temporal"] = "auto"
 
 
 class SubmitADORequest(BaseModel):
@@ -41,10 +45,25 @@ async def lifespan(app: FastAPI):
 
     telemetry.configure("api")
     await db.create_all()
-    yield
+    from infosec_harness.workflows.runner import reconcile_submissions
+    async def reconcile_loop() -> None:
+        while True:
+            try:
+                await reconcile_submissions()
+            except Exception:
+                logging.getLogger(__name__).exception("Submission reconciliation failed; retrying")
+            await asyncio.sleep(30)
+    task = asyncio.create_task(reconcile_loop())
+    try:
+        yield
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 app = FastAPI(title="InfoSec Harness", version="2.0.0", lifespan=lifespan)
+
+app.include_router(router)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
@@ -52,6 +71,8 @@ async def _submit(findings: list[FindingInput], label: str, mode: str) -> str:
     from infosec_harness.workflows import runner
 
     if mode == "local":
+        if get_settings().model_mode != "stub":
+            raise HTTPException(422, "Real assessments require Temporal; local mode is for stub demos.")
         batch_id, _ = await runner.run_local(findings, label=label)
         return batch_id
     return await runner.submit_via_temporal(findings, label=label)
@@ -92,7 +113,7 @@ async def batch(batch_id: str) -> dict:
 
 
 @app.get("/api/runs")
-async def runs(batch_id: str | None = None, verdict: str | None = None, limit: int = 200) -> list[dict]:
+async def runs(batch_id: str | None = None, verdict: str | None = None, limit: int = Query(200, ge=1, le=1000)) -> list[dict]:
     return await store.list_runs(batch_id=batch_id, verdict=verdict, limit=limit)
 
 
@@ -127,7 +148,9 @@ async def experiments() -> list[dict]:
             select(db.EvalExperiment).order_by(db.EvalExperiment.created_at.desc()).limit(100))).scalars().all()
         return [{"id": e.id, "agent": e.agent, "dataset": e.dataset, "dataset_version": e.dataset_version,
                  "git_sha": e.git_sha, "overlay": e.overlay, "repetitions": e.repetitions,
-                 "metrics": e.metrics, "created_at": e.created_at.isoformat()} for e in rows]
+                 "metrics": e.metrics, "config_hash": e.config_hash, "git_dirty": e.git_dirty,
+                 "model_name": e.model_name, "backend": e.backend, "pricing": e.pricing,
+                 "harness_version": e.harness_version, "created_at": e.created_at.isoformat()} for e in rows]
 
 
 @app.get("/api/config")
@@ -147,3 +170,12 @@ async def config() -> dict:
 @app.get("/api/health")
 async def health() -> dict:
     return {"status": "ok"}
+
+
+@app.post("/api/batches/{batch_id}/cancel")
+async def cancel_batch(batch_id: str) -> dict:
+    from infosec_harness.workflows.runner import cancel_durable_batch
+    try:
+        return {"status": await cancel_durable_batch(batch_id)}
+    except KeyError as exc:
+        raise HTTPException(404, "batch not found") from exc

@@ -69,3 +69,36 @@ def test_outcome_attributes_keep_unknown_cost_distinguishable():
     assert attrs["agent.cost_usd"] == -1.0
     assert attrs["agent.tools_called"] == "read_file"
     assert attrs["agent.skills_loaded"] == "cwe-89"
+
+
+async def test_instrumentation_excludes_prompt_and_completion_content():
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+    from pydantic_ai import Agent
+    from pydantic_ai.messages import ModelResponse, TextPart
+    from pydantic_ai.models.function import FunctionModel
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    settings = telemetry.private_instrumentation(provider)
+    agent = Agent(FunctionModel(lambda messages, info: ModelResponse(
+        parts=[TextPart("synthetic-sensitive-answer")])))
+    agent.instrument = settings
+    await agent.run("synthetic-sensitive-prompt")
+    spans = exporter.get_finished_spans()
+    assert spans
+    exported = str([(s.attributes, [(e.name, e.attributes) for e in s.events]) for s in spans])
+    assert "synthetic-sensitive-prompt" not in exported
+    assert "synthetic-sensitive-answer" not in exported
+    provider.shutdown()
+
+
+def test_spec_instrumentation_cannot_reenable_content_export():
+    from infosec_harness.agents.registry import AGENT_BINDINGS, build_agent
+
+    for name in AGENT_BINDINGS:
+        settings = build_agent(name, durable=False).instrument
+        assert settings.include_content is False, name
+        assert settings.include_binary_content is False, name

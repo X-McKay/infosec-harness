@@ -7,6 +7,7 @@ precomputed, cached maps so nothing here does disk or config I/O inside the work
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from datetime import timedelta
 
@@ -30,12 +31,12 @@ with workflow.unsafe.imports_passed_through():
     from infosec_harness.agents import models as model_factory
     from infosec_harness.agents.durable import AGENTS
     from infosec_harness.agents.registry import (
-        agent_config_hashes,
-        agent_run_budgets,
+        resolved_agent_configs,
         resolved_model_names,
     )
     from infosec_harness.evals.trajectory import count_repeated_calls, inspect_messages
     from infosec_harness.workflows import activities
+    from infosec_harness.workflows.accounting import RootAccounting
 
 
 # Temporal's default retry policy is *unlimited* attempts. A deterministic programming
@@ -50,26 +51,40 @@ class TemporalOps:
     """Bound to one workflow execution; created inside the workflow's run method."""
 
     def __init__(self) -> None:
+        self._accounting = RootAccounting()
         self._agents = AGENTS
-        self._hashes = agent_config_hashes()
+        self._configs = resolved_agent_configs()
         self._models = resolved_model_names()
-        # Precomputed on the host: reading a spec inside a workflow would be I/O. Budgets
-        # rather than finished limits, because each run's ceilings are widened for the size of
-        # the repository and that is only known from the deps at call time.
-        self._budgets = agent_run_budgets()
+        # Precomputed on the host: reading a spec inside a workflow would be I/O. The immutable
+        # config retains its declared budget and applies repository-size scaling replay-safely.
 
     async def run_agent(self, name: str, prompt: Sequence[UserContent], deps: AgentDeps) -> AgentOutcome:
+        config = self._configs[name].for_source_files(deps.source_files)
+        identity = await self._accounting.reserve(config)
+        try:
+            outcome = await self._run_agent(name, prompt, deps)
+        except (Exception, asyncio.CancelledError) as exc:
+            await self._accounting.settle(identity, None, type(exc).__name__)
+            raise
+        await self._accounting.settle(identity, outcome)
+        return outcome
+
+    async def _run_agent(self, name: str, prompt: Sequence[UserContent], deps: AgentDeps) -> AgentOutcome:
         agent = self._agents[name]
         started = workflow.now()
-        limits = self._budgets[name].scaled_for(deps.source_files).to_usage_limits()
-        result = await agent.run(list(prompt), deps=deps, usage_limits=limits)
+        effective_config = self._configs[name].for_source_files(deps.source_files)
+        result = await agent.run(
+            list(prompt), deps=deps, usage_limits=effective_config.budget.to_usage_limits()
+        )
         usage = result.usage
         model_name = self._models[name]
         cost, estimated = model_factory.estimate_cost(model_name, usage)
         tools_called, skills_loaded = inspect_messages(messages := result.all_messages())
         repeated = count_repeated_calls(messages)
         return AgentOutcome(
-            output=result.output, agent=name, model_name=model_name, config_hash=self._hashes[name],
+            output=result.output, agent=name, model_name=model_name,
+            config_hash=effective_config.digest,
+            effective_config=effective_config.model_dump(mode="json"),
             input_tokens=usage.input_tokens, output_tokens=usage.output_tokens,
             cache_read_tokens=usage.cache_read_tokens or 0, cache_write_tokens=usage.cache_write_tokens or 0,
             cost_usd=cost, cost_estimated=estimated,

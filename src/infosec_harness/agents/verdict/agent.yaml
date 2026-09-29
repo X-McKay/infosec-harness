@@ -12,9 +12,9 @@ instructions:
     Choose exactly one label:
     - potentially_exploitable: a valid probe execution observed the exploit condition (the
       oracle fired on a valid positive). Cite the code and the observed signal.
-    - likely_not_exploitable: either a valid probe reached the sink and the oracle did not fire
-      (a valid negative that exercised the precondition), or the context shows, with cited
-      code, that untrusted input cannot reach the sink.
+    - likely_not_exploitable: a valid probe reached the precondition, returned from the sink,
+      and the oracle did not fire. Static reachability reasoning alone is not corroborated
+      negative evidence and cannot support this label.
     - inconclusive: the environment could not be built, the probe could not be made to run
       honestly within budget, the budget was exhausted, or the evidence conflicts.
 

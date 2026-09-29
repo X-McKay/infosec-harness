@@ -30,12 +30,15 @@ def _load_findings(path: Path) -> list[FindingInput]:
 def submit(
     findings: Path = typer.Argument(..., help="JSON file: a finding, a list, or {findings:[...]}"),
     label: str = typer.Option("", help="Human label for the batch"),
-    local: bool = typer.Option(False, "--local", help="Run in-process without Temporal"),
+    local: bool = typer.Option(False, "--local", help="Run a stub demo in-process without Temporal"),
 ):
     """Submit findings for triage and print the batch id."""
     from infosec_harness.persistence import db
+    from infosec_harness.settings import get_settings
     from infosec_harness.workflows import runner
 
+    if local and get_settings().model_mode != "stub":
+        raise typer.BadParameter("Real assessments require Temporal; --local requires HARNESS_MODEL_MODE=stub.")
     items = _load_findings(findings)
 
     async def _go():
@@ -177,12 +180,34 @@ def eval_results(
     asyncio.run(list_experiments(agent=agent, commit=commit, limit=limit))
 
 
+@eval_app.command("calibrate")
+def eval_calibrate(
+    specification: Path = typer.Argument(..., help="Validated calibration experiment YAML"),
+    report: Path = typer.Option(..., help="Atomic JSON report output path"),
+):
+    """Run bounded candidate trials, select by hard gates, then evaluate grouped holdouts."""
+    from infosec_harness.evals.calibration import load_calibration, run_calibration, write_report
+
+    calibration = load_calibration(specification)
+    result = asyncio.run(run_calibration(calibration))
+    write_report(report, result)
+    typer.echo(
+        f"CALIBRATION_REPORT={report} selected={result.selected_candidate!r} "
+        f"promotion_eligible={str(result.promotion_eligible).lower()}"
+    )
+
+
 @eval_app.command("compare")
 def eval_compare(
     experiments: list[str] = typer.Argument(
         None, help="Two or more experiment ids; the first is the baseline"),
     agent: str = typer.Option(None, help="Instead of ids, compare this agent's latest run per model"),
     commit: str = typer.Option(None, help="With --agent, restrict to runs of this commit"),
+    descriptive: bool = typer.Option(
+        False,
+        "--descriptive",
+        help="Show incompatible runs for inspection; output cannot clear release gates",
+    ),
 ):
     """Compare experiments on accuracy, latency and cost.
 
@@ -193,9 +218,9 @@ def eval_compare(
 
     ids = list(experiments or [])
     if agent:
-        asyncio.run(compare_models_for(agent, commit=commit))
+        asyncio.run(compare_models_for(agent, commit=commit, descriptive=descriptive))
     elif len(ids) >= 2:
-        asyncio.run(compare_experiments(ids))
+        asyncio.run(compare_experiments(ids, descriptive=descriptive))
     else:
         raise typer.BadParameter("pass two or more experiment ids, or --agent <name>")
 

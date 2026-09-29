@@ -10,9 +10,10 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import math
 import time
 import uuid
-from datetime import UTC, datetime
+from collections.abc import Mapping
 from pathlib import Path
 
 import yaml
@@ -23,138 +24,49 @@ from infosec_harness.evals.adapters import (
     UNEVIDENCED_SAFETY_AGENTS,
     is_unevidenced_safe,
 )
-from infosec_harness.evals.coverage import coverage_for
 from infosec_harness.evals.provenance import code_version
-from infosec_harness.evals.trajectory import inspect_messages, scores_skills
+from infosec_harness.evals.trajectory import inspect_messages
 from infosec_harness.settings import get_settings
 
-
-def _spread(values: list[float]) -> str:
-    """`mean` when one sample, `mean [min-max]` when several — so noise is visible."""
-    mean = sum(values) / len(values)
-    if len(values) == 1:
-        return f"{mean:.0%}"
-    return f"{mean:.0%} [{min(values):.0%}-{max(values):.0%}]"
+EVALUATOR_VERSION = "deterministic-agent-output-v2"
+EVAL_EXECUTION_MODE = "local-eval-production-transport-v1"
 
 
-# The pipeline's stages, in order, each scored against ground truth the manifest already
-# carries. A single accuracy number says a case failed; it cannot say *where*, and locating that
-# by hand meant reading raw traces for every failure. Each entry is
-# (label, applies_to_case, verdict_fn) where verdict_fn returns True/False, or None for "this
-# stage did not get to run", which is counted separately so a late-stage rate is never inflated
-# by the cases that never reached it.
-def _stage_results(case, out) -> list[tuple[str, bool | None]]:
-    """Score one case at each stage. None means the stage was never reached."""
-    ctx = out.context
-    execs = out.executions
-    last = execs[-1] if execs else None
-    probes = case.early_exit is None  # `testonly` is meant to stop before a probe
+def case_group(case: Mapping[str, object]) -> str:
+    """Stable group used to keep related variants on the same side of a holdout split."""
+    if group := case.get("group"):
+        return str(group)
+    if repo := case.get("repo"):
+        value = str(repo).rstrip("/")
+        for suffix in ("/vulnerable", "/fixed"):
+            if value.endswith(suffix):
+                return value.removesuffix(suffix)
+        return value
+    name = str(case.get("name") or "")
+    for suffix in ("-vulnerable", "-fixed"):
+        if name.endswith(suffix):
+            return name.removesuffix(suffix)
+    return name
 
-    def sink_located() -> bool | None:
-        if ctx is None or ctx.sink is None:
-            return None if ctx is None else False
-        # The line is what the probe author actually needs; the file alone is not enough.
-        # A CodeRef may legitimately span the whole statement, so the truth line must fall
-        # inside the range rather than equal its start.
-        if ctx.sink.file_path != case.sink_file:
-            return False
-        last = ctx.sink.end_line or ctx.sink.start_line
-        return ctx.sink.start_line <= case.sink_line <= last
 
-    return [
-        ("environment built", out.prepared_status == "ready"),
-        ("context: reachability", None if ctx is None else ctx.reachability.value == case.reachability),
-        ("context: sink located", sink_located()),
-        ("context: target callable",
-         None if ctx is None else ctx.target_callable == case.target_callable),
-        ("probe reached the sink",
-         None if not probes else (last.precondition_reached if last else False)),
-        ("probe's sink returned",
-         None if not probes else (last.sink_returned if last else False)),
-        # Gated on the sink having returned, not merely on a probe existing. A silent oracle
-        # after a probe that never ran is not agreement -- and on the `fixed` half it would
-        # score as a pass for the same reason a zero-test run once scored as a clean negative.
-        ("oracle agreed with truth",
-         None if not probes or last is None or not last.sink_returned
-         else last.oracle_fired == (case.expected_verdict == "potentially_exploitable")),
-        ("verdict", out.result.verdict.label.value == case.expected_verdict),
+def _dataset_identity(cases: list[dict]) -> dict[str, object]:
+    case_contracts = [
+        {"name": case.get("name"), "group": case_group(case), "expected": case.get("expected")}
+        for case in cases
     ]
-
-
-async def score_corpus(*, language: str = "python", sandbox: bool | None = None,
-                       repeat: int = 1, manifest_path: Path | None = None,
-                       dataset: str = "seed", limit: int = 0) -> dict:
-    """Run the seeded corpus end-to-end and score verdicts against ground truth (§10.2).
-
-    Headline metrics: per-class recall and the false-negative rate on truly exploitable
-    cases (the costliest error). With stub models the verdicts are not meaningful (the stub
-    is not a judge) — this is the harness that lights up under a live model.
-    `sandbox=None` auto-detects the gVisor runtime.
-
-    `language="all"` sweeps every language in the corpus. `repeat` runs the whole thing
-    more than once and reports the spread: the corpus is small and the model is stochastic,
-    so a single pass has enough run-to-run variance (measured: one agent's skill-evocation
-    rate moved between 0% and 44% with no change at all) that comparing two one-pass runs
-    cannot separate a real effect from noise. Repeat both sides of an A/B.
-    """
-    from infosec_harness.evals.corpus import languages as corpus_languages
-    from infosec_harness.evals.corpus import load_corpus
-
-    if language == "all" and manifest_path is not None:
-        # `languages()` reads the seeded manifest, so sweeping a harvested one has to come
-        # from the harvested file rather than from the seed's language list.
-        langs = sorted({c.language for c in load_corpus(manifest_path=manifest_path)})
-    else:
-        langs = corpus_languages() if language == "all" else [language]
-    runs: list[dict] = []
-    for rep in range(repeat):
-        for lang in langs:
-            if len(langs) > 1 or repeat > 1:
-                print(f"--- {lang}" + (f" (pass {rep + 1}/{repeat})" if repeat > 1 else ""))
-            runs.append({"language": lang, **await _score_corpus_once(
-                language=lang, sandbox=sandbox, manifest_path=manifest_path,
-                dataset=dataset, limit=limit)})
-    if len(runs) == 1:
-        return runs[0]
-
-    agents = sorted({a for r in runs for a in r["trajectory"]})
-    summary = {
-        "runs": runs,
-        "languages": langs,
-        "repeat": repeat,
-        "n": sum(r["n"] for r in runs),
-        "accuracy_mean": round(sum(r["accuracy"] for r in runs) / len(runs), 4),
-        "accuracy_min": min(r["accuracy"] for r in runs),
-        "accuracy_max": max(r["accuracy"] for r in runs),
-        "trajectory": {
-            a: {
-                "n": sum(r["trajectory"][a]["n"] for r in runs if a in r["trajectory"]),
-                "tool_use_rate_mean": round(_mean_rate(runs, a, "tool_use_rate"), 3),
-                "skill_use_rate_mean": round(_mean_rate(runs, a, "skill_use_rate"), 3),
-            }
-            for a in agents
-        },
+    encoded = json.dumps(case_contracts, sort_keys=True, separators=(",", ":"))
+    return {
+        "case_set_digest": hashlib.sha256(encoded.encode()).hexdigest(),
+        "case_ids": [str(case.get("name")) for case in cases],
+        "groups": sorted({case_group(case) for case in cases}),
+        "evaluator_version": EVALUATOR_VERSION,
+        # Model/provider settings mirror the durable worker, while orchestration and activity
+        # retries do not run under Temporal in this evaluator. Latency and failure behavior are
+        # only comparable between runs carrying this same execution contract.
+        "execution_mode": EVAL_EXECUTION_MODE,
     }
-    print("\n=== aggregate over "
-          f"{len(runs)} run(s): {', '.join(langs)}"
-          + (f" x{repeat}" if repeat > 1 else "") + " ===")
-    print(f"accuracy {_spread([r['accuracy'] for r in runs])}  "
-          f"FN-on-exploitable {_spread([r['false_negative_rate_on_exploitable'] for r in runs])}")
-    print("tool/skill evocation:")
-    for a in agents:
-        tools = [r["trajectory"][a]["tool_use_rate"] for r in runs if a in r["trajectory"]]
-        skills = [r["trajectory"][a]["skill_use_rate"] for r in runs if a in r["trajectory"]]
-        skill_col = _spread(skills) if scores_skills(a) else "n/a (no expectation)"
-        print(f"  {a:14} tools {_spread(tools):18} skills {skill_col}")
-    return summary
 
 
-def _mean_rate(runs: list[dict], agent: str, key: str) -> float:
-    """Weight each run's rate by the cases it saw, so languages don't count equally."""
-    num = sum(r["trajectory"][agent][key] * r["trajectory"][agent]["n"]
-              for r in runs if agent in r["trajectory"])
-    den = sum(r["trajectory"][agent]["n"] for r in runs if agent in r["trajectory"])
-    return num / den if den else 0.0
 
 
 def _pricing_label(model_name: str) -> str:
@@ -198,8 +110,18 @@ class TruncatedExperiment(SystemExit):
         )
 
 
-async def run_experiment(agent: str, *, overlay: Path | None = None, repeat: int = 1,
-                         report: Path | None = None, model: str | None = None) -> str:
+
+
+async def run_experiment(
+    agent: str,
+    *,
+    overlay: Path | Mapping[str, object] | None = None,
+    repeat: int = 1,
+    report: Path | None = None,
+    model: str | None = None,
+    groups: set[str] | None = None,
+    split: str | None = None,
+) -> str:
     """Run an agent's dataset, score it, and persist the experiment.
 
     Persistence is incremental: the experiment row and its case results are written as each
@@ -211,10 +133,15 @@ async def run_experiment(agent: str, *, overlay: Path | None = None, repeat: int
     """
     if agent not in ADAPTERS:
         raise SystemExit(f"No eval adapter for agent {agent!r}. Available: {sorted(ADAPTERS)}")
-    from infosec_harness.agents.registry import build_agent, config_hash, load_spec
+    from infosec_harness.agents.registry import (
+        build_agent,
+        config_hash,
+        load_spec,
+        resolve_agent_config,
+    )
     from infosec_harness.persistence import db
 
-    overlay_data = yaml.safe_load(overlay.read_text()) if overlay else None
+    overlay_data = yaml.safe_load(overlay.read_text()) if isinstance(overlay, Path) else overlay
     agent_overlay = (overlay_data or {}).get(agent)
     if model:
         # `--model` is the one-variable-at-a-time knob the playbook's comparison method asks
@@ -224,12 +151,22 @@ async def run_experiment(agent: str, *, overlay: Path | None = None, repeat: int
         agent_overlay = {**(agent_overlay or {}), "model": model}
     dataset_path = get_settings().agents_dir / agent / "evals" / "dataset.yaml"
     dataset = yaml.safe_load(dataset_path.read_text())
-    cases = dataset["cases"]
+    all_cases = dataset["cases"]
+    cases = [case for case in all_cases if groups is None or case_group(case) in groups]
+    if not cases:
+        raise ValueError(f"no cases selected for groups {sorted(groups or ())}")
     version = str(dataset.get("version", "1"))
 
-    built = build_agent(agent, agent_overlay, durable=False)
+    # The runner itself is local, while the model/provider contract intentionally mirrors the
+    # durable worker. This keeps transport retry settings in the effective identity and on the
+    # actual client aligned with production without requiring a Temporal activity context.
+    built = build_agent(
+        agent, agent_overlay, durable=False, production_transport=True
+    )
     spec = load_spec(agent, agent_overlay)
-    cfg_hash = config_hash(agent, spec)
+    cfg_hash = config_hash(agent, spec, durable=True)
+    base_effective_config = resolve_agent_config(agent, spec, durable=True)
+    dataset_identity = _dataset_identity(cases)
     # build_agent already applied the overlay; run through it directly for accounting.
     from infosec_harness.agents import models as model_factory
 
@@ -241,12 +178,14 @@ async def run_experiment(agent: str, *, overlay: Path | None = None, repeat: int
     pricing = _pricing_label(model_name)
     code = code_version()
 
+    overlay_label = str(overlay) if isinstance(overlay, Path) else "inline" if overlay else ""
     exp_id = "exp-" + hashlib.sha256(
-        f"{agent}:{version}:{cfg_hash}:{overlay}:{uuid.uuid4()}".encode()).hexdigest()[:16]
+        f"{agent}:{version}:{cfg_hash}:{overlay_label}:{uuid.uuid4()}".encode()).hexdigest()[:16]
 
     total = passed = invalid_output = budget_exhausted = unevidenced_safe = 0
     completed_cases = 0
     cost = cache_read = tokens = 0.0
+    cost_unknown = usage_unknown = 0
     model_requests: list[int] = []
     # Per-case series for the distributions the playbook asks for ("pass rate and worst-case
     # score / p50-p95 latency and cost / tool-call and model-request distributions"). A single
@@ -258,17 +197,22 @@ async def run_experiment(agent: str, *, overlay: Path | None = None, repeat: int
     # --repeat is used, because a mean across runs launders a bad one.
     per_repetition: dict[int, list[int]] = {}
     confusion: dict[tuple[str, str], int] = {}
+    attempts: list[dict[str, object]] = []
     planned_runs = len(cases) * repeat
 
     def build_metrics(status: str, truncation: dict | None = None) -> dict:
+        complete_cost = round(cost, 6) if cost_unknown == 0 else None
+        per_case_cost = round(cost / total, 6) if total and cost_unknown == 0 else None
         metrics = {
             "accuracy": round(passed / total, 4) if total else 0.0,
             "n": total, "passed": passed,
-            "cost_usd_total": round(cost, 6), "cost_usd_per_case": round(cost / total, 6) if total else 0.0,
+            "cost_usd_total": complete_cost,
+            "cost_usd_per_case": per_case_cost,
             "avg_tokens": round(tokens / total, 1) if total else 0.0,
             "cache_hit_ratio": round(cache_read / tokens, 4) if tokens else 0.0,
             "confusion": {f"{k[0]}->{k[1]}": v for k, v in sorted(confusion.items())},
             "distributions": {
+                "percentile_method": PERCENTILE_METHOD,
                 # The worst repetition, not the mean across them: with --repeat, averaging
                 # launders a bad run into an acceptable number.
                 "worst_repetition_pass_rate": (
@@ -276,8 +220,8 @@ async def run_experiment(agent: str, *, overlay: Path | None = None, repeat: int
                     if per_repetition else 0.0),
                 "p50_latency_s": round(_pct(latencies, 0.50), 3),
                 "p95_latency_s": round(_pct(latencies, 0.95), 3),
-                "p50_cost_usd": round(_pct(costs, 0.50), 6),
-                "p95_cost_usd": round(_pct(costs, 0.95), 6),
+                "p50_cost_usd": round(_pct(costs, 0.50), 6) if costs else None,
+                "p95_cost_usd": round(_pct(costs, 0.95), 6) if costs else None,
                 "p50_model_requests": int(_pct([float(x) for x in model_requests], 0.50)),
                 "p95_model_requests": _p95(model_requests),
                 "p50_tool_calls": int(_pct([float(x) for x in tool_calls], 0.50)),
@@ -295,7 +239,20 @@ async def run_experiment(agent: str, *, overlay: Path | None = None, repeat: int
             "task_success_rate": round(passed / total, 4) if total else 0.0,
             "schema_validity_rate": round((total - invalid_output) / total, 4) if total else 0.0,
             "budget_exhausted_count": budget_exhausted,
-            "average_cost_usd": round(cost / total, 6) if total else 0.0,
+            "budget_enforcement_violations": 0,
+            "expected_budget_stops": sum(
+                1 for attempt in attempts
+                if attempt.get("outcome") == "budget_exhausted"
+                and attempt.get("expected") == "budget_exhausted"
+            ),
+            "unexpected_budget_stops": sum(
+                1 for attempt in attempts
+                if attempt.get("outcome") == "budget_exhausted"
+                and attempt.get("expected") != "budget_exhausted"
+            ),
+            "usage_unknown": usage_unknown,
+            "cost_unknown": cost_unknown,
+            "average_cost_usd": per_case_cost,
             "p95_model_requests": _p95(model_requests),
             "unevidenced_safe_verdicts": unevidenced_safe,
             # Coverage travels with the numbers: every metric above is over `n` of
@@ -305,6 +262,16 @@ async def run_experiment(agent: str, *, overlay: Path | None = None, repeat: int
             "n_planned": planned_runs,
             "cases_planned": len(cases),
             "cases_completed": completed_cases,
+            "attempted_runs": len(attempts),
+            "attempts": attempts,
+            "comparison_identity": {
+                **dataset_identity,
+                "dataset_version": version,
+                "repetitions": repeat,
+                "split": split or "full",
+            },
+            "effective_configuration": base_effective_config.model_dump(mode="json"),
+            "code_identity": code.as_dict(),
         }
         if truncation is not None:
             metrics["truncated"] = truncation
@@ -321,7 +288,7 @@ async def run_experiment(agent: str, *, overlay: Path | None = None, repeat: int
                 id=exp_id, agent=agent, dataset=str(dataset_path.name),
                 dataset_version=version, git_sha=code.git_commit, git_dirty=code.git_dirty,
                 harness_version=code.harness_version,
-                overlay=str(overlay) if overlay else "", config_hash=cfg_hash,
+                overlay=overlay_label, config_hash=cfg_hash,
                 model_tier=model_tier, model_name=model_name, backend=backend, pricing=pricing,
                 repetitions=repeat, metrics=build_metrics(status, truncation)))
             for row in rows:
@@ -347,31 +314,107 @@ async def run_experiment(agent: str, *, overlay: Path | None = None, repeat: int
             task_text, payload, deps, predict, expected = ADAPTERS[agent](case)
             for rep in range(repeat):
                 prompt = render_prompt(task_text, payload)
+                invocation_config = resolve_agent_config(
+                    agent, spec, source_files=deps.source_files, durable=True
+                )
                 started = time.monotonic()
+                usage_record: dict[str, object] | None = None
+                outcome = "answered"
                 try:
-                    result = await built.run(prompt, deps=deps)
+                    result = await asyncio.wait_for(
+                        built.run(
+                            prompt,
+                            deps=deps,
+                            usage_limits=invocation_config.budget.to_usage_limits(),
+                        ),
+                        timeout=get_settings().agent_run_timeout_s,
+                    )
                     predicted = predict(result.output)
-                    model_requests.append(result.usage.requests)
+                    requests = result.usage.requests or 0
+                    model_requests.append(requests)
                     tool_calls.append(len(inspect_messages(result.all_messages())[0]))
                     c, _ = model_factory.estimate_cost(model_name, result.usage)
+                    if c is None and pricing in {"stub", "zero_priced"}:
+                        c = 0.0
+                    elif c is None:
+                        cost_unknown += 1
                     tokens += result.usage.input_tokens + result.usage.output_tokens
                     cache_read += result.usage.cache_read_tokens or 0
+                    usage_record = {
+                        "requests": requests,
+                        "input_tokens": result.usage.input_tokens,
+                        "output_tokens": result.usage.output_tokens,
+                        "cache_read_tokens": result.usage.cache_read_tokens or 0,
+                        "cache_write_tokens": result.usage.cache_write_tokens or 0,
+                    }
                 except UsageLimitExceeded:
                     # The run hit its declared budget: it was stopped, not answered. This is a
                     # hard gate, so it is counted separately from a wrong answer.
-                    predicted, c = "budget_exhausted", 0.0
+                    predicted, c = "budget_exhausted", (
+                        0.0 if pricing in {"stub", "zero_priced"} else None
+                    )
+                    outcome = "budget_exhausted"
                     budget_exhausted += 1
+                    usage_unknown += 1
+                    cost_unknown += int(c is None)
                 except UnexpectedModelBehavior:
                     # The model could not produce a valid output within its retry budget
                     # (e.g. it kept violating an output contract). That is a failed case, and an
                     # output that does not validate is no answer rather than a wrong one.
-                    predicted, c = "invalid_output", 0.0
+                    predicted, c = "invalid_output", (
+                        0.0 if pricing in {"stub", "zero_priced"} else None
+                    )
+                    outcome = "invalid_output"
                     invalid_output += 1
+                    usage_unknown += 1
+                    cost_unknown += int(c is None)
+                except BaseException as exc:
+                    latency = time.monotonic() - started
+                    usage_unknown += 1
+                    failed_cost_unknown = pricing not in {"stub", "zero_priced"}
+                    cost_unknown += int(failed_cost_unknown)
+                    attempts.append({
+                        "case": case_name,
+                        "group": case_group(case),
+                        "repetition": rep,
+                        "expected": expected,
+                        "outcome": "failed",
+                        "error_type": type(exc).__name__,
+                        "error": str(exc)[:500] or repr(exc)[:500],
+                        "latency_s": latency,
+                        "usage": None,
+                        "usage_status": "unknown",
+                        "cost_usd": None if failed_cost_unknown else 0.0,
+                        "cost_status": "unknown" if failed_cost_unknown else "known_zero",
+                        "effective_config_digest": invocation_config.digest,
+                        "effective_budget_digest": invocation_config.budget.digest,
+                    })
+                    raise
                 # Recorded on every path, including the two failure branches above: a run
                 # that was stopped by its budget still took time, and excluding it would make
                 # the latency distribution describe only the cases that behaved.
-                latencies.append(time.monotonic() - started)
-                costs.append(c or 0.0)
+                latency = time.monotonic() - started
+                latencies.append(latency)
+                if c is not None:
+                    costs.append(c)
+                attempts.append({
+                    "case": case_name,
+                    "group": case_group(case),
+                    "repetition": rep,
+                    "expected": expected,
+                    "outcome": outcome,
+                    "latency_s": latency,
+                    "usage": usage_record,
+                    "usage_status": "observed" if usage_record is not None else "unknown",
+                    "cost_usd": c,
+                    "cost_status": (
+                        "known_zero" if c == 0.0 and pricing in {"stub", "zero_priced"}
+                        else "observed" if c is not None
+                        else "unknown"
+                    ),
+                    "effective_config_digest": invocation_config.digest,
+                    "effective_budget_digest": invocation_config.budget.digest,
+                })
                 if is_unevidenced_safe(agent, case, predicted):
                     unevidenced_safe += 1
                 ok = predicted == expected
@@ -384,7 +427,22 @@ async def run_experiment(agent: str, *, overlay: Path | None = None, repeat: int
                 confusion[(expected, predicted)] = confusion.get((expected, predicted), 0) + 1
                 pending_rows.append(db.EvalCaseResult(
                     experiment_id=exp_id, case_name=case["name"], repetition=rep, passed=ok,
-                    scores={"expected": expected, "predicted": predicted}, cost_usd=c or 0.0))
+                    scores={
+                        "expected": expected,
+                        "predicted": predicted,
+                        "outcome": outcome,
+                        "usage": usage_record,
+                        "usage_status": "observed" if usage_record is not None else "unknown",
+                        "cost_usd": c,
+                        "cost_status": attempts[-1]["cost_status"],
+                        "group": case_group(case),
+                        "effective_config_digest": invocation_config.digest,
+                        "effective_budget": invocation_config.budget.model_dump(mode="json"),
+                    },
+                    # Legacy non-null column: truth lives in scores.cost_usd/status when unknown.
+                    cost_usd=c or 0.0,
+                    latency_s=latency,
+                ))
             completed_cases += 1
             await persist("running", pending_rows)
             pending_rows = []
@@ -416,8 +474,10 @@ async def run_experiment(agent: str, *, overlay: Path | None = None, repeat: int
     metrics = build_metrics("complete")
     await persist("complete", pending_rows)
 
+    cost_label = (f"${metrics['cost_usd_per_case']:.4f}"
+                  if metrics["cost_usd_per_case"] is not None else "unknown")
     print(f"experiment {exp_id}: accuracy={metrics['accuracy']:.2%} "
-          f"cost/case=${metrics['cost_usd_per_case']:.4f} cache_hit={metrics['cache_hit_ratio']:.2%} "
+          f"cost/case={cost_label} cache_hit={metrics['cache_hit_ratio']:.2%} "
           f"(model {model_name} [{pricing}], config {cfg_hash}, code {code.label()})")
     if code.git_dirty:
         # Said once, at the point the number is produced: this result cannot be filed against
@@ -436,617 +496,55 @@ async def run_experiment(agent: str, *, overlay: Path | None = None, repeat: int
     return exp_id
 
 
+PERCENTILE_METHOD = "nearest-rank-v1"
+
+
 def _pct(values: list[float], q: float) -> float:
     """Nearest-rank percentile, 0.0 when nothing ran. Small samples, so no interpolation."""
     if not values:
         return 0.0
+    if not 0.0 <= q <= 1.0:
+        raise ValueError(f"percentile must be between 0 and 1, got {q}")
     ordered = sorted(values)
-    return ordered[min(len(ordered) - 1, int(round(q * (len(ordered) - 1))))]
+    # Nearest-rank is the observation at ceil(q * N), using one-based ranks. Clamp q=0
+    # to the first observation so the helper remains defined on the closed interval.
+    index = max(0, math.ceil(q * len(ordered)) - 1)
+    return ordered[index]
 
 
 def _p95(values: list[int]) -> int:
     """The 95th percentile, or 0 when nothing ran. Nearest-rank on a small sample."""
-    if not values:
-        return 0
-    ordered = sorted(values)
-    index = min(len(ordered) - 1, int(round(0.95 * (len(ordered) - 1))))
-    return ordered[index]
+    return int(_pct([float(value) for value in values], 0.95))
 
 
-def write_release_report(path: Path, *, agent: str, metrics: dict, cfg_hash: str,
-                         model_name: str, dataset_version: str, agent_version: str,
-                         extra_gates: dict | None = None, experiment_id: str = "",
-                         repeat: int = 1, spec: object | None = None) -> None:
-    """Write the report `agentctl release` compares against the agent's release policy.
-
-    The gate and threshold names here are the policy's names; provenance is what makes a pass
-    reproducible rather than a claim.
-    """
-    gates = {
-        "schema_validity_rate": metrics["schema_validity_rate"],
-        "budget_exhausted_count": metrics["budget_exhausted_count"],
-        **(extra_gates or {}),
-    }
-    report = {
-        "schema_version": 1,
-        "subject": {"kind": "agent", "name": agent},
-        "agent": agent,
-        "hard_gates": {**gates,
-                       # Zero is the only passing value: "passing average quality cannot
-                       # compensate for an uncovered material risk".
-                       "uncovered_material_scenarios":
-                           len(coverage_for(agent).uncovered_material)},
-        "metrics": {k: metrics[k] for k in
-                    ("task_success_rate", "average_cost_usd", "p95_model_requests")},
-        # The playbook makes uncovered material risk a release blocker, so the report must
-        # carry covered *and uncovered* scenario IDs -- a report that lists only what passed
-        # cannot show what was never tested.
-        "coverage": coverage_for(agent).as_report(),
-        # Distributions, not just means: the playbook asks for pass rate and worst case,
-        # p50/p95 latency and cost, and tool-call and model-request spreads, because a single
-        # average cannot show the tail a budget exists to brake.
-        "distributions": metrics.get("distributions", {}),
-        "provenance": {
-            **code_version().as_dict(),
-            # `git_dirty` travels beside the commit deliberately: a reader who sees only a SHA
-            # has no way to know the tree differed from it when the numbers were produced.
-            "agent_version": agent_version,
-            "config_hash": cfg_hash,
-            "model": model_name,
-            "dataset_version": dataset_version,
-            # The rest of what the playbook's Provenance section enumerates. What makes a pass
-            # reproducible is knowing which skills, toolsets and model settings produced it --
-            # `config_hash` fingerprints them, but a reader cannot expand a hash.
-            "recorded_at": datetime.now(UTC).isoformat(),
-            "run_count": repeat,
-            "experiment_id": experiment_id,
-            # Package-relative, which is the path inside the distribution as well as under
-            # src/ in a checkout.
-            "dataset": f"agents/{agent}/evals/dataset.yaml",
-            "model_pricing": _pricing_label(model_name),
-            "evaluators": ["deterministic_output_match", "schema_validity", "budget_gate",
-                           "scenario_coverage"],
-            # No LLM judge is used anywhere in this suite, which is deliberate: the playbook
-            # forbids one as the sole evaluator for schema validity and safety properties, and
-            # every gate here is deterministic. Recorded explicitly so its absence is a stated
-            # fact rather than an omission.
-            "judge_rubric": None,
-            "model_settings": dict(getattr(spec, "model_settings", None) or {}),
-            "skills": list(getattr(spec, "enabled_skills", None) or []),
-            "toolsets": list(getattr(spec, "enabled_toolsets", None) or []),
-            # Case-level results (per repetition, with pass/fail and cost) are persisted to the
-            # experiment store under this id rather than inlined, so the report stays readable.
-            "case_results": f"experiment {experiment_id}" if experiment_id else None,
-        },
-    }
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(report, indent=2) + "\n")
-
-
-async def compare_experiments(experiment_ids: list[str]) -> None:
-    """Compare two or more experiments. The first is the baseline the rest are read against."""
-    from infosec_harness.persistence import db
-
-    async with db.session() as s:
-        rows = [(eid, await s.get(db.EvalExperiment, eid)) for eid in experiment_ids]
-    if missing := [eid for eid, row in rows if row is None]:
-        raise SystemExit(f"experiment not found: {', '.join(missing)}")
-    found = [row for _, row in rows]
-    if len({row.agent for row in found}) > 1:
-        raise SystemExit(
-            "these experiments are of different agents "
-            f"({sorted({row.agent for row in found})}); their datasets differ, so the metrics "
-            "are not comparable")
-    _print_comparison(found)
-    if len(found) == 2:
-        _print_pairwise(found[0], found[1])
-
-
-def _experiment_label(row) -> str:
-    """How a row identifies itself in a table: the model, plus anything else that differs."""
-    return row.model_tier or row.config_hash[:8] or row.id
-
-
-def _print_comparison(found: list) -> None:
-    print(f"agent={found[0].agent}  dataset={found[0].dataset} v{found[0].dataset_version}\n")
-    print(comparison_table([
-        {"label": _experiment_label(row), "experiment_id": row.id, "pricing": row.pricing,
-         "metrics": row.metrics} for row in found]))
-    print()
-    for row in found:
-        code = f"{row.git_sha[:12] or '(no commit)'}{'-dirty' if row.git_dirty else ''}"
-        print(f"  {_experiment_label(row):<14} {row.model_name or '(unknown model)':<40} "
-              f"config {row.config_hash[:8]}  code {code}  v{row.harness_version or '?'}")
-    # Comparing runs of different code is a common and easy mistake -- a model sweep taken
-    # across an afternoon of edits reads as a model difference. Say it rather than assume it
-    # was noticed.
-    if len({(row.git_sha, row.git_dirty) for row in found}) > 1:
-        print("\n  ! these runs are of different code, so a difference between them is not "
-              "necessarily a difference between the models.")
-    if any(row.git_dirty for row in found):
-        print("  ! at least one run had a dirty working tree and cannot be reproduced from "
-              "its commit.")
-    for row in found:
-        status = row.metrics.get("status", "complete")
-        if status == "complete":
-            continue
-        # Loud, because the columns above are then between different numbers of cases: a
-        # "+8% accuracy" can be nothing but which cases happened to run.
-        cut = row.metrics.get("truncated") or {}
-        print(f"  !! {_experiment_label(row)} ({row.id}) is {status.upper()}: "
-              f"{row.metrics.get('n', 0)}/{row.metrics.get('n_planned', '?')} case runs scored"
-              + (f" — stopped on case {cut['failed_case']!r} "
-                 f"({cut['error_type']}: {cut['error'][:120]})" if cut else "")
-              + ". Its metrics cover only those cases, so this is not a like-for-like row.")
-
-
-def _print_pairwise(b, c) -> None:
-    """The original two-experiment view: deltas and confusion matrices, which only mean
-    something between exactly two runs."""
-    print()
-
-    def delta(key: str) -> str:
-        bv, cv = b.metrics.get(key, 0), c.metrics.get(key, 0)
-        return f"{bv:>10} -> {cv:<10} ({cv - bv:+.4f})"
-
-    incomplete = [(label, exp) for label, exp in (("baseline", b), ("candidate", c))
-                  if exp.metrics.get("status", "complete") != "complete"]
-    for label, exp in incomplete:
-        # Loud and first: the deltas below are between different numbers of cases, so a
-        # "+8% accuracy" here can be nothing but which cases happened to run.
-        t = exp.metrics.get("truncated") or {}
-        print(f"  !! {label} {exp.id} is {exp.metrics.get('status', 'incomplete').upper()}: "
-              f"{exp.metrics.get('n', 0)}/{exp.metrics.get('n_planned', '?')} case runs scored"
-              + (f" — stopped on case {t['failed_case']!r} ({t['error_type']}: {t['error'][:120]})"
-                 if t else "")
-              + ". Its metrics cover only those cases.")
-    if incomplete:
-        print("  !! NOT a like-for-like comparison: re-run the "
-              f"{'/'.join(label for label, _ in incomplete)} side before drawing a conclusion.")
-    print(f"  config      {b.config_hash} -> {c.config_hash}")
-    print(f"  coverage    {b.metrics.get('n', 0)}/{b.metrics.get('n_planned', '?')} -> "
-          f"{c.metrics.get('n', 0)}/{c.metrics.get('n_planned', '?')} case runs "
-          f"({b.metrics.get('status', 'complete')} -> {c.metrics.get('status', 'complete')})")
-    for key in ("accuracy", "cost_usd_per_case", "avg_tokens", "cache_hit_ratio"):
-        print(f"  {key:18} {delta(key)}")
-    print(f"  baseline confusion: {b.metrics.get('confusion')}")
-    print(f"  candidate confusion: {c.metrics.get('confusion')}")
-
-
-async def _score_corpus_once(*, language: str, sandbox: bool | None,
-                             manifest_path: Path | None = None, dataset: str = "seed",
-                             limit: int = 0) -> dict:
-    """One pass over the corpus. See :func:`score_corpus`."""
-    from infosec_harness.domain.models import Finding, InconclusiveReason
-    from infosec_harness.evals.corpus import load_corpus
-    from infosec_harness.evals.trajectory import (
-        AGENT_EXPECTATIONS,
-        TrajectoryExpectation,
-        check_expectations,
-        cwe_skill_prefix,
-    )
-    from infosec_harness.graph.local import triage_batch_local
-
-    cases = load_corpus(language, manifest_path=manifest_path, dataset=dataset)
-    if limit:
-        # Harvested manifests run to hundreds of cases against real repositories; a bounded
-        # slice keeps a first run interpretable. Pairs are kept together, since scoring one
-        # half of a pair measures nothing.
-        keep = {c.name.rsplit("-", 1)[0] for c in cases[:limit]}
-        cases = [c for c in cases if c.name.rsplit("-", 1)[0] in keep]
-    if sandbox is None:
-        from infosec_harness.sandbox import docker
-        sandbox = await docker.docker_available() and await docker.runtime_available()
-    prepare_sink: dict[tuple[str, str], list] = {}
-    # A harvested case ships the PoV test that established its ground truth, and on a `-fixed`
-    # revision the fix commit put it in the tree. Strip it before any agent reads the checkout,
-    # or probe-author is scored on copying rather than authoring.
-    masks: dict[tuple[str, str], list[str]] = {}
-    for c in cases:
-        if c.mask_paths:
-            masks.setdefault((c.finding.repo_url, c.finding.revision), []).extend(c.mask_paths)
-    # Cache off: an eval must exercise every stage and give the same answer twice.
-    # Serial for the same reason, and one more. Concurrency makes per-case latency
-    # unreadable -- N probe containers competing for the same sandbox CPU inflate each other's
-    # timings, so the p50/p95 numbers in the report would describe contention rather than the
-    # pipeline. And a measurement should not be the thing that decides how much hardware the
-    # runner needs: production can fan out, an eval establishes the baseline it fans out from.
-    # Override with `concurrency=` when deliberately measuring the effect of fanning out.
-    outputs = await triage_batch_local([c.finding for c in cases], sandbox=sandbox,
-                                       recipe_cache=False, mask_paths=masks, concurrency=1,
-                                       prepare_sink=prepare_sink)
-    by_fp = {o.finding.fingerprint: o for o in outputs}
-
-    rows, confusion = [], {}
-    correct = fn = exploitable = 0
-    # Cases the manifest expects to run the full pipeline, and how many of those were right
-    # *and* actually got there. `accuracy` alone cannot distinguish a probed verdict from a
-    # label guessed before the build.
-    expected_to_probe = correct_with_evidence = 0
-    unexpected_exits: list[str] = []
-    # stage label -> [passed, scored, not_reached], in the order _stage_results returns them.
-    stages: dict[str, list[int]] = {}
-    first_failures: dict[str, list[str]] = {}
-    infrastructure_failures: list[str] = []
-    # Trajectory scoring: did the tool-using agents evoke the expected tools/skills?
-    traj_totals: dict[str, dict[str, int]] = {}
-    # Request counts and repeated identical tool calls, so a `request_limit` breach can be told
-    # from honest work without re-running live. inspect_messages de-duplicates by tool name and
-    # drops arguments, so without this a run that read one file eight times is byte-identical in
-    # the record to one that read it once.
-    budget_totals: dict[str, dict[str, int]] = {}
-    worst_repeats: dict[str, dict[str, int]] = {}
-
-    def _score_trajectory(agent: str, tools_called, skills_loaded, cwe: str | None = None,
-                          requests: int = 0, repeated: dict[str, int] | None = None) -> None:
-        # Recorded for every agent, including those with no expectation: an agent that burns its
-        # request budget is worth seeing whether or not its tool use is scored.
-        b = budget_totals.setdefault(agent, {"n": 0, "requests": 0, "max_requests": 0, "looping": 0})
-        b["n"] += 1
-        b["requests"] += requests
-        b["max_requests"] = max(b["max_requests"], requests)
-        b["looping"] += int(bool(repeated))
-        for key, count in (repeated or {}).items():
-            worst_repeats.setdefault(agent, {})
-            worst_repeats[agent][key] = max(worst_repeats[agent].get(key, 0), count)
-        base = AGENT_EXPECTATIONS.get(agent)
-        if base is None:
-            return
-        skill_prefixes = base.skill_prefixes
-        if agent == "context" and (p := cwe_skill_prefix(cwe)):
-            skill_prefixes = (p,)  # require the *matching* CWE skill, not just any
-        exp = TrajectoryExpectation(tool_groups=base.tool_groups, skill_prefixes=skill_prefixes)
-        res = check_expectations(tools_called, skills_loaded, exp)
-        t = traj_totals.setdefault(agent, {"n": 0, "tools_ok": 0, "skills_ok": 0})
-        t["n"] += 1
-        t["tools_ok"] += int(res.tools_ok)
-        t["skills_ok"] += int(res.skills_ok)
-
-    # Prepare-phase agents (recon, env-planner, build repair) run once per repo.
-    for invs in prepare_sink.values():
-        for inv in invs:
-            _score_trajectory(inv.agent, inv.tools_called, inv.skills_loaded,
-                              requests=inv.requests, repeated=inv.repeated_tool_calls)
-
-    for c in cases:
-        out = by_fp[Finding.compute_fingerprint(c.finding)]
-        actual = out.result.verdict.label.value
-        ok = actual == c.expected_verdict
-        correct += int(ok)
-        # An early exit the manifest did not ask for means the label was reached without the
-        # mechanism under test: no build, no probe, no oracle. Measured on the Perl pair --
-        # both `fixed` cases came back `likely_not_exploitable` via `unreachable_by_context`,
-        # scoring as clean passes while never probing anything. Label accuracy stays label
-        # accuracy, but a pass with no evidence behind it must be visible, because the same
-        # reasoning applied to a vulnerable case is a false negative.
-        unexpected_exit = out.result.early_exit and out.result.early_exit != c.early_exit
-        if unexpected_exit:
-            unexpected_exits.append(f"{c.name} ({out.result.early_exit})")
-        if c.early_exit is None:
-            expected_to_probe += 1
-            correct_with_evidence += int(ok and not unexpected_exit)
-        confusion[(c.expected_verdict, actual)] = confusion.get((c.expected_verdict, actual), 0) + 1
-        if c.expected_verdict == "potentially_exploitable":
-            exploitable += 1
-            if actual != "potentially_exploitable":
-                fn += 1  # missed a real vulnerability — the costliest error
-        rows.append({"case": c.name, "expected": c.expected_verdict, "actual": actual,
-                     "ok": ok, "early_exit": out.result.early_exit,
-                     "unexpected_early_exit": bool(unexpected_exit),
-                     "priority": out.result.priority.value,
-                     # Why, not just that: a table of `inconclusive` tells you nothing about
-                     # whether the environment failed, the probe was unrepairable, or the
-                     # judge declined.
-                     "rationale": out.result.verdict.rationale})
-        # A provider outage tells us nothing about any stage. Counting it would have read
-        # "environment built 1/4" on a run where the environment stage worked and the model
-        # endpoint was returning 502 -- the precise misattribution this funnel exists to stop.
-        if out.result.verdict.inconclusive_reason == InconclusiveReason.infrastructure_error:
-            infrastructure_failures.append(c.name)
-            continue
-        stage_results = _stage_results(c, out)
-        blamed = False
-        for label, passed in stage_results:
-            tally = stages.setdefault(label, [0, 0, 0])
-            if passed is None:
-                tally[2] += 1
-                continue
-            tally[1] += 1
-            tally[0] += int(passed)
-            # Attribute each failing case to the FIRST stage that went wrong. A late stage
-            # inherits every earlier mistake, so without this the blame lands on `verdict`
-            # for a case whose context misread reachability three stages earlier.
-            if not passed and not blamed:
-                first_failures.setdefault(label, []).append(c.name)
-                blamed = True
-
-        # Per-finding triage agents (context, probe-author, ...).
-        for inv in out.invocations:
-            _score_trajectory(inv.agent, inv.tools_called, inv.skills_loaded, c.finding.cwe,
-                              requests=inv.requests, repeated=inv.repeated_tool_calls)
-
-    trajectory = {a: {"n": v["n"],
-                      "tool_use_rate": round(v["tools_ok"] / v["n"], 3) if v["n"] else 0.0,
-                      "skill_use_rate": round(v["skills_ok"] / v["n"], 3) if v["n"] else 0.0}
-                  for a, v in sorted(traj_totals.items())}
-    metrics = {
-        "n": len(cases), "accuracy": round(correct / len(cases), 4) if cases else 0.0,
-        "false_negative_rate_on_exploitable": round(fn / exploitable, 4) if exploitable else 0.0,
-        "sandbox": sandbox,
-        "accuracy_with_evidence": (round(correct_with_evidence / expected_to_probe, 4)
-                                   if expected_to_probe else 0.0),
-        "unexpected_early_exits": unexpected_exits,
-        "infrastructure_failures": infrastructure_failures,
-        "confusion": {f"{k[0]}->{k[1]}": v for k, v in sorted(confusion.items())},
-        "trajectory": trajectory,
-        "stages": {label: {"passed": p, "scored": n, "not_reached": nr,
-                           "rate": round(p / n, 3) if n else None,
-                           "first_failed_here": first_failures.get(label, [])}
-                   for label, (p, n, nr) in stages.items()},
-        "budget": {a: {"n": v["n"],
-                       "mean_requests": round(v["requests"] / v["n"], 2) if v["n"] else 0.0,
-                       "max_requests": v["max_requests"],
-                       "runs_with_repeated_calls": v["looping"],
-                       "worst_repeats": dict(sorted(worst_repeats.get(a, {}).items(),
-                                                    key=lambda kv: -kv[1])[:3])}
-                   for a, v in sorted(budget_totals.items())},
-    }
-    for r in rows:
-        mark = "OK " if r["ok"] else "XX "
-        print(f"  {mark}{r['case']:26} {r['expected']:24} -> {r['actual']:24} {r['early_exit'] or ''}")
-        if not r["ok"] and r["rationale"]:
-            # Long enough to carry the whole failure. A truncated reason costs more time than
-            # the extra lines do: "UsageLimitExceeded: The" says nothing about which limit.
-            print(f"        {r['rationale'][:600]}")
-    print(f"accuracy={metrics['accuracy']:.0%}  FN-on-exploitable={metrics['false_negative_rate_on_exploitable']:.0%}  "
-          f"sandbox={'on' if sandbox else 'off (verdicts not meaningful)'}")
-    if unexpected_exits:
-        print(f"accuracy-with-evidence={metrics['accuracy_with_evidence']:.0%}  "
-              f"({expected_to_probe - correct_with_evidence} of {expected_to_probe} cases that "
-              f"should have probed did not reach a probed verdict)")
-        print(f"  unexpected early exits: {', '.join(unexpected_exits)}")
-    if infrastructure_failures:
-        print(f"WARNING: {len(infrastructure_failures)} of {len(cases)} cases failed on "
-              f"infrastructure, not on the pipeline (model provider unreachable, timed out, or "
-              f"a transport error). These are excluded from the stage funnel below, and the "
-              f"accuracy above is not a measurement of anything: {', '.join(infrastructure_failures)}")
-    if metrics["stages"]:
-        print("stage funnel (where the pipeline actually loses cases):")
-        for label, st in metrics["stages"].items():
-            if not st["scored"]:
-                print(f"  {label:26} --      (not reached in {st['not_reached']} cases)")
-                continue
-            blame = st["first_failed_here"]
-            note = f"   <- first failure for {', '.join(blame)}" if blame else ""
-            skipped = f"  (+{st['not_reached']} not reached)" if st["not_reached"] else ""
-            print(f"  {label:26} {st['passed']}/{st['scored']}"
-                  f"  {st['rate']:.0%}{skipped}{note}")
-    print("tool/skill evocation (per agent, rate across cases):")
-    for agent, t in trajectory.items():
-        skills = f"{t['skill_use_rate']:.0%}" if scores_skills(agent) else "n/a"
-        print(f"  {agent:14} tools {t['tool_use_rate']:.0%}  skills {skills}  (n={t['n']})")
-    if any(v["max_requests"] for v in metrics["budget"].values()):
-        print("requests per agent run (max, and identical calls repeated):")
-        for agent, b in metrics["budget"].items():
-            if not b["max_requests"]:
-                continue
-            note = ""
-            if b["runs_with_repeated_calls"]:
-                worst = next(iter(b["worst_repeats"].items()), None)
-                note = (f"  LOOPING in {b['runs_with_repeated_calls']}/{b['n']} runs"
-                        + (f", worst {worst[0]} x{worst[1]}" if worst else ""))
-            # 15 wide: this section lists every agent, including probe-diagnosis, which is
-            # one character wider than the tool-using agents the trajectory table covers.
-            print(f"  {agent:15} max {b['max_requests']:3}  mean {b['mean_requests']:6.2f}{note}")
-    return metrics
-
-
-# --- Comparing models -------------------------------------------------------------------
-#
-# Changing the model is the single most common experiment, and until now it meant hand-writing
-# an overlay YAML per model, running them one at a time, noting the experiment ids, and then
-# comparing them two at a time. The three things anyone actually wants out of that -- how good,
-# how fast, how much -- were spread across a console line, a JSON report and a database row.
-
-# What a model sweep reports, in the order a reader needs it: is it right, how slow is the
-# tail, what does it cost, and how much work did it take to get there. Each is
-# (column, metrics path, formatter).
-_COMPARISON_COLUMNS: tuple[tuple[str, tuple[str, ...], str], ...] = (
-    ("accuracy", ("task_success_rate",), "pct"),
-    ("worst rep", ("distributions", "worst_repetition_pass_rate"), "pct"),
-    ("schema", ("schema_validity_rate",), "pct"),
-    ("p50 lat", ("distributions", "p50_latency_s"), "secs"),
-    ("p95 lat", ("distributions", "p95_latency_s"), "secs"),
-    ("$/case", ("average_cost_usd",), "usd"),
-    ("p95 $", ("distributions", "p95_cost_usd"), "usd"),
-    ("p95 req", ("p95_model_requests",), "int"),
-    ("budget", ("budget_exhausted_count",), "int"),
+# Public compatibility surface. Cohesive corpus and reporting implementations live in focused
+# modules, while existing callers can continue importing these names from ``evals.run``.
+from infosec_harness.evals.corpus_run import _stage_results, score_corpus  # noqa: E402
+from infosec_harness.evals.reporting import (  # noqa: E402
+    IncomparableExperiments,
+    comparability_issues,
+    compare_experiments,
+    compare_models_for,
+    comparison_table,
+    list_experiments,
+    save_baseline,
+    sweep_models,
+    write_release_report,
 )
 
-
-def _dig(metrics: dict, path: tuple[str, ...]):
-    value = metrics
-    for key in path:
-        if not isinstance(value, dict):
-            return None
-        value = value.get(key)
-    return value
-
-
-def _fmt(value, kind: str) -> str:
-    if value is None:
-        return "-"
-    if kind == "pct":
-        return f"{value:.0%}"
-    if kind == "secs":
-        return f"{value:.1f}s"
-    if kind == "usd":
-        return f"${value:.4f}"
-    return str(value)
-
-
-def comparison_table(rows: list[dict]) -> str:
-    """Render one row per model: quality, latency and cost side by side.
-
-    ``rows`` are ``{"label", "pricing", "metrics", "experiment_id"}``. Kept separate from both
-    the runner and the store so the same table renders a fresh sweep and a query over past
-    experiments, and so it can be tested without either.
-    """
-    if not rows:
-        return "(no experiments)"
-    headers = ["model", *(name for name, _, _ in _COMPARISON_COLUMNS)]
-    body = [[row["label"], *(_fmt(_dig(row["metrics"], path), kind)
-                             for _, path, kind in _COMPARISON_COLUMNS)] for row in rows]
-    widths = [max(len(str(r[i])) for r in [headers, *body]) for i in range(len(headers))]
-    lines = [
-        "  ".join(h.ljust(w) for h, w in zip(headers, widths, strict=True)),
-        "  ".join("-" * w for w in widths),
-        *("  ".join(str(c).ljust(w) for c, w in zip(row, widths, strict=True)) for row in body),
-    ]
-    # A cost column is only comparable between models priced the same way. Saying which kind of
-    # zero each zero is turns a misleading "cheaper" into a fact about the price table.
-    kinds = {row.get("pricing", "") for row in rows}
-    if kinds - {"priced"}:
-        lines.append("")
-        lines.append("  cost basis: " + ", ".join(
-            f"{row['label']}={row.get('pricing') or 'unknown'}" for row in rows))
-        if len(kinds) > 1:
-            lines.append("  ! these models are not priced on the same basis, so the cost "
-                         "columns are not comparable between them.")
-    lines.append("")
-    for row in rows:
-        lines.append(f"  {row['label'].ljust(widths[0])}  {row['experiment_id']}")
-    return "\n".join(lines)
-
-
-async def sweep_models(agent: str, models: list[str], *, overlay: Path | None = None,
-                       repeat: int = 1, report_dir: Path | None = None) -> list[dict]:
-    """Run one agent's dataset once per model, then report them side by side.
-
-    Sequential on purpose. These runs are the measurement, and latency is one of the things
-    being measured -- running them concurrently would have them contend for the same endpoint
-    and make every number a function of how many models were in the sweep.
-
-    A model that fails does not abort the sweep: its row is recorded as failed and the others
-    still produce numbers, because "opus could not complete the dataset" is itself a result
-    worth seeing next to the models that could.
-    """
-    from infosec_harness.persistence import db
-
-    results: list[dict] = []
-    for tier in models:
-        print(f"\n=== {agent} @ {tier} " + "=" * 40)
-        try:
-            exp_id = await run_experiment(
-                agent, overlay=overlay, repeat=repeat, model=tier,
-                report=(report_dir / f"{agent}-{tier}.json") if report_dir else None)
-        except SystemExit as exc:  # includes TruncatedExperiment
-            print(f"  {tier}: FAILED -- {type(exc).__name__}: {str(exc)[:200]}")
-            results.append({"label": tier, "experiment_id": getattr(exc, "experiment_id", "-"),
-                            "pricing": "", "metrics": {}, "failed": True})
-            continue
-        async with db.session() as s:
-            row = await s.get(db.EvalExperiment, exp_id)
-            results.append({"label": tier, "experiment_id": exp_id,
-                            "pricing": row.pricing, "metrics": row.metrics, "failed": False})
-    print(f"\n{agent}: {len(models)} models, {repeat} repetition(s), "
-          f"code {code_version().label()}\n")
-    print(comparison_table(results))
-    return results
-
-
-async def list_experiments(*, agent: str | None = None, commit: str | None = None,
-                           limit: int = 20) -> list:
-    """Print stored experiments, newest first, with what identifies each one.
-
-    The columns are the ones you need to decide whether two rows are comparable at all: the
-    model, the code, and the config -- not just the score.
-    """
-    from sqlalchemy import select
-
-    from infosec_harness.persistence import db
-
-    await db.create_all()
-    query = select(db.EvalExperiment).order_by(db.EvalExperiment.created_at.desc())
-    if agent:
-        query = query.where(db.EvalExperiment.agent == agent)
-    async with db.session() as s:
-        rows = list((await s.execute(query)).scalars())
-    if commit:
-        rows = [r for r in rows if r.git_sha.startswith(commit)]
-    rows = rows[:limit]
-    if not rows:
-        print("no experiments stored" + (f" for {agent}" if agent else ""))
-        return rows
-    header = f"{'experiment':<22} {'agent':<16} {'model':<10} {'code':<20} {'status':<10} acc     $/case"
-    print(header)
-    print("-" * len(header))
-    for row in rows:
-        metrics = row.metrics or {}
-        code = f"{row.git_sha[:12] or '-'}{'-dirty' if row.git_dirty else ''}"
-        print(f"{row.id:<22} {row.agent:<16} {(row.model_tier or '-'):<10} {code:<20} "
-              f"{metrics.get('status', '?'):<10} "
-              f"{metrics.get('task_success_rate', 0):<7.0%} "
-              f"${metrics.get('average_cost_usd', 0):.4f}")
-    return rows
-
-
-async def compare_models_for(agent: str, *, commit: str | None = None) -> list:
-    """Line up an agent's most recent run for each model it has been evaluated against.
-
-    This is the query the sweep produces live, asked after the fact -- so a comparison survives
-    the terminal it was printed in, and so models run days apart can still be read together
-    (with the code difference called out, because that is exactly when it matters).
-    """
-    from sqlalchemy import select
-
-    from infosec_harness.persistence import db
-
-    await db.create_all()
-    async with db.session() as s:
-        rows = list((await s.execute(
-            select(db.EvalExperiment)
-            .where(db.EvalExperiment.agent == agent)
-            .order_by(db.EvalExperiment.created_at.desc()))).scalars())
-    if commit:
-        rows = [r for r in rows if r.git_sha.startswith(commit)]
-    latest: dict[str, object] = {}
-    for row in rows:  # newest first, so the first of each model wins
-        latest.setdefault(row.model_tier or row.config_hash[:8], row)
-    if not latest:
-        raise SystemExit(f"no experiments stored for {agent}"
-                         + (f" at commit {commit}" if commit else ""))
-    found = list(latest.values())
-    _print_comparison(found)
-    return found
-
-
-async def save_baseline(experiment_id: str) -> Path:
-    """Record one experiment as the committed baseline for its agent and model."""
-    from infosec_harness.evals import baselines as baseline_store
-    from infosec_harness.persistence import db
-
-    async with db.session() as s:
-        row = await s.get(db.EvalExperiment, experiment_id)
-    if row is None:
-        raise SystemExit(f"experiment not found: {experiment_id}")
-    try:
-        baseline = baseline_store.from_experiment(row)
-    except baseline_store.BaselineRefused as refusal:
-        raise SystemExit(f"not recorded as a baseline: {refusal}") from refusal
-    previous = baseline_store.load(baseline.agent, baseline.model_tier)
-    path = baseline_store.save(baseline)
-    print(f"wrote {path}")
-    print(f"  {baseline.agent} @ {baseline.model_tier} ({baseline.model_name}) "
-          f"at {baseline.git_commit[:12]}, cost basis {baseline.pricing}")
-    if previous is not None:
-        moved = baseline_store.drift(previous, baseline.metrics)
-        if moved:
-            print(f"  replaces the baseline from {previous.git_commit[:12]}; what moved:")
-            for key, was, now in moved:
-                print(f"    {key:<24} {was} -> {now}")
-        else:
-            print(f"  replaces the baseline from {previous.git_commit[:12]}; no pinned metric "
-                  f"changed")
-    print("  commit this file: a baseline is only useful to the next person if it is in the repo")
-    return path
+__all__ = [
+    "IncomparableExperiments",
+    "TruncatedExperiment",
+    "_stage_results",
+    "case_group",
+    "comparability_issues",
+    "compare_experiments",
+    "compare_models_for",
+    "comparison_table",
+    "list_experiments",
+    "run_experiment",
+    "save_baseline",
+    "score_corpus",
+    "sweep_models",
+    "write_release_report",
+]

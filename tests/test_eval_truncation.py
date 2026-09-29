@@ -15,7 +15,12 @@ import pytest
 import yaml
 from sqlalchemy import func, select
 
-from infosec_harness.evals.run import TruncatedExperiment, compare_experiments, run_experiment
+from infosec_harness.evals.run import (
+    IncomparableExperiments,
+    TruncatedExperiment,
+    compare_experiments,
+    run_experiment,
+)
 from infosec_harness.settings import get_settings
 
 AGENT = "probe-diagnosis"
@@ -127,10 +132,17 @@ async def test_compare_flags_a_truncated_side(monkeypatch, capsys):
         await run_experiment(AGENT)
     capsys.readouterr()
 
-    await compare_experiments([baseline, excinfo.value.experiment_id])
+    with pytest.raises(IncomparableExperiments) as compare_error:
+        await compare_experiments([baseline, excinfo.value.experiment_id])
+    assert "incomplete coverage" in str(compare_error.value)
+
+    await compare_experiments(
+        [baseline, excinfo.value.experiment_id], descriptive=True
+    )
     out = capsys.readouterr().out
     assert "TRUNCATED" in out and "candidate" in out
     assert "NOT a like-for-like comparison" in out
+    assert "DESCRIPTIVE ONLY" in out
     assert "coverage" in out
     # The baseline is clean, so only the candidate is called out.
     warnings = [line for line in out.splitlines() if "!!" in line]

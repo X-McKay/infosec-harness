@@ -1,3 +1,7 @@
+import sys
+
+import pytest
+
 from infosec_harness.domain.models import EnvironmentSpec
 from infosec_harness.sandbox import docker
 
@@ -12,11 +16,22 @@ def test_dockerfile_is_deterministic_and_nonroot():
     assert df == docker.render_dockerfile(_spec(system_packages=["gcc"]))
     assert f"USER {docker.SANDBOX_USER}" in df
     assert "COPY --chown" in df
+    assert "RUN chmod -R u+rwX /opt/repo" in df
 
 
 def test_partial_scope_sets_module_workdir():
     df = docker.render_dockerfile(_spec(scope="partial", module_path="services/api"))
     assert "WORKDIR /opt/repo/services/api" in df
+
+
+async def test_process_output_is_bounded_while_it_is_streamed():
+    result = await docker._run(
+        [sys.executable, "-c", "import sys; sys.stdout.write('x' * 250000 + 'TAIL')"],
+        timeout=10,
+    )
+    assert result.exit_code == 0
+    assert len(result.stdout.encode()) <= docker.MAX_CAPTURE
+    assert result.stdout.endswith("TAIL")
 
 
 def test_oracle_signals_match_nonce():
@@ -25,6 +40,23 @@ def test_oracle_signals_match_nonce():
     assert docker.oracle_signals(f"{docker.PRECONDITION_PREFIX}{n}", n) == (False, True)
     assert docker.oracle_signals("nothing", n) == (False, False)
     assert docker.oracle_signals(f"{docker.ORACLE_PREFIX}other", n) == (False, False)
+
+
+def test_controller_execution_record_labels_marker_trust_and_unknown_counts():
+    from infosec_harness.sandbox import evidence
+
+    record = evidence.execution_record(
+        image_tag="img", test_file_path="tests/p.py", test_command="pytest {test_file}",
+        content="probe", nonce="n", attempt=1, exit_code=0, timed_out=False,
+        duration_s=0.2, oracle_fired=False, precondition_reached=True,
+        sink_returned=True, no_tests=None,
+    )
+    decoded = evidence.parse_execution_record(evidence.encode_execution_record(record))
+    assert decoded is not None
+    assert decoded["process"]["origin"] == "controller"
+    assert decoded["observations"]["origin"] == "self_reported_marker"
+    assert decoded["runner"]["discovered_count"] is None
+    assert decoded["runner"]["executed_count"] is None
 
 
 def test_image_tag_changes_with_spec():
@@ -191,3 +223,53 @@ def test_the_node_runners_that_were_unsmoke_testable_now_have_checks():
     assert "tsx" in (runner_check_command("npx tsx --test {test_file}") or "")
     assert runner_check_command("node --test {test_file}") == "node --version"
     assert "vitest" in (runner_check_command("npx vitest run --silent=false {test_file}") or "")
+
+
+@pytest.mark.parametrize("payload", ['[]', 'null', '"text"', '42', '{bad json'])
+def test_execution_record_rejects_non_object_and_malformed_payloads(payload):
+    from infosec_harness.sandbox.evidence import EXECUTION_RECORD_PREFIX, parse_execution_record
+
+    assert parse_execution_record(EXECUTION_RECORD_PREFIX + payload) is None
+
+
+def test_image_format_changes_invalidate_prepared_image_cache(monkeypatch):
+    original = docker.image_tag_for("repohash", _spec())
+    monkeypatch.setattr(docker, "IMAGE_FORMAT_VERSION", "next-format")
+    assert docker.image_tag_for("repohash", _spec()) != original
+
+
+async def test_probe_can_write_disposable_copy_of_sealed_snapshot(tmp_path, monkeypatch):
+    import stat
+
+    source = tmp_path / "source"
+    source.mkdir()
+    tests = source / "tests"
+    tests.mkdir()
+    original = tests / "original.py"
+    original.write_text("# immutable source\n")
+    original.chmod(0o444)
+    tests.chmod(0o555)
+    source.chmod(0o555)
+    monkeypatch.setattr(docker, "REPO_STAGE", str(source))
+    monkeypatch.setattr(docker, "HOME_STAGE", str(tmp_path / "absent-home"))
+    monkeypatch.setattr(docker, "WORK", str(tmp_path / "work"))
+    monkeypatch.setattr(docker, "WORK_HOME", str(tmp_path / "home"))
+
+    async def execute_fixture_script(argv, *, name, stdin, timeout):
+        # Execute the actual staging script against a controlled local fixture. The real
+        # runtime check separately verifies its container isolation boundary.
+        return await docker._run(["sh", "-c", argv[-1]], stdin=stdin, timeout=timeout)
+
+    monkeypatch.setattr(docker, "_run_container", execute_fixture_script)
+    try:
+        result = await docker.run_probe(
+            "fixture", "tests/new.sh", "printf writable-copy", "sh {test_file}", "fixture",
+        )
+        assert result.exit_code == 0, result.stderr
+        assert "writable-copy" in result.stdout
+        assert not (tests / "new.sh").exists()
+        assert stat.S_IMODE(tests.stat().st_mode) == 0o555
+        assert stat.S_IMODE(original.stat().st_mode) == 0o444
+    finally:
+        source.chmod(0o755)
+        tests.chmod(0o755)

@@ -36,7 +36,12 @@ def _repo(case: dict) -> str:
 
 
 def _deps(case: dict, **kw: Any) -> AgentDeps:
-    return AgentDeps(repo_path=_repo(case), **kw)
+    repo_path = _repo(case)
+    if "source_files" not in kw and case.get("repo"):
+        from infosec_harness.repo.detect import detect_stack
+
+        kw["source_files"] = sum((detect_stack(repo_path).languages or {}).values()) or None
+    return AgentDeps(repo_path=repo_path, **kw)
 
 
 def _with_detected_stack(case: dict) -> dict:
@@ -205,14 +210,10 @@ def is_unevidenced_safe(agent: str, case: dict, predicted: str) -> bool:
         # The deterministic validator should already make this impossible; counting it proves
         # the contract held rather than assuming it.
         facts = case.get("facts") or {}
-        # `unreachable` supports a safe verdict on its own: nothing arrives, so there is
-        # nothing to probe. `neutralized` deliberately does NOT, and must not be added here --
-        # it says input arrives and a control stops it, which is a claim about behaviour that
-        # only a probe can support. Letting it through would restore the exact gap this value
-        # was introduced to close.
         supported = (facts.get("last_diagnosis") == "valid_negative"
                      and facts.get("precondition_reached")
-                     and not facts.get("oracle_fired")) or facts.get("reachability") == "unreachable"
+                     and facts.get("sink_returned")
+                     and not facts.get("oracle_fired"))
         return predicted == "likely_not_exploitable" and not supported
     if agent == "probe-diagnosis":
         # "The code resisted the payload" is only sayable if the payload reached the sink.

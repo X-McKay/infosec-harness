@@ -17,6 +17,7 @@ whether something belongs in provenance.
 """
 from __future__ import annotations
 
+import hashlib
 import platform
 import subprocess
 from dataclasses import asdict, dataclass
@@ -39,6 +40,9 @@ class CodeVersion:
     """The installed distribution's version -- what a deployment would actually be running."""
 
     python: str
+
+    source_digest: str = ""
+    """Digest of tracked and untracked source bytes, including dirty working-tree content."""
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -83,6 +87,40 @@ def _harness_version() -> str:
         return "unknown"
 
 
+def _source_digest() -> str:
+    """Digest the actual checkout content measured, rather than only naming ``HEAD``."""
+    root = source_checkout()
+    if root is None:
+        return ""
+    try:
+        listed = subprocess.check_output(
+            ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+            cwd=root,
+            timeout=20,
+        )
+    except Exception:
+        return ""
+    digest = hashlib.sha256()
+    for raw_path in sorted(path for path in listed.split(b"\0") if path):
+        relative = raw_path.decode(errors="surrogateescape")
+        path = root / relative
+        digest.update(len(raw_path).to_bytes(8, "big"))
+        digest.update(raw_path)
+        try:
+            if path.is_symlink():
+                content = path.readlink().as_posix().encode()
+                mode = b"symlink"
+            else:
+                content = path.read_bytes()
+                mode = b"executable" if path.stat().st_mode & 0o111 else b"file"
+        except OSError:
+            content, mode = b"", b"missing"
+        digest.update(mode)
+        digest.update(len(content).to_bytes(8, "big"))
+        digest.update(content)
+    return digest.hexdigest()
+
+
 @cache
 def code_version() -> CodeVersion:
     """The current code's identity. Cached: it cannot change inside one process."""
@@ -98,4 +136,5 @@ def code_version() -> CodeVersion:
         git_dirty=bool(status),
         harness_version=_harness_version(),
         python=platform.python_version(),
+        source_digest=_source_digest(),
     )

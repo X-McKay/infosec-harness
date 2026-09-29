@@ -112,23 +112,31 @@ class LocalOps:
 
         from infosec_harness import telemetry
         from infosec_harness.agents import models as model_factory
-        from infosec_harness.agents.budgets import usage_limits_for
-        from infosec_harness.agents.registry import build_agent, config_hash, load_spec
+        from infosec_harness.agents.registry import (
+            build_agent,
+            load_spec,
+            resolve_agent_config,
+        )
         from infosec_harness.evals.trajectory import count_repeated_calls, inspect_messages
         from infosec_harness.settings import get_settings
 
         agent = build_agent(name, durable=False)
         spec = load_spec(name)
+        effective_config = resolve_agent_config(
+            name, spec, source_files=deps.source_files, durable=False
+        )
         model_name = model_factory.resolved_model_name(name, spec.model or "sonnet")
-        attrs = telemetry.agent_run_attributes(name, model_name, config_hash(name, spec))
+        attrs = telemetry.agent_run_attributes(name, model_name, effective_config.digest)
         start = time.monotonic()
         timeout = get_settings().agent_run_timeout_s
         with telemetry.agent_span(name, attrs) as span:
             try:
                 result = await asyncio.wait_for(
-                    agent.run(list(prompt), deps=deps,
-                              usage_limits=usage_limits_for(
-                                  name, spec.metadata, source_files=deps.source_files)),
+                    agent.run(
+                        list(prompt),
+                        deps=deps,
+                        usage_limits=effective_config.budget.to_usage_limits(),
+                    ),
                     timeout=timeout,
                 )
             except TimeoutError as e:
@@ -144,7 +152,9 @@ class LocalOps:
         tools_called, skills_loaded = inspect_messages(messages := result.all_messages())
         repeated = count_repeated_calls(messages)
         outcome = AgentOutcome(
-            output=result.output, agent=name, model_name=model_name, config_hash=config_hash(name, spec),
+            output=result.output, agent=name, model_name=model_name,
+            config_hash=effective_config.digest,
+            effective_config=effective_config.model_dump(mode="json"),
             input_tokens=usage.input_tokens, output_tokens=usage.output_tokens,
             cache_read_tokens=usage.cache_read_tokens or 0, cache_write_tokens=usage.cache_write_tokens or 0,
             cost_usd=cost, cost_estimated=estimated, latency_s=time.monotonic() - start,
@@ -225,4 +235,3 @@ class LocalOps:
             {"image_tag": image_tag, "probe": probe.model_dump(), "spec": spec.model_dump(),
              "nonce": nonce, "attempt": attempt}
         )
-

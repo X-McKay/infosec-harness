@@ -1,0 +1,94 @@
+# Editable development overlay used by ./dev. Backend and web source are mounted from this
+# checkout; the base compose file remains suitable for the packaged nginx image.
+services:
+  postgres:
+    runtime: runc
+    environment:
+      POSTGRES_PASSWORD: ${HARNESS_POSTGRES_PASSWORD}
+
+  temporal:
+    runtime: runc
+    environment:
+      POSTGRES_PWD: ${HARNESS_POSTGRES_PASSWORD}
+
+  temporal-ui:
+    runtime: runc
+
+  minio:
+    runtime: runc
+    # Pinned S3-compatible development service with the API and console ports used here.
+    image: ghcr.io/rustfs/rustfs:1.0.0-glibc@sha256:bffcab0c9d647aab0055d1c69d340b202d0909966b385932d4ead1aeb7602858
+    command: ["rustfs"]
+    environment:
+      RUSTFS_ACCESS_KEY: ${HARNESS_MINIO_ACCESS_KEY}
+      RUSTFS_SECRET_KEY: ${HARNESS_MINIO_SECRET_KEY}
+
+  otel-collector:
+    runtime: runc
+
+  jaeger:
+    runtime: runc
+
+  api:
+    runtime: runc
+    command: ["sh", "-c", "uv pip install --system --no-deps -e . && harness migrate && harness api --host 0.0.0.0 --port 8000"]
+    volumes:
+      - .:/app:ro
+    environment:
+      AWS_PROFILE: !reset null
+      HARNESS_DATABASE_URL: postgresql+asyncpg://harness:${HARNESS_POSTGRES_PASSWORD}@postgres:5432/harness
+      HARNESS_S3_ACCESS_KEY: ${HARNESS_MINIO_ACCESS_KEY}
+      HARNESS_S3_SECRET_KEY: ${HARNESS_MINIO_SECRET_KEY}
+      HARNESS_BUILD_EGRESS_NETWORK: ${HARNESS_BUILD_EGRESS_NETWORK}
+      HARNESS_BUILD_EGRESS_HOST_IP: ${HARNESS_BUILD_EGRESS_HOST_IP}
+      HARNESS_BUILDX_BUILDER: ${HARNESS_BUILDX_BUILDER}
+  worker:
+    runtime: runc
+    command: ["sh", "-c", "uv pip install --system --no-deps -e . && harness worker"]
+    volumes: !override
+      - /var/run/docker.sock:/var/run/docker.sock
+      - .:/app:ro
+      - ${HARNESS_WORKSPACE_DIR}:/workspace
+      # The daemon and this trusted control-plane worker share the managed VM's
+      # per-checkout Buildx inventory, so worker restarts retain the verified builder.
+      - /root/.docker/buildx:/root/.docker/buildx
+    environment:
+      AWS_PROFILE: !reset null
+      HARNESS_DATABASE_URL: postgresql+asyncpg://harness:${HARNESS_POSTGRES_PASSWORD}@postgres:5432/harness
+      HARNESS_S3_ACCESS_KEY: ${HARNESS_MINIO_ACCESS_KEY}
+      HARNESS_S3_SECRET_KEY: ${HARNESS_MINIO_SECRET_KEY}
+      HARNESS_BUILD_EGRESS_NETWORK: ${HARNESS_BUILD_EGRESS_NETWORK}
+      HARNESS_BUILD_EGRESS_HOST_IP: ${HARNESS_BUILD_EGRESS_HOST_IP}
+      HARNESS_BUILDX_BUILDER: ${HARNESS_BUILDX_BUILDER}
+  web:
+    runtime: runc
+    build: !reset null
+    image: node:22.23.3-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c
+    working_dir: /app
+    command: ["sh", "-c", "npm ci --no-audit --no-fund && npm run dev -- --host 0.0.0.0 --port 5173"]
+    volumes:
+      - ./web:/app:ro
+      - web_node_modules:/app/node_modules
+    environment:
+      VITE_API_URL: http://api:8000
+    ports:
+      - "${HARNESS_WEB_PORT:-8080}:5173"
+
+  egress-proxy:
+    runtime: runc
+    networks:
+      default: {}
+      build-egress:
+        aliases: [egress-proxy]
+        ipv4_address: ${HARNESS_BUILD_EGRESS_HOST_IP}
+
+volumes:
+  web_node_modules:
+
+networks:
+  build-egress:
+    name: ${HARNESS_BUILD_EGRESS_NETWORK}
+    internal: true
+    ipam:
+      config:
+        - subnet: ${HARNESS_BUILD_EGRESS_SUBNET}

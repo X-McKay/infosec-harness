@@ -105,14 +105,14 @@ def test_context_calling_an_exploitable_sink_unreachable_is_unevidenced():
     assert not is_unevidenced_safe("context", {"expected": "unreachable"}, "unreachable")
 
 
-def test_verdict_needs_a_valid_negative_or_an_unreachable_sink():
+def test_verdict_needs_a_complete_valid_negative_execution():
     unsupported = {"facts": {"last_diagnosis": "environment_issue"}}
     assert is_unevidenced_safe("verdict", unsupported, "likely_not_exploitable")
     supported = {"facts": {"last_diagnosis": "valid_negative", "precondition_reached": True,
-                           "oracle_fired": False}}
+                           "sink_returned": True, "oracle_fired": False}}
     assert not is_unevidenced_safe("verdict", supported, "likely_not_exploitable")
     unreachable = {"facts": {"reachability": "unreachable"}}
-    assert not is_unevidenced_safe("verdict", unreachable, "likely_not_exploitable")
+    assert is_unevidenced_safe("verdict", unreachable, "likely_not_exploitable")
 
 
 def test_the_predicate_is_silent_for_agents_it_is_not_defined_for():

@@ -8,6 +8,9 @@ never enter workflow history. In ``stub`` mode a deterministic in-process model 
 
 from __future__ import annotations
 
+import hashlib
+import importlib.metadata
+import json
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -56,6 +59,55 @@ class BackendConfig(BaseModel):
     # response was generated". This raises the floor for one backend without touching the
     # specs — set it to 0 to disable.
     min_max_tokens: int = 0
+
+
+class CapabilityProfile(BaseModel):
+    """Provider behavior which changes how an otherwise identical agent is invoked."""
+
+    model_config = {"frozen": True}
+
+    # AgentSpec's typed Pydantic outputs are emitted through the model-facing output tool on
+    # both supported backends. Recording "native" here would claim a JSON-schema response
+    # format that these agents do not request.
+    structured_output: Literal["native", "tool"] = "tool"
+    tool_calling: bool = True
+    message_layout: Literal["native", "single_system"] = "native"
+    reasoning_accounting: Literal["separate", "inside_output", "unknown"] = "unknown"
+    usage_reporting: Literal["observed", "unavailable"] = "observed"
+    prompt_caching: Literal["observed", "provider_managed", "unsupported"] = "provider_managed"
+
+
+class ResolvedModelConfig(BaseModel):
+    """Secret-free, immutable identity of the model configuration actually used.
+
+    This is deliberately more explicit than ``"backend:model"``. Backend adaptations and
+    retry ownership change observable behavior, and requested settings can differ from the
+    values sent on the wire (notably the gateway's output-token floor).
+    """
+
+    model_config = {"frozen": True}
+
+    mode: Literal["stub", "live"]
+    backend_name: str
+    backend_kind: Literal["stub", "bedrock", "openai_compatible"]
+    requested_model: str
+    resolved_model: str
+    requested_settings: dict[str, Any] = Field(default_factory=dict)
+    effective_settings: dict[str, Any] = Field(default_factory=dict)
+    capability_profile: CapabilityProfile
+    provider_output_floor: int = 0
+    transport_retries: int = 0
+    durable: bool = False
+    region: str | None = None
+    endpoint: str | None = None
+    credential_reference: str | None = None
+    pricing_table: str
+    pricing_status: Literal["known_zero", "catalog", "custom", "unknown"]
+
+    @property
+    def digest(self) -> str:
+        payload = json.dumps(self.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 
 class ModelsConfig(BaseModel):
@@ -144,6 +196,71 @@ def max_tokens_floor(agent_name: str | None = None) -> int:
     return cfg.backends[cfg.backend_for(agent_name)].min_max_tokens
 
 
+def resolve_config(
+    agent_name: str,
+    tier: str,
+    *,
+    model_settings: dict[str, Any] | None = None,
+    durable: bool = False,
+) -> ResolvedModelConfig:
+    """Resolve the secret-free effective model contract without constructing a client."""
+    requested = dict(model_settings or {})
+    if get_settings().model_mode == "stub":
+        return ResolvedModelConfig(
+            mode="stub",
+            backend_name="stub",
+            backend_kind="stub",
+            requested_model=tier,
+            resolved_model=f"stub:{agent_name}:{tier}",
+            requested_settings=requested,
+            effective_settings=requested,
+            capability_profile=CapabilityProfile(prompt_caching="unsupported"),
+            durable=durable,
+            pricing_table="stub-known-zero",
+            pricing_status="known_zero",
+        )
+
+    cfg = load_models_config()
+    backend_name = cfg.backend_for(agent_name)
+    backend = cfg.backends[backend_name]
+    model_id = cfg.model_id(tier, backend_name)
+    resolved_model = f"{backend_name}:{model_id}"
+    source = pricing_source(resolved_model)
+    effective = _apply_max_tokens_floor(requested, backend.min_max_tokens) or {}
+    retries = backend.max_retries_under_temporal if durable else backend.max_retries
+    if backend.kind == "openai_compatible":
+        capabilities = CapabilityProfile(
+            message_layout=("single_system" if backend.merge_system_messages else "native"),
+            reasoning_accounting="inside_output",
+        )
+        credential_reference = backend.api_key_env
+    else:
+        capabilities = CapabilityProfile(reasoning_accounting="separate")
+        credential_reference = "aws-default-chain"
+    return ResolvedModelConfig(
+        mode="live",
+        backend_name=backend_name,
+        backend_kind=backend.kind,
+        requested_model=tier,
+        resolved_model=resolved_model,
+        requested_settings=requested,
+        effective_settings=effective,
+        capability_profile=capabilities,
+        provider_output_floor=backend.min_max_tokens,
+        transport_retries=retries,
+        durable=durable,
+        region=backend.region,
+        endpoint=backend.base_url,
+        credential_reference=credential_reference,
+        pricing_table=pricing_table_identity(backend_name),
+        pricing_status={
+            "custom-zero": "known_zero",
+            "genai-prices": "catalog",
+            "custom": "custom",
+        }.get(source, "unknown"),
+    )
+
+
 class _CompatOpenAIChatModel(OpenAIChatModelBase):  # type: ignore[misc,valid-type]
     """An OpenAI-spec model that works around two common self-hosted-endpoint quirks.
 
@@ -228,6 +345,15 @@ def resolved_model_name(agent_name: str, tier: str) -> str:
     return f"{backend}:{cfg.model_id(tier, backend)}"
 
 
+def _backend_and_bare_model(model_name: str) -> tuple[str, str]:
+    """Return the selected backend and its model id without guessing across backends."""
+    cfg = load_models_config()
+    prefix, sep, rest = model_name.partition(":")
+    if sep and prefix in cfg.backends:
+        return prefix, rest
+    return cfg.backend_for(None), model_name
+
+
 def strip_backend_prefix(model_name: str) -> str:
     """Drop a leading ``<backend>:`` from a recorded model name.
 
@@ -240,25 +366,90 @@ def strip_backend_prefix(model_name: str) -> str:
     Only a known backend name is stripped, so a model id that legitimately contains a colon
     (``qwen3.5:9b``) is left alone.
     """
-    prefix, sep, rest = model_name.partition(":")
-    if sep and prefix in load_models_config().backends:
-        return rest
-    return model_name
+    return _backend_and_bare_model(model_name)[1]
+
+
+def _content_digest(value: bytes) -> str:
+    return hashlib.sha256(value).hexdigest()[:16]
+
+
+def pricing_table_identity(backend_name: str) -> str:
+    """Version the exact price inputs used for one backend without exposing credentials."""
+    cfg = load_models_config()
+    if backend_name not in cfg.backends:
+        raise KeyError(f"unknown backend {backend_name!r}")
+    config_path = Path(get_settings().models_config)
+    config_digest = _content_digest(config_path.read_bytes())
+    backend_prices = cfg.backends[backend_name].prices
+    custom_digest = _content_digest(json.dumps(
+        {name: price.model_dump(mode="json") for name, price in sorted(backend_prices.items())},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode())
+    try:
+        import genai_prices
+
+        version = importlib.metadata.version("genai-prices")
+        data_path = Path(genai_prices.__file__).with_name("data.py")
+        data_digest = _content_digest(data_path.read_bytes())
+    except Exception:
+        version, data_digest = "unavailable", "unavailable"
+    return (
+        f"genai-prices:{version}:{data_digest};models:{config_digest};"
+        f"backend:{backend_name};custom:{custom_digest}"
+    )
 
 
 def custom_prices(model_name: str) -> Prices | None:
     """Configured fallback prices for models genai-prices doesn't know (e.g. gateways)."""
     cfg = load_models_config()
-    bare = strip_backend_prefix(model_name)
-    for backend in cfg.backends.values():
-        for candidate in (bare, model_name):
-            if candidate in backend.prices:
-                return backend.prices[candidate]
+    backend_name, bare = _backend_and_bare_model(model_name)
+    backend = cfg.backends[backend_name]
+    for candidate in (bare, model_name):
+        if candidate in backend.prices:
+            return backend.prices[candidate]
     return None
 
 
+def pricing_source(model_name: str) -> Literal[
+    "stub", "genai-prices", "custom", "custom-zero", "unknown"
+]:
+    """Identify whether a dollar ceiling can be enforced before a provider call starts."""
+    if model_name.startswith("stub:"):
+        return "stub"
+    # Backend-scoped configured prices are deployment truth (including an explicit zero for
+    # self-hosted models), so they override a public catalog entry for the same bare model id.
+    if (price := custom_prices(model_name)) is not None:
+        return "custom-zero" if price.input_per_mtok == price.output_per_mtok == 0 else "custom"
+    try:
+        from genai_prices import Usage, calc_price
+
+        name = strip_backend_prefix(model_name)
+        provider = None
+        if name.startswith("anthropic."):
+            name, provider = name.removeprefix("anthropic."), "anthropic"
+        for prefix in ("us.", "eu.", "global.", "apac."):
+            if name.startswith(prefix + "anthropic."):
+                name, provider = name.removeprefix(prefix + "anthropic."), "anthropic"
+        calc_price(Usage(input_tokens=1, output_tokens=1), model_ref=name, provider_id=provider)
+        return "genai-prices"
+    except Exception:
+        return "unknown"
+
+
 def estimate_cost(model_name: str, usage: Any) -> tuple[float | None, bool]:
-    """Return (usd, estimated?) for a RunUsage using genai-prices, then configured prices."""
+    """Return (usd, estimated?) using the selected backend's rates, then genai-prices."""
+    if model_name.startswith("stub:"):
+        return 0.0, False
+    if (p := custom_prices(model_name)) is not None:
+        uncached = usage.input_tokens - (usage.cache_read_tokens or 0) - (usage.cache_write_tokens or 0)
+        cost = (
+            max(uncached, 0) * p.input_per_mtok
+            + (usage.cache_read_tokens or 0) * (p.cache_read_per_mtok or p.input_per_mtok * 0.1)
+            + (usage.cache_write_tokens or 0) * (p.cache_write_per_mtok or p.input_per_mtok * 1.25)
+            + usage.output_tokens * p.output_per_mtok
+        ) / 1_000_000
+        return cost, True
     try:
         from genai_prices import Usage, calc_price
 
@@ -282,13 +473,4 @@ def estimate_cost(model_name: str, usage: Any) -> tuple[float | None, bool]:
         return float(price.total_price), False
     except Exception:
         pass
-    if (p := custom_prices(model_name)) is not None:
-        uncached = usage.input_tokens - (usage.cache_read_tokens or 0) - (usage.cache_write_tokens or 0)
-        cost = (
-            max(uncached, 0) * p.input_per_mtok
-            + (usage.cache_read_tokens or 0) * (p.cache_read_per_mtok or p.input_per_mtok * 0.1)
-            + (usage.cache_write_tokens or 0) * (p.cache_write_per_mtok or p.input_per_mtok * 1.25)
-            + usage.output_tokens * p.output_per_mtok
-        ) / 1_000_000
-        return cost, True
     return None, True

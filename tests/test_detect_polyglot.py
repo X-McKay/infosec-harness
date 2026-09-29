@@ -14,6 +14,10 @@ import json
 import pytest
 
 from infosec_harness.agents.stubs import _env_plan
+from infosec_harness.domain.models import RepoSnapshot
+from infosec_harness.graph.ops import LocalOps
+from infosec_harness.graph.prepare import run_prepare
+from infosec_harness.repo.components import component_stack, owning_component, preparation_key
 from infosec_harness.repo.detect import detect_stack, js_test_runners
 
 CJS = "function renderComment(t) { return '<div>' + t + '</div>'; }\nmodule.exports = { renderComment };\n"
@@ -28,6 +32,128 @@ def _pkg(tmp_path, **fields):
 
 def _plan(tmp_path) -> dict:
     return _env_plan(detect_stack(str(tmp_path)).model_dump())
+
+
+def test_polyglot_manifests_produce_separate_component_contracts(tmp_path):
+    py = tmp_path / "services" / "api"
+    js = tmp_path / "web"
+    py.mkdir(parents=True)
+    js.mkdir()
+    (py / "pyproject.toml").write_text("[project]\nname='api'\n")
+    (py / "app.py").write_text("x = 1\n")
+    (js / "package.json").write_text('{"scripts":{"test":"node --test"}}')
+    (js / "app.mjs").write_text("export const x = 1;\n")
+
+    components = {component.root: component for component in detect_stack(str(tmp_path)).components}
+
+    assert components["services/api"].languages == {"python": 1}
+    assert components["services/api"].build_systems == ["python"]
+    assert components["web"].languages == {"javascript": 1}
+    assert components["web"].build_systems == ["npm"]
+    assert all(component.support.value == "experimental" for component in components.values())
+
+    api = owning_component(detect_stack(str(tmp_path)), "services/api/app.py")
+    web = owning_component(detect_stack(str(tmp_path)), "web/app.mjs")
+    assert api is not None and preparation_key(api) == "services/api"
+    assert web is not None and preparation_key(web) == "web"
+    assert owning_component(detect_stack(str(tmp_path)), "README.md") is None
+
+
+async def test_component_preparation_uses_separate_stack_and_workdir(tmp_path):
+    py = tmp_path / "services" / "api"
+    js = tmp_path / "web"
+    py.mkdir(parents=True)
+    js.mkdir()
+    (py / "pyproject.toml").write_text("[project]\nname='api'\n")
+    (py / "app.py").write_text("x = 1\n")
+    (js / "package.json").write_text('{"scripts":{"test":"node --test"}}')
+    (js / "app.mjs").write_text("export const x = 1;\n")
+    stack = detect_stack(str(tmp_path))
+    snapshot = RepoSnapshot(
+        repo_url=str(tmp_path), revision="HEAD", path=str(tmp_path), content_hash="component",
+    )
+    ops = LocalOps(sandbox=False, recipe_cache=False)
+
+    prepared = {}
+    for path in ("services/api/app.py", "web/app.mjs"):
+        component = owning_component(stack, path)
+        assert component is not None
+        outcome = await run_prepare(
+            ops, snapshot, component_stack(stack, component), component_root=component.root)
+        prepared[component.root] = outcome.prepared
+
+    assert prepared["services/api"].stack.languages == {"python": 1}
+    assert prepared["web"].stack.languages == {"javascript": 1}
+    assert prepared["services/api"].build.spec.module_path == "services/api"
+    assert prepared["web"].build.spec.module_path == "web"
+    assert prepared["services/api"].build.spec.scope == "partial"
+    assert prepared["web"].build.spec.scope == "partial"
+
+
+async def test_resolved_nested_component_rebinds_once(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from infosec_harness.domain.models import (
+        BuildResult,
+        CodeLocation,
+        ComponentProfile,
+        EnvironmentSpec,
+        Finding,
+        FindingSourceKind,
+        PreparedEnvironment,
+        StackFingerprint,
+    )
+    from infosec_harness.graph import prepare as prepare_module
+
+    api = ComponentProfile(root="services/api", languages={"python": 3},
+                           manifest_paths=["services/api/pyproject.toml"],
+                           build_systems=["python"])
+    web = ComponentProfile(root="web", languages={"javascript": 2},
+                           manifest_paths=["web/package.json"], build_systems=["npm"])
+    stack = StackFingerprint(languages={"python": 3, "javascript": 2},
+                             test_dirs=["services/api/tests", "web/test"],
+                             components=[api, web])
+    snapshot = RepoSnapshot(repo_url=str(tmp_path), revision="HEAD", path=str(tmp_path),
+                            content_hash="resolved-component")
+
+    def environment(module_path=None):
+        spec = EnvironmentSpec(base_image="python:3.12-slim", test_command="pytest {test_file}",
+                               scope="partial" if module_path else "full",
+                               module_path=module_path)
+        return PreparedEnvironment(snapshot=snapshot, stack=stack,
+                                   build=BuildResult(ok=True, image_tag="fixture", spec=spec),
+                                   status="ready")
+
+    finding = Finding(fingerprint="resolved", title="Resolved from prose", repo_url=str(tmp_path),
+                      revision="HEAD", location=CodeLocation(file_path="services/api/app.py"),
+                      source_kind=FindingSourceKind.generic_json)
+    sentinel = SimpleNamespace(prepared=environment("services/api"), invocations=[])
+    calls = []
+
+    async def fake_run_prepare(ops, got_snapshot, got_stack, *, component_root):
+        calls.append((got_snapshot, got_stack, component_root))
+        return sentinel
+
+    monkeypatch.setattr(prepare_module, "run_prepare", fake_run_prepare)
+    rebound = await prepare_module.prepare_resolved_component(object(), finding, environment())
+
+    assert rebound is sentinel
+    assert calls[0][0] == snapshot
+    assert calls[0][1].languages == {"python": 3}
+    assert calls[0][2] == "services/api"
+
+    # A repository-wide planner may coincidentally choose the resolved component's path. Its
+    # full polyglot stack still needs rebinding to the component-local discovery contract.
+    assert await prepare_module.prepare_resolved_component(
+        object(), finding, environment("services/api")) is sentinel
+    assert len(calls) == 2
+
+    narrowed = component_stack(stack, api)
+    assert narrowed.test_dirs == ["tests"]
+    already_bound = environment("services/api").model_copy(update={"stack": narrowed})
+    assert await prepare_module.prepare_resolved_component(
+        object(), finding, already_bound) is None
+    assert len(calls) == 2
 
 
 # --- language counting ---------------------------------------------------------------------
@@ -232,3 +358,19 @@ def test_the_perl_plan_names_the_module_root(tmp_path):
     `Can't locate Runner.pm` before printing a marker, so the flag belongs in the recipe."""
     _perl_repo(tmp_path, "use Test::More;\nok(1);\ndone_testing();\n", cpanfile="")
     assert _plan(tmp_path)["test_command"] == "prove -v -Ilib {test_file}"
+
+
+def test_components_keep_distinct_declared_java_releases(tmp_path):
+    from infosec_harness.repo.components import component_stack, owning_component
+
+    for name, version in (("legacy", 8), ("modern", 17)):
+        component = tmp_path / name
+        component.mkdir()
+        (component / "pom.xml").write_text(
+            f"<project><properties><maven.compiler.release>{version}</maven.compiler.release></properties></project>")
+        (component / "App.java").write_text("class App {}")
+    stack = detect_stack(str(tmp_path))
+    legacy = component_stack(stack, owning_component(stack, "legacy/App.java"))
+    modern = component_stack(stack, owning_component(stack, "modern/App.java"))
+    assert legacy.java_release == 8
+    assert modern.java_release == 17

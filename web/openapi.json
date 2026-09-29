@@ -5,6 +5,323 @@
     "version": "2.0.0"
   },
   "paths": {
+    "/api/run-page": {
+      "get": {
+        "summary": "Run Page",
+        "operationId": "run_page_api_run_page_get",
+        "parameters": [
+          {
+            "name": "batch_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Batch Id"
+            }
+          },
+          {
+            "name": "verdict",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Verdict"
+            }
+          },
+          {
+            "name": "population",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "operational",
+                    "demo",
+                    "legacy"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Population"
+            }
+          },
+          {
+            "name": "metric",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "total_tokens",
+                    "input_tokens",
+                    "output_tokens",
+                    "cost_usd",
+                    "wall_time_s"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Metric"
+            }
+          },
+          {
+            "name": "lower",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Lower"
+            }
+          },
+          {
+            "name": "upper",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Upper"
+            }
+          },
+          {
+            "name": "upper_inclusive",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Upper Inclusive"
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Search"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/metrics": {
+      "get": {
+        "summary": "Metrics",
+        "operationId": "metrics_api_metrics_get",
+        "parameters": [
+          {
+            "name": "batch_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Batch Id"
+            }
+          },
+          {
+            "name": "population",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "operational",
+                "demo",
+                "legacy"
+              ],
+              "type": "string",
+              "default": "operational",
+              "title": "Population"
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since"
+            }
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Until"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetricsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/experiments/{experiment_id}": {
+      "get": {
+        "summary": "Experiment Detail",
+        "operationId": "experiment_detail_api_experiments__experiment_id__get",
+        "parameters": [
+          {
+            "name": "experiment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Experiment Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Experiment Detail Api Experiments  Experiment Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/batches": {
       "get": {
         "summary": "Batches",
@@ -190,6 +507,8 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
               "default": 200,
               "title": "Limit"
             }
@@ -378,10 +697,155 @@
           }
         }
       }
+    },
+    "/api/batches/{batch_id}/cancel": {
+      "post": {
+        "summary": "Cancel Batch",
+        "operationId": "cancel_batch_api_batches__batch_id__cancel_post",
+        "parameters": [
+          {
+            "name": "batch_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Batch Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Cancel Batch Api Batches  Batch Id  Cancel Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "Bin": {
+        "properties": {
+          "lower": {
+            "type": "number",
+            "title": "Lower"
+          },
+          "upper": {
+            "type": "number",
+            "title": "Upper"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "lower",
+          "upper",
+          "count"
+        ],
+        "title": "Bin"
+      },
+      "Distribution": {
+        "properties": {
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          },
+          "population": {
+            "type": "integer",
+            "title": "Population"
+          },
+          "coverage": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverage"
+          },
+          "mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean"
+          },
+          "p50": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P50"
+          },
+          "p95": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P95"
+          },
+          "maximum": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maximum"
+          },
+          "bins": {
+            "items": {
+              "$ref": "#/components/schemas/Bin"
+            },
+            "type": "array",
+            "title": "Bins"
+          }
+        },
+        "type": "object",
+        "required": [
+          "count",
+          "population",
+          "coverage"
+        ],
+        "title": "Distribution"
+      },
       "FindingInput": {
         "properties": {
           "external_id": {
@@ -415,6 +879,17 @@
             "title": "Revision",
             "description": "Commit SHA, tag, or branch",
             "default": "HEAD"
+          },
+          "source_mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourceMode"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Explicit source identity mode; omitted for backwards-compatible inference"
           },
           "file_path": {
             "anyOf": [
@@ -534,6 +1009,98 @@
         "type": "object",
         "title": "HTTPValidationError"
       },
+      "MetricsResponse": {
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "title": "Schema Version",
+            "default": 1
+          },
+          "as_of": {
+            "type": "string",
+            "title": "As Of"
+          },
+          "population": {
+            "type": "string",
+            "title": "Population"
+          },
+          "total_runs": {
+            "type": "integer",
+            "title": "Total Runs"
+          },
+          "status_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Status Counts"
+          },
+          "verdict_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Verdict Counts"
+          },
+          "tokens": {
+            "$ref": "#/components/schemas/Distribution"
+          },
+          "input_tokens": {
+            "$ref": "#/components/schemas/Distribution"
+          },
+          "output_tokens": {
+            "$ref": "#/components/schemas/Distribution"
+          },
+          "cost_usd": {
+            "$ref": "#/components/schemas/Distribution"
+          },
+          "wall_time_s": {
+            "$ref": "#/components/schemas/Distribution"
+          },
+          "agent_time_s": {
+            "$ref": "#/components/schemas/Distribution"
+          },
+          "trends": {
+            "items": {
+              "$ref": "#/components/schemas/TrendPoint"
+            },
+            "type": "array",
+            "title": "Trends"
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/StageMetric"
+            },
+            "type": "array",
+            "title": "Stages"
+          },
+          "definitions": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Definitions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "population",
+          "total_runs",
+          "status_counts",
+          "verdict_counts",
+          "tokens",
+          "input_tokens",
+          "output_tokens",
+          "cost_usd",
+          "wall_time_s",
+          "agent_time_s",
+          "trends",
+          "stages",
+          "definitions"
+        ],
+        "title": "MetricsResponse"
+      },
       "ReviewRequest": {
         "properties": {
           "reviewer": {
@@ -567,6 +1134,229 @@
         ],
         "title": "ReviewRequest"
       },
+      "RunPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RunSummary"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "as_of": {
+            "type": "string",
+            "title": "As Of"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "offset",
+          "limit",
+          "as_of"
+        ],
+        "title": "RunPage"
+      },
+      "RunSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "batch_id": {
+            "type": "string",
+            "title": "Batch Id"
+          },
+          "fingerprint": {
+            "type": "string",
+            "title": "Fingerprint"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "repo_url": {
+            "type": "string",
+            "title": "Repo Url"
+          },
+          "revision": {
+            "type": "string",
+            "title": "Revision"
+          },
+          "cwe": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cwe"
+          },
+          "severity": {
+            "type": "string",
+            "title": "Severity"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "verdict": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verdict"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "inconclusive_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inconclusive Reason"
+          },
+          "priority": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Priority"
+          },
+          "priority_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Priority Score"
+          },
+          "environment_scope": {
+            "type": "string",
+            "title": "Environment Scope"
+          },
+          "early_exit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Early Exit"
+          },
+          "cost_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Usd"
+          },
+          "total_tokens": {
+            "type": "integer",
+            "title": "Total Tokens"
+          },
+          "cache_read_tokens": {
+            "type": "integer",
+            "title": "Cache Read Tokens"
+          },
+          "latency_s": {
+            "type": "number",
+            "title": "Latency S"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "telemetry": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Telemetry"
+          },
+          "phase": {
+            "type": "string",
+            "title": "Phase"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "batch_id",
+          "fingerprint",
+          "title",
+          "repo_url",
+          "revision",
+          "cwe",
+          "severity",
+          "status",
+          "verdict",
+          "confidence",
+          "inconclusive_reason",
+          "priority",
+          "priority_score",
+          "environment_scope",
+          "early_exit",
+          "cost_usd",
+          "total_tokens",
+          "cache_read_tokens",
+          "latency_s",
+          "created_at",
+          "telemetry",
+          "phase"
+        ],
+        "title": "RunSummary"
+      },
       "Severity": {
         "type": "string",
         "enum": [
@@ -578,6 +1368,52 @@
           "unknown"
         ],
         "title": "Severity"
+      },
+      "SourceMode": {
+        "type": "string",
+        "enum": [
+          "git_revision",
+          "working_snapshot"
+        ],
+        "title": "SourceMode"
+      },
+      "StageMetric": {
+        "properties": {
+          "agent": {
+            "type": "string",
+            "title": "Agent"
+          },
+          "invocations": {
+            "type": "integer",
+            "title": "Invocations"
+          },
+          "agent_time_s": {
+            "type": "number",
+            "title": "Agent Time S"
+          },
+          "tokens": {
+            "type": "integer",
+            "title": "Tokens"
+          },
+          "known_cost_usd": {
+            "type": "number",
+            "title": "Known Cost Usd"
+          },
+          "cost_coverage": {
+            "type": "number",
+            "title": "Cost Coverage"
+          }
+        },
+        "type": "object",
+        "required": [
+          "agent",
+          "invocations",
+          "agent_time_s",
+          "tokens",
+          "known_cost_usd",
+          "cost_coverage"
+        ],
+        "title": "StageMetric"
       },
       "SubmitADORequest": {
         "properties": {
@@ -616,6 +1452,11 @@
           },
           "mode": {
             "type": "string",
+            "enum": [
+              "auto",
+              "local",
+              "temporal"
+            ],
             "title": "Mode",
             "default": "auto"
           }
@@ -625,6 +1466,60 @@
           "findings"
         ],
         "title": "SubmitRequest"
+      },
+      "TrendPoint": {
+        "properties": {
+          "date": {
+            "type": "string",
+            "title": "Date"
+          },
+          "runs": {
+            "type": "integer",
+            "title": "Runs"
+          },
+          "tokens": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tokens"
+          },
+          "cost_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Usd"
+          },
+          "wall_time_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wall Time S"
+          }
+        },
+        "type": "object",
+        "required": [
+          "date",
+          "runs",
+          "tokens",
+          "cost_usd",
+          "wall_time_s"
+        ],
+        "title": "TrendPoint"
       },
       "ValidationError": {
         "properties": {

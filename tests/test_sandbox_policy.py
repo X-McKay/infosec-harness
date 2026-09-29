@@ -1,11 +1,16 @@
 """Sandbox policy and hardening: base-image allowlist, egress allowlist, fail-closed,
 read-only probe args, image GC selection, and k8s Pod rendering — all deterministic."""
+import asyncio
+import csv
+import json
+
 import pytest
 
 from infosec_harness.domain.models import EnvironmentSpec, StackFingerprint
 from infosec_harness.sandbox import docker, k8s
 from infosec_harness.sandbox.policy import (
     DisallowedBaseImage,
+    InvalidEnvironmentSpec,
     SandboxUnavailable,
     build_egress_allowlist,
     ensure_runtime_available,
@@ -29,12 +34,12 @@ def test_base_image_rejected(image):
         validate_base_image(image, ALLOW)
 
 
-def test_egress_allowlist_includes_defaults_and_repo_registries():
+def test_repo_registry_declarations_cannot_widen_egress_policy():
     stack = StackFingerprint(registries=["artifactory.corp.internal", "https://nexus.corp/repo"])
     hosts = build_egress_allowlist(stack)
     assert "pypi.org" in hosts and "registry.npmjs.org" in hosts  # ecosystem defaults
-    assert "artifactory.corp.internal" in hosts
-    assert "nexus.corp" in hosts  # scheme/path stripped
+    assert "artifactory.corp.internal" not in hosts
+    assert "nexus.corp" not in hosts
 
 
 async def test_fail_closed_when_runtime_missing(monkeypatch):
@@ -68,14 +73,168 @@ def test_dockerfile_stages_repo_readonly():
     assert f"WORKDIR {docker.REPO_STAGE}" in df
 
 
+@pytest.mark.parametrize(
+    "spec",
+    [
+        _spec().model_copy(update={"install_commands": ["echo ok\nUSER root"]}),
+        _spec(env={"SAFE\nUSER root": "x"}),
+        _spec(scope="partial", module_path="../../host"),
+        _spec().model_copy(update={"test_command": "pytest tests"}),
+    ],
+)
+def test_generated_fields_cannot_inject_dockerfile_structure(spec):
+    with pytest.raises(InvalidEnvironmentSpec):
+        docker.render_dockerfile(spec)
+
+
 def test_build_argv_uses_buildx_and_proxy(monkeypatch):
     s = get_settings()
     monkeypatch.setattr(s, "use_buildx", True, raising=False)
-    monkeypatch.setattr(s, "build_egress_proxy", "http://egress:3128", raising=False)
+    monkeypatch.setattr(s, "build_egress_proxy", "http://172.30.0.2:3128", raising=False)
+    monkeypatch.setattr(s, "build_egress_network", "harness-egress", raising=False)
     argv = docker.build_argv("/tmp/Dockerfile", "tag:1", "/ctx", ["pypi.org"])
     assert "buildx" in argv and "--builder" in argv and s.buildx_builder in argv
     joined = " ".join(argv)
-    assert "HTTP_PROXY=http://egress:3128" in joined and "NO_PROXY=localhost,127.0.0.1" in joined
+    assert "HTTP_PROXY=http://172.30.0.2:3128" in joined
+    assert "NO_PROXY=localhost,127.0.0.1" in joined
+    assert "--network=default" in argv
+    assert "--network=harness-egress" not in argv
+
+
+async def test_build_egress_fails_closed_without_internal_network(monkeypatch):
+    s = get_settings()
+    monkeypatch.setattr(s, "allow_insecure_runtime", False, raising=False)
+    monkeypatch.setattr(s, "build_egress_proxy", "http://172.30.0.2:3128", raising=False)
+    monkeypatch.setattr(s, "build_egress_host_ip", "172.30.0.2", raising=False)
+    monkeypatch.setattr(s, "build_egress_network", "ordinary-network", raising=False)
+
+    async def fake_run(argv, *, stdin=None, timeout):
+        return docker.ProcResult(0, "false\n", "", False, 0)
+
+    monkeypatch.setattr(docker, "_run", fake_run)
+    with pytest.raises(SandboxUnavailable, match="not internal"):
+        await docker.ensure_build_egress_boundary()
+
+
+async def test_builder_is_created_on_internal_network_and_verified(monkeypatch):
+    s = get_settings()
+    monkeypatch.setattr(s, "allow_insecure_runtime", False, raising=False)
+    monkeypatch.setattr(s, "use_buildx", True, raising=False)
+    monkeypatch.setattr(s, "build_egress_network", "harness-egress", raising=False)
+    monkeypatch.setattr(s, "build_egress_proxy", "http://172.30.0.2:3128", raising=False)
+    monkeypatch.setattr(s, "build_egress_host_ip", "172.30.0.2", raising=False)
+    monkeypatch.setattr(s, "sandbox_runtime", "runsc", raising=False)
+    calls = []
+
+    async def fake_run(argv, *, stdin=None, timeout):
+        calls.append(argv)
+        if argv[:3] == ["docker", "buildx", "inspect"] and len(calls) == 1:
+            return docker.ProcResult(1, "", "missing", False, 0)
+        if argv[:3] == ["docker", "buildx", "create"]:
+            return docker.ProcResult(0, "created", "", False, 0)
+        if argv[:3] == ["docker", "buildx", "inspect"]:
+            return docker.ProcResult(
+                0, f"Name: {s.buildx_builder}\nDriver: docker-container\n"
+                f"Name: {s.buildx_builder}0\n", "", False, 0
+            )
+        if argv[-1] == "{{.HostConfig.Runtime}}":
+            return docker.ProcResult(0, "runsc\n", "", False, 0)
+        if argv[-1] == "{{json .NetworkSettings.Networks}}":
+            return docker.ProcResult(0, '{"harness-egress": {}}\n', "", False, 0)
+        if argv[-1] == "{{json .Config.Env}}":
+            environment = [
+                f"{name}={value}" for name, value in docker._builder_proxy_environment().items()
+            ]
+            return docker.ProcResult(0, json.dumps(environment), "", False, 0)
+        raise AssertionError(argv)
+
+    monkeypatch.setattr(docker, "_run", fake_run)
+    await docker.ensure_builder()
+
+    create = next(call for call in calls if call[:3] == ["docker", "buildx", "create"])
+    start = create.index("--driver-opt")
+    assert create[start:start + 2] == ["--driver-opt", "network=harness-egress"]
+    options = [create[index + 1] for index, value in enumerate(create) if value == "--driver-opt"]
+    decoded = [next(csv.reader([option])) for option in options]
+    assert all(len(row) == 1 and "=" in row[0] for row in decoded)
+    assert ["env.NO_PROXY=localhost,127.0.0.1"] in decoded
+    assert ["env.no_proxy=localhost,127.0.0.1"] in decoded
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+        assert f"env.{name}=http://172.30.0.2:3128" in create
+
+
+async def test_existing_builder_with_extra_network_fails_closed(monkeypatch):
+    s = get_settings()
+    monkeypatch.setattr(s, "allow_insecure_runtime", False, raising=False)
+    monkeypatch.setattr(s, "use_buildx", True, raising=False)
+    monkeypatch.setattr(s, "build_egress_network", "harness-egress", raising=False)
+    monkeypatch.setattr(s, "build_egress_proxy", "http://172.30.0.2:3128", raising=False)
+    monkeypatch.setattr(s, "build_egress_host_ip", "172.30.0.2", raising=False)
+    monkeypatch.setattr(s, "sandbox_runtime", "runsc", raising=False)
+
+    async def fake_run(argv, *, stdin=None, timeout):
+        if argv[:3] == ["docker", "buildx", "inspect"]:
+            return docker.ProcResult(
+                0, f"Name: {s.buildx_builder}\nDriver: docker-container\n"
+                f"Name: {s.buildx_builder}0\n", "", False, 0
+            )
+        if argv[-1] == "{{.HostConfig.Runtime}}":
+            return docker.ProcResult(0, "runsc\n", "", False, 0)
+        return docker.ProcResult(
+            0, '{"harness-egress": {}, "bridge": {}}\n', "", False, 0
+        )
+
+    monkeypatch.setattr(docker, "_run", fake_run)
+    with pytest.raises(SandboxUnavailable, match="do not match"):
+        await docker.ensure_builder()
+
+
+@pytest.mark.parametrize("host_ip,proxy", [
+    ("egress-proxy", "http://egress-proxy:3128"),
+    ("172.30.0.2", "http://172.30.0.3:3128"),
+    ("::1", "http://[::1]:3128"),
+])
+async def test_secure_builder_rejects_non_numeric_or_mismatched_proxy(monkeypatch, host_ip, proxy):
+    s = get_settings()
+    monkeypatch.setattr(s, "allow_insecure_runtime", False, raising=False)
+    monkeypatch.setattr(s, "build_egress_network", "harness-egress", raising=False)
+    monkeypatch.setattr(s, "build_egress_host_ip", host_ip, raising=False)
+    monkeypatch.setattr(s, "build_egress_proxy", proxy, raising=False)
+    with pytest.raises(SandboxUnavailable, match="IPv4|exactly matches"):
+        await docker.ensure_builder()
+
+
+async def test_existing_builder_with_stale_proxy_fails_closed(monkeypatch):
+    s = get_settings()
+    monkeypatch.setattr(s, "allow_insecure_runtime", False, raising=False)
+    monkeypatch.setattr(s, "use_buildx", True, raising=False)
+    monkeypatch.setattr(s, "build_egress_network", "harness-egress", raising=False)
+    monkeypatch.setattr(s, "build_egress_proxy", "http://172.30.0.2:3128", raising=False)
+    monkeypatch.setattr(s, "build_egress_host_ip", "172.30.0.2", raising=False)
+    monkeypatch.setattr(s, "sandbox_runtime", "runsc", raising=False)
+
+    async def fake_run(argv, *, stdin=None, timeout):
+        if argv[:3] == ["docker", "buildx", "inspect"]:
+            return docker.ProcResult(
+                0, f"Name: {s.buildx_builder}\nDriver: docker-container\n"
+                f"Name: {s.buildx_builder}0\n", "", False, 0
+            )
+        if argv[-1] == "{{.HostConfig.Runtime}}":
+            return docker.ProcResult(0, "runsc\n", "", False, 0)
+        if argv[-1] == "{{json .NetworkSettings.Networks}}":
+            return docker.ProcResult(0, '{"harness-egress": {}}\n', "", False, 0)
+        if argv[-1] == "{{json .Config.Env}}":
+            return docker.ProcResult(
+                0, '["HTTP_PROXY=http://user:stale-secret@172.30.0.99:3128",'
+                '"ALL_PROXY=http://other-secret@172.30.0.98:3128"]', "", False, 0)
+        raise AssertionError(argv)
+
+    monkeypatch.setattr(docker, "_run", fake_run)
+    with pytest.raises(SandboxUnavailable, match="proxy configuration is stale") as exc_info:
+        await docker.ensure_builder()
+    message = str(exc_info.value)
+    assert "HTTP_PROXY" in message and "ALL_PROXY" in message
+    assert "stale-secret" not in message and "other-secret" not in message
 
 
 async def test_run_probe_readonly_argv_shape(monkeypatch):
@@ -97,7 +256,7 @@ async def test_run_probe_readonly_argv_shape(monkeypatch):
     assert captured["stdin"] == b"print('x')"
 
 
-async def test_prune_images_removes_oldest(monkeypatch):
+async def test_manual_prune_removes_oldest_without_force(monkeypatch):
     ids = [f"id{i}\t2026-01-0{i}" for i in range(1, 6)]
     removed = []
 
@@ -105,13 +264,35 @@ async def test_prune_images_removes_oldest(monkeypatch):
         if argv[:2] == ["docker", "images"]:
             return docker.ProcResult(exit_code=0, stdout="\n".join(ids), stderr="", timed_out=False, duration_s=0)
         if argv[:2] == ["docker", "rmi"]:
-            removed.append(argv[-1])
+            removed.append(argv)
             return docker.ProcResult(exit_code=0, stdout="", stderr="", timed_out=False, duration_s=0)
         return docker.ProcResult(exit_code=1, stdout="", stderr="", timed_out=False, duration_s=0)
 
     monkeypatch.setattr(docker, "_run", fake_run)
     n = await docker.prune_images(keep=2)
-    assert n == 3 and removed == ["id3", "id4", "id5"]  # newest-first; keep first 2
+    assert n == 3
+    assert removed == [["docker", "rmi", image] for image in ("id3", "id4", "id5")]
+
+
+async def test_cancelled_named_workload_is_removed(monkeypatch):
+    started = asyncio.Event()
+    removed = []
+
+    async def fake_run(argv, *, stdin=None, timeout):
+        if argv[:3] == ["docker", "rm", "-f"]:
+            removed.append(argv[-1])
+            return docker.ProcResult(0, "", "", False, 0)
+        started.set()
+        await asyncio.Future()
+
+    monkeypatch.setattr(docker, "_run", fake_run)
+    task = asyncio.create_task(docker.run_shell("img", "sleep 30", network=False,
+                                                idempotency_key="operation-1"))
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert removed == [docker.container_name("operation-1")]
 
 
 def test_k8s_probe_pod_is_hardened():
@@ -151,7 +332,7 @@ async def test_build_and_probe_activities_with_faked_sandbox(tmp_path, monkeypat
                                  stderr="", timed_out=False, duration_s=0.1)
 
     async def _prune(keep=None):
-        return 0
+        raise AssertionError("successful builds must not prune potentially active images")
 
     monkeypatch.setattr(docker, "runtime_available", _rt)
     monkeypatch.setattr(docker, "image_exists", _exists)

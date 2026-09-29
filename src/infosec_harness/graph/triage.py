@@ -32,6 +32,8 @@ from infosec_harness.domain.models import (
 )
 from infosec_harness.graph.ops import AgentOutcome, Ops
 from infosec_harness.graph.scoring import PreFilterResult, pre_filter, priority_band, priority_score
+from infosec_harness.repo.access import RepositoryAccessError, validate_code_ref
+from infosec_harness.sandbox.canary import parse_control_result
 from infosec_harness.settings import get_settings
 
 
@@ -83,6 +85,55 @@ class TriageState:
         return self.prepared.profile
 
 
+def _validate_context_citations(state: TriageState, context: FindingContext) -> FindingContext:
+    """Ground model-produced references in the immutable snapshot before routing on them."""
+    invalid: list[str] = []
+
+    def one(reference):
+        if reference is None:
+            return None
+        try:
+            return validate_code_ref(state.prepared.snapshot.path, reference)
+        except (OSError, RepositoryAccessError) as exc:
+            invalid.append(f"{reference.file_path}:{reference.start_line}-{reference.end_line}: {exc}")
+            return None
+
+    source = one(context.source)
+    sink = one(context.sink)
+    path = [validated for reference in context.path if (validated := one(reference)) is not None]
+    sanitizers = [validated for reference in context.sanitizers
+                  if (validated := one(reference)) is not None]
+    update = {"source": source, "sink": sink, "path": path, "sanitizers": sanitizers}
+    if invalid:
+        # A fabricated or stale citation cannot support either a path claim or a control claim.
+        update.update({
+            "reachability": Reachability.unknown,
+            "reachability_rationale": (
+                context.reachability_rationale
+                + " Citation validation failed, so reachability remains unknown: "
+                + "; ".join(invalid[:5])
+            ),
+        })
+    return context.model_copy(update=update)
+
+
+def _validate_verdict_citations(state: TriageState, verdict: Verdict) -> Verdict:
+    valid = []
+    invalid = []
+    for reference in verdict.evidence:
+        try:
+            valid.append(validate_code_ref(state.prepared.snapshot.path, reference))
+        except (OSError, RepositoryAccessError) as exc:
+            invalid.append(f"{reference.file_path}:{reference.start_line}-{reference.end_line}: {exc}")
+    if not invalid:
+        return verdict.model_copy(update={"evidence": valid})
+    return verdict.model_copy(update={
+        "evidence": valid,
+        "rationale": verdict.rationale + " Invalid code references were discarded: "
+        + "; ".join(invalid[:5]),
+    })
+
+
 def _finalize(state: TriageState, verdict: Verdict, reachability: Reachability) -> TriageResult:
     score = priority_score(state.finding, verdict, reachability)
     return TriageResult(
@@ -116,7 +167,7 @@ class GatherContext(BaseNode[TriageState, TriageDeps, TriageResult]):
         )
         outcome = await ctx.deps.ops.run_agent("context", prompt, s.deps())
         s.invocations.append(outcome)
-        s.context = outcome.output
+        s.context = _validate_context_citations(s, outcome.output)
         return PlanProbe()
 
 
@@ -124,23 +175,8 @@ class GatherContext(BaseNode[TriageState, TriageDeps, TriageResult]):
 class PlanProbe(BaseNode[TriageState, TriageDeps, TriageResult]):
     async def run(self, ctx: GraphRunContext[TriageState, TriageDeps]) -> AuthorProbe | End[TriageResult]:
         s = ctx.state
-        # Only `unreachable` skips the probe. `neutralized` does NOT: it says untrusted input
-        # reaches the sink and a named control stops it, and whether that control actually
-        # holds is a claim about behaviour -- exactly what the probe is for. Measured: both
-        # Java `fixed` cases took this exit with no build, probe or oracle behind them, and the
-        # same reasoning on a vulnerable case is a false negative, the costliest error here.
-        if s.context and s.context.reachability == Reachability.unreachable and (
-            s.context.source or s.context.sink or s.context.path
-        ):
-            evidence = [r for r in (s.context.sink, s.context.source) if r] + s.context.path
-            verdict = Verdict(
-                label=VerdictLabel.likely_not_exploitable, confidence=0.7,
-                rationale="Context analysis shows the sink is not reachable from untrusted input: "
-                + s.context.reachability_rationale,
-                evidence=evidence[:5],
-            )
-            s.early_exit = "unreachable_by_context"
-            return End(_finalize(s, verdict, Reachability.unreachable))
+        # Context is a model assertion, even when its CodeRefs resolve. Initial policy therefore
+        # does not turn `unreachable` into a safety verdict: continue to the bounded experiment.
         prompt = render_prompt(
             "Plan a targeted unit-test probe and define its deterministic oracle.",
             {"finding": s.finding, "finding_context": s.context}, stack=s.stack(), profile=s.profile(),
@@ -337,6 +373,9 @@ class RepairEnvironment(BaseNode[TriageState, TriageDeps, TriageResult]):
                       source_files=s.source_files),
         )
         s.invocations.append(outcome)
+        if outcome.output == s.spec:
+            s.early_exit = "environment_repair_no_progress"
+            return Decide()
         build = await ctx.deps.ops.build_environment(s.prepared.snapshot, outcome.output)
         if not build.ok:
             # Nothing is retried from here. The prepared environment stays as it was, so the
@@ -368,6 +407,7 @@ class Decide(BaseNode[TriageState, TriageDeps, TriageResult]):
             environment_ready=s.prepared.status == "ready",
             oracle_fired=bool(last_exec and last_exec.oracle_fired),
             precondition_reached=bool(last_exec and last_exec.precondition_reached),
+            sink_returned=bool(last_exec and last_exec.sink_returned),
             last_diagnosis=diagnosis.kind if diagnosis else None,
             reachability=reachability,
             probe_repairs_exhausted=s.attempt > ctx.deps.max_probe_repairs,
@@ -404,7 +444,23 @@ class Decide(BaseNode[TriageState, TriageDeps, TriageResult]):
             s.early_exit = "verdict_contract_unsatisfied"
             return End(_finalize(s, verdict, reachability))
         s.invocations.append(outcome)
-        return End(_finalize(s, outcome.output, reachability))
+        verdict = _validate_verdict_citations(s, outcome.output)
+        controls = parse_control_result(s.prepared.smoke.output_excerpt) if s.prepared.smoke else None
+        if (verdict.label is VerdictLabel.likely_not_exploitable
+                and (diagnosis is None or diagnosis.kind is not DiagnosisKind.valid_negative
+                     or not last_exec or not last_exec.sink_returned
+                     or (controls is not None and not controls.passed))):
+            verdict = Verdict(
+                label=VerdictLabel.inconclusive,
+                confidence=0.0,
+                rationale=("A negative security judgment was rejected because the run did not "
+                           "have both a valid negative execution that completed the sink call "
+                           "and passing versioned positive/negative adapter controls."),
+                inconclusive_reason=InconclusiveReason.conflicting_evidence,
+                evidence=verdict.evidence,
+            )
+            s.early_exit = "unsupported_negative"
+        return End(_finalize(s, verdict, reachability))
 
 
 def build_triage_graph():

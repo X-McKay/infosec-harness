@@ -46,8 +46,10 @@ def wheel(tmp_path_factory) -> Path:
            else [sys.executable, "-m", "build", "--wheel", "--outdir", str(out)])
     try:
         subprocess.run(cmd, cwd=REPO, check=True, capture_output=True, timeout=600)
-    except (FileNotFoundError, subprocess.CalledProcessError) as exc:
+    except FileNotFoundError as exc:
         pytest.skip(f"cannot build a wheel here: {exc}")
+    except subprocess.CalledProcessError as exc:
+        pytest.fail(f"wheel build failed: {exc.stderr.decode(errors='replace')}")
     wheels = list(out.glob("*.whl"))
     assert wheels, "the build produced no wheel"
     return wheels[0]

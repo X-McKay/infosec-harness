@@ -10,7 +10,8 @@ import os
 import re
 from pathlib import Path
 
-from infosec_harness.domain.models import StackFingerprint
+from infosec_harness.domain.models import ComponentProfile, StackFingerprint, SupportStatus
+from infosec_harness.repo.access import walk_files
 
 EXT_LANG = {
     ".py": "python", ".java": "java", ".kt": "java", ".scala": "java",
@@ -212,10 +213,14 @@ def _detect_registries(root: Path) -> list[str]:
     return sorted(hosts)
 
 
-def detect_stack(root: str) -> StackFingerprint:
+def detect_stack(root: str, *, _include_components: bool = True) -> StackFingerprint:
     base = Path(root)
+    # Detection, repository tools, citation validation, and snapshot hashing share one link and
+    # special-file policy. Validate before any manifest reader can follow a hostile symlink.
+    tuple(walk_files(base, skip_dirs=SKIP))
     langs: dict[str, int] = {}
     manifests: set[str] = set()
+    manifest_paths: set[str] = set()
     test_dirs: set[str] = set()
     for dirpath, dirnames, filenames in os.walk(base):
         dirnames[:] = [d for d in dirnames if d not in SKIP]
@@ -228,8 +233,9 @@ def detect_stack(root: str) -> StackFingerprint:
                 langs[EXT_LANG[ext]] = langs.get(EXT_LANG[ext], 0) + 1
             if name in MANIFESTS:
                 manifests.add(name)
+                manifest_paths.add((Path(dirpath) / name).relative_to(base).as_posix())
     build_systems = sorted({BUILD_SYSTEM[m] for m in manifests if m in BUILD_SYSTEM})
-    return StackFingerprint(
+    stack = StackFingerprint(
         languages=dict(sorted(langs.items(), key=lambda kv: (-kv[1], kv[0]))),
         manifests=sorted(manifests),
         build_systems=build_systems,
@@ -238,6 +244,42 @@ def detect_stack(root: str) -> StackFingerprint:
         test_dirs=sorted(test_dirs),
         java_release=_declared_release(base),
     )
+    if _include_components:
+        stack = stack.model_copy(update={"components": _component_profiles(base, manifest_paths)})
+    return stack
+
+
+def _component_profiles(root: Path, manifest_paths: set[str]) -> list[ComponentProfile]:
+    roots = sorted({Path(path).parent.as_posix() for path in manifest_paths}) or ["."]
+    profiles: list[ComponentProfile] = []
+    supported_languages = {"python", "java", "javascript", "typescript", "perl"}
+    for relative in roots[:256]:
+        component_root = root if relative == "." else root / relative
+        component = detect_stack(str(component_root), _include_components=False)
+        manifests = sorted(
+            Path(path).relative_to(Path(relative)).as_posix()
+            for path in manifest_paths
+            if relative == "." or Path(path).is_relative_to(Path(relative))
+        )
+        languages = set(component.languages)
+        if not languages:
+            support = SupportStatus.not_checked
+        elif languages <= supported_languages:
+            # Compatibility is not claimed from filename detection alone. Adapters and fixtures
+            # can promote a concrete slice to `tested`; discovery starts conservatively.
+            support = SupportStatus.experimental
+        else:
+            support = SupportStatus.unsupported
+        profiles.append(ComponentProfile(
+            root=relative,
+            languages=component.languages,
+            manifest_paths=manifests,
+            build_systems=component.build_systems,
+            test_frameworks=component.test_frameworks,
+            java_release=component.java_release,
+            support=support,
+        ))
+    return profiles
 
 
 def _declared_release(root: Path) -> int | None:

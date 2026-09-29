@@ -15,10 +15,15 @@ const badgeVariants = cva(
       },
     },
     defaultVariants: { variant: "default" },
-  }
+  },
 );
 
-export function Badge({ className, variant, ...props }:
-  React.HTMLAttributes<HTMLDivElement> & VariantProps<typeof badgeVariants>) {
-  return <div className={cn(badgeVariants({ variant }), className)} {...props} />;
+export function Badge({
+  className,
+  variant,
+  ...props
+}: React.HTMLAttributes<HTMLDivElement> & VariantProps<typeof badgeVariants>) {
+  return (
+    <div className={cn(badgeVariants({ variant }), className)} {...props} />
+  );
 }

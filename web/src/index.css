@@ -3,20 +3,161 @@
 @tailwind utilities;
 
 :root {
-  --background: 0 0% 100%; --foreground: 222 47% 11%;
-  --card: 0 0% 100%; --card-foreground: 222 47% 11%;
-  --primary: 222 47% 31%; --primary-foreground: 210 40% 98%;
-  --muted: 210 40% 96%; --muted-foreground: 215 16% 47%;
-  --destructive: 0 72% 51%; --destructive-foreground: 210 40% 98%;
-  --border: 214 32% 91%; --input: 214 32% 91%; --ring: 222 47% 31%; --radius: 0.5rem;
+  --background: 0 0% 100%;
+  --foreground: 222 47% 11%;
+  --card: 0 0% 100%;
+  --card-foreground: 222 47% 11%;
+  --primary: 222 47% 31%;
+  --primary-foreground: 210 40% 98%;
+  --muted: 210 40% 96%;
+  --muted-foreground: 215 16% 47%;
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 210 40% 98%;
+  --border: 214 32% 91%;
+  --input: 214 32% 91%;
+  --ring: 222 47% 31%;
+  --radius: 0.5rem;
 }
 .dark {
-  --background: 222 47% 8%; --foreground: 210 40% 96%;
-  --card: 222 47% 11%; --card-foreground: 210 40% 96%;
-  --primary: 210 40% 90%; --primary-foreground: 222 47% 11%;
-  --muted: 217 33% 17%; --muted-foreground: 215 20% 65%;
-  --destructive: 0 63% 45%; --destructive-foreground: 210 40% 98%;
-  --border: 217 33% 20%; --input: 217 33% 20%; --ring: 213 27% 70%;
+  --background: 222 47% 8%;
+  --foreground: 210 40% 96%;
+  --card: 222 47% 11%;
+  --card-foreground: 210 40% 96%;
+  --primary: 210 40% 90%;
+  --primary-foreground: 222 47% 11%;
+  --muted: 217 33% 17%;
+  --muted-foreground: 215 20% 65%;
+  --destructive: 0 63% 45%;
+  --destructive-foreground: 210 40% 98%;
+  --border: 217 33% 20%;
+  --input: 217 33% 20%;
+  --ring: 213 27% 70%;
 }
-* { border-color: hsl(var(--border)); }
-body { background: hsl(var(--background)); color: hsl(var(--foreground)); font-family: ui-sans-serif, system-ui, sans-serif; }
+* {
+  border-color: hsl(var(--border));
+}
+body {
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+:root {
+  --background: 240 12% 98%;
+  --foreground: 240 10% 12%;
+  --card: 0 0% 100%;
+  --card-foreground: 240 10% 12%;
+  --primary: 242 69% 58%;
+  --primary-foreground: 0 0% 100%;
+  --muted: 240 8% 94%;
+  --muted-foreground: 240 5% 43%;
+  --border: 240 8% 88%;
+  --input: 240 8% 88%;
+  --ring: 242 69% 58%;
+}
+.dark {
+  --background: 240 8% 8%;
+  --foreground: 240 8% 93%;
+  --card: 240 7% 10%;
+  --card-foreground: 240 8% 93%;
+  --primary: 242 85% 75%;
+  --primary-foreground: 240 8% 8%;
+  --muted: 240 6% 15%;
+  --muted-foreground: 240 5% 64%;
+  --border: 240 5% 21%;
+  --input: 240 5% 21%;
+  --ring: 242 85% 75%;
+}
+body {
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+  font-size: 14px;
+}
+h1 {
+  font-size: 1.65rem;
+  font-weight: 600;
+  letter-spacing: -0.035em;
+}
+.eyebrow {
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-bottom: 0.5rem;
+}
+.sidebar {
+  background: hsl(var(--card));
+}
+.nav-link {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  border-radius: 0.4rem;
+  padding: 0.6rem 0.75rem;
+  font-size: 13px;
+  color: hsl(var(--muted-foreground));
+  white-space: nowrap;
+}
+.nav-link:hover,
+.nav-link.selected {
+  color: hsl(var(--foreground));
+  background: hsl(var(--muted));
+}
+.nav-link.selected svg {
+  color: hsl(var(--primary));
+}
+.appearance-control {
+  width: 8rem;
+}
+.field {
+  border: 1px solid hsl(var(--input));
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  border-radius: 0.4rem;
+  padding: 0.5rem 0.7rem;
+  font-size: 13px;
+}
+.empty {
+  color: hsl(var(--muted-foreground));
+  text-align: center;
+  padding: 3rem 1rem;
+}
+.data-table {
+  width: 100%;
+  font-size: 12px;
+  text-align: left;
+}
+.data-table th {
+  color: hsl(var(--muted-foreground));
+  font-weight: 500;
+}
+.data-table th,
+.data-table td {
+  padding: 0.7rem 0.5rem;
+  border-bottom: 1px solid hsl(var(--border));
+}
+*:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 3px;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+@media (max-width: 767px) {
+  .sidebar {
+    flex-wrap: wrap;
+  }
+  .appearance-control {
+    margin-left: auto;
+  }
+  .sidebar nav {
+    flex-basis: 100%;
+    order: 3;
+    flex-wrap: wrap;
+    overflow-x: visible;
+  }
+}

@@ -11,10 +11,9 @@
 # it needed the validator.
 #
 # The regression pair at the end is the shape the validator does NOT catch. `verdict_violations`
-# reasons over VerdictFacts, which carries `precondition_reached` and not `sink_returned`, and
-# over facts that exist rather than evidence that is missing. A zero-test run and an aborted run
-# both present as "nothing failed", and both are admissible to the validator as long as the
-# facts are shaped right. Nothing but the agent stands between those and a safe-looking verdict.
+# reasons over VerdictFacts, including both `precondition_reached` and `sink_returned`. A
+# zero-test run and an aborted run both present as "nothing failed", and the contract rejects
+# either as negative evidence before model prose can turn missing execution into safety.
 #
 # Inconclusive is the plurality label (6 of 9), which is deliberate: it is the answer the agent
 # must not avoid, and no constant answer comes near the 0.85 threshold.
@@ -44,6 +43,7 @@ cases:
                         sink_returned: true}
       diagnosis: {kind: valid_negative, explanation: "token stayed bound"}
     facts: {environment_ready: true, oracle_fired: false, precondition_reached: true,
+            sink_returned: true,
             last_diagnosis: valid_negative, reachability: reachable}
     expected: likely_not_exploitable
   - name: inconclusive_env
@@ -59,9 +59,8 @@ cases:
     category: capability
     scenarios: [RISK-SEC-003]
     # The corpus `unreachable` case: healthcheck runs a constant query through a private helper,
-    # so no probe was ever built and environment_ready is false. "No probe ran" is not the same
-    # as "no answer" — cited code showing untrusted input cannot reach the sink is a verdict, and
-    # the contract admits it as the one non-inconclusive label without an execution.
+    # so no probe was ever built and environment_ready is false. The static claim is retained as
+    # evidence, but without an approved corroborated-static policy it cannot become a negative.
     payload:
       finding: {title: "SQL execution in healthcheck", cwe: "CWE-89", severity: medium,
                 file_path: app.py, start_line: 12}
@@ -76,7 +75,7 @@ cases:
       diagnosis: null
     facts: {environment_ready: false, oracle_fired: false, precondition_reached: false,
             reachability: unreachable}
-    expected: likely_not_exploitable
+    expected: inconclusive
   - name: probe_unrepairable_after_budget
     category: capability
     scenarios: [RISK-SEC-003, RISK-OPS-001]

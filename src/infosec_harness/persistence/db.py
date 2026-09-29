@@ -42,6 +42,7 @@ class Batch(Base):
     status: Mapped[str] = mapped_column(String(32), default="running")
     workflow_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     finding_count: Mapped[int] = mapped_column(Integer, default=0)
+    submission: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     runs: Mapped[list[TriageRun]] = relationship(back_populates="batch")
 
 
@@ -71,6 +72,9 @@ class TriageRun(Base):
     total_tokens: Mapped[int] = mapped_column(Integer, default=0)
     cache_read_tokens: Mapped[int] = mapped_column(Integer, default=0)
     latency_s: Mapped[float] = mapped_column(Float, default=0.0)
+
+    telemetry: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    evidence: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     batch: Mapped[Batch] = relationship(back_populates="runs")
     invocations: Mapped[list[AgentInvocation]] = relationship(back_populates="run")
@@ -111,6 +115,31 @@ class VerdictReview(Base):
     override_label: Mapped[str | None] = mapped_column(String(32), nullable=True)
     reason: Mapped[str] = mapped_column(Text, default="")
     run: Mapped[TriageRun] = relationship(back_populates="review")
+
+
+class BudgetLedger(Base):
+    __tablename__ = "budget_ledgers"
+    root_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    revision: Mapped[int] = mapped_column(Integer, default=0)
+    state: Mapped[dict] = mapped_column(JSON)
+
+
+class RunEvent(Base):
+    """Idempotent activity-written state transitions; legacy runs have none."""
+    __tablename__ = "run_events"
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("triage_runs.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    phase: Mapped[str] = mapped_column(String(48))
+    detail: Mapped[str] = mapped_column(Text, default="")
+
+
+class ReviewHistory(Base):
+    __tablename__ = "review_history"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("triage_runs.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    record: Mapped[dict] = mapped_column(JSON)
 
 
 class AdoSync(Base):

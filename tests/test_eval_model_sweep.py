@@ -73,7 +73,9 @@ async def test_the_comparison_can_be_asked_for_after_the_fact(capsys):
     await run_experiment(AGENT, model="haiku")
     capsys.readouterr()
 
-    found = await compare_models_for(AGENT)
+    # The test worktree is intentionally dirty, so this is an exploratory view rather than a
+    # release comparison. Strict mode rejects dirty source snapshots.
+    found = await compare_models_for(AGENT, descriptive=True)
     assert {row.model_tier for row in found} >= {"sonnet", "haiku"}
     out = capsys.readouterr().out
     assert "accuracy" in out and "$/case" in out
@@ -85,7 +87,7 @@ async def test_only_the_latest_run_per_model_is_compared(capsys):
     newest = await run_experiment(AGENT, model="sonnet")
     capsys.readouterr()
 
-    found = await compare_models_for(AGENT)
+    found = await compare_models_for(AGENT, descriptive=True)
     sonnet = [row for row in found if row.model_tier == "sonnet"]
     assert len(sonnet) == 1
     assert sonnet[0].id == newest

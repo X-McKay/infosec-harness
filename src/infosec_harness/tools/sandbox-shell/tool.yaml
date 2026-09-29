@@ -30,7 +30,8 @@ tools:
 constraints:
   - Commands never run on the worker host; execution is always inside a container.
   - The repository is not mounted, so a command cannot read the source under triage.
-  - Build-time egress is limited to the registry allowlist; probe containers have none.
+  - Diagnostic containers and probe containers have no external network; dependency traffic is
+    reserved for the separately controlled build boundary.
   - The container is discarded after the call; no state carries to the next one.
 risks:
   # The control this depends on has no runtime evidence yet; see the risk assessments.

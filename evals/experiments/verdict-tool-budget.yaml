@@ -1,0 +1,22 @@
+version: "1"
+experiment: verdict-tool-budget-example
+subject: verdict
+hypothesis: A lower unused tool-call ceiling preserves verdict quality while tightening the brake.
+backend_profile: stub
+variable: metadata.budgets.max_tool_calls
+candidates: [3, 4]
+repetitions: 1
+dataset:
+  calibration:
+    - valid_positive_sqli
+    - valid_negative_parameterized
+    - no_probe_was_ever_planned_on_reachable_code
+  held_out:
+    - oracle_fired_on_a_defective_probe
+    - a_runner_that_executed_no_tests_is_not_a_negative
+constraints:
+  maximum_trials: 2
+  maximum_duration_seconds: 300
+  maximum_model_requests: 300
+  minimum_task_success_rate: 0.30
+promotion: review_required

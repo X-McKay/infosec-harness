@@ -1,16 +1,94 @@
 # Local setup
 
+The supported entry point is `./dev`. It is safe to run repeatedly and keeps compose resources
+scoped to the absolute checkout path, which allows multiple worktrees to run without sharing
+volumes or fixed host ports. The default profile is intentionally strict: it requires an actual
+`runsc` execution probe before starting the stack. A runtime name in Docker's inventory alone is
+not accepted as isolation evidence.
+
+## Quickstart
+
+The managed reference targets are Apple Silicon macOS and Debian/Ubuntu x86-64 Linux.
+The launcher downloads checksum-verified mise and Lima, installs pinned Python/uv/Node/just,
+and provisions a checkout-owned Linux VM with Docker and runsc. macOS uses VZ; Linux uses
+QEMU/KVM and may request sudo to install missing QEMU packages. Hardware virtualization,
+network access for initial downloads, and roughly 8 GiB of available VM memory are required.
+Host Docker is unnecessary, and host Docker contexts, daemon settings and shell profiles are
+not changed. Other Linux distributions need their QEMU prerequisite installed separately.
+
+Versions and download hashes live in [`.dev-tools/versions.env`](../.dev-tools/versions.env),
+`.mise.toml`, and `deploy/dev-runtime/lima.yaml`. Managed tools, downloads and configuration live
+beneath the ignored `.harness/` directory. VM state uses a short per-checkout directory under
+`~/.cache/ih/` because macOS limits UNIX socket path lengths. `.harness/runtime-home` records
+its exact location. Platform support remains subject to the acceptance limits below.
+```bash
+./dev
+./dev status
+./dev logs api
+./dev reload  # restart API and worker after backend edits
+./dev stop
+```
+
+The generated `.harness/dev.env` records the per-checkout compose identity and loopback ports.
+Existing project identity, ports, and local service credentials are preserved. This file
+contains generated PostgreSQL/RustFS S3 credentials, is mode 0600, and is ignored by Git. The first run
+may download dependencies and images; a warm run reuses them. If startup is interrupted, rerun
+`./dev`; inspect `./dev status` and `./dev logs <service>` for bounded failure details. `stop`
+preserves local findings and volumes. No destructive reset is part of the launcher.
+
+The full compose profile uses `docker-compose.dev.yml`: API and worker source are mounted
+read-only and installed editable inside the image, while the web container runs Vite against the
+mounted `web/` tree. Backend edits take effect after `./dev reload` restarts the API/worker processes; frontend edits use
+Vite's normal hot reload. The packaged nginx image remains available through the base compose
+file for deployment-oriented checks.
+
+`./dev smoke` repeats the API readiness and actual sandbox fixture checks. It does not infer model
+quality from stub inference. `./dev doctor` reports host/runtime readiness without starting
+services. Provider credentials are optional and are never required by the default profile.
+
+### Offline component profile
+
+When virtualization or the required runtime is unavailable:
+
+```bash
+./dev --profile offline
+```
+
+This installs the locked Python dependencies and runs agent validation with stub inference. It
+does not check the real API, Temporal, web, persistence integration, or sandbox boundary. Keep
+that distinction in evidence reports. Do not set `HARNESS_ALLOW_INSECURE_RUNTIME=true` to turn a
+failed full profile into a green isolation result; that override is for explicitly labeled local
+development only.
+
+### Current onboarding evidence limits
+
+Clean-host macOS/Linux acceptance, real build/probe isolation, and warm restart are tracked
+in [IMPLEMENTATION_VALIDATION.md](IMPLEMENTATION_VALIDATION.md). A managed VM configuration
+is not proof that these gates passed. The offline profile and browser fixture review do not
+substitute for real execution evidence.
+
+### Generated development skills
+
+Author development skills under `dev-skills/`. `just generated-sync` copies them to both
+`.agents/skills/` (Codex discovery) and `.claude/skills/` (Claude discovery); `just generated-check`
+and CI verify drift without rewriting files. The packaged runtime skills under
+`src/infosec_harness/skills/` are a separate source of truth.
+
 How to run the harness on your own machine, including a live-model run against the test
 endpoint. Day-to-day work lands on `develop`; `main` is what has been released.
 
-## Prerequisites
+## Manual setup prerequisites
+
+The following sections are optional manual/operator paths; `./dev` manages the reference
+development environment. Real operational submissions require Temporal. `harness submit
+--local` is restricted to stub demonstrations; controlled component evals may run locally.
 
 - Python 3.12 and [`uv`](https://docs.astral.sh/uv/)
 - `just` (task runner) — optional but assumed below
 - Docker (for the full stack and for real sandboxed builds/probes)
 - Node 22 + npm (only for the web app)
-- gVisor (`runsc`) for real probe isolation — see [Sandbox](#sandbox-gvisor). Without it,
-  builds/probes fail closed unless you set `HARNESS_ALLOW_INSECURE_RUNTIME=true`.
+- gVisor (`runsc`) for real probe isolation — see [Sandbox](#sandbox-gvisor). The managed
+  launcher provisions and verifies it; without it, builds/probes fail closed.
 
 ## 1. Offline smoke (no credentials, no Docker)
 
@@ -36,9 +114,13 @@ and — because `TemporalOps` set no retry policy and so inherited Temporal's *u
 retries — it retried forever. The test hung on any machine, indefinitely. Both the double and
 the retry policy are fixed; it now passes in seconds.
 
-## 2. Live-model run against the test endpoint
+## 2. Historical live-model validation
 
-The harness talks to any OpenAI-spec endpoint. For testing use **`llm.almckay.io`**, which
+The following endpoint instructions and report are historical validation material, not a current
+onboarding or acceptance path. They do not establish that a live model has been tested on the
+managed launcher.
+
+The harness supports configured OpenAI-compatible chat-completions profiles. For testing use **`llm.almckay.io`**, which
 needs **no API key**. Select the OpenAI-spec ("gateway") backend and turn on live mode:
 
 ```bash
@@ -62,15 +144,14 @@ uv run harness eval run probe-diagnosis
 Results from this run, and the problems it exposed, are written up in
 [`LIVE_VALIDATION.md`](LIVE_VALIDATION.md).
 
-Under a live model these produce real numbers where stub mode shows placeholders:
-per-class accuracy, the false-negative rate on truly-exploitable cases, and — from the
-trajectory evaluators — the rate at which `context` / `probe-author` / `recon` /
-`env-planner` actually call the expected tools and load the matching skill.
+The historical report records model-dependent measurements that stub mode cannot provide,
+including per-class accuracy and trajectory tool/skill evocation. Treat those measurements as
+historical and descriptive; they are not current managed-runtime acceptance evidence.
 
 > If a model tier resolves to a name the endpoint doesn't serve, edit `model_catalog` in
 > `config/models.yaml` (the `gateway:` column) to the model ids `llm.almckay.io` exposes,
-> then re-run. A quick way to see what a run sent/received is the OTel trace UI (below) or
-> the per-agent trace in the web finding-detail view.
+> then re-run. The OTel trace UI and finding detail expose operational metadata; prompts and
+> completions are excluded from trace exports.
 
 ### Bedrock instead (optional)
 
@@ -85,13 +166,16 @@ enabled (add a `us.`/`global.` inference-profile prefix if required).
 ## 3. Full stack
 
 ```bash
-docker compose up --build
+./dev
 ```
 
-Brings up Postgres, Temporal (+ UI at :8233), MinIO (:9001), an OpenTelemetry collector +
-Jaeger (:16686), the worker, the API (:8000, docs at `/docs`), and the web app (:8080).
-Set the same `HARNESS_MODEL_MODE`/`HARNESS_MODEL_BACKEND` env before `up` for a live stack;
-default is stub, so it also runs with nothing configured.
+The managed profile brings up Postgres, Temporal (+ UI at :8233), RustFS (an S3-compatible
+service addressed as `minio` inside compose, console at :9001), an OpenTelemetry collector +
+Jaeger (:16686), the worker, the API (:8000, docs at `/docs`), and the web app (:8080). It
+generates PostgreSQL and S3 credentials in `.harness/dev.env`; default inference is stub.
+Use `./dev status`, `./dev logs <service>`, `./dev smoke`, and `./dev stop` for lifecycle
+operations. The base `docker-compose.yml` remains an advanced manual path and is not equivalent
+to the verified managed setup.
 
 ## 4. Database migrations
 
@@ -113,24 +197,26 @@ understands. If a local `.harness/demo.db` fails with *no such column*, run `jus
 
 ## Sandbox (gVisor) {#sandbox-gvisor}
 
-Real builds and probes run under gVisor. Install `runsc` and register it as a Docker
-runtime (see the gVisor docs), then confirm:
+Untrusted BuildKit build steps and probes run under gVisor. Trusted infrastructure containers
+use Docker's `runc`. The managed launcher provisions `runsc` and verifies an actual execution
+probe before starting the full profile. Its build egress network uses a static numeric proxy
+address because the runsc network stack cannot use Docker's embedded DNS on the internal bridge.
+The generated `HARNESS_BUILD_EGRESS_HOST_IP` and matching `HARNESS_BUILD_EGRESS_PROXY` must stay
+numeric and aligned.
+
+For an advanced manual setup, install `runsc` and register it as a Docker runtime (see the
+gVisor docs), then confirm:
 
 ```bash
 docker info --format '{{json .Runtimes}}'   # must list "runsc"
 ```
 
-- Builds and probes **fail closed** if `runsc` is missing. For local development without
-  gVisor, set `HARNESS_ALLOW_INSECURE_RUNTIME=true` (weaker isolation — dev only).
+- Builds and probes **fail closed** if `runsc` is missing.
 - The build step uses a buildx builder (`harness-gvisor`, created automatically by the
   worker) so untrusted install scripts are gVisor-contained; build egress is pinned to the
   registry allowlist via the `egress-proxy` service in compose.
 - Kubernetes manifests for the isolated probe namespace are under `deploy/k8s/`.
 
-**gVisor has now run, on a Mac, via a Linux VM.** `runsc` inside a dedicated podman
-machine with a `docker`->podman shim; the harness's fail-closed check passes on the real
-runtime with no `HARNESS_ALLOW_INSECURE_RUNTIME`. The Python corpus scores 90% with a 25%
-false-negative rate on exploitable cases — see
-[`LIVE_VALIDATION.md`](LIVE_VALIDATION.md) for the setup and the four defects it found.
-Still outstanding: **build-time** containment (buildah does not persist layers under
-runsc, so builds run under crun), and the production `docker` + `runsc` path.
+The historical live-model and podman-based runtime notes remain in
+[`LIVE_VALIDATION.md`](LIVE_VALIDATION.md) as historical evidence only. They do not describe
+the managed launcher or establish clean-host acceptance.

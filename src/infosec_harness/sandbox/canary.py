@@ -27,11 +27,60 @@ this gate's job.
 """
 from __future__ import annotations
 
+import json
 import re
+from dataclasses import dataclass
 
 # Deliberately distinct from any finding's oracle nonce: this proves the transport, and must
 # never be mistaken for evidence about a vulnerability.
 CANARY_NONCE = "harness-canary-0000"
+NEGATIVE_CANARY_NONCE = "harness-canary-negative-0000"
+CONTROL_RESULT_PREFIX = "HARNESS_CONTROL_RESULT::"
+CONTROL_PROTOCOL = "unit-probe-controls/v1"
+
+
+@dataclass(frozen=True)
+class ControlResult:
+    """Controls executed through the same selector and adapter as a real probe."""
+
+    positive: bool
+    negative: bool
+    status: str = "checked"
+    version: str = CONTROL_PROTOCOL
+
+    @property
+    def passed(self) -> bool:
+        return self.status == "checked" and self.positive and self.negative
+
+
+def encode_control_result(result: ControlResult) -> str:
+    payload = {
+        "negative": result.negative,
+        "positive": result.positive,
+        "status": result.status,
+        "version": result.version,
+    }
+    return CONTROL_RESULT_PREFIX + json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
+def parse_control_result(text: str) -> ControlResult | None:
+    """Read the last control record; old histories without one remain explicitly legacy."""
+    for line in reversed((text or "").splitlines()):
+        if not line.startswith(CONTROL_RESULT_PREFIX):
+            continue
+        try:
+            value = json.loads(line.removeprefix(CONTROL_RESULT_PREFIX))
+            if value.get("version") != CONTROL_PROTOCOL:
+                return None
+            return ControlResult(
+                positive=value.get("positive") is True,
+                negative=value.get("negative") is True,
+                status=str(value.get("status") or ""),
+                version=str(value["version"]),
+            )
+        except (AttributeError, KeyError, TypeError, ValueError):
+            return None
+    return None
 
 _CLASS_SELECTOR = re.compile(r"(?:-Dtest=|--tests\s+['\"]?\*?)([A-Za-z_$][\w$]*)")
 
@@ -46,16 +95,18 @@ def selector_class_name(test_command: str, default: str = "HarnessProbeTest") ->
     return match.group(1) if match else default
 
 
-def _python(nonce: str) -> tuple[str, str]:
+def _python(nonce: str, *, oracle: bool) -> tuple[str, str]:
+    oracle_line = f'    print("HARNESS_ORACLE::{nonce}", flush=True)\n' if oracle else ""
     return "tests/test_harness_canary.py", f'''# Written by the harness. Proves a test we author is discovered and its stdout is heard.
 def test_harness_canary():
     print("HARNESS_PRECONDITION::{nonce}", flush=True)
     print("HARNESS_SINK_RETURNED::{nonce}", flush=True)
-    print("HARNESS_ORACLE::{nonce}", flush=True)
+{oracle_line.rstrip()}
 '''
 
 
-def _perl(nonce: str) -> tuple[str, str]:
+def _perl(nonce: str, *, oracle: bool) -> tuple[str, str]:
+    oracle_line = f'print "HARNESS_ORACLE::{nonce}\\n";\n' if oracle else ""
     return "t/harness_canary.t", f'''use strict;
 use warnings;
 use Test::More tests => 1;
@@ -63,26 +114,29 @@ use Test::More tests => 1;
 # Written by the harness. Proves a test we author is discovered and its stdout is heard.
 print "HARNESS_PRECONDITION::{nonce}\\n";
 print "HARNESS_SINK_RETURNED::{nonce}\\n";
-print "HARNESS_ORACLE::{nonce}\\n";
+{oracle_line.rstrip()}
 ok(1, 'canary ran');
 '''
 
 
-def _javascript(nonce: str) -> tuple[str, str]:
+def _javascript(nonce: str, *, oracle: bool) -> tuple[str, str]:
+    oracle_line = f"  console.log('HARNESS_ORACLE::{nonce}');\n" if oracle else ""
     return "harness_canary.test.js", f'''// Written by the harness. Proves a test we author is discovered and its stdout is heard.
 test('harness canary', () => {{
   console.log('HARNESS_PRECONDITION::{nonce}');
   console.log('HARNESS_SINK_RETURNED::{nonce}');
-  console.log('HARNESS_ORACLE::{nonce}');
+{oracle_line.rstrip()}
 }});
 '''
 
 
-def _java(nonce: str, class_name: str) -> tuple[str, str]:
+def _java(nonce: str, class_name: str, *, oracle: bool) -> tuple[str, str]:
     # No package declaration: a package would have to match the directory, and the default
     # package is discovered by every Surefire provider. JUnit 5's annotation is used because
     # that is what the current recipes assume; when the project is JUnit 4 this fails to
     # *compile*, and the error names `org.junit.jupiter` as missing -- which is the diagnosis.
+    oracle_line = (f'        System.out.println("HARNESS_ORACLE::{nonce}");\n'
+                   if oracle else "")
     return f"src/test/java/{class_name}.java", f'''import org.junit.jupiter.api.Test;
 
 // Written by the harness. Proves a test we author is discovered and its stdout is heard.
@@ -91,13 +145,14 @@ public class {class_name} {{
     public void harnessCanary() {{
         System.out.println("HARNESS_PRECONDITION::{nonce}");
         System.out.println("HARNESS_SINK_RETURNED::{nonce}");
-        System.out.println("HARNESS_ORACLE::{nonce}");
+{oracle_line.rstrip()}
     }}
 }}
 '''
 
 
 def canary_for(language: str, test_command: str, *, nonce: str = CANARY_NONCE,
+               oracle: bool = True,
                ) -> tuple[str, str] | None:
     """`(test_file_path, content)` for a language, or None when we cannot write one.
 
@@ -106,13 +161,13 @@ def canary_for(language: str, test_command: str, *, nonce: str = CANARY_NONCE,
     """
     lang = (language or "").lower()
     if lang == "python":
-        return _python(nonce)
+        return _python(nonce, oracle=oracle)
     if lang == "perl":
-        return _perl(nonce)
+        return _perl(nonce, oracle=oracle)
     if lang in ("javascript", "typescript"):
-        return _javascript(nonce)
+        return _javascript(nonce, oracle=oracle)
     if lang in ("java", "kotlin"):
-        return _java(nonce, selector_class_name(test_command))
+        return _java(nonce, selector_class_name(test_command), oracle=oracle)
     return None
 
 

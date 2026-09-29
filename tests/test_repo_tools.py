@@ -219,6 +219,19 @@ def test_a_repository_with_no_manifest_says_so_rather_than_saying_nothing(repo):
     assert "0 found" in out or "none found" in out
 
 
+def test_repo_digest_does_not_follow_an_external_manifest_symlink(tmp_path):
+    outside = tmp_path / "secret-package.json"
+    outside.write_text('{"token":"must-not-leak"}')
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "package.json").symlink_to(outside)
+
+    out = cap.repo_digest(ctx(repo))
+
+    assert "must-not-leak" not in out
+    assert "0 found" in out or "none found" in out
+
+
 def test_the_digest_never_executes_or_imports_what_it_reads(repo):
     """The snapshot holds the unfixed vulnerability under triage, so this is load-bearing."""
     (repo / "conftest.py").write_text("raise SystemExit('this must never run')\n")

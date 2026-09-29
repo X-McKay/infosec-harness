@@ -25,20 +25,28 @@ def test_exploitable_valid_positive_ok():
     assert verdict_violations(v(VerdictLabel.potentially_exploitable), facts) == []
 
 
-def test_not_exploitable_needs_valid_negative_or_unreachable():
+def test_not_exploitable_needs_a_complete_valid_negative():
     facts = VerdictFacts(environment_ready=True, oracle_fired=False, precondition_reached=False)
     assert verdict_violations(v(VerdictLabel.likely_not_exploitable), facts)
-    facts_ok = VerdictFacts(environment_ready=True, oracle_fired=False, precondition_reached=True,
-                            last_diagnosis=DiagnosisKind.valid_negative)
+    facts_ok = VerdictFacts(
+        environment_ready=True,
+        oracle_fired=False,
+        precondition_reached=True,
+        sink_returned=True,
+        last_diagnosis=DiagnosisKind.valid_negative,
+    )
     assert verdict_violations(v(VerdictLabel.likely_not_exploitable), facts_ok) == []
 
+    did_not_return = facts_ok.model_copy(update={"sink_returned": False})
+    assert verdict_violations(v(VerdictLabel.likely_not_exploitable), did_not_return)
 
-def test_unreachable_negative_needs_evidence():
+
+def test_static_unreachable_is_not_a_negative_execution():
     facts = VerdictFacts(environment_ready=False, reachability=Reachability.unreachable)
     assert verdict_violations(v(VerdictLabel.likely_not_exploitable), facts)  # no evidence
     assert verdict_violations(
         v(VerdictLabel.likely_not_exploitable, evidence=[CodeRef(file_path="a", start_line=1, end_line=2)]),
-        facts) == []
+        facts)
 
 
 def test_inconclusive_needs_reason_and_env_rule():
@@ -956,8 +964,8 @@ def test_an_honest_probe_in_either_language_is_accepted():
     assert _skipping_probe_violations(js) == []
 
 
-def test_a_neutralized_claim_alone_does_not_support_a_safe_verdict():
-    """`unreachable` supports safety on its own; `neutralized` must not.
+def test_a_static_claim_alone_does_not_support_a_safe_verdict():
+    """Neither `unreachable` nor `neutralized` is a valid negative execution.
 
     It says untrusted input arrives and a control stops it — a claim about behaviour that only
     a probe can support. If it were accepted here, a verdict could assert safety on reasoning
@@ -968,7 +976,7 @@ def test_a_neutralized_claim_alone_does_not_support_a_safe_verdict():
     def case(reachability):
         return {"facts": {"reachability": reachability}, "payload": {}}
 
-    assert not is_unevidenced_safe("verdict", case("unreachable"), "likely_not_exploitable")
+    assert is_unevidenced_safe("verdict", case("unreachable"), "likely_not_exploitable")
     assert is_unevidenced_safe("verdict", case("neutralized"), "likely_not_exploitable"), (
         "a neutralized claim with no probe behind it is an unevidenced safe verdict"
     )

@@ -4,7 +4,7 @@ Every container runs with the configured OCI runtime (``runsc`` = gVisor by defa
 as a non-root user, with all capabilities dropped, no new privileges, pid/memory/cpu
 limits, a read-only root filesystem, and a wall-clock timeout. Probe containers have **no
 network**. Builds fail closed when gVisor is unavailable (unless explicitly overridden),
-validate the base image against an allowlist, and pin egress to the repo-derived registry
+validate the base image against an allowlist, and pin egress to the operator-configured registry
 allowlist via the proxy (D14). Untrusted install steps run on a buildx builder so they are
 gVisor-contained like probes.
 
@@ -15,14 +15,21 @@ replaced by a Job-based runner (phase 5) behind the same functions.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import csv
 import hashlib
+import io
+import ipaddress
+import json
 import os
 import re
 import shlex
 import tempfile
 import time
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from infosec_harness.domain.models import EnvironmentSpec
 from infosec_harness.settings import get_settings
@@ -45,6 +52,9 @@ HOME_STAGE = "/opt/home"
 WORK = "/work/repo"
 WORK_HOME = "/work/home"
 IMAGE_LABEL = "harness.image=target"
+IMAGE_FORMAT_VERSION = "2"  # Writable build staging from immutable source snapshots.
+_PROXY_ENV = ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy")
+_NO_PROXY = "localhost,127.0.0.1"
 
 
 @dataclass
@@ -64,17 +74,52 @@ async def _run(argv: list[str], *, stdin: bytes | None = None, timeout: float) -
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
+    async def drain(stream: asyncio.StreamReader) -> bytes:
+        chunks: deque[bytes] = deque()
+        size = 0
+        while chunk := await stream.read(16_384):
+            chunks.append(chunk)
+            size += len(chunk)
+            while size > MAX_CAPTURE and chunks:
+                excess = size - MAX_CAPTURE
+                if excess >= len(chunks[0]):
+                    size -= len(chunks.popleft())
+                else:
+                    chunks[0] = chunks[0][excess:]
+                    size -= excess
+        return b"".join(chunks)
+
+    async def feed() -> None:
+        if stdin is not None and proc.stdin is not None:
+            proc.stdin.write(stdin)
+            await proc.stdin.drain()
+            proc.stdin.close()
+            await proc.stdin.wait_closed()
+
+    stdout_task = asyncio.create_task(drain(proc.stdout))
+    stderr_task = asyncio.create_task(drain(proc.stderr))
+    feed_task = asyncio.create_task(feed())
+    timed_out = False
     try:
-        out, err = await asyncio.wait_for(proc.communicate(stdin), timeout=timeout)
-        timed_out = False
+        await asyncio.wait_for(asyncio.gather(proc.wait(), feed_task), timeout=timeout)
     except TimeoutError:
-        proc.kill()
-        out, err = await proc.communicate()
         timed_out = True
+        with contextlib.suppress(ProcessLookupError):
+            proc.kill()
+        await proc.wait()
+    except asyncio.CancelledError:
+        with contextlib.suppress(ProcessLookupError):
+            proc.kill()
+        await proc.wait()
+        raise
+    finally:
+        if not feed_task.done():
+            feed_task.cancel()
+        out, err = await asyncio.gather(stdout_task, stderr_task)
     return ProcResult(
         exit_code=None if timed_out else proc.returncode,
-        stdout=out.decode(errors="replace")[-MAX_CAPTURE:],
-        stderr=err.decode(errors="replace")[-MAX_CAPTURE:],
+        stdout=out.decode(errors="replace"),
+        stderr=err.decode(errors="replace"),
         timed_out=timed_out,
         duration_s=time.monotonic() - start,
     )
@@ -102,6 +147,9 @@ def _hardening_args(*, network: bool, read_only: bool = False) -> list[str]:
 def render_dockerfile(spec: EnvironmentSpec) -> str:
     """Deterministic Dockerfile for an EnvironmentSpec. Dependencies are installed at build
     time (network allowed, D14); probes later run with no network."""
+    from infosec_harness.sandbox.policy import validate_environment_spec
+
+    validate_environment_spec(spec)
     lines = [f"FROM {spec.base_image}", f"LABEL {IMAGE_LABEL}", "USER root"]
     if spec.system_packages:
         pkgs = " ".join(shlex.quote(p) for p in sorted(set(spec.system_packages)))
@@ -116,6 +164,9 @@ def render_dockerfile(spec: EnvironmentSpec) -> str:
         lines.append(f"ENV {key}={shlex.quote(value)}")
     # Stage the repo read-only at /opt/repo with HOME at /opt/home; installs run here.
     lines.append(f"COPY --chown={SANDBOX_USER} . {REPO_STAGE}")
+    # Snapshots are sealed on the host. Only this disposable image copy becomes
+    # writable so non-root installers can create build output and metadata.
+    lines.append(f"RUN chmod -R u+rwX {REPO_STAGE}")
     lines.append(f"RUN mkdir -p {HOME_STAGE} && chown {SANDBOX_USER} {HOME_STAGE}")
     lines.append(f"ENV HOME={HOME_STAGE}")
     lines.append(f"USER {SANDBOX_USER}")
@@ -135,7 +186,8 @@ def module_suffix(spec: EnvironmentSpec) -> str:
 def image_tag_for(repo_hash: str, spec: EnvironmentSpec) -> str:
     from infosec_harness.domain.models import canonical_json, sha256_text
 
-    return f"harness-target:{repo_hash[:12]}-{sha256_text(canonical_json(spec))[:12]}"
+    identity = {"spec": spec.model_dump(mode="json"), "image_format": IMAGE_FORMAT_VERSION}
+    return f"harness-target:{repo_hash[:12]}-{sha256_text(canonical_json(identity))[:12]}"
 
 
 async def image_exists(tag: str) -> bool:
@@ -151,17 +203,87 @@ def build_argv(dockerfile: str, tag: str, context: str, egress_hosts: list[str] 
     proxy_args: list[str] = []
     if s.build_egress_proxy:
         # Route ALL build egress through the allowlisting proxy; only loopback bypasses it.
-        # The proxy enforces which hosts are reachable (its allowlist is seeded from the
-        # ecosystem defaults + configured internal registries; egress_hosts is the
-        # repo-derived set to add). NO_PROXY must stay minimal or it becomes a bypass.
-        for var in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+        # The proxy enforces which hosts are reachable from the operator-managed ecosystem and
+        # internal registry list. NO_PROXY must stay minimal or it becomes a bypass.
+        for var in _PROXY_ENV:
             proxy_args += ["--build-arg", f"{var}={s.build_egress_proxy}"]
-        proxy_args += ["--build-arg", "NO_PROXY=localhost,127.0.0.1",
-                       "--build-arg", "no_proxy=localhost,127.0.0.1"]
+        proxy_args += ["--build-arg", f"NO_PROXY={_NO_PROXY}",
+                       "--build-arg", f"no_proxy={_NO_PROXY}"]
     if s.use_buildx:
         return ["docker", "buildx", "build", "--builder", s.buildx_builder, "--load",
-                "-f", dockerfile, "-t", tag, "--progress=plain", *proxy_args, context]
-    return ["docker", "build", "-f", dockerfile, "-t", tag, "--progress=plain", *proxy_args, context]
+                "-f", dockerfile, "-t", tag, "--progress=plain", "--network=default", *proxy_args,
+                context]
+    return ["docker", "build", "-f", dockerfile, "-t", tag, "--progress=plain",
+            "--network=default", *proxy_args, context]
+
+
+def _builder_proxy_environment() -> dict[str, str]:
+    """Validate and return the one proxy identity admitted to the secure builder."""
+    from infosec_harness.sandbox.policy import SandboxUnavailable
+
+    s = get_settings()
+    try:
+        address = ipaddress.ip_address(s.build_egress_host_ip)
+    except ValueError as exc:
+        raise SandboxUnavailable(
+            "secure builds require HARNESS_BUILD_EGRESS_HOST_IP to be a numeric IPv4 address"
+        ) from exc
+    if not isinstance(address, ipaddress.IPv4Address) or any((
+        address.is_loopback, address.is_link_local, address.is_multicast,
+        address.is_unspecified,
+    )):
+        raise SandboxUnavailable(
+            "HARNESS_BUILD_EGRESS_HOST_IP must be a usable non-loopback IPv4 address"
+        )
+    try:
+        parsed = urlsplit(s.build_egress_proxy)
+        port = parsed.port
+    except ValueError as exc:
+        raise SandboxUnavailable("HARNESS_BUILD_EGRESS_PROXY is not a valid proxy URL") from exc
+    if (parsed.scheme != "http" or parsed.hostname != str(address) or port is None
+            or parsed.username is not None or parsed.password is not None
+            or parsed.path not in ("", "/") or parsed.query or parsed.fragment):
+        raise SandboxUnavailable(
+            "HARNESS_BUILD_EGRESS_PROXY must be an http URL whose numeric host exactly matches "
+            "HARNESS_BUILD_EGRESS_HOST_IP and includes a port"
+        )
+    environment = {name: s.build_egress_proxy for name in _PROXY_ENV}
+    environment.update({"NO_PROXY": _NO_PROXY, "no_proxy": _NO_PROXY})
+    return environment
+
+
+def _driver_option(name: str, value: str) -> str:
+    """Encode one Buildx driver option, whose CLI parser treats the value as CSV."""
+    output = io.StringIO()
+    csv.writer(output, lineterminator="").writerow([f"{name}={value}"])
+    return output.getvalue()
+
+
+async def ensure_build_egress_boundary() -> None:
+    """Require an internal RUN network plus its allowlisting proxy, or fail closed."""
+    s = get_settings()
+    if s.allow_insecure_runtime:
+        return
+    if not s.build_egress_proxy or not s.build_egress_network:
+        from infosec_harness.sandbox.policy import SandboxUnavailable
+
+        raise SandboxUnavailable(
+            "build egress requires HARNESS_BUILD_EGRESS_PROXY and an internal "
+            "HARNESS_BUILD_EGRESS_NETWORK; proxy environment variables alone do not block "
+            "direct connections"
+        )
+    _builder_proxy_environment()
+    result = await _run(
+        ["docker", "network", "inspect", s.build_egress_network,
+         "--format", "{{.Internal}}"],
+        timeout=30,
+    )
+    if result.exit_code != 0 or result.stdout.strip().lower() != "true":
+        from infosec_harness.sandbox.policy import SandboxUnavailable
+
+        raise SandboxUnavailable(
+            f"build egress network {s.build_egress_network!r} is missing or not internal"
+        )
 
 
 async def build_image(snapshot_path: str, spec: EnvironmentSpec, tag: str,
@@ -172,10 +294,21 @@ async def build_image(snapshot_path: str, spec: EnvironmentSpec, tag: str,
 
     The base image is validated against the allowlist first (raises DisallowedBaseImage),
     and build egress is pinned to the proxy/allowlist (D14)."""
-    from infosec_harness.sandbox.policy import validate_base_image
+    from infosec_harness.sandbox.policy import ensure_runtime_available, validate_base_image
 
     validate_base_image(spec.base_image)
     s = get_settings()
+    requested = set(egress_hosts or s.default_registry_allowlist)
+    unapproved = requested - set(s.default_registry_allowlist)
+    if unapproved:
+        from infosec_harness.sandbox.policy import SandboxUnavailable
+
+        raise SandboxUnavailable(
+            f"build requested registries outside the operator allowlist: {sorted(unapproved)!r}"
+        )
+    await ensure_runtime_available("build the target environment")
+    await ensure_build_egress_boundary()
+    await ensure_builder()
     with tempfile.TemporaryDirectory(prefix="harness-build-") as tmp:
         dockerfile = Path(tmp) / "Dockerfile"
         dockerfile.write_text(render_dockerfile(spec))
@@ -190,16 +323,130 @@ async def ensure_builder() -> None:
     gVisor (e.g. dockerd default-runtime=runsc, or a runsc-backed buildkitd). No-op unless
     use_buildx is set."""
     s = get_settings()
-    if not s.use_buildx:
+    if s.allow_insecure_runtime:
+        if not s.use_buildx:
+            return
+        exists = await _run(
+            ["docker", "buildx", "inspect", s.buildx_builder, "--bootstrap"], timeout=120)
+        if exists.exit_code != 0:
+            exists = await _run(
+                ["docker", "buildx", "create", "--name", s.buildx_builder,
+                 "--driver", "docker-container", "--bootstrap"],
+                timeout=120,
+            )
+        if exists.exit_code != 0 or not re.search(
+            r"^Driver:\s+docker-container\s*$", exists.stdout, re.MULTILINE
+        ):
+            raise RuntimeError(
+                f"could not prepare development builder: {tail(exists.stderr or exists.stdout)}"
+            )
         return
-    exists = await _run(["docker", "buildx", "inspect", s.buildx_builder], timeout=30)
+    if not s.use_buildx:
+        from infosec_harness.sandbox.policy import SandboxUnavailable
+
+        raise SandboxUnavailable("secure builds require the docker-container buildx driver")
+    if not s.build_egress_network:
+        from infosec_harness.sandbox.policy import SandboxUnavailable
+
+        raise SandboxUnavailable("secure builds require an isolated build egress network")
+    proxy_environment = _builder_proxy_environment()
+    exists = await _run(
+        ["docker", "buildx", "inspect", s.buildx_builder, "--bootstrap"], timeout=120)
     if exists.exit_code != 0:
-        await _run(["docker", "buildx", "create", "--name", s.buildx_builder,
-                    "--driver", "docker-container", "--bootstrap"], timeout=120)
+        driver_options = ["--driver-opt", _driver_option("network", s.build_egress_network)]
+        for name, value in proxy_environment.items():
+            driver_options += ["--driver-opt", _driver_option(f"env.{name}", value)]
+        created = await _run(["docker", "buildx", "create", "--name", s.buildx_builder,
+                              "--driver", "docker-container", *driver_options,
+                              "--bootstrap"], timeout=120)
+        if created.exit_code != 0:
+            from infosec_harness.sandbox.policy import SandboxUnavailable
+
+            raise SandboxUnavailable(
+                f"could not create sandbox builder: {tail(created.stderr or created.stdout)}"
+            )
+        exists = await _run(
+            ["docker", "buildx", "inspect", s.buildx_builder, "--bootstrap"], timeout=120)
+    if exists.exit_code != 0 or not re.search(
+        r"^Driver:\s+docker-container\s*$", exists.stdout, re.MULTILINE
+    ):
+        from infosec_harness.sandbox.policy import SandboxUnavailable
+
+        raise SandboxUnavailable(
+            f"buildx builder {s.buildx_builder!r} is not the required docker-container executor"
+        )
+    nodes = re.findall(
+        rf"^Name:\s+{re.escape(s.buildx_builder)}(\d+)\s*$", exists.stdout, re.MULTILINE
+    )
+    if nodes != ["0"]:
+        from infosec_harness.sandbox.policy import SandboxUnavailable
+
+        raise SandboxUnavailable(
+            f"buildx builder must have exactly one verified node; found node indexes {nodes!r}"
+        )
+    # Docker documents this managed container name for the docker-container driver. Inspect the
+    # live object rather than trusting buildx's inventory: an old builder may have the right name
+    # and driver while still retaining a routable network or a weaker OCI runtime.
+    container = f"buildx_buildkit_{s.buildx_builder}0"
+    runtime = await _run(
+        ["docker", "inspect", container, "--format", "{{.HostConfig.Runtime}}"], timeout=30)
+    networks = await _run(
+        ["docker", "inspect", container, "--format", "{{json .NetworkSettings.Networks}}"],
+        timeout=30,
+    )
+    environment = await _run(
+        ["docker", "inspect", container, "--format", "{{json .Config.Env}}"], timeout=30)
+    try:
+        attached = set(json.loads(networks.stdout)) if networks.exit_code == 0 else set()
+    except (TypeError, json.JSONDecodeError):
+        attached = set()
+    if runtime.exit_code != 0 or runtime.stdout.strip() != s.sandbox_runtime:
+        from infosec_harness.sandbox.policy import SandboxUnavailable
+
+        raise SandboxUnavailable(
+            f"buildx builder is not running under required runtime {s.sandbox_runtime!r}"
+        )
+    if attached != {s.build_egress_network}:
+        from infosec_harness.sandbox.policy import SandboxUnavailable
+
+        raise SandboxUnavailable(
+            f"buildx builder networks {sorted(attached)!r} do not match the isolated build "
+            f"network {s.build_egress_network!r}"
+        )
+    try:
+        actual_environment = {
+            name: value
+            for item in json.loads(environment.stdout)
+            if isinstance(item, str) and "=" in item
+            for name, value in [item.split("=", 1)]
+        } if environment.exit_code == 0 else {}
+    except (TypeError, json.JSONDecodeError):
+        actual_environment = {}
+    mismatched = sorted(
+        name
+        for name, value in proxy_environment.items()
+        if actual_environment.get(name) != value
+    )
+    unexpected = sorted(name for name in ("ALL_PROXY", "all_proxy")
+                        if name in actual_environment)
+    if mismatched or unexpected:
+        from infosec_harness.sandbox.policy import SandboxUnavailable
+
+        raise SandboxUnavailable(
+            "buildx builder proxy configuration is stale or unsafe; recreate the managed "
+            f"builder (mismatched variables={mismatched!r}, "
+            f"unexpected variables={unexpected!r})"
+        )
 
 
 async def prune_images(keep: int | None = None) -> int:
-    """Evict oldest cached target images beyond ``keep`` (image cache GC). Returns count removed."""
+    """Manually evict old target images after the operator has quiesced assessments.
+
+    This is deliberately absent from build/probe paths: between activities an active prepared
+    environment has no container reference, and durable image leases do not exist yet. Removal
+    is non-forced so Docker still protects images referenced by containers, but that is not a
+    substitute for leases; callers must ensure no workflow can still reference the candidates.
+    """
     keep = keep if keep is not None else get_settings().image_cache_max
     res = await _run(["docker", "images", "--filter", f"label={IMAGE_LABEL}",
                       "--format", "{{.ID}}\t{{.CreatedAt}}"], timeout=30)
@@ -210,7 +457,7 @@ async def prune_images(keep: int | None = None) -> int:
     stale = [r[0] for r in rows[keep:]]
     removed = 0
     for image_id in stale:
-        rm = await _run(["docker", "rmi", "-f", image_id], timeout=60)
+        rm = await _run(["docker", "rmi", image_id], timeout=60)
         removed += int(rm.exit_code == 0)
     return removed
 
@@ -226,17 +473,35 @@ async def run_shell(image: str, command: str, *, network: bool, timeout: float |
     found and removed by name.
     """
     s = get_settings()
-    argv = ["docker", "run", "-i", *_hardening_args(network=network)]
-    if idempotency_key:
-        argv += ["--name", container_name(idempotency_key)]
+    operation = idempotency_key or f"shell:{time.monotonic_ns()}"
+    name = container_name(operation)
+    argv = ["docker", "run", "-i", *_hardening_args(network=network), "--name", name]
     argv += [image, "sh", "-c", command]
-    return await _run(argv, timeout=timeout or s.sandbox_probe_timeout_s)
+    return await _run_container(argv, name=name, timeout=timeout or s.sandbox_probe_timeout_s)
 
 
 def container_name(idempotency_key: str) -> str:
     """A stable, Docker-legal container name for one logical sandbox operation."""
     digest = hashlib.sha256(idempotency_key.encode()).hexdigest()[:16]
     return f"harness-shell-{digest}"
+
+
+async def _remove_container(name: str) -> None:
+    with contextlib.suppress(Exception):
+        await _run(["docker", "rm", "-f", name], timeout=30)
+
+
+async def _run_container(argv: list[str], *, name: str, timeout: float,
+                         stdin: bytes | None = None) -> ProcResult:
+    """Run a named workload and remove the engine-side container on timeout/cancellation."""
+    try:
+        result = await _run(argv, stdin=stdin, timeout=timeout)
+    except asyncio.CancelledError:
+        await asyncio.shield(_remove_container(name))
+        raise
+    if result.timed_out:
+        await _remove_container(name)
+    return result
 
 
 async def run_probe(image: str, test_file_path: str, content: str, test_command: str, nonce: str,
@@ -257,6 +522,7 @@ async def run_probe(image: str, test_file_path: str, content: str, test_command:
     script = (
         "set -e; "
         f"cp -a {REPO_STAGE} {WORK}; "
+        f"chmod -R u+rwX {WORK}; "
         f"if [ -d {HOME_STAGE} ]; then cp -a {HOME_STAGE} {WORK_HOME}; else mkdir -p {WORK_HOME}; fi; "
         f"export HOME={WORK_HOME}; cd {shlex.quote(workdir)}; "
         f"mkdir -p \"$(dirname {shlex.quote(rel)})\"; cat > {shlex.quote(rel)}; "
@@ -273,11 +539,15 @@ async def run_probe(image: str, test_file_path: str, content: str, test_command:
         "do [ -f \"$f\" ] && cat \"$f\"; done; "
         f"if [ -e {canary} ]; then echo '{CANARY_PREFIX}{nonce}'; fi; exit $rc"
     )
+    name = "harness-probe-" + hashlib.sha256(
+        f"{image}:{test_file_path}:{nonce}".encode()).hexdigest()[:16]
     argv = ["docker", "run", "-i", *_hardening_args(network=False, read_only=s.sandbox_read_only_root),
+            "--name", name,
             "--tmpfs=/tmp:rw,size=64m,mode=1777",
             "--tmpfs=/work:rw,mode=1777",
             image, "sh", "-c", script]
-    return await _run(argv, stdin=content.encode(), timeout=s.sandbox_probe_timeout_s)
+    return await _run_container(argv, name=name, stdin=content.encode(),
+                                timeout=s.sandbox_probe_timeout_s)
 
 
 # How to ask each known test runner whether it is actually installed. Keyed on the token that
@@ -428,8 +698,13 @@ async def docker_available() -> bool:
 
 async def runtime_available(runtime: str | None = None) -> bool:
     runtime = runtime or get_settings().sandbox_runtime
-    res = await _run(["docker", "info", "--format", "{{json .Runtimes}}"], timeout=20)
-    return res.exit_code == 0 and f'"{runtime}"' in res.stdout
+    res = await _run(
+        ["docker", "info", "--format", "{{json .Runtimes}} {{.DefaultRuntime}}"], timeout=20)
+    # buildx's docker-container executor inherits the daemon default. Requiring the configured
+    # runtime to be both registered and selected prevents an advertised-but-unused runtime from
+    # satisfying the startup check; probes additionally pass --runtime on every invocation.
+    return (res.exit_code == 0 and f'"{runtime}"' in res.stdout
+            and res.stdout.rstrip().endswith(runtime))
 
 
 def default_workspace() -> Path:

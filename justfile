@@ -9,6 +9,23 @@ check:
     uv run python -m compileall -q src
     HARNESS_MODEL_MODE=stub uv run harness agents validate
 
+# The development-client copies are generated from the canonical sources. These checks never
+# rewrite the checkout, so CI and reviewers can distinguish drift from a deliberate sync.
+dev-skills-check:
+    uv run python scripts/sync_dev_skills.py check
+
+dev-skills-sync:
+    uv run python scripts/sync_dev_skills.py sync
+
+generated-check:
+    HARNESS_MODEL_MODE=stub uv run python scripts/check_api_schema.py
+    uv run python scripts/sync_dev_instructions.py check
+    uv run python scripts/sync_dev_skills.py check
+
+generated-sync:
+    uv run python scripts/sync_dev_instructions.py sync
+    uv run python scripts/sync_dev_skills.py sync
+
 test:
     HARNESS_MODEL_MODE=stub uv run pytest
 
@@ -89,6 +106,10 @@ up:
     docker compose up --build
 
 down:
+    docker compose down
+
+# Explicitly destructive local cleanup; ./dev stop and `just down` preserve volumes.
+down-reset:
     docker compose down -v
 
 worker:
@@ -98,4 +119,9 @@ api:
     uv run harness api
 
 web-build:
-    cd web && npm install && npm run build
+    cd web && npm ci && npm run build
+
+# Handwritten frontend formatting and type/production checks; generated API stays untouched.
+web-check:
+    cd web && npm run format:check
+    cd web && npm run build

@@ -7,14 +7,13 @@ in the workflow and folded in with :func:`merge_extraction`; location resolution
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from infosec_harness.domain.models import (
     CodeLocation,
     ExtractedFinding,
     Finding,
     FindingInput,
 )
+from infosec_harness.repo.access import RepositoryAccessError, resolve_confined
 
 
 def to_finding(inp: FindingInput) -> Finding:
@@ -31,6 +30,7 @@ def to_finding(inp: FindingInput) -> Finding:
         description=inp.description,
         repo_url=inp.repo_url,
         revision=inp.revision,
+        source_mode=inp.source_mode,
         location=location,
         cwe=inp.cwe,
         severity=inp.severity,
@@ -64,6 +64,8 @@ def resolve_location(finding: Finding, repo_path: str) -> Finding | None:
     """Return the finding if its file exists at the revision, else None (-> needs_info)."""
     if finding.location is None:
         return None
-    if (Path(repo_path) / finding.location.file_path).exists():
-        return finding
-    return None
+    try:
+        resolved = resolve_confined(repo_path, finding.location.file_path, must_exist=True)
+    except (OSError, RepositoryAccessError):
+        return None
+    return finding if resolved.is_file() else None

@@ -1,0 +1,7 @@
+# Project-local tool versions. ./dev bootstraps its pinned mise binary and installs these into
+# .harness/mise; neither global tools nor shell profiles are changed.
+[tools]
+python = "3.12.13"
+uv = "0.12.7"
+node = "22.23.3"
+just = "1.58.0"

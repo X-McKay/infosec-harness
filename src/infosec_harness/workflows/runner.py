@@ -21,23 +21,83 @@ def new_batch_id(label: str) -> str:
 
 
 async def submit_via_temporal(findings: list[FindingInput], *, label: str = "") -> str:
-    """Start TriageBatchWorkflow, await it, persist every run. Returns the batch id."""
+    """Persist acceptance before starting Temporal; reconciliation retries interrupted starts."""
+    from infosec_harness.persistence.lifecycle import accept_batch
+    batch_id = new_batch_id(label)
+    payload = {"findings": [f.model_dump(mode="json") for f in findings],
+               "per_repo_concurrency": get_settings().per_repo_concurrency,
+               "batch_id": batch_id}
+    await accept_batch(batch_id, findings, label, payload)
+    await start_accepted_batch(batch_id, payload)
+    return batch_id
+
+
+async def start_accepted_batch(batch_id: str, payload: dict) -> None:
+    import logging
+
+    from temporalio.exceptions import WorkflowAlreadyStartedError
+
     from infosec_harness.workflows.worker import connect
     from infosec_harness.workflows.workflows import TriageBatchWorkflow
+    try:
+        client = await connect()
+        await client.start_workflow(TriageBatchWorkflow.run, payload,
+            id=f"batch:{batch_id}", task_queue=get_settings().task_queue)
+    except WorkflowAlreadyStartedError:
+        pass  # An earlier start succeeded before its acknowledgement was persisted.
+    except Exception:
+        logging.getLogger(__name__).exception("Batch %s accepted; workflow start will be retried", batch_id)
+        return
+    from sqlalchemy import update
 
-    s = get_settings()
-    batch_id = new_batch_id(label)
-    workflow_id = f"batch:{batch_id}"
-    await store.create_batch(batch_id, source_kind=_kind(findings), label=label,
-                             count=len(findings), workflow_id=workflow_id)
+    from infosec_harness.persistence import db
+    async with db.session() as session:
+        await session.execute(update(db.Batch).where(db.Batch.id == batch_id,
+                              db.Batch.status == "accepted").values(status="running"))
+        await session.commit()
+        batch = await session.get(db.Batch, batch_id)
+        cancel_requested = batch is not None and batch.status in {"cancellation_requested", "cancelled"}
+    if cancel_requested:
+        await client.get_workflow_handle(f"batch:{batch_id}").cancel()
+
+
+async def cancel_durable_batch(batch_id: str) -> str:
+    """Cancellation intent survives API loss and races with acceptance/start reconciliation."""
+    from temporalio.service import RPCError, RPCStatusCode
+
+    from infosec_harness.persistence import db, lifecycle
+    from infosec_harness.workflows.worker import connect
+    async with db.session() as session:
+        batch = await session.get(db.Batch, batch_id)
+        if batch is None:
+            raise KeyError(batch_id)
+        if batch.status in {"complete", "failed", "cancelled"}:
+            return batch.status
+        batch.status = "cancellation_requested"
+        await session.commit()
     client = await connect()
-    outputs: list[TriageRunOutput] = await client.execute_workflow(
-        TriageBatchWorkflow.run,
-        {"findings": [f.model_dump() for f in findings], "per_repo_concurrency": s.per_repo_concurrency},
-        id=workflow_id, task_queue=s.task_queue,
-    )
-    await _persist_and_writeback(batch_id, outputs)
-    return batch_id
+    try:
+        await client.get_workflow_handle(f"batch:{batch_id}").cancel()
+    except RPCError as exc:
+        if exc.status != RPCStatusCode.NOT_FOUND:
+            raise
+        await lifecycle.finish_pending(batch_id, "cancelled", "Cancelled before workflow start")
+        return "cancelled"
+    return "cancellation_requested"
+
+
+async def reconcile_submissions() -> None:
+    from infosec_harness.persistence.lifecycle import pending_submissions
+    for batch_id, payload in await pending_submissions():
+        await start_accepted_batch(batch_id, payload)
+    from sqlalchemy import select
+
+    from infosec_harness.persistence import db
+    async with db.session() as session:
+        ids = (await session.scalars(select(db.Batch.id).where(
+            db.Batch.status == "cancellation_requested"))).all()
+    for batch_id in ids:
+        await cancel_durable_batch(batch_id)
 
 
 async def run_local(findings: list[FindingInput], *, label: str = "", persist: bool = True,
@@ -47,6 +107,8 @@ async def run_local(findings: list[FindingInput], *, label: str = "", persist: b
     When ``sandbox`` is None, the gVisor sandbox is used only if its runtime is available;
     otherwise builds/probes are skipped so the pipeline still runs offline.
     """
+    if get_settings().model_mode != "stub":
+        raise ValueError("Real assessments require Temporal; local mode is for stub demos.")
     from infosec_harness.graph.local import triage_batch_local
     from infosec_harness.sandbox import docker
 
@@ -57,6 +119,14 @@ async def run_local(findings: list[FindingInput], *, label: str = "", persist: b
     if persist:
         await store.create_batch(batch_id, source_kind=_kind(findings), label=label, count=len(findings))
         await _persist_and_writeback(batch_id, outputs)
+        from sqlalchemy import select
+
+        from infosec_harness.persistence import db
+        async with db.session() as session:
+            rows = (await session.execute(select(db.TriageRun).where(db.TriageRun.batch_id == batch_id))).scalars().all()
+            for row in rows:
+                row.telemetry = {**(row.telemetry or {}), "population": "demo"}
+            await session.commit()
     return batch_id, outputs
 
 

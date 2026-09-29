@@ -7,6 +7,9 @@ provenance must record. A mean alone hides the tail a budget exists to brake, an
 can reproduce is a claim rather than evidence.
 """
 import inspect
+from types import SimpleNamespace
+
+import pytest
 
 from infosec_harness.evals import run as run_module
 
@@ -42,7 +45,7 @@ def test_the_writer_records_every_provenance_field_the_playbook_enumerates(tmp_p
 
     provenance = json.loads(path.read_text())["provenance"]
     for field in ("git_commit", "agent_version", "config_hash", "model", "dataset_version",
-                  "recorded_at", "run_count", "dataset", "evaluators", "model_settings",
+                  "recorded_at", "run_count", "dataset", "execution_mode", "evaluators", "model_settings",
                   "skills", "toolsets", "case_results"):
         assert field in provenance, f"provenance is missing {field!r}"
     assert provenance["run_count"] == 3
@@ -79,7 +82,21 @@ def test_the_percentile_helper_is_defined_on_an_empty_series():
     percentile that raised there would lose the report along with the run."""
     assert run_module._pct([], 0.95) == 0.0
     assert run_module._pct([1.0], 0.5) == 1.0
-    assert run_module._pct([1.0, 2.0, 3.0, 4.0], 0.5) in (2.0, 3.0)
+    assert run_module._pct([1.0, 2.0, 3.0, 4.0], 0.5) == 2.0
+
+
+def test_percentiles_use_versioned_nearest_rank_semantics():
+    """The API/report label and implementation must describe the same calculation."""
+    from infosec_harness.evals import run as run_module
+
+    values = [1.0, 2.0, 3.0, 4.0]
+    assert run_module.PERCENTILE_METHOD == "nearest-rank-v1"
+    assert run_module._pct(values, 0.0) == 1.0
+    assert run_module._pct(values, 0.5) == 2.0
+    assert run_module._pct(values, 0.95) == 4.0
+    assert run_module._p95([1, 2, 3, 4]) == 4
+    with pytest.raises(ValueError, match="between 0 and 1"):
+        run_module._pct(values, 1.01)
 
 
 def test_worst_case_is_reported_rather_than_the_mean_across_repetitions():
@@ -100,3 +117,40 @@ def test_latency_is_recorded_even_for_cases_that_failed():
     assert latency_append > budget_branch, (
         "latency is appended before the failure branches, so failed cases are not timed"
     )
+
+
+def _comparable_row(identifier: str, *, digest: str = "source-a", dirty: bool = False):
+    metrics = {
+        "status": "complete", "n": 2, "n_planned": 2, "passed": 2,
+        "accuracy": 1.0, "task_success_rate": 1.0, "schema_validity_rate": 1.0,
+        "p95_model_requests": 2, "average_cost_usd": 0.1, "cost_unknown": 0,
+        "comparison_identity": {
+            "case_set_digest": "cases", "evaluator_version": "evaluator-v1",
+            "execution_mode": run_module.EVAL_EXECUTION_MODE,
+            "repetitions": 1, "split": "full",
+        },
+        "code_identity": {"source_digest": digest},
+    }
+    return SimpleNamespace(
+        id=identifier, agent="verdict", dataset="dataset.yaml", dataset_version="1",
+        git_sha="abc", git_dirty=dirty, harness_version="1", pricing="configured",
+        metrics=metrics,
+    )
+
+
+def test_release_comparisons_require_exact_clean_source_and_execution_identity():
+    from infosec_harness.evals.reporting import comparability_issues
+
+    baseline = _comparable_row("baseline")
+    assert comparability_issues([baseline, _comparable_row("candidate")]) == []
+    assert any("source digest" in issue for issue in comparability_issues([
+        baseline, _comparable_row("code-change", digest="source-b")
+    ]))
+    assert any("dirty" in issue for issue in comparability_issues([
+        baseline, _comparable_row("dirty", dirty=True)
+    ]))
+    changed_execution = _comparable_row("runtime-change")
+    changed_execution.metrics["comparison_identity"]["execution_mode"] = "temporal-v2"
+    assert any("execution mode" in issue for issue in comparability_issues([
+        baseline, changed_execution
+    ]))

@@ -29,6 +29,11 @@ from temporalio.common import RetryPolicy
 from temporalio.workflow import ActivityConfig
 
 from infosec_harness.agents import models as model_factory
+from infosec_harness.agents.budgets import (
+    BudgetResolution,
+    resolve_budget,
+    resolve_declared_budget,
+)
 from infosec_harness.agents.capabilities import CUSTOM_CAPABILITIES
 from infosec_harness.agents.deps import AgentDeps
 from infosec_harness.agents.governance import GovernanceError, assert_governed
@@ -115,6 +120,68 @@ TOOL_ACTIVITY = {"sandbox_shell": ActivityConfig(start_to_close_timeout=timedelt
 DEFAULT_CLEAR_TOOL_TOKENS = 40_000
 
 
+class ResolvedAgentConfig(BaseModel):
+    """Effective, secret-free invocation contract shared by production and evals."""
+
+    model_config = {"frozen": True}
+
+    agent_name: str
+    effective_spec: dict[str, Any]
+    skills_digest: str
+    model: model_factory.ResolvedModelConfig
+    budget: BudgetResolution
+
+    @property
+    def digest(self) -> str:
+        return hashlib.sha256(canonical_json(self.model_dump(mode="json")).encode()).hexdigest()[:16]
+
+    @property
+    def effective_digest(self) -> str:
+        """Identity of behavior after provider and budget normalization.
+
+        The full :attr:`digest` retains requested values for audit provenance. Calibration uses
+        this projection to collapse candidates which differ only in a request that a provider
+        floor or another effective limit normalizes to the same invocation contract.
+        """
+        spec = copy.deepcopy(self.effective_spec)
+        spec.pop("model", None)
+        spec.pop("model_settings", None)
+        metadata = spec.get("metadata")
+        if isinstance(metadata, dict):
+            metadata.pop("budgets", None)
+            # Routing policy is provenance for the requested tier; the resolved model below is
+            # the behavior. Two policies resolving to the same concrete model are equivalent.
+            metadata.pop("model_policy", None)
+        model = self.model.model_dump(mode="json", exclude={"requested_model", "requested_settings"})
+        budget = {
+            "agent_name": self.budget.agent_name,
+            "source_files": self.budget.source_files,
+            "formula_version": self.budget.formula_version,
+            "size_factor": self.budget.size_factor,
+            "rounding": self.budget.rounding,
+            "effective": self.budget.effective.model_dump(mode="json"),
+            "provider_output_floor": self.budget.provider_output_floor,
+        }
+        payload = {
+            "agent_name": self.agent_name,
+            "effective_spec": spec,
+            "skills_digest": self.skills_digest,
+            "model": model,
+            "budget": budget,
+        }
+        return hashlib.sha256(canonical_json(payload).encode()).hexdigest()[:16]
+
+    def for_source_files(self, source_files: int | None) -> ResolvedAgentConfig:
+        """Replay-safe per-run variant with repository-size scaling applied."""
+        budget = resolve_declared_budget(
+            self.agent_name,
+            self.budget.requested,
+            source_files=source_files,
+            provider_output_floor=self.model.provider_output_floor,
+        )
+        return self.model_copy(update={"budget": budget})
+
+
 def spec_path(name: str) -> Path:
     return get_settings().agents_dir / name / "agent.yaml"
 
@@ -173,15 +240,48 @@ def _abs(path: str | Path) -> Path:
     return package_root() / p
 
 
-def config_hash(name: str, spec: AgentSpec) -> str:
+def resolve_agent_config(
+    name: str,
+    spec: AgentSpec,
+    *,
+    source_files: int | None = None,
+    durable: bool = False,
+) -> ResolvedAgentConfig:
+    """Resolve the same effective settings and limits an invocation will receive."""
+    effective = _apply_backend_token_floor(name, spec)
+    tier = effective.model or "sonnet"
+    model = model_factory.resolve_config(
+        name,
+        tier,
+        model_settings=dict(spec.model_settings or {}),
+        durable=durable,
+    )
+    budget = resolve_budget(
+        name,
+        effective.metadata,
+        source_files=source_files,
+        provider_output_floor=model.provider_output_floor,
+    )
+    return ResolvedAgentConfig(
+        agent_name=name,
+        effective_spec=effective.model_dump(by_alias=True, exclude_none=True, mode="json"),
+        skills_digest=_skills_hash(effective),
+        model=model,
+        budget=budget,
+    )
+
+
+def config_hash(
+    name: str,
+    spec: AgentSpec,
+    *,
+    source_files: int | None = None,
+    durable: bool = False,
+) -> str:
     """Agent config identity (§6): effective spec + skill contents + resolved model."""
-    tier = spec.model or "sonnet"
-    payload = {
-        "spec": spec.model_dump(by_alias=True, exclude_none=True, mode="json"),
-        "skills": _skills_hash(spec),
-        "model": model_factory.resolved_model_name(name, tier),
-    }
-    return hashlib.sha256(canonical_json(payload).encode()).hexdigest()[:16]
+    return resolve_agent_config(
+        name, spec, source_files=source_files, durable=durable
+    ).digest
 
 
 def _absolutize_skill_dirs(spec: AgentSpec) -> AgentSpec:
@@ -239,6 +339,11 @@ def _apply_backend_token_floor(name: str, spec: AgentSpec) -> AgentSpec:
     return spec.model_copy(update={"model_settings": floored})
 
 
+def effective_spec(name: str, spec: AgentSpec) -> AgentSpec:
+    """Apply backend adjustments visible to PydanticAI before building an agent."""
+    return _apply_backend_token_floor(name, spec)
+
+
 def _assert_execution_class_covers_tools(name: str, metadata: Mapping[str, Any] | None) -> None:
     """An agent's execution class must be at least what its most consequential tool requires.
 
@@ -289,7 +394,20 @@ def _assert_tools_are_declared(name: str, spec: AgentSpec) -> None:
             )
 
 
-def build_agent(name: str, overlay: Mapping[str, Any] | None = None, *, durable: bool = True) -> Agent[AgentDeps, Any]:
+def build_agent(
+    name: str,
+    overlay: Mapping[str, Any] | None = None,
+    *,
+    durable: bool = True,
+    production_transport: bool | None = None,
+) -> Agent[AgentDeps, Any]:
+    """Build an agent with independently selected execution and transport layers.
+
+    Evals execute outside Temporal, but their provider request contract must match production.
+    ``production_transport=True`` selects production's reduced provider retry profile without
+    attaching Temporal activities. Ordinary callers leave it unset, preserving the existing
+    rule that durable execution owns transport retries.
+    """
     if name not in AGENT_BINDINGS:
         raise KeyError(f"Unknown agent {name!r}")
     spec = load_spec(name, overlay)
@@ -299,10 +417,12 @@ def build_agent(name: str, overlay: Mapping[str, Any] | None = None, *, durable:
     assert_governed(name, spec.metadata)
     _assert_execution_class_covers_tools(name, spec.metadata)
     _assert_tools_are_declared(name, spec)
-    spec = _absolutize_skill_dirs(spec)
-    spec = _apply_backend_token_floor(name, spec)
+    spec = _absolutize_skill_dirs(effective_spec(name, spec))
+    transport = durable if production_transport is None else production_transport
     capabilities: list[Any] = [ResolveModelId(
-        lambda ctx, model_id, _n=name, _d=durable: model_factory.resolve(_n, model_id, durable=_d))]
+        lambda ctx, model_id, _n=name, _d=transport: model_factory.resolve(
+            _n, model_id, durable=_d
+        ))]
     # Cross-cutting robustness, attached in code (see ALLOWED_CAPABILITIES note).
     if any(cap.name in {"RepoReadOnly", "SandboxShell"} for cap in spec.capabilities):
         capabilities.append(RepairToolArguments())
@@ -322,6 +442,9 @@ def build_agent(name: str, overlay: Mapping[str, Any] | None = None, *, durable:
         name=name,
         defer_model_check=True,
     )
+    from infosec_harness.telemetry import private_instrumentation
+
+    agent.instrument = private_instrumentation()
     for validator in OUTPUT_VALIDATORS.get(name, ()):
         agent.output_validator(validator)
     return agent
@@ -361,7 +484,16 @@ def agent_run_budgets() -> dict[str, Any]:
 
 @lru_cache
 def agent_config_hashes() -> dict[str, str]:
-    return {name: config_hash(name, load_spec(name)) for name in AGENT_BINDINGS}
+    return {name: config.digest for name, config in resolved_agent_configs().items()}
+
+
+@lru_cache
+def resolved_agent_configs() -> dict[str, ResolvedAgentConfig]:
+    """Durable base configs loaded outside workflow execution."""
+    return {
+        name: resolve_agent_config(name, load_spec(name), durable=True)
+        for name in AGENT_BINDINGS
+    }
 
 
 @lru_cache

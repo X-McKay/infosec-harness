@@ -7,6 +7,7 @@ PydanticAIPlugin from each workflow's ``__pydantic_ai_agents__``.
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from temporalio.client import Client
 from temporalio.worker import Worker
@@ -14,6 +15,7 @@ from temporalio.worker import Worker
 from infosec_harness.settings import get_settings
 from infosec_harness.workflows.activities import ALL_ACTIVITIES
 from infosec_harness.workflows.workflows import (
+    ComponentPreparationWorkflow,
     FindingTriageWorkflow,
     RepoPreparationWorkflow,
     TriageBatchWorkflow,
@@ -21,7 +23,8 @@ from infosec_harness.workflows.workflows import (
 
 # TriageBatchWorkflow.__pydantic_ai_agents__ carries the durable agents; PydanticAIPlugin
 # registers their model/tool activities on the worker (once, worker-global).
-WORKFLOWS = [TriageBatchWorkflow, RepoPreparationWorkflow, FindingTriageWorkflow]
+WORKFLOWS = [TriageBatchWorkflow, RepoPreparationWorkflow, ComponentPreparationWorkflow,
+             FindingTriageWorkflow]
 
 
 async def connect() -> Client:
@@ -33,6 +36,8 @@ async def connect() -> Client:
 
 
 async def run_worker() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    logger = logging.getLogger(__name__)
     s = get_settings()
     from infosec_harness import telemetry
 
@@ -40,15 +45,15 @@ async def run_worker() -> None:
     # workflow itself must not touch a tracer (nondeterministic under replay); Temporal
     # emits workflow/activity spans, and the model/tool activities run in this process.
     if telemetry.configure("worker"):
-        print(f"tracing to {s.otel_exporter_otlp_endpoint}")
+        logger.info("Tracing enabled for worker")
     from infosec_harness.sandbox import docker
     try:
-        await docker.ensure_builder()  # best-effort; builds still work without buildx
-    except Exception as e:  # noqa: BLE001
-        print(f"buildx builder setup skipped: {e}")
+        await docker.ensure_builder()
+    except Exception:  # noqa: BLE001 - retain worker access to status/recovery activities
+        logger.exception("Sandbox builder unavailable; environment builds will fail closed until runtime setup succeeds")
     client = await connect()
     worker = Worker(client, task_queue=s.task_queue, workflows=WORKFLOWS, activities=ALL_ACTIVITIES)
-    print(f"worker listening on task queue {s.task_queue!r} at {s.temporal_address}")
+    logger.info("Worker listening on task queue %s at %s", s.task_queue, s.temporal_address)
     await worker.run()
 
 
