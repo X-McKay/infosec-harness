@@ -157,6 +157,11 @@ def test_openai_backends_ride_out_transient_upstream_failures():
             assert backend.max_retries >= 3, f"{name} retries too few times to be useful"
 
 
+# Below this an answer is not meaningfully expressible, so equality-plus-epsilon is not
+# enough to call a spec coherent. Shared with the companion test below.
+MIN_ANSWER_TOKENS = 1024
+
+
 def test_no_spec_asks_for_more_thinking_than_its_own_token_ceiling_allows():
     """Anthropic counts thinking *inside* `max_tokens`, so `budget_tokens >= max_tokens` is
     rejected by the API — and the answer gets whatever is left, so equality leaves zero.
@@ -175,9 +180,6 @@ def test_no_spec_asks_for_more_thinking_than_its_own_token_ceiling_allows():
     import yaml
     from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP
 
-    # Below this an answer is not meaningfully expressible, so equality-plus-epsilon is not
-    # enough to call the spec coherent.
-    MIN_ANSWER_TOKENS = 1024
     checked = 0
     for path in sorted(agents_dir().glob("*/agent.yaml")):
         settings = yaml.safe_load(path.read_text()).get("model_settings") or {}
@@ -194,6 +196,28 @@ def test_no_spec_asks_for_more_thinking_than_its_own_token_ceiling_allows():
             f"(the answer share this agent needs, plus {budget}) or lower the thinking level."
         )
     assert checked >= 10, f"only {checked} specs declared a thinking level; the schema changed"
+
+
+def test_raising_a_specs_thinking_level_is_caught_by_the_invariant():
+    """The level and the ceiling are coupled; the invariant above must be load-bearing.
+
+    `verdict` clears the rule with 4000 tokens of answer behind a `medium` budget. Stepping it
+    to `high` — the obvious first response to a weak verdict, and a one-word edit — reserves
+    16384 of a 14000-token ceiling, which Anthropic rejects outright rather than truncating.
+    The two halves live on adjacent lines of the same spec and read as independent knobs, so
+    the coupling has to be checked rather than remembered.
+    """
+
+    import yaml
+    from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP
+
+    settings = yaml.safe_load((agents_dir() / "verdict" / "agent.yaml").read_text())["model_settings"]
+    assert settings["thinking"] == "medium", "fixture drifted; pick the level this steps up from"
+    raised = ANTHROPIC_THINKING_BUDGET_MAP["high"]
+    assert settings["max_tokens"] - raised < MIN_ANSWER_TOKENS, (
+        "this test exists to show the invariant is enforced: raising a spec's thinking level "
+        "without raising max_tokens would put the budget back over its own ceiling"
+    )
 
 
 def test_the_probe_writing_agents_are_told_about_the_sink_returned_marker():
