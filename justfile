@@ -66,6 +66,19 @@ eval-adapters:
         uv run harness eval run "$agent"; \
     done
 
+# One agent's dataset against several models, printed side by side: accuracy, latency, cost.
+# Sequential on purpose — latency is one of the things being measured.
+eval-models agent="verdict" models="sonnet opus haiku":
+    uv run harness eval run {{agent}} {{ prepend("-m ", models) }}
+
+# Every stored experiment, newest first, with the model and the commit each measured.
+eval-results:
+    uv run harness eval results
+
+# Record an experiment as the committed baseline for its agent and model.
+eval-baseline experiment:
+    uv run harness eval baseline save {{experiment}}
+
 # --- Full stack ---
 up:
     docker compose up --build

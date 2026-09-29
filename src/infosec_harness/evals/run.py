@@ -10,8 +10,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import platform
-import subprocess
 import time
 import uuid
 from datetime import UTC, datetime
@@ -26,6 +24,7 @@ from infosec_harness.evals.adapters import (
     is_unevidenced_safe,
 )
 from infosec_harness.evals.coverage import coverage_for
+from infosec_harness.evals.provenance import code_version
 from infosec_harness.evals.trajectory import inspect_messages, scores_skills
 from infosec_harness.settings import get_settings
 
@@ -158,11 +157,21 @@ def _mean_rate(runs: list[dict], agent: str, key: str) -> float:
     return num / den if den else 0.0
 
 
-def _git_sha() -> str:
+def _pricing_label(model_name: str) -> str:
+    """Whether this run's dollar figures are money, a self-hosted zero, or unknown.
+
+    Routed through the same estimator the eval loop uses, so it cannot claim a cost is real
+    when the price table has nothing for the model. Stored on the experiment because a cost
+    comparison across two models priced differently is not a comparison at all -- a
+    self-hosted model always "wins" on cost against a billed one, for no reason worth acting
+    on -- and after the fact there is no way to tell which kind of zero a zero was.
+    """
     try:
-        return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()[:40]
+        from infosec_harness.evals.inert_gates import pricing_status
+
+        return pricing_status(model_name).value
     except Exception:
-        return ""
+        return "undetermined"
 
 
 class TruncatedExperiment(SystemExit):
@@ -190,7 +199,7 @@ class TruncatedExperiment(SystemExit):
 
 
 async def run_experiment(agent: str, *, overlay: Path | None = None, repeat: int = 1,
-                         report: Path | None = None) -> str:
+                         report: Path | None = None, model: str | None = None) -> str:
     """Run an agent's dataset, score it, and persist the experiment.
 
     Persistence is incremental: the experiment row and its case results are written as each
@@ -207,6 +216,12 @@ async def run_experiment(agent: str, *, overlay: Path | None = None, repeat: int
 
     overlay_data = yaml.safe_load(overlay.read_text()) if overlay else None
     agent_overlay = (overlay_data or {}).get(agent)
+    if model:
+        # `--model` is the one-variable-at-a-time knob the playbook's comparison method asks
+        # for, expressed as the smallest possible overlay so nothing else moves with it. It is
+        # applied *after* any --overlay file, because naming a model on the command line is the
+        # more specific instruction.
+        agent_overlay = {**(agent_overlay or {}), "model": model}
     dataset_path = get_settings().agents_dir / agent / "evals" / "dataset.yaml"
     dataset = yaml.safe_load(dataset_path.read_text())
     cases = dataset["cases"]
@@ -218,7 +233,13 @@ async def run_experiment(agent: str, *, overlay: Path | None = None, repeat: int
     # build_agent already applied the overlay; run through it directly for accounting.
     from infosec_harness.agents import models as model_factory
 
-    model_name = model_factory.resolved_model_name(agent, spec.model or "sonnet")
+    model_tier = spec.model or "sonnet"
+    model_name = model_factory.resolved_model_name(agent, model_tier)
+    # "<backend>:<id>" is what the factory returns; the backend half is what decides whether a
+    # cost figure is money at all, so it is worth storing on its own.
+    backend = model_name.split(":", 1)[0] if ":" in model_name else ""
+    pricing = _pricing_label(model_name)
+    code = code_version()
 
     exp_id = "exp-" + hashlib.sha256(
         f"{agent}:{version}:{cfg_hash}:{overlay}:{uuid.uuid4()}".encode()).hexdigest()[:16]
@@ -298,8 +319,10 @@ async def run_experiment(agent: str, *, overlay: Path | None = None, repeat: int
         async with db.session() as s:
             await s.merge(db.EvalExperiment(
                 id=exp_id, agent=agent, dataset=str(dataset_path.name),
-                dataset_version=version, git_sha=git_sha,
+                dataset_version=version, git_sha=code.git_commit, git_dirty=code.git_dirty,
+                harness_version=code.harness_version,
                 overlay=str(overlay) if overlay else "", config_hash=cfg_hash,
+                model_tier=model_tier, model_name=model_name, backend=backend, pricing=pricing,
                 repetitions=repeat, metrics=build_metrics(status, truncation)))
             for row in rows:
                 s.add(row)
@@ -307,7 +330,6 @@ async def run_experiment(agent: str, *, overlay: Path | None = None, repeat: int
 
     from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
 
-    git_sha = _git_sha()
     await db.create_all()
     # Claim the row before the first model call: a run that dies on case 1 is still a visible
     # `status=running` experiment rather than nothing at all.
@@ -396,7 +418,12 @@ async def run_experiment(agent: str, *, overlay: Path | None = None, repeat: int
 
     print(f"experiment {exp_id}: accuracy={metrics['accuracy']:.2%} "
           f"cost/case=${metrics['cost_usd_per_case']:.4f} cache_hit={metrics['cache_hit_ratio']:.2%} "
-          f"(config {cfg_hash})")
+          f"(model {model_name} [{pricing}], config {cfg_hash}, code {code.label()})")
+    if code.git_dirty:
+        # Said once, at the point the number is produced: this result cannot be filed against
+        # a commit, so it is not a baseline and is not reproducible from the SHA it carries.
+        print("  ! the working tree is dirty, so this result does not describe "
+              f"{code.git_commit[:12] or 'any commit'} -- commit before recording a baseline")
     if report is not None:
         write_release_report(
             report, agent=agent, metrics=metrics, cfg_hash=cfg_hash, model_name=model_name,
@@ -460,7 +487,9 @@ def write_release_report(path: Path, *, agent: str, metrics: dict, cfg_hash: str
         # average cannot show the tail a budget exists to brake.
         "distributions": metrics.get("distributions", {}),
         "provenance": {
-            "git_commit": _git_sha(),
+            **code_version().as_dict(),
+            # `git_dirty` travels beside the commit deliberately: a reader who sees only a SHA
+            # has no way to know the tree differed from it when the numbers were produced.
             "agent_version": agent_version,
             "config_hash": cfg_hash,
             "model": model_name,
@@ -471,7 +500,10 @@ def write_release_report(path: Path, *, agent: str, metrics: dict, cfg_hash: str
             "recorded_at": datetime.now(UTC).isoformat(),
             "run_count": repeat,
             "experiment_id": experiment_id,
+            # Package-relative, which is the path inside the distribution as well as under
+            # src/ in a checkout.
             "dataset": f"agents/{agent}/evals/dataset.yaml",
+            "model_pricing": _pricing_label(model_name),
             "evaluators": ["deterministic_output_match", "schema_validity", "budget_gate",
                            "scenario_coverage"],
             # No LLM judge is used anywhere in this suite, which is deliberate: the playbook
@@ -482,7 +514,6 @@ def write_release_report(path: Path, *, agent: str, metrics: dict, cfg_hash: str
             "model_settings": dict(getattr(spec, "model_settings", None) or {}),
             "skills": list(getattr(spec, "enabled_skills", None) or []),
             "toolsets": list(getattr(spec, "enabled_toolsets", None) or []),
-            "python": platform.python_version(),
             # Case-level results (per repetition, with pass/fail and cost) are persisted to the
             # experiment store under this id rather than inlined, so the report stays readable.
             "case_results": f"experiment {experiment_id}" if experiment_id else None,
@@ -492,20 +523,72 @@ def write_release_report(path: Path, *, agent: str, metrics: dict, cfg_hash: str
     path.write_text(json.dumps(report, indent=2) + "\n")
 
 
-async def compare_experiments(baseline: str, candidate: str) -> None:
+async def compare_experiments(experiment_ids: list[str]) -> None:
+    """Compare two or more experiments. The first is the baseline the rest are read against."""
     from infosec_harness.persistence import db
 
     async with db.session() as s:
-        b = await s.get(db.EvalExperiment, baseline)
-        c = await s.get(db.EvalExperiment, candidate)
-    if b is None or c is None:
-        raise SystemExit("experiment not found")
+        rows = [(eid, await s.get(db.EvalExperiment, eid)) for eid in experiment_ids]
+    if missing := [eid for eid, row in rows if row is None]:
+        raise SystemExit(f"experiment not found: {', '.join(missing)}")
+    found = [row for _, row in rows]
+    if len({row.agent for row in found}) > 1:
+        raise SystemExit(
+            "these experiments are of different agents "
+            f"({sorted({row.agent for row in found})}); their datasets differ, so the metrics "
+            "are not comparable")
+    _print_comparison(found)
+    if len(found) == 2:
+        _print_pairwise(found[0], found[1])
+
+
+def _experiment_label(row) -> str:
+    """How a row identifies itself in a table: the model, plus anything else that differs."""
+    return row.model_tier or row.config_hash[:8] or row.id
+
+
+def _print_comparison(found: list) -> None:
+    print(f"agent={found[0].agent}  dataset={found[0].dataset} v{found[0].dataset_version}\n")
+    print(comparison_table([
+        {"label": _experiment_label(row), "experiment_id": row.id, "pricing": row.pricing,
+         "metrics": row.metrics} for row in found]))
+    print()
+    for row in found:
+        code = f"{row.git_sha[:12] or '(no commit)'}{'-dirty' if row.git_dirty else ''}"
+        print(f"  {_experiment_label(row):<14} {row.model_name or '(unknown model)':<40} "
+              f"config {row.config_hash[:8]}  code {code}  v{row.harness_version or '?'}")
+    # Comparing runs of different code is a common and easy mistake -- a model sweep taken
+    # across an afternoon of edits reads as a model difference. Say it rather than assume it
+    # was noticed.
+    if len({(row.git_sha, row.git_dirty) for row in found}) > 1:
+        print("\n  ! these runs are of different code, so a difference between them is not "
+              "necessarily a difference between the models.")
+    if any(row.git_dirty for row in found):
+        print("  ! at least one run had a dirty working tree and cannot be reproduced from "
+              "its commit.")
+    for row in found:
+        status = row.metrics.get("status", "complete")
+        if status == "complete":
+            continue
+        # Loud, because the columns above are then between different numbers of cases: a
+        # "+8% accuracy" can be nothing but which cases happened to run.
+        cut = row.metrics.get("truncated") or {}
+        print(f"  !! {_experiment_label(row)} ({row.id}) is {status.upper()}: "
+              f"{row.metrics.get('n', 0)}/{row.metrics.get('n_planned', '?')} case runs scored"
+              + (f" — stopped on case {cut['failed_case']!r} "
+                 f"({cut['error_type']}: {cut['error'][:120]})" if cut else "")
+              + ". Its metrics cover only those cases, so this is not a like-for-like row.")
+
+
+def _print_pairwise(b, c) -> None:
+    """The original two-experiment view: deltas and confusion matrices, which only mean
+    something between exactly two runs."""
+    print()
 
     def delta(key: str) -> str:
         bv, cv = b.metrics.get(key, 0), c.metrics.get(key, 0)
         return f"{bv:>10} -> {cv:<10} ({cv - bv:+.4f})"
 
-    print(f"agent={b.agent}  baseline={baseline}  candidate={candidate}")
     incomplete = [(label, exp) for label, exp in (("baseline", b), ("candidate", c))
                   if exp.metrics.get("status", "complete") != "complete"]
     for label, exp in incomplete:
@@ -756,3 +839,214 @@ async def _score_corpus_once(*, language: str, sandbox: bool | None,
             # one character wider than the tool-using agents the trajectory table covers.
             print(f"  {agent:15} max {b['max_requests']:3}  mean {b['mean_requests']:6.2f}{note}")
     return metrics
+
+
+# --- Comparing models -------------------------------------------------------------------
+#
+# Changing the model is the single most common experiment, and until now it meant hand-writing
+# an overlay YAML per model, running them one at a time, noting the experiment ids, and then
+# comparing them two at a time. The three things anyone actually wants out of that -- how good,
+# how fast, how much -- were spread across a console line, a JSON report and a database row.
+
+# What a model sweep reports, in the order a reader needs it: is it right, how slow is the
+# tail, what does it cost, and how much work did it take to get there. Each is
+# (column, metrics path, formatter).
+_COMPARISON_COLUMNS: tuple[tuple[str, tuple[str, ...], str], ...] = (
+    ("accuracy", ("task_success_rate",), "pct"),
+    ("worst rep", ("distributions", "worst_repetition_pass_rate"), "pct"),
+    ("schema", ("schema_validity_rate",), "pct"),
+    ("p50 lat", ("distributions", "p50_latency_s"), "secs"),
+    ("p95 lat", ("distributions", "p95_latency_s"), "secs"),
+    ("$/case", ("average_cost_usd",), "usd"),
+    ("p95 $", ("distributions", "p95_cost_usd"), "usd"),
+    ("p95 req", ("p95_model_requests",), "int"),
+    ("budget", ("budget_exhausted_count",), "int"),
+)
+
+
+def _dig(metrics: dict, path: tuple[str, ...]):
+    value = metrics
+    for key in path:
+        if not isinstance(value, dict):
+            return None
+        value = value.get(key)
+    return value
+
+
+def _fmt(value, kind: str) -> str:
+    if value is None:
+        return "-"
+    if kind == "pct":
+        return f"{value:.0%}"
+    if kind == "secs":
+        return f"{value:.1f}s"
+    if kind == "usd":
+        return f"${value:.4f}"
+    return str(value)
+
+
+def comparison_table(rows: list[dict]) -> str:
+    """Render one row per model: quality, latency and cost side by side.
+
+    ``rows`` are ``{"label", "pricing", "metrics", "experiment_id"}``. Kept separate from both
+    the runner and the store so the same table renders a fresh sweep and a query over past
+    experiments, and so it can be tested without either.
+    """
+    if not rows:
+        return "(no experiments)"
+    headers = ["model", *(name for name, _, _ in _COMPARISON_COLUMNS)]
+    body = [[row["label"], *(_fmt(_dig(row["metrics"], path), kind)
+                             for _, path, kind in _COMPARISON_COLUMNS)] for row in rows]
+    widths = [max(len(str(r[i])) for r in [headers, *body]) for i in range(len(headers))]
+    lines = [
+        "  ".join(h.ljust(w) for h, w in zip(headers, widths, strict=True)),
+        "  ".join("-" * w for w in widths),
+        *("  ".join(str(c).ljust(w) for c, w in zip(row, widths, strict=True)) for row in body),
+    ]
+    # A cost column is only comparable between models priced the same way. Saying which kind of
+    # zero each zero is turns a misleading "cheaper" into a fact about the price table.
+    kinds = {row.get("pricing", "") for row in rows}
+    if kinds - {"priced"}:
+        lines.append("")
+        lines.append("  cost basis: " + ", ".join(
+            f"{row['label']}={row.get('pricing') or 'unknown'}" for row in rows))
+        if len(kinds) > 1:
+            lines.append("  ! these models are not priced on the same basis, so the cost "
+                         "columns are not comparable between them.")
+    lines.append("")
+    for row in rows:
+        lines.append(f"  {row['label'].ljust(widths[0])}  {row['experiment_id']}")
+    return "\n".join(lines)
+
+
+async def sweep_models(agent: str, models: list[str], *, overlay: Path | None = None,
+                       repeat: int = 1, report_dir: Path | None = None) -> list[dict]:
+    """Run one agent's dataset once per model, then report them side by side.
+
+    Sequential on purpose. These runs are the measurement, and latency is one of the things
+    being measured -- running them concurrently would have them contend for the same endpoint
+    and make every number a function of how many models were in the sweep.
+
+    A model that fails does not abort the sweep: its row is recorded as failed and the others
+    still produce numbers, because "opus could not complete the dataset" is itself a result
+    worth seeing next to the models that could.
+    """
+    from infosec_harness.persistence import db
+
+    results: list[dict] = []
+    for tier in models:
+        print(f"\n=== {agent} @ {tier} " + "=" * 40)
+        try:
+            exp_id = await run_experiment(
+                agent, overlay=overlay, repeat=repeat, model=tier,
+                report=(report_dir / f"{agent}-{tier}.json") if report_dir else None)
+        except SystemExit as exc:  # includes TruncatedExperiment
+            print(f"  {tier}: FAILED -- {type(exc).__name__}: {str(exc)[:200]}")
+            results.append({"label": tier, "experiment_id": getattr(exc, "experiment_id", "-"),
+                            "pricing": "", "metrics": {}, "failed": True})
+            continue
+        async with db.session() as s:
+            row = await s.get(db.EvalExperiment, exp_id)
+            results.append({"label": tier, "experiment_id": exp_id,
+                            "pricing": row.pricing, "metrics": row.metrics, "failed": False})
+    print(f"\n{agent}: {len(models)} models, {repeat} repetition(s), "
+          f"code {code_version().label()}\n")
+    print(comparison_table(results))
+    return results
+
+
+async def list_experiments(*, agent: str | None = None, commit: str | None = None,
+                           limit: int = 20) -> list:
+    """Print stored experiments, newest first, with what identifies each one.
+
+    The columns are the ones you need to decide whether two rows are comparable at all: the
+    model, the code, and the config -- not just the score.
+    """
+    from sqlalchemy import select
+
+    from infosec_harness.persistence import db
+
+    await db.create_all()
+    query = select(db.EvalExperiment).order_by(db.EvalExperiment.created_at.desc())
+    if agent:
+        query = query.where(db.EvalExperiment.agent == agent)
+    async with db.session() as s:
+        rows = list((await s.execute(query)).scalars())
+    if commit:
+        rows = [r for r in rows if r.git_sha.startswith(commit)]
+    rows = rows[:limit]
+    if not rows:
+        print("no experiments stored" + (f" for {agent}" if agent else ""))
+        return rows
+    header = f"{'experiment':<22} {'agent':<16} {'model':<10} {'code':<20} {'status':<10} acc     $/case"
+    print(header)
+    print("-" * len(header))
+    for row in rows:
+        metrics = row.metrics or {}
+        code = f"{row.git_sha[:12] or '-'}{'-dirty' if row.git_dirty else ''}"
+        print(f"{row.id:<22} {row.agent:<16} {(row.model_tier or '-'):<10} {code:<20} "
+              f"{metrics.get('status', '?'):<10} "
+              f"{metrics.get('task_success_rate', 0):<7.0%} "
+              f"${metrics.get('average_cost_usd', 0):.4f}")
+    return rows
+
+
+async def compare_models_for(agent: str, *, commit: str | None = None) -> list:
+    """Line up an agent's most recent run for each model it has been evaluated against.
+
+    This is the query the sweep produces live, asked after the fact -- so a comparison survives
+    the terminal it was printed in, and so models run days apart can still be read together
+    (with the code difference called out, because that is exactly when it matters).
+    """
+    from sqlalchemy import select
+
+    from infosec_harness.persistence import db
+
+    await db.create_all()
+    async with db.session() as s:
+        rows = list((await s.execute(
+            select(db.EvalExperiment)
+            .where(db.EvalExperiment.agent == agent)
+            .order_by(db.EvalExperiment.created_at.desc()))).scalars())
+    if commit:
+        rows = [r for r in rows if r.git_sha.startswith(commit)]
+    latest: dict[str, object] = {}
+    for row in rows:  # newest first, so the first of each model wins
+        latest.setdefault(row.model_tier or row.config_hash[:8], row)
+    if not latest:
+        raise SystemExit(f"no experiments stored for {agent}"
+                         + (f" at commit {commit}" if commit else ""))
+    found = list(latest.values())
+    _print_comparison(found)
+    return found
+
+
+async def save_baseline(experiment_id: str) -> Path:
+    """Record one experiment as the committed baseline for its agent and model."""
+    from infosec_harness.evals import baselines as baseline_store
+    from infosec_harness.persistence import db
+
+    async with db.session() as s:
+        row = await s.get(db.EvalExperiment, experiment_id)
+    if row is None:
+        raise SystemExit(f"experiment not found: {experiment_id}")
+    try:
+        baseline = baseline_store.from_experiment(row)
+    except baseline_store.BaselineRefused as refusal:
+        raise SystemExit(f"not recorded as a baseline: {refusal}") from refusal
+    previous = baseline_store.load(baseline.agent, baseline.model_tier)
+    path = baseline_store.save(baseline)
+    print(f"wrote {path}")
+    print(f"  {baseline.agent} @ {baseline.model_tier} ({baseline.model_name}) "
+          f"at {baseline.git_commit[:12]}, cost basis {baseline.pricing}")
+    if previous is not None:
+        moved = baseline_store.drift(previous, baseline.metrics)
+        if moved:
+            print(f"  replaces the baseline from {previous.git_commit[:12]}; what moved:")
+            for key, was, now in moved:
+                print(f"    {key:<24} {was} -> {now}")
+        else:
+            print(f"  replaces the baseline from {previous.git_commit[:12]}; no pinned metric "
+                  f"changed")
+    print("  commit this file: a baseline is only useful to the next person if it is in the repo")
+    return path

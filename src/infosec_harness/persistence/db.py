@@ -127,8 +127,21 @@ class EvalExperiment(Base):
     dataset: Mapped[str] = mapped_column(String(128))
     dataset_version: Mapped[str] = mapped_column(String(32), default="")
     git_sha: Mapped[str] = mapped_column(String(40), default="")
+    # A SHA alone cannot say whether the tree matched it. Without this, a run over uncommitted
+    # edits is stored as if it measured the commit, and no later reader can tell.
+    git_dirty: Mapped[bool] = mapped_column(default=False)
+    harness_version: Mapped[str] = mapped_column(String(32), default="")
     overlay: Mapped[str] = mapped_column(String(256), default="")
     config_hash: Mapped[str] = mapped_column(String(32), default="")
+    # The model, as its own columns rather than only inside `config_hash`. Comparing models is
+    # the main reason to run the same dataset twice, and a hash cannot be grouped by, filtered
+    # on, or read. `model_name` is the resolved "<backend>:<id>"; `model_tier` is what the spec
+    # asked for; `pricing` records whether the cost figures are real money, a self-hosted zero,
+    # or unknown -- so a cost comparison is never read across models priced differently.
+    model_tier: Mapped[str] = mapped_column(String(32), default="", index=True)
+    model_name: Mapped[str] = mapped_column(String(128), default="", index=True)
+    backend: Mapped[str] = mapped_column(String(32), default="")
+    pricing: Mapped[str] = mapped_column(String(16), default="")
     repetitions: Mapped[int] = mapped_column(Integer, default=1)
     metrics: Mapped[dict] = mapped_column(JSON, default=dict)
     cases: Mapped[list[EvalCaseResult]] = relationship(back_populates="experiment")

@@ -38,8 +38,10 @@ design and decision log.
   run long enough to need compaction pays full prefill afterwards. That is why the read tools
   answer in few, large calls (`tests/test_exploration_cost.py`) — a short run needs neither.
 - **Evidence-based tuning.** Every agent has an eval dataset and an executable release
-  policy; `harness eval run` / `eval compare` measure the accuracy, cost, and latency impact
-  of any model/prompt/skill change, one variable at a time.
+  policy. `harness eval run <agent> -m sonnet -m opus` runs the same dataset against each model
+  in turn and prints accuracy, latency and cost side by side; every run is stored with the
+  model, the commit, and whether that commit's tree was clean, and the accepted result per
+  agent per model is committed under [`evals/baselines/`](evals/baselines/README.md).
 - **Governed.** Each agent declares an owner, execution class, governance tier, data
   classification, model policy, and an enforced per-run budget; each toolset declares its
   effect on external state; each agent has a risk assessment whose tier its spec must match.
@@ -88,9 +90,13 @@ Jaeger (:16686), the worker, the API (:8000, docs at `/docs`), and the web app (
 harness submit findings.json [--local]   # triage a batch (JSON: one finding, a list, or {findings:[...]})
 harness runs [--verdict … --batch-id …]  # list runs, highest priority first
 harness report <run-id>                  # full triage report as JSON
-harness eval run <agent> [--overlay … --repeat N]   # run an agent's eval dataset
+harness eval run <agent> [-m sonnet -m opus] [--repeat N]  # one dataset, one model per -m
 harness eval corpus [--language all --repeat N --no-sandbox]  # score the ground-truth corpus
-harness eval compare <exp-a> <exp-b>     # accuracy / cost / latency deltas
+harness eval results [--agent … --commit …]   # every stored run, with its model and commit
+harness eval compare --agent <name>      # latest run per model, side by side
+harness eval compare <exp-a> <exp-b> […]  # named experiments, accuracy / cost / latency
+harness eval baseline save <exp-id>      # record the accepted result under evals/baselines/
+harness eval baseline list
 harness worker | harness api | harness init-db
 harness agents validate | agents schema
 ```

@@ -72,6 +72,49 @@ upstream.
 boundaries are system-level: the same untrusted repository reaches all of them, and the same
 sandbox contains the code. Eleven near-identical documents would be worse, not better.
 
+## Where eval results live
+
+Two stores, because they answer different questions and a single one does neither well.
+
+| | holds | lifetime | tied to |
+| --- | --- | --- | --- |
+| experiment store (`HARNESS_DATABASE_URL`) | every run, every case result | local, disposable | commit + dirty flag, model, config hash |
+| `evals/baselines/<agent>/<tier>.json` | the accepted result per agent per model | committed, reviewed | the commit it was measured at |
+
+The database is where runs go: incremental, queryable, and written after every case so a run
+killed halfway keeps what it scored. It is also, in practice, a scratch SQLite file — not
+reviewed, not in a clone, not in a release. So the handful of numbers that matter later are
+promoted into the repository, one file per agent per model, reviewed in a pull request like any
+other change and readable without the database that produced them.
+
+Every row and every file records what agent-playbook 02 needs to make a number attributable:
+the commit, **whether that commit's tree was clean**, the distribution version, the resolved
+model id and tier, the backend, the config hash, the dataset version, and the cost basis.
+
+Three of those are worth their own note.
+
+**`git_dirty`.** `git rev-parse HEAD` answers the same SHA whether or not the tree matches it,
+so a run over uncommitted edits used to be filed against a commit that never contained the code
+it measured, with nothing downstream able to tell. `harness eval baseline save` refuses such a
+run outright, as it refuses a truncated one: a baseline that quietly lies is worse than no
+baseline, because it becomes the thing every later comparison is read against.
+
+**The model, as columns rather than only inside `config_hash`.** The hash fingerprints the
+model but cannot be grouped by, filtered on, or read, so "how did `verdict` do on opus" was not
+a question the store could answer however many times it had been run.
+
+**The cost basis** (`priced` / `zero_priced` / `stub` / `unknown_model`), read from the same
+estimator the eval loop uses. A self-hosted model with a declared zero rate always "wins" on
+cost against a billed one, for a reason that has nothing to do with either model, and after the
+fact there is no way to tell which kind of zero a zero was. `harness eval compare` says so
+rather than letting the column be read straight.
+
+```bash
+harness eval run verdict -m sonnet -m opus -m haiku   # one dataset, three models, one table
+harness eval compare --agent verdict                  # the same, asked after the fact
+harness eval baseline save exp-<id>                   # promote an accepted result
+```
+
 ## Where the structure still differs from the reference architecture
 
 Audited against

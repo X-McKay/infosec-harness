@@ -13,8 +13,10 @@ from infosec_harness.domain.models import FindingInput
 app = typer.Typer(add_completion=False, help="Exploitability triage harness")
 agents_app = typer.Typer(help="Agent spec tooling")
 eval_app = typer.Typer(help="Evaluations")
+baseline_app = typer.Typer(help="Accepted eval results, committed under evals/baselines/")
 app.add_typer(agents_app, name="agents")
 app.add_typer(eval_app, name="eval")
+eval_app.add_typer(baseline_app, name="baseline")
 
 
 def _load_findings(path: Path) -> list[FindingInput]:
@@ -122,20 +124,108 @@ def agents_schema():
 @eval_app.command("run")
 def eval_run(
     agent: str = typer.Argument(..., help="Agent name, or 'e2e' for the end-to-end corpus"),
+    model: list[str] = typer.Option(
+        None, "--model", "-m",
+        help="Model tier to run against (repeat to sweep and compare, e.g. -m sonnet -m opus)"),
     overlay: Path = typer.Option(None, help="Experiment overlay YAML"),
     repeat: int = typer.Option(1, help="Repetitions (LLM variance)"),
     report: Path = typer.Option(None, help="Write an agentctl-compatible release report here"),
+    report_dir: Path = typer.Option(
+        None, help="With several --model, write one release report per model into this directory"),
 ):
-    """Run an agent's eval dataset (or the e2e corpus) and persist the experiment."""
-    from infosec_harness.evals.inert_gates import announce_inert_checks
-    from infosec_harness.evals.run import run_experiment
+    """Run an agent's eval dataset and persist the experiment.
 
-    exp_id = asyncio.run(run_experiment(agent, overlay=overlay, repeat=repeat, report=report))
+    Pass --model more than once to run the same dataset against each model in turn and print
+    accuracy, latency and cost side by side. The runs are sequential: latency is one of the
+    things being measured, so letting them contend would make every number depend on how many
+    models were in the sweep.
+    """
+    from infosec_harness.evals.inert_gates import announce_inert_checks
+    from infosec_harness.evals.run import run_experiment, sweep_models
+
+    models = list(model or [])
+    if len(models) > 1:
+        asyncio.run(sweep_models(agent, models, overlay=overlay, repeat=repeat,
+                                 report_dir=report_dir))
+        return
+    exp_id = asyncio.run(run_experiment(agent, overlay=overlay, repeat=repeat, report=report,
+                                        model=models[0] if models else None))
     if report is not None and report.exists():
         # A threshold on a metric this run could not move looks like coverage and is none:
         # say so next to the evidence, loudly, without changing the run's verdict.
         announce_inert_checks(agent, report, echo=typer.echo)
     typer.echo(f"EXPERIMENT_ID={exp_id}")
+
+
+@eval_app.command("results")
+def eval_results(
+    agent: str = typer.Option(None, help="Only this agent"),
+    commit: str = typer.Option(None, help="Only runs of this commit (prefix match)"),
+    limit: int = typer.Option(20, help="Most recent N experiments"),
+):
+    """List stored experiments with their model, commit and headline metrics."""
+    from infosec_harness.evals.run import list_experiments
+
+    asyncio.run(list_experiments(agent=agent, commit=commit, limit=limit))
+
+
+@eval_app.command("compare")
+def eval_compare(
+    experiments: list[str] = typer.Argument(
+        None, help="Two or more experiment ids; the first is the baseline"),
+    agent: str = typer.Option(None, help="Instead of ids, compare this agent's latest run per model"),
+    commit: str = typer.Option(None, help="With --agent, restrict to runs of this commit"),
+):
+    """Compare experiments on accuracy, latency and cost.
+
+    Either name the experiments, or pass --agent to line up that agent's most recent run for
+    each model it has been evaluated against.
+    """
+    from infosec_harness.evals.run import compare_experiments, compare_models_for
+
+    ids = list(experiments or [])
+    if agent:
+        asyncio.run(compare_models_for(agent, commit=commit))
+    elif len(ids) >= 2:
+        asyncio.run(compare_experiments(ids))
+    else:
+        raise typer.BadParameter("pass two or more experiment ids, or --agent <name>")
+
+
+@baseline_app.command("save")
+def baseline_save(
+    experiment: str = typer.Argument(..., help="Experiment id to record as the accepted result"),
+):
+    """Record an experiment as the committed baseline for its agent and model.
+
+    Refused for a truncated run or a dirty working tree: a baseline is a claim about a commit,
+    and one that names the wrong commit cannot be reproduced or bisected.
+    """
+    from infosec_harness.evals.run import save_baseline
+
+    asyncio.run(save_baseline(experiment))
+
+
+@baseline_app.command("list")
+def baseline_list(agent: str = typer.Option(None, help="Only this agent")):
+    """Show the committed baselines and whether the code has moved since each was measured."""
+    from infosec_harness.evals import baselines as baseline_store
+    from infosec_harness.evals.run import comparison_table
+
+    stored = baseline_store.load_all(agent)
+    if not stored:
+        typer.echo("no baselines recorded yet (`harness eval baseline save <experiment-id>`)")
+        return
+    for name in sorted({b.agent for b in stored}):
+        rows = [b for b in stored if b.agent == name]
+        typer.echo(f"\n{name}")
+        typer.echo(comparison_table([
+            {"label": b.model_tier, "experiment_id": b.experiment_id, "pricing": b.pricing,
+             "metrics": {**b.metrics, "distributions": b.distributions}} for b in rows]))
+        for b in rows:
+            note = baseline_store.staleness(b)
+            typer.echo(f"  {b.model_tier:<14} {b.git_commit[:12]}  {b.model_name}"
+                       + (f"  ! {note}" if note else ""))
 
 
 @eval_app.command("inert-gates")
@@ -168,14 +258,6 @@ def eval_corpus(
     from infosec_harness.evals.run import score_corpus
 
     asyncio.run(score_corpus(language=language, sandbox=sandbox, repeat=repeat))
-
-
-@eval_app.command("compare")
-def eval_compare(baseline: str, candidate: str):
-    """Compare two experiments on accuracy, cost, and latency."""
-    from infosec_harness.evals.run import compare_experiments
-
-    asyncio.run(compare_experiments(baseline, candidate))
 
 
 if __name__ == "__main__":

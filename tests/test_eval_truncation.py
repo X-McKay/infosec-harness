@@ -127,7 +127,7 @@ async def test_compare_flags_a_truncated_side(monkeypatch, capsys):
         await run_experiment(AGENT)
     capsys.readouterr()
 
-    await compare_experiments(baseline, excinfo.value.experiment_id)
+    await compare_experiments([baseline, excinfo.value.experiment_id])
     out = capsys.readouterr().out
     assert "TRUNCATED" in out and "candidate" in out
     assert "NOT a like-for-like comparison" in out
