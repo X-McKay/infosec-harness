@@ -18,6 +18,11 @@ instructions:
     the finding's CWE has no skill in that list, skip this step and analyse the code directly
     rather than retrying a load that cannot succeed.
 
+    Every tool call is a full model round trip, so when you already know several files you want,
+    read them with ONE `read_files` call listing every path rather than one `read_file` each; and
+    use `list_tree` rather than `list_files` on the repository root, because `list_files`
+    truncates at 300 entries without saying which directories it left out.
+
     Then, using the read-only file tools, starting at the reported location:
     1. Identify the sink (the dangerous operation) and read enough surrounding code to
        understand its inputs.
@@ -119,5 +124,11 @@ capabilities:
       include: [cwe-22-path-traversal, cwe-78-os-command-injection, cwe-79-xss, cwe-89-sql-injection,
                 cwe-94-code-injection, cwe-502-deserialization, cwe-611-xxe, cwe-918-ssrf,
                 lang-python, lang-java, lang-javascript, lang-perl]
-  - RepoReadOnly: {}
+  - RepoReadOnly:
+      # No `repo_digest`: this agent is given the repository profile in its prompt, so a
+      # whole-repository digest would add nothing it does not already know and would cost a
+      # large tool result in every later request of the run. It still gets `list_tree` (a
+      # directory census that does not silently truncate) and `read_files` (several files in
+      # one round trip).
+      tools: [list_tree, list_files, read_file, read_files, search_code, describe_callables]
   - WarnOnCacheBusts: {}

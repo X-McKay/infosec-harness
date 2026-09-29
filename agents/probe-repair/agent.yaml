@@ -102,5 +102,11 @@ capabilities:
       directories: skills
       include: [probe-oracle-protocol, test-pytest, test-junit5, test-jest, test-perl-test-more,
                 lang-python, lang-java, lang-javascript, lang-perl]
-  - RepoReadOnly: {}
+  - RepoReadOnly:
+      # No `repo_digest`: this agent is given the repository profile in its prompt, so a
+      # whole-repository digest would add nothing it does not already know and would cost a
+      # large tool result in every later request of the run. It still gets `list_tree` (a
+      # directory census that does not silently truncate) and `read_files` (several files in
+      # one round trip).
+      tools: [list_tree, list_files, read_file, read_files, search_code, describe_callables]
   - WarnOnCacheBusts: {}

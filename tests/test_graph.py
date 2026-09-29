@@ -205,12 +205,18 @@ async def test_one_failing_finding_does_not_sink_the_batch(repo):
         local.triage_one = real_triage_one
 
     assert len(outputs) == 2, "the surviving finding must still be reported"
-    failed = outputs[0]
-    assert failed.result.verdict.label is VerdictLabel.inconclusive
-    assert failed.result.verdict.inconclusive_reason is InconclusiveReason.error
-    assert "load_capability" in failed.result.verdict.rationale
-    # The second finding was triaged normally rather than discarded.
-    assert outputs[1].result.verdict.label in set(VerdictLabel)
+    # Which of the two fails is a property of the schedule, not of the containment: the batch
+    # runs a repo's findings in the same (cwe, file_path) order the durable workflow uses, and
+    # warms on the first. So this asserts that exactly one failed with the right reason and the
+    # other was triaged, rather than pinning the failure to an index.
+    failed = [o for o in outputs
+              if o.result.verdict.inconclusive_reason is InconclusiveReason.error]
+    assert len(failed) == 1, [o.result.verdict.inconclusive_reason for o in outputs]
+    assert failed[0].result.verdict.label is VerdictLabel.inconclusive
+    assert "load_capability" in failed[0].result.verdict.rationale
+    survivor = next(o for o in outputs if o is not failed[0])
+    assert survivor.result.verdict.label in set(VerdictLabel)
+    assert survivor.result.verdict.inconclusive_reason is not InconclusiveReason.error
 
 
 async def test_a_repo_that_cannot_be_prepared_does_not_sink_the_batch(repo, monkeypatch):

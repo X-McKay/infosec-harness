@@ -2757,6 +2757,20 @@
     "spec_params_RepoReadOnly": {
       "additionalProperties": false,
       "properties": {
+        "tools": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Tools"
+        },
         "id": {
           "anyOf": [
             {

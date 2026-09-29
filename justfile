@@ -15,6 +15,14 @@ test:
 lint-fix:
     uv run ruff check src tests --fix
 
+# What a run costs in model round trips, prompt-cache prefix stability, and batch schedule.
+# All three are offline: no provider, no container, no credentials, seconds to run. Use them
+# before changing a read tool, a prompt's exploration procedure, or per-repo concurrency.
+measure:
+    HARNESS_MODEL_MODE=stub uv run python scripts/measure_exploration.py
+    HARNESS_MODEL_MODE=stub uv run python scripts/measure_cache_prefix.py
+    HARNESS_MODEL_MODE=stub uv run python scripts/measure_batch_schedule.py
+
 # Conformance against the Agent / Multi-Agent Playbooks, via agentctl.
 # Needs agentctl: `uv tool install ./tools/agentctl` from the playbooks repo, or
 # `just conformance AGENTCTL=/path/to/playbooks` to use a checkout.

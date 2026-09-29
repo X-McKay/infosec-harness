@@ -34,11 +34,20 @@ from infosec_harness.domain.models import (
 from infosec_harness.settings import get_settings
 
 # The tools each agent must expose to the model (design contract).
-REPO = {"load_capability", "list_files", "read_file", "search_code", "describe_callables"}
+#
+# `repo_digest` is the one tool not given to every repo agent, and the split is deliberate. It
+# answers "what is this repository" in a single call, which is recon's and env-planner's whole
+# job; every other repo agent is handed the finished RepoProfile in its prompt, so for them the
+# digest would restate what they already know and cost a 20-40 kB tool result that every later
+# request of the run resends. Widening this set is a design decision, not a formality: assert
+# the tools each agent should have, not the tools it happens to have.
+REPO = {"load_capability", "list_tree", "list_files", "read_file", "read_files", "search_code",
+        "describe_callables"}
+PROFILING = REPO | {"repo_digest"}
 EXPECTED_TOOLS = {
     "intake": {"load_capability"},
-    "recon": REPO,
-    "env-planner": REPO,
+    "recon": PROFILING,
+    "env-planner": PROFILING,
     "build-repair": REPO | {"run_in_sandbox"},
     "partial-build": REPO | {"run_in_sandbox"},
     "context": REPO,
