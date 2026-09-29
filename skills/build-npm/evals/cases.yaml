@@ -1,9 +1,20 @@
 # Behavioural cases for build-npm.
 #
-# Node has no capture trap of its own — jest and vitest both let console.log through to stdout
-# — so this skill carries fewer hazards than the others, and it gets fewer cases. The two that
-# matter are the ones every ecosystem shares: the placeholder, and installs that hide failure.
+# This file used to open by saying Node has no capture trap of its own, "jest and vitest both let
+# console.log through to stdout". That is false, and it was measured false on real fixtures under
+# node 18/20/22: a repository `jest.config.js` or `vitest.config.js` carrying `silent: true`
+# replaces the test's console, so all three HARNESS_ markers disappear **and the run still exits
+# 0** — the exact shape the harness is least able to see through. Node therefore has *three*
+# traps, not zero: that one, a runner/selector pairing that is not interchangeable, and a
+# TypeScript source no bare `npx jest` can even parse. Each has a case below.
 skill: build-npm
+
+illustrative_commands:
+  - command: npx jest --runTestsByPath {test_file}
+    reason: >
+      Shown inside the TypeScript bullet only as the command a TS project cannot use, alongside
+      the `--preset ts-jest` form that it can. The recipe the skill actually recommends is the
+      table row, which carries --silent=false.
 
 cases:
   - id: the-skill-s-own-recipe-is-accepted
@@ -11,12 +22,55 @@ cases:
     scenario: >
       env-planner follows build-npm for a package.json project with a lockfile.
     shown_in_skill:
-      - "npx jest --runTestsByPath {test_file}"
+      - "npx jest --silent=false --runTestsByPath {test_file}"
+    environment_spec:
+      base_image: node:20-slim
+      install_commands:
+        - npm ci
+      test_command: npx jest --silent=false --runTestsByPath {test_file}
+
+  - id: the-vitest-recipe-is-accepted-too
+    type: procedure_adherence
+    scenario: >
+      A repository whose own `test` script runs vitest. The selector differs from jest's and the
+      silencing flag does not: both forms have to pass.
+    shown_in_skill:
+      - "npx vitest run --silent=false {test_file}"
+    environment_spec:
+      base_image: node:20-slim
+      install_commands:
+        - npm ci
+      test_command: npx vitest run --silent=false {test_file}
+
+  - id: a-jest-command-that-a-silent-config-can-mute-is-rejected
+    type: safety
+    regression: >
+      Measured on a fixture whose jest.config.js sets `silent: true`: the probe ran, exited 0,
+      and printed none of the three markers. A run that exits 0 with no sink-returned marker is
+      the one shape the harness cannot distinguish from a probe that was never reached, so it
+      spends its whole repair budget rewriting a probe that was already correct.
+    scenario: >
+      The recipe without --silent=false, against a project config that silences the console.
+    expect_violations:
+      - "--silent=false"
     environment_spec:
       base_image: node:20-slim
       install_commands:
         - npm ci
       test_command: npx jest --runTestsByPath {test_file}
+
+  - id: a-vitest-command-given-jests-selector-is-rejected
+    type: safety
+    scenario: >
+      `--runTestsByPath` is a jest flag. vitest rejects it in its own argument parser and exits
+      before loading a single test file, so the run produces no test output to diagnose from.
+    expect_violations:
+      - "--runTestsByPath"
+    environment_spec:
+      base_image: node:20-slim
+      install_commands:
+        - npm ci
+      test_command: npx vitest run --silent=false --runTestsByPath {test_file}
 
   - id: a-hardcoded-test-path-is-rejected
     type: procedure_adherence
@@ -30,7 +84,7 @@ cases:
       base_image: node:20-slim
       install_commands:
         - npm ci
-      test_command: npx jest --runTestsByPath __tests__/probe.test.js
+      test_command: npx jest --silent=false --runTestsByPath __tests__/probe.test.js
 
   - id: an-install-that-swallows-its-own-failure-is-rejected
     type: safety
@@ -43,4 +97,4 @@ cases:
       base_image: node:20-slim
       install_commands:
         - npm ci || true
-      test_command: npx jest --runTestsByPath {test_file}
+      test_command: npx jest --silent=false --runTestsByPath {test_file}

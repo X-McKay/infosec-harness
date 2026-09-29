@@ -279,6 +279,13 @@ _RUNNER_VERSION_CHECKS: tuple[tuple[str, str], ...] = (
     ("npx jest", "npx --no-install jest --version"),
     ("jest", "jest --version"),
     ("npx vitest", "npx --no-install vitest --version"),
+    # mocha, tsx and node's own runner were missing, so a spec naming any of them got the trivial
+    # shell check and an absent runner surfaced at probe time as `npx canceled due to missing
+    # packages` — exit 1, no test output, routed to probe repair, which cannot install anything.
+    ("npx mocha", "npx --no-install mocha --version"),
+    ("mocha", "mocha --version"),
+    ("npx tsx", "npx --no-install tsx --version"),
+    ("node --test", "node --version"),
     ("prove", "prove --version"),
     ("mvn", "mvn -v"),
     ("gradlew", "./gradlew --offline --version"),
@@ -351,6 +358,20 @@ _NO_TESTS_SIGNATURES: tuple[tuple[str, str], ...] = (
     # Jest
     ("No tests found", "jest: found no test files"),
     ("Tests:       0 total", "jest: ran 0 tests"),
+    # Vitest. Measured on real fixtures: a file with no `test()` in it is a *failed suite*, not
+    # an empty one, and a path vitest cannot match is a different message again. Neither says
+    # "no tests found", which is why jest's wording caught nothing here.
+    ("No test suite found in file", "vitest: the file declared no test suite"),
+    ("No test files found", "vitest: matched no test file"),
+)
+# Signatures that need a boundary a substring cannot express. mocha's summary is "  0 passing",
+# and `"0 passing" in output` is TRUE for a ten-test run ("10 passing") -- measured -- which would
+# report a healthy run as having executed nothing. node:test prints its own counters as TAP
+# comments; `# pass 0` with `# fail 0` is a run in which every test was skipped or filtered out,
+# which is exactly the zero-test shape (`node --test` has no "no tests" message of its own).
+_NO_TESTS_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"(?<!\d)0 passing"), "mocha: 0 passing"),
+    (re.compile(r"^# pass 0$", re.M), "node:test: every test was skipped or filtered out"),
 )
 
 
@@ -366,6 +387,11 @@ def no_tests_executed(output: str) -> str | None:
     for signature, reason in _NO_TESTS_SIGNATURES:
         if signature in output:
             return f"{reason} (matched {signature!r}). Zero tests ran, so this is not a negative result."
+    for pattern, reason in _NO_TESTS_PATTERNS:
+        match = pattern.search(output)
+        if match:
+            return (f"{reason} (matched {match.group(0)!r}). Zero tests ran, so this is not a "
+                    "negative result.")
     return None
 
 

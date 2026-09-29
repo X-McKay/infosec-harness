@@ -69,6 +69,60 @@ def test_a_javascript_default_export_is_not_destructured(tmp_path):
     assert "{ only }" not in block
 
 
+# --- the module systems and dialects this tool has to survive ----------------------------
+#
+# This tool exists to stop one false negative, so a file it *refuses* is the worst outcome
+# available: the probe author then writes the import from memory, which is the exact mistake.
+
+@pytest.mark.parametrize("name", ["render.ts", "render.tsx", "render.mts", "render.cts"])
+def test_typescript_is_described_rather_than_refused(tmp_path, name):
+    """`.ts` was absent from _LANG_BY_SUFFIX, so this tool raised ModelRetry on every file in a
+    TypeScript repository — while `detect_stack` happily classified the repo as `typescript` and
+    the plan sent it to jest. The declaration forms the scanner matches are spelled identically
+    in TypeScript; only the annotations differ, and they sit inside the parameter list."""
+    (tmp_path / name).write_text(
+        "export function renderComment(text: string): string {\n"
+        "  return \"<div>\" + text + \"</div>\";\n}\n")
+    ctx = SimpleNamespace(deps=AgentDeps(repo_path=str(tmp_path)))
+    report = caps.describe_callables(ctx, name)
+    block = _block(report, "renderComment")
+    assert "export=named" in block
+    # Extensionless: `./render.ts` is what ts-jest and tsc's own resolver reject.
+    assert 'import { renderComment } from "./render";' in block
+    assert "TypeScript source" in report and "compiles TS" in report
+
+
+def test_an_esm_specifier_keeps_its_extension(tmp_path):
+    """Measured under node 18/20/22: `import { x } from "../src/render"` in a `"type": "module"`
+    package dies with ERR_MODULE_NOT_FOUND under `node --test` and plain node, because node's
+    ESM resolver does no extension guessing. vitest and jest's vm-modules mode forgive it, so
+    printing the form that works under every runner is strictly better than printing the other."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/render.js").write_text(
+        "export function renderComment(t) { return \"<div>\" + t + \"</div>\"; }\n")
+    ctx = SimpleNamespace(deps=AgentDeps(repo_path=str(tmp_path)))
+    report = caps.describe_callables(ctx, "src/render.js")
+    assert 'import { renderComment } from "./src/render.js";' in report
+    assert 'from "./src/render"' not in report.replace('from "./src/render.js"', "")
+    assert "ERR_MODULE_NOT_FOUND" in report
+
+
+def test_a_commonjs_require_specifier_stays_extensionless(tmp_path):
+    """CommonJS resolution *does* guess, and the corpus case this tool was built for is CJS: the
+    require form must not acquire an extension just because ESM needs one."""
+    (tmp_path / "cmd.js").write_text(
+        "function countLines(p) { return p; }\nmodule.exports = { countLines };\n")
+    ctx = SimpleNamespace(deps=AgentDeps(repo_path=str(tmp_path)))
+    report = caps.describe_callables(ctx, "cmd.js")
+    assert 'const { countLines } = require("./cmd");' in report
+
+
+def test_an_mjs_module_keeps_the_mjs_extension(tmp_path):
+    (tmp_path / "render.mjs").write_text("export function render(t) { return t; }\n")
+    ctx = SimpleNamespace(deps=AgentDeps(repo_path=str(tmp_path)))
+    assert 'from "./render.mjs"' in caps.describe_callables(ctx, "render.mjs")
+
+
 # --- one file per corpus language --------------------------------------------------------
 
 def test_python_is_parsed_not_guessed():

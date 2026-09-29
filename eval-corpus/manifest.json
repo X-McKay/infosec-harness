@@ -721,6 +721,102 @@
         "source": "arg argument",
         "target_callable": "run"
       }
+    },
+    {
+      "name": "javascript-xssesm-vulnerable",
+      "language": "javascript",
+      "finding": {
+        "title": "Cross-site scripting in renderComment",
+        "repo_url": "eval-corpus/javascript/xssesm/vulnerable",
+        "revision": "HEAD",
+        "file_path": "src/render.ts",
+        "start_line": 2,
+        "symbol": "renderComment",
+        "cwe": "CWE-79",
+        "severity": "high",
+        "source_tool": "seed-corpus",
+        "description": "Untrusted text argument reaches the CWE-79 sink in renderComment."
+      },
+      "truth": {
+        "expected_verdict": "potentially_exploitable",
+        "reachability": "reachable",
+        "sink_file": "src/render.ts",
+        "sink_line": 3,
+        "source": "text argument",
+        "target_callable": "renderComment"
+      }
+    },
+    {
+      "name": "javascript-xssesm-fixed",
+      "language": "javascript",
+      "finding": {
+        "title": "Cross-site scripting in renderComment",
+        "repo_url": "eval-corpus/javascript/xssesm/fixed",
+        "revision": "HEAD",
+        "file_path": "src/render.ts",
+        "start_line": 11,
+        "symbol": "renderComment",
+        "cwe": "CWE-79",
+        "severity": "high",
+        "source_tool": "seed-corpus",
+        "description": "Untrusted text argument reaches the CWE-79 sink in renderComment."
+      },
+      "truth": {
+        "expected_verdict": "likely_not_exploitable",
+        "reachability": "neutralized",
+        "sink_file": "src/render.ts",
+        "sink_line": 12,
+        "source": "text argument",
+        "target_callable": "renderComment"
+      }
+    },
+    {
+      "name": "perl-xss-vulnerable",
+      "language": "perl",
+      "finding": {
+        "title": "Cross-site scripting in render",
+        "repo_url": "eval-corpus/perl/xss/vulnerable",
+        "revision": "HEAD",
+        "file_path": "lib/Renderer.pm",
+        "start_line": 8,
+        "symbol": "render",
+        "cwe": "CWE-79",
+        "severity": "high",
+        "source_tool": "seed-corpus",
+        "description": "Untrusted text argument reaches the CWE-79 sink in render."
+      },
+      "truth": {
+        "expected_verdict": "potentially_exploitable",
+        "reachability": "reachable",
+        "sink_file": "lib/Renderer.pm",
+        "sink_line": 10,
+        "source": "text argument",
+        "target_callable": "render"
+      }
+    },
+    {
+      "name": "perl-xss-fixed",
+      "language": "perl",
+      "finding": {
+        "title": "Cross-site scripting in render",
+        "repo_url": "eval-corpus/perl/xss/fixed",
+        "revision": "HEAD",
+        "file_path": "lib/Renderer.pm",
+        "start_line": 10,
+        "symbol": "render",
+        "cwe": "CWE-79",
+        "severity": "high",
+        "source_tool": "seed-corpus",
+        "description": "Untrusted text argument reaches the CWE-79 sink in render."
+      },
+      "truth": {
+        "expected_verdict": "likely_not_exploitable",
+        "reachability": "neutralized",
+        "sink_file": "lib/Renderer.pm",
+        "sink_line": 13,
+        "source": "text argument",
+        "target_callable": "render"
+      }
     }
   ],
   "note": "Paired seeded corpus across languages. Each case carries its own `language`. Vulnerable variants -> potentially_exploitable; fixed -> likely_not_exploitable. Truth is for scoring only. The `-fixed` variants are `neutralized`, not `unreachable` and not plain `reachable`: untrusted input does arrive at the sink, and a named control on the path stops it. `unreachable` is reserved for the one case where no untrusted value reaches the sink at all. The distinction decides whether the probe runs, so it is ground truth rather than wording."

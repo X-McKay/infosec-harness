@@ -26,11 +26,19 @@ DEFINITION_PATTERN = {  # language -> regex (with a {name} slot) for "this calla
     "javascript": r"(?:function\s+{name}\s*\(|\b{name}\s*[:=]\s*(?:async\s*)?(?:function\b|\())",
     "java": r"\b{name}\s*\(",  # methods carry a return type/modifiers, not a keyword
 }
-EXPECTED_STACK = {  # language -> (detected language alternatives, build system, test framework)
-    "python": ({"python"}, "pip", "pytest"),
-    "java": ({"java"}, "maven", "junit5"),
-    "javascript": ({"javascript", "typescript"}, "npm", "jest"),
-    "perl": ({"perl"}, "cpanm", "Test::More"),
+# language -> (detected language alternatives, build system, acceptable test frameworks).
+#
+# The frameworks are a *set* because the corpus deliberately spans more than one runner per
+# ecosystem: a jest + CommonJS Node case alongside a vitest + ESM + TypeScript one, and a
+# Test::More distribution alongside a Test2::V0 Module::Build one. Pinning a single framework per
+# language is how the corpus came to assert that every Node repo is a jest repo and every Perl
+# repo a Test::More repo, which is exactly the assumption the harness had to stop making.
+# `test_the_corpus_spans_more_than_one_runner_per_ecosystem` keeps the breadth from regressing.
+EXPECTED_STACK = {
+    "python": ({"python"}, "pip", {"pytest"}),
+    "java": ({"java"}, "maven", {"junit5"}),
+    "javascript": ({"javascript", "typescript"}, "npm", {"jest", "vitest", "mocha", "node:test"}),
+    "perl": ({"perl"}, "cpanm", {"Test::More", "Test2::V0"}),
 }
 
 
@@ -75,7 +83,25 @@ def test_stack_detects_expected_toolchain(case):
     top = max(st.languages, key=st.languages.get) if st.languages else None
     assert top in langs, f"{case.name}: detected {top}, expected one of {langs}"
     assert build in st.build_systems, f"{case.name}: build {st.build_systems} lacks {build}"
-    assert testfw in st.test_frameworks, f"{case.name}: test fw {st.test_frameworks} lacks {testfw}"
+    assert set(st.test_frameworks) & testfw, \
+        f"{case.name}: test fw {st.test_frameworks} names none of {sorted(testfw)}"
+
+
+def test_the_corpus_spans_more_than_one_runner_per_ecosystem():
+    """The harness has to work on *any* JS or Perl codebase, so the corpus must contain more than
+    one shape of each. A single-runner corpus cannot catch a plan hardcoded to that runner —
+    which is how `npx jest --runTestsByPath` survived as the only Node command for so long.
+    """
+    seen: dict[str, set[str]] = {}
+    for case in CASES:
+        if case.language in ("javascript", "perl") and case.is_vendored:
+            seen.setdefault(case.language, set()).update(
+                detect_stack(str(case.repo_path)).test_frameworks)
+    for language in ("javascript", "perl"):
+        assert len(seen.get(language, set())) > 1, (
+            f"every {language} case in the corpus reports the same test framework "
+            f"({sorted(seen.get(language, set()))}); a plan hardcoded to it would score perfectly"
+        )
 
 
 def test_paired_variants_differ_at_the_sink():

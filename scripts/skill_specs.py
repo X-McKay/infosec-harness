@@ -64,17 +64,37 @@ PYTEST_COMPLETION = [
     "The pytest command disables output capture with `-s`, or the probe's markers are buffered "
     "away and a correct probe is recorded as having reached nothing.",
 ]
+# Node's equivalent of pytest's `-s`, plus the pairing rule the runners do not share. Both were
+# measured on real fixtures under node 18/20/22, and the first is the costliest shape there is:
+# every marker gone with the run still exiting 0.
+JS_RUNNER_COMPLETION = [
+    "A jest or vitest `test_command` carries `--silent=false`. A repository `jest.config.js` or "
+    "`vitest.config.js` that sets `silent: true` replaces the test's console, so all three "
+    "`HARNESS_` markers disappear while the run still exits 0 — a correct probe recorded as "
+    "having reached nothing, with nothing in the output to say why. mocha and `node --test` "
+    "never capture a test's stdout and need no flag.",
+    "`test_command` invokes the runner the repository's own `test` script invokes, with the "
+    "selector that runner accepts: `--runTestsByPath` is jest's and vitest rejects it outright. "
+    "`npx` cannot rescue a runner the project does not declare — the probe container is offline, "
+    "so it exits with `npx canceled due to missing packages` and no test output at all.",
+    "A TypeScript probe runs under a runner that compiles TypeScript: vitest or `npx tsx --test` "
+    "need no configuration, while jest needs `--preset ts-jest` *and* `@types/jest` installed, "
+    "because ts-jest type-checks the probe and stops on `TS2582: Cannot find name 'test'`.",
+]
 JVM_RUNNER_COMPLETION = [
     "`test_command` names the probe's test *class* in its selector (`-Dtest=HarnessProbeTest`, "
     "`--tests '*HarnessProbeTest'`) — not a file path, which these runners do not accept. The "
     "probe's class name must therefore match the selector.",
 ]
 PROVE_COMPLETION = [
-    "The `prove` command is verbose (`prove -v {test_file}`). prove parses its child's TAP and "
-    "discards every other line, so without `-v` the probe's markers are thrown away and a "
+    "The `prove` command is verbose (`prove -v -Ilib {test_file}`). prove parses its child's TAP "
+    "and discards every other line, so without `-v` the probe's markers are thrown away and a "
     "correct probe is recorded as having reached nothing — the Perl form of pytest's `-s`.",
-    "Every module the repository's cpanfile/Makefile.PL declares is installed, and if the "
-    "install used a local lib then `env.PERL5LIB` points at it.",
+    "The `-I` path is the repository's real module root, which is not always `lib`. Measured: a "
+    "distribution whose modules live in `blib/lib` (use `-b`, or `-Iblib/lib`) or under "
+    "`src/perl` dies on `Can't locate Runner.pm` with `-Ilib`, before the probe prints anything.",
+    "Every module the repository's cpanfile/Makefile.PL/Build.PL declares is installed, and if "
+    "the install used a local lib then `env.PERL5LIB` points at it.",
 ]
 MAVEN_COMPLETION = [
     "`test_command` compiles the probe (`test-compile`) and then invokes a version-pinned "
@@ -93,6 +113,29 @@ GRADLE_COMPLETION = [
     "`test_command` runs at the INFO log level (`-i`): Gradle's `Test` task forwards a test's "
     "standard streams only from INFO up, so at the default level the probe's markers are "
     "dropped and a correct probe is recorded as having reached nothing.",
+]
+# The probe *body* is not portable across the Node runners, which is what this skill used to
+# claim. Measured: `test(...)` is a global under jest only — vitest ships `globals: false` and
+# mocha's default BDD interface names it `it` — so the same file dies with
+# `ReferenceError: test is not defined` under either.
+JS_PROBE_COMPLETION = [
+    "The probe declares its test function the way its own runner provides it: a bare `test(...)` "
+    "under jest, `import { test } from 'vitest'` under vitest, `it(...)` under mocha, and "
+    "`require('node:test')` under node's built-in runner. A bare `test(...)` is a global under "
+    "jest alone, so the wrong shape is a `ReferenceError` before the sink is ever reached.",
+    "An ESM specifier keeps the file extension (`../src/render.js`, not `../src/render`): node's "
+    "own resolver does no extension guessing, so the extensionless form fails with "
+    "`ERR_MODULE_NOT_FOUND` under `node --test`.",
+]
+# Every dialect prove will run declares a plan, and each declares it differently. Measured on
+# perl 5.34 with prove 3.43: without one, prove reports `Parse errors: No plan found in TAP
+# output` and exits nonzero on a script that printed every marker correctly.
+PERL_PLAN_COMPLETION = [
+    "The script declares a plan in its own dialect's spelling: `done_testing();` (Test::More or "
+    "Test2::V0), `use Test::More tests => 1;`, `plan 1;` (Test2::V0 — it has no `tests =>` form), "
+    "or a printed `1..1` line in a script that loads no Test:: module at all. With no plan, prove "
+    "reports `Parse errors: No plan found in TAP output` and exits nonzero however well the probe "
+    "behaved.",
 ]
 NO_SKIP_COMPLETION = [
     "The probe cannot decline to run: no skip, no disable, no assumption guard. A skipped test "
@@ -416,13 +459,14 @@ SKILLS = {
         safety=BUILD_SAFETY,
         completion=BUILD_COMPLETION + JVM_RUNNER_COMPLETION + GRADLE_COMPLETION),
     "build-npm": dict(
-        description=("Recipe for building a Node and JavaScript test environment in the "
-                     "sandbox. Use this when planning or repairing a build for a package.json "
-                     "project."),
+        description=("Recipe for building a Node, JavaScript or TypeScript test environment in "
+                     "the sandbox, for any of jest, vitest, mocha and node's own test runner. "
+                     "Use this when planning or repairing a build for a package.json project."),
         use_when=["You are producing or repairing an EnvironmentSpec for a Node project.",
                   "The repository declares a package.json."],
         avoid_when=["The repository is not a Node project."],
-        safety=BUILD_SAFETY, completion=BUILD_COMPLETION + PATH_RUNNER_COMPLETION),
+        safety=BUILD_SAFETY,
+        completion=BUILD_COMPLETION + PATH_RUNNER_COMPLETION + JS_RUNNER_COMPLETION),
     "build-cpanm": dict(
         description=("Recipe for building a Perl test environment in the sandbox. Use this when "
                      "planning or repairing a build for a cpanfile or Makefile.PL project."),
@@ -463,14 +507,14 @@ SKILLS = {
                     "You have not yet read `probe-oracle-protocol`; read it first."],
         safety=TEST_SAFETY, completion=TEST_COMPLETION + NO_SKIP_COMPLETION),
     "test-jest": dict(
-        description=("How to write a probe as a Jest or Vitest test that emits the oracle "
-                     "markers. Use this when authoring or repairing a probe for a Jest "
-                     "repository."),
+        description=("How to write a probe as a JavaScript or TypeScript test that emits the "
+                     "oracle markers, under Jest, Vitest, Mocha or node's built-in test runner. "
+                     "Use this when authoring or repairing a probe for a Node repository."),
         use_when=["You are writing or repairing a probe and the repository's test framework is "
-                  "Jest or Vitest."],
+                  "Jest, Vitest, Mocha, or node's built-in runner (`node --test`)."],
         avoid_when=["The repository uses a different framework; load that `test-*` skill.",
                     "You have not yet read `probe-oracle-protocol`; read it first."],
-        safety=TEST_SAFETY, completion=TEST_COMPLETION),
+        safety=TEST_SAFETY, completion=TEST_COMPLETION + JS_PROBE_COMPLETION),
     "test-perl-test-more": dict(
         description=("How to write a probe as a Test::More script that emits the oracle "
                      "markers. Use this when authoring or repairing a probe for a Perl "
@@ -479,5 +523,5 @@ SKILLS = {
                   "Test::More or Test2."],
         avoid_when=["The repository uses a different framework; load that `test-*` skill.",
                     "You have not yet read `probe-oracle-protocol`; read it first."],
-        safety=TEST_SAFETY, completion=TEST_COMPLETION + NO_SKIP_COMPLETION),
+        safety=TEST_SAFETY, completion=TEST_COMPLETION + NO_SKIP_COMPLETION + PERL_PLAN_COMPLETION),
 }

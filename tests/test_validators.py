@@ -149,14 +149,106 @@ def test_a_pytest_command_that_captures_output_is_rejected():
 
 
 def test_non_pytest_runners_are_not_held_to_pytests_flag():
-    """Only invent a requirement where it is real: jest does not capture as pytest does."""
+    """Only invent a requirement where it is real.
+
+    This test used to assert that no Node runner needed a flag of its own, on the stated grounds
+    that "jest does not capture as pytest does". Measured on real fixtures under node 18/20/22,
+    that is only true of mocha and node's own runner. jest and vitest both replace the test's
+    console when the *project's* config says `silent: true`, and the run then exits 0 having
+    printed none of the three markers — so the two halves are asserted separately now.
+    """
     from infosec_harness.agents.validators import environment_spec_violations
     from infosec_harness.domain.models import EnvironmentSpec
 
-    for command in ("npx jest {test_file}", "npx jest --runTestsByPath {test_file}",
-                    "npx vitest run {test_file}", "node --test {test_file}"):
+    for command in ("npx mocha {test_file}", "node --test {test_file}",
+                    "npx tsx --test {test_file}"):
         spec = EnvironmentSpec(base_image="node:22-slim", test_command=command)
         assert environment_spec_violations(spec) == [], command
+
+
+def test_a_jest_or_vitest_command_a_project_config_can_mute_is_rejected():
+    """The Node equivalent of an un-`-s`ed pytest, and the costliest shape there is.
+
+    Measured: a fixture whose `jest.config.js` carries `silent: true` ran the probe, exited 0,
+    and printed none of HARNESS_PRECONDITION / HARNESS_SINK_RETURNED / HARNESS_ORACLE; the same
+    holds for `vitest.config.js`. `--silent=false` restored all three, and is a no-op when the
+    project silences nothing, so the rejection names it as the correction.
+    """
+    from infosec_harness.agents.validators import (
+        JEST_TEST_COMMAND,
+        VITEST_TEST_COMMAND,
+        environment_spec_violations,
+    )
+    from infosec_harness.domain.models import EnvironmentSpec
+
+    for muted in ("npx jest --runTestsByPath {test_file}", "npx vitest run {test_file}",
+                  "npx jest --silent --runTestsByPath {test_file}"):
+        spec = EnvironmentSpec(base_image="node:22-slim", test_command=muted)
+        problems = environment_spec_violations(spec)
+        assert any("--silent=false" in p for p in problems), muted
+    for ok in (JEST_TEST_COMMAND, VITEST_TEST_COMMAND):
+        spec = EnvironmentSpec(base_image="node:22-slim", test_command=ok)
+        assert environment_spec_violations(spec) == [], ok
+
+
+def test_vitest_given_jests_selector_is_rejected_with_the_command_that_works():
+    """`npx vitest run --runTestsByPath <path>` dies in vitest's own argument parser.
+
+    Measured: it exits 1 with a CAC stack trace, before loading a single test file, so there is
+    no test output at all to diagnose from — a run that looks like a probe defect and is not one.
+    """
+    from infosec_harness.agents.validators import VITEST_TEST_COMMAND, environment_spec_violations
+    from infosec_harness.domain.models import EnvironmentSpec
+
+    spec = EnvironmentSpec(base_image="node:22-slim",
+                          test_command="npx vitest run --silent=false --runTestsByPath {test_file}")
+    problems = environment_spec_violations(spec)
+    assert any(VITEST_TEST_COMMAND in p for p in problems), problems
+    # jest is the runner the flag belongs to, so it must not be rejected for carrying it.
+    ok = EnvironmentSpec(base_image="node:22-slim",
+                        test_command="npx jest --silent=false --runTestsByPath {test_file}")
+    assert environment_spec_violations(ok) == []
+
+
+def test_a_runner_the_repository_does_not_declare_is_rejected(tmp_path):
+    """`npx jest` in a vitest-only project cannot fall back to anything in an offline container.
+
+    Measured: `npx --no-install jest --runTestsByPath probe.test.js` in a vitest-only fixture
+    exits 1 with `npx canceled due to missing packages` and no test output whatsoever, which
+    reads as a probe defect and routes repair to the one stage that cannot install a runner.
+    """
+    from infosec_harness.agents.validators import js_runner_choice_violations, repo_js_runners
+
+    (tmp_path / "package.json").write_text(
+        '{"name":"v","scripts":{"test":"vitest run"},"devDependencies":{"vitest":"^2"}}')
+    declared = repo_js_runners(str(tmp_path))
+    assert declared == ["vitest"], declared
+
+    problems = js_runner_choice_violations("npx jest --silent=false --runTestsByPath {test_file}",
+                                           declared)
+    assert problems and "vitest" in problems[0] and "npx canceled" in problems[0]
+    assert js_runner_choice_violations("npx vitest run --silent=false {test_file}", declared) == []
+    # No package.json, or a runner the repo does declare: the check stays silent rather than guess.
+    assert js_runner_choice_violations("npx jest --runTestsByPath {test_file}", []) == []
+
+
+def test_a_migration_that_carries_both_runners_names_the_one_its_test_script_invokes(tmp_path):
+    """jest and vitest side by side in devDependencies is the case the skill warns about.
+
+    `test_frameworks[0]` is what recon reports and what the env plan builds its command from, so
+    the ordering is load-bearing: alphabetical order would answer "jest" for a project that has
+    already migrated to vitest.
+    """
+    from infosec_harness.agents.validators import js_runner_choice_violations, repo_js_runners
+
+    (tmp_path / "package.json").write_text(
+        '{"name":"m","scripts":{"test":"vitest run"},'
+        '"devDependencies":{"jest":"^29","vitest":"^2"}}')
+    declared = repo_js_runners(str(tmp_path))
+    assert declared[0] == "vitest", declared
+    # Both are installed, so neither invocation is *missing* a runner: this check must not fire.
+    assert js_runner_choice_violations("npx jest --silent=false --runTestsByPath {test_file}",
+                                       declared) == []
 
 
 def test_the_environment_agents_all_carry_the_contract():
@@ -387,6 +479,51 @@ def test_a_test_more_probe_with_no_plan_is_rejected():
     assert any("done_testing" in p for p in problems)
     counted = planless.replace("use Test::More;", "use Test::More tests => 1;") + "ok(1);\n"
     assert _skipping_probe_violations(_perl_probe(counted)) == []
+
+
+def test_the_plan_forms_the_other_perl_dialects_use_are_accepted():
+    """Executed against perl 5.34 + prove 3.43: each of these exits 0 with all three markers.
+
+    The rule used to look only for `done_testing`, `tests =>` or `no_plan`, which rejects both
+    forms below — a correct probe sent into output retries until the author's budget is gone.
+    `Test2::V0` has no `tests =>` spelling at all (`plan 1;` is the whole of it), and a
+    prove-run script that loads no Test:: module declares its plan by printing `1..N` itself.
+    """
+    from infosec_harness.agents.validators import _skipping_probe_violations
+
+    test2 = (
+        "use strict; use warnings;\nuse lib 'lib';\nuse Test2::V0;\nplan 1;\nuse Runner;\n"
+        "print \"HARNESS_PRECONDITION::n\\n\";\n"
+        "my $r = Runner::render('x');\n"
+        "print \"HARNESS_SINK_RETURNED::n\\n\";\n"
+        "print \"HARNESS_ORACLE::n\\n\" if index($r, 'x') >= 0;\n"
+        "ok(1);\n"
+    )
+    bare_tap = (
+        "use strict; use warnings;\nuse lib 'lib';\nuse Runner;\n"
+        "print \"HARNESS_PRECONDITION::n\\n\";\n"
+        "my $r = Runner::render('x');\n"
+        "print \"HARNESS_SINK_RETURNED::n\\n\";\n"
+        "print \"HARNESS_ORACLE::n\\n\" if index($r, 'x') >= 0;\n"
+        "print \"1..1\\nok 1\\n\";\n"
+    )
+    for content in (test2, bare_tap):
+        assert _skipping_probe_violations(_perl_probe(content)) == [], content
+    # `plan skip_all => '...'` is a plan keyword but not a plan: it must still be rejected, and
+    # for the skip, not for a missing plan.
+    skipping = test2.replace("plan 1;", "skip_all 'needs DBI';")
+    problems = _skipping_probe_violations(_perl_probe(skipping))
+    assert any("skip_all" in p for p in problems), problems
+
+
+def test_the_no_plan_rejection_names_every_dialects_spelling():
+    """A retry that names only Test::More's spelling is unactionable in a Test2 distribution."""
+    from infosec_harness.agents.validators import _skipping_probe_violations
+
+    planless = PERL_PROBE_BODY.replace("done_testing();\n", "")
+    joined = " ".join(_skipping_probe_violations(_perl_probe(planless)))
+    for spelling in ("done_testing();", "tests => 1", "plan 1;", "1..1"):
+        assert spelling in joined, spelling
 
 
 def test_a_junit_probe_that_disables_or_aborts_itself_is_rejected():

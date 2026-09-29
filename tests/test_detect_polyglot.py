@@ -1,0 +1,234 @@
+"""What `detect_stack` says about JavaScript and Perl repositories that are not the default shape.
+
+The harness has to work on *any* JS or Perl codebase, and the fingerprint is the first thing that
+decides: `_primary_language` picks the env-plan branch and `test_frameworks[0]` is what recon
+reports as the framework, which selects the probe template and the test command. Every case here
+was built as a real fixture and run with real node (18/20/22) or real perl 5.34 + prove 3.43
+before being pinned; the docstrings say what the run showed.
+"""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from infosec_harness.agents.stubs import _env_plan
+from infosec_harness.repo.detect import detect_stack, js_test_runners
+
+CJS = "function renderComment(t) { return '<div>' + t + '</div>'; }\nmodule.exports = { renderComment };\n"
+ESM = "export function renderComment(t) { return '<div>' + t + '</div>'; }\n"
+RUNNER_PM = ("package Runner;\nuse strict;\nuse warnings;\n"
+             "sub render { my ($t) = @_; return \"<div>\" . $t . \"</div>\"; }\n1;\n")
+
+
+def _pkg(tmp_path, **fields):
+    (tmp_path / "package.json").write_text(json.dumps({"name": "f", "private": True, **fields}))
+
+
+def _plan(tmp_path) -> dict:
+    return _env_plan(detect_stack(str(tmp_path)).model_dump())
+
+
+# --- language counting ---------------------------------------------------------------------
+
+def test_a_pure_esm_package_is_still_javascript(tmp_path):
+    """`.mjs` was absent from EXT_LANG, so a package that renamed every file to .mjs counted
+    ZERO javascript files. `_primary_language` then answered "unknown" and the plan fell all the
+    way through to `sh {test_file}` with no install commands at all — the whole Node branch
+    skipped for a Node project."""
+    _pkg(tmp_path, type="module")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/render.mjs").write_text(ESM)
+
+    stack = detect_stack(str(tmp_path))
+    assert stack.languages.get("javascript") == 1
+    assert _plan(tmp_path)["base_image"] == "node:22-slim"
+    assert "{test_file}" in _plan(tmp_path)["test_command"]
+
+
+def test_a_cjs_only_package_is_javascript_too(tmp_path):
+    _pkg(tmp_path)
+    (tmp_path / "lib.cjs").write_text(CJS)
+    assert detect_stack(str(tmp_path)).languages.get("javascript") == 1
+
+
+# --- which Node runner ---------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    ("script", "dev_deps", "expected"),
+    [("jest", {"jest": "^29"}, "jest"),
+     ("vitest run", {"vitest": "^2"}, "vitest"),
+     ("mocha", {"mocha": "^10"}, "mocha"),
+     ("node --test", {}, "node:test"),
+     ("tsx --test", {"tsx": "^4"}, "node:test")],
+)
+def test_the_runner_a_project_declares_is_the_one_reported(tmp_path, script, dev_deps, expected):
+    """mocha and node's own runner were detected by nothing, so a project using either reported
+    an empty `test_frameworks`, recon answered "unknown", and the plan still said `npx jest` —
+    which in an offline container exits 1 with `npx canceled due to missing packages`."""
+    _pkg(tmp_path, scripts={"test": script}, devDependencies=dev_deps)
+    (tmp_path / "src.js").write_text(CJS)
+    assert detect_stack(str(tmp_path)).test_frameworks[:1] == [expected]
+
+
+def test_a_migration_carrying_both_runners_reports_the_one_its_test_script_uses(tmp_path):
+    """A repo mid-migration has jest and vitest side by side. Sorted order answers "jest", and
+    `npx vitest run --runTestsByPath <path>` — or `npx jest` where only vitest is installed —
+    costs the whole run. recon reads `test_frameworks[0]`, so the ordering is the fix."""
+    _pkg(tmp_path, scripts={"test": "vitest run"},
+         devDependencies={"jest": "^29", "vitest": "^2"})
+    (tmp_path / "src.js").write_text(CJS)
+
+    frameworks = detect_stack(str(tmp_path)).test_frameworks
+    assert frameworks[0] == "vitest" and "jest" in frameworks
+    assert _plan(tmp_path)["test_command"] == "npx vitest run --silent=false {test_file}"
+
+
+def test_a_node_test_project_with_no_script_is_found_from_its_test_files(tmp_path):
+    """`node --test` is not a package, so nothing in package.json names it."""
+    _pkg(tmp_path)
+    (tmp_path / "test").mkdir()
+    (tmp_path / "test/probe.test.js").write_text(
+        "const test = require('node:test');\ntest('x', () => {});\n")
+    assert js_test_runners(tmp_path) == ["node:test"]
+
+
+def test_a_runner_is_not_invented_from_an_unrelated_dependency(tmp_path):
+    """`ava` and `tap` as bare substrings match "available", "java" and "tapable". A runner named
+    by accident is worse than one not named: the plan would build a command for it."""
+    _pkg(tmp_path, devDependencies={"tapable": "^2", "available-typed-arrays": "^1"})
+    assert js_test_runners(tmp_path) == []
+
+
+# --- the plan the fingerprint produces -----------------------------------------------------
+
+def test_the_node_plan_carries_the_silencing_defeat_for_the_runners_that_need_it(tmp_path):
+    """Measured: a project `jest.config.js`/`vitest.config.js` with `silent: true` erases all
+    three HARNESS_ markers while the run exits 0. mocha and node:test never capture stdout."""
+    for script, dev_deps, expected in (
+        ("jest", {"jest": "^29"}, "npx jest --silent=false --runTestsByPath {test_file}"),
+        ("vitest run", {"vitest": "^2"}, "npx vitest run --silent=false {test_file}"),
+        ("mocha", {"mocha": "^10"}, "npx mocha {test_file}"),
+        ("node --test", {}, "node --test {test_file}"),
+    ):
+        _pkg(tmp_path, scripts={"test": script}, devDependencies=dev_deps)
+        (tmp_path / "src.js").write_text(CJS)
+        assert _plan(tmp_path)["test_command"] == expected, script
+
+
+def test_a_lockfile_makes_the_install_reproducible(tmp_path):
+    _pkg(tmp_path, scripts={"test": "jest"}, devDependencies={"jest": "^29"})
+    (tmp_path / "src.js").write_text(CJS)
+    assert _plan(tmp_path)["install_commands"] == ["npm install --no-audit --no-fund"]
+    (tmp_path / "package-lock.json").write_text('{"lockfileVersion": 3}')
+    assert _plan(tmp_path)["install_commands"] == ["npm ci --no-audit --no-fund"]
+
+
+def test_a_typescript_project_gets_a_runner_that_can_compile_it(tmp_path):
+    """A bare `npx jest` on a `.ts` probe fails to parse it — the default babel transform has no
+    TypeScript plugin — and the run reports `Tests: 1 failed` having executed nothing of the
+    probe. Measured working alternatives: `--preset ts-jest` with @types/jest installed, vitest
+    with no configuration at all, and `npx tsx --test` for node's runner."""
+    _pkg(tmp_path, scripts={"test": "jest"}, devDependencies={"jest": "^29"})
+    (tmp_path / "src.ts").write_text("export function f(t: string): string { return t; }\n")
+    plan = _plan(tmp_path)
+    assert "--preset ts-jest" in plan["test_command"]
+    assert any("ts-jest" in c and "@types/jest" in c for c in plan["install_commands"])
+
+    _pkg(tmp_path, scripts={"test": "vitest run"}, devDependencies={"vitest": "^2"})
+    assert _plan(tmp_path)["test_command"] == "npx vitest run --silent=false {test_file}"
+
+    _pkg(tmp_path, scripts={"test": "node --test"})
+    plan = _plan(tmp_path)
+    assert plan["test_command"] == "npx tsx --test {test_file}"
+    assert any("tsx" in c for c in plan["install_commands"])
+
+
+# --- Perl ----------------------------------------------------------------------------------
+
+def _perl_repo(tmp_path, t_body: str, **files):
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "lib/Runner.pm").write_text(RUNNER_PM)
+    (tmp_path / "t").mkdir()
+    (tmp_path / "t/probe.t").write_text(t_body)
+    for name, body in files.items():
+        (tmp_path / name.replace("__", ".")).write_text(body)
+
+
+def test_a_test2_distribution_is_not_reported_as_test_more(tmp_path):
+    """Every Perl repo was reported as Test::More regardless of what its `t/` actually used.
+    A Test2::V0 script declares its plan as `plan 1;` — Test2 has no `tests =>` spelling — so
+    naming the wrong dialect points the author at a template whose plan form was then rejected."""
+    _perl_repo(tmp_path, "use Test2::V0;\nplan 1;\nok(1);\n", cpanfile="requires 'Test2::V0';\n")
+    assert detect_stack(str(tmp_path)).test_frameworks[:1] == ["Test2::V0"]
+
+
+def test_a_test_more_distribution_still_reports_test_more(tmp_path):
+    _perl_repo(tmp_path, "use Test::More;\nok(1);\ndone_testing();\n")
+    assert detect_stack(str(tmp_path)).test_frameworks[:1] == ["Test::More"]
+
+
+def test_an_empty_test_dir_falls_back_to_test_more_rather_than_nothing(tmp_path):
+    """Test::More is the ecosystem default and the probe author needs *some* template named; a
+    repository with an empty `t/` must not report no framework at all."""
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "lib/Runner.pm").write_text(RUNNER_PM)
+    (tmp_path / "t").mkdir()
+    assert detect_stack(str(tmp_path)).test_frameworks[:1] == ["Test::More"]
+
+
+def test_a_module_build_distribution_reports_a_build_system(tmp_path):
+    """Build.PL was in MANIFESTS but not in BUILD_SYSTEM, so a Module::Build distribution
+    reported `build_systems: []` while the plan ran cpanm against it anyway."""
+    _perl_repo(tmp_path, "use Test::More;\nok(1);\ndone_testing();\n",
+               Build__PL="use Module::Build;\n")
+    stack = detect_stack(str(tmp_path))
+    assert stack.build_systems == ["cpanm"] and "Build.PL" in stack.manifests
+
+
+# --- how the stub diagnosis reads a Node failure -------------------------------------------
+
+def test_the_node_failures_that_only_build_repair_can_fix_are_named_as_environment_issues():
+    """Both were measured as exit-1 runs with no test output at all, which the stub used to read
+    as a probe defect — routing repair to the stage that can rewrite a probe but install nothing.
+
+    `npx canceled due to missing packages` is what an offline container does when the spec names
+    a runner the project never declared; the jest validation error is what a `jest.config.js`
+    naming `testEnvironment: 'jsdom'` does when jest-environment-jsdom (removed from jest core in
+    28) was not installed.
+    """
+    from infosec_harness.agents.stubs import _diagnosis
+
+    for stderr in ('npm error npx canceled due to missing packages and no YES option: '
+                   '["jest@30.5.2"]',
+                   "● Validation Error:\n\n  Test environment jest-environment-jsdom cannot be "
+                   "found. Make sure the testEnvironment configuration option points to an "
+                   "existing node module."):
+        text = ("<probe_execution>\n"
+                + json.dumps({"attempt": 1, "exit_code": 1, "oracle_fired": False,
+                              "precondition_reached": False, "sink_returned": False,
+                              "stderr_tail": stderr})
+                + "\n</probe_execution>")
+        assert _diagnosis(text)["kind"] == "environment_issue", stderr
+
+
+def test_a_fired_oracle_is_a_positive_even_when_the_runner_counted_no_tests():
+    """Mirrors graph.triage._ground_zero_test_diagnosis. Measured: a prove-run script that prints
+    all three markers and declares no plan reports `Tests: 0` with exit 1 and a fired oracle."""
+    from infosec_harness.agents.stubs import _diagnosis
+
+    text = ("<probe_execution>\n"
+            + json.dumps({"attempt": 1, "exit_code": 1, "oracle_fired": True,
+                          "precondition_reached": True, "sink_returned": True,
+                          "runner_reported_no_tests": "prove: no tests were run"})
+            + "\n</probe_execution>")
+    assert _diagnosis(text)["kind"] == "valid_positive"
+
+
+def test_the_perl_plan_names_the_module_root(tmp_path):
+    """`prove -v {test_file}` with no -I works only because the probe template carries
+    `use lib 'lib'`. Measured: a distribution whose modules live in blib/lib or src/perl dies on
+    `Can't locate Runner.pm` before printing a marker, so the flag belongs in the recipe."""
+    _perl_repo(tmp_path, "use Test::More;\nok(1);\ndone_testing();\n", cpanfile="")
+    assert _plan(tmp_path)["test_command"] == "prove -v -Ilib {test_file}"

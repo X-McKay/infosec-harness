@@ -24,6 +24,7 @@ from infosec_harness.domain.models import (
     VerdictFacts,
     VerdictLabel,
 )
+from infosec_harness.repo.detect import js_test_runners
 
 
 def verdict_violations(verdict: Verdict, facts: VerdictFacts) -> list[str]:
@@ -100,6 +101,18 @@ _PERL_SKIPS = ("skip_all", "skip_rest", "SKIP:")
 # Test::More needs a plan, before or after the assertions; without one prove reports a bad
 # plan and exits nonzero on a probe that did everything right.
 _PERL_PLAN = ("done_testing", "tests =>", "tests=>", "no_plan")
+# The two plan forms the substring list above cannot see, both verified against perl 5.34 +
+# prove 3.43: `use Test2::V0; plan 1;` -- Test2 has no `tests =>` spelling at all -- and a
+# prove-run script with no Test:: module that prints its own `1..N` line. Both exit 0 with every
+# marker on stdout, so rejecting them costs the author its whole output-retry budget for a probe
+# that was already correct.
+_PERL_PLAN_PATTERNS = (re.compile(r"^\s*plan\s*\(?\s*\d+", re.M),
+                       re.compile(r"1\.\.\d+"))
+
+
+def _declares_a_perl_plan(content: str) -> bool:
+    return (any(marker in content for marker in _PERL_PLAN)
+            or any(pattern.search(content) for pattern in _PERL_PLAN_PATTERNS))
 _JUNIT_SKIPS = ("@Disabled", "@Ignore", "assumeTrue", "assumeFalse", "assumingThat",
                 "Assumptions.", "assumeThat")
 # The protocol names pytest's `collected 0 items` and jest's `No tests found` as zero-test runs
@@ -143,11 +156,13 @@ def _skipping_probe_violations(output: ProbeSource) -> list[str]:
                 "probe needs being absent is an *environment* defect: let the `use` fail so the "
                 "run exits nonzero with the module name, and build repair can install it."
             )
-        if not any(marker in output.content for marker in _PERL_PLAN):
+        if not _declares_a_perl_plan(output.content):
             problems.append(
-                "Add `done_testing();` as the script's last statement (or declare the count up "
-                "front with `use Test::More tests => 1;`). With no plan, prove reports a bad "
-                "plan and exits nonzero on a probe that printed every marker correctly."
+                "Add `done_testing();` as the script's last statement — or declare the count up "
+                "front, with `use Test::More tests => 1;` under Test::More, `plan 1;` under "
+                "Test2::V0, or a printed `1..1` line in a script that loads no Test:: module at "
+                "all. With no plan, prove reports `Parse errors: No plan found in TAP output` "
+                "and exits nonzero on a probe that printed every marker correctly."
             )
     if _is_junit_probe(output):
         skips = [idiom for idiom in _JUNIT_SKIPS if idiom in output.content]
@@ -224,12 +239,61 @@ MAVEN_TEST_COMMAND = (
     "-Dmaven.test.redirectTestOutputToFile=false"
 )
 GRADLE_TEST_COMMAND = "./gradlew --no-daemon --offline -i test --tests '*HarnessProbeTest'"
+# The two Node runners that intercept a test's console. Measured on real fixtures under node 22:
+# a repository `jest.config.js` or `vitest.config.js` carrying `silent: true` -- an ordinary thing
+# for a project with chatty tests to do -- replaces the test's console, so ALL THREE markers
+# vanish while the run still exits 0. `--silent=false` on the command line overrides it, and is a
+# no-op when nothing was silencing anything. mocha and node:test never capture stdout.
+JEST_TEST_COMMAND = "npx jest --silent=false --runTestsByPath {test_file}"
+VITEST_TEST_COMMAND = "npx vitest run --silent=false {test_file}"
+_JS_CAPTURING_RUNNERS = {"jest": JEST_TEST_COMMAND, "vitest": VITEST_TEST_COMMAND}
+_JS_SILENT_OFF = "--silent=false"
+# `--runTestsByPath` is jest's. vitest takes a bare path and dies in its own argument parser on
+# this flag, before loading a single test file, so the pairing costs the run with no test output
+# to diagnose from.
+_JEST_ONLY_SELECTOR = "--runTestsByPath"
 # `cmd || true` makes a failed dependency install invisible: the image builds, the smoke test
 # passes, and the absence surfaces at probe time as a compile error inside the probe — past
 # build repair, the only stage that could have installed anything.
 _SWALLOWED_FAILURE = re.compile(r"\|\|\s*(?:true|:)\s*(?=$|[;&|])|;\s*true\s*$")
 # cpanm into a local lib puts the modules somewhere perl does not look by default.
 _CPANM_LOCAL_LIB = re.compile(r"cpanm\b.*?(?:\s-[lL]\s|--local-lib(?:-contained)?)")
+
+
+def _js_runner(command: str) -> str | None:
+    """Which Node test runner a command invokes, or None. vitest before jest: a command may
+    legitimately mention both (`npx vitest run` in a repo whose config file is named jest.*),
+    and the runner is the executable, which is the first of the two to appear as a bare token."""
+    tokens = [t.rsplit("/", 1)[-1] for t in command.split() if not t.startswith("-")]
+    for token in tokens:
+        for runner in ("vitest", "jest", "mocha", "jasmine"):
+            if token == runner:
+                return runner
+    return None
+
+
+def _js_runner_violations(command: str) -> list[str]:
+    """Node runners: the ways a JS probe runs and its markers never reach the harness."""
+    runner = _js_runner(command)
+    if runner is None:
+        return []
+    problems: list[str] = []
+    if runner == "vitest" and _JEST_ONLY_SELECTOR in command:
+        problems.append(
+            f"Drop {_JEST_ONLY_SELECTOR} and pass the path on its own: {VITEST_TEST_COMMAND}. "
+            f"{_JEST_ONLY_SELECTOR} is a jest flag; vitest rejects it in its own argument parser "
+            "and exits before loading a single test file, so the run produces no test output at "
+            "all and the probe is recorded as having reached nothing."
+        )
+    if runner in _JS_CAPTURING_RUNNERS and _JS_SILENT_OFF not in command:
+        problems.append(
+            f"Add {_JS_SILENT_OFF}: {_JS_CAPTURING_RUNNERS[runner]}. A repository "
+            f"{runner}.config.js that sets `silent: true` replaces the test's console, so all "
+            "three HARNESS_ markers disappear while the run still exits 0 — a correct probe "
+            "recorded as having reached nothing, with nothing in the output to say why. The flag "
+            "overrides the config and is a no-op when the project silences nothing."
+        )
+    return problems
 
 
 def _selects_by_class_name(command: str) -> bool:
@@ -547,6 +611,7 @@ def environment_spec_violations(spec: EnvironmentSpec) -> list[str]:
             "otherwise the probe's HARNESS_ markers never reach the runner and a correct "
             "probe is recorded as having reached nothing."
         )
+    problems += _js_runner_violations(command)
     if "prove" in command and not (
         _short_flag(command, "v") or _long_flag(command, "--verbose")
     ):
@@ -694,6 +759,49 @@ def offline_warmup_violations(spec: EnvironmentSpec) -> list[str]:
 _JAVA_BUILD_FILES = ("pom.xml", "build.gradle", "build.gradle.kts")
 
 
+def js_runner_choice_violations(test_command: str, declared: list[str]) -> list[str]:
+    """Reject a Node runner the repository does not have. Pure, so tests can check it.
+
+    The probe container has no network, and `npx <runner>` for a runner that is not installed
+    does not fall back to anything: measured on a vitest-only fixture, `npx --no-install jest
+    --runTestsByPath probe.test.js` exits 1 with `npx canceled due to missing packages` and no
+    test output whatsoever — a failure that looks like a probe defect, routes to probe repair,
+    and cannot be fixed there. A repository mid-migration carries both runners, which is why the
+    *first* declared one (the one its own `test` script invokes) is the one to name.
+    """
+    runner = _js_runner(test_command)
+    if runner is None or not declared or runner in declared:
+        return []
+    wanted = declared[0]
+    exemplar = _JS_CAPTURING_RUNNERS.get(wanted)
+    hint = (f" Use {exemplar}" if exemplar else
+            f" Invoke {wanted} instead") + ", and match the selector to it."
+    return [
+        f"test_command invokes {runner}, which this repository does not declare; its package.json "
+        f"declares {', '.join(declared)} and its own `test` script runs {wanted}.{hint} "
+        f"`npx {runner}` cannot install a missing runner in an offline probe container — it exits "
+        f"with `npx canceled due to missing packages` and no test output at all, which reads as a "
+        f"probe defect and sends repair to the one stage that cannot fix it."
+    ]
+
+
+def repo_js_runners(repo_path: str | None) -> list[str]:
+    """The Node test runners the repository declares, its own `test` script's choice first.
+
+    Empty when there is no repo or no package.json, in which case the runner check stays silent
+    rather than guessing — the same discipline as ``repo_java_release``.
+    """
+    if not repo_path:
+        return []
+    root = Path(repo_path)
+    if not root.is_dir():
+        return []
+    try:
+        return js_test_runners(root)
+    except OSError:
+        return []
+
+
 def repo_java_release(repo_path: str | None) -> int | None:
     """The oldest Java language level the repository's build files ask for.
 
@@ -726,7 +834,10 @@ def validate_environment_spec(ctx: RunContext[AgentDeps], output: EnvironmentSpe
                 # Repo-aware, unlike the three above: the binding constraint is what the
                 # project declares, which no amount of inspecting the spec alone can reveal.
                 + jdk_compatibility_violations(
-                    output.base_image, repo_java_release(getattr(ctx.deps, "repo_path", None))))
+                    output.base_image, repo_java_release(getattr(ctx.deps, "repo_path", None)))
+                + js_runner_choice_violations(
+                    output.test_command or "",
+                    repo_js_runners(getattr(ctx.deps, "repo_path", None))))
     if problems:
         raise ModelRetry("The environment spec cannot run a probe:\n- " + "\n- ".join(problems))
     return output

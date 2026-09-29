@@ -33,7 +33,7 @@ metadata:
   system_packages: [gcc, make, libc6-dev]     # DBI and every other XS module is compiled here
   install_commands: ["cpanm --notest --local-lib=/opt/home/perl5 --installdeps ."]
   env: {PERL5LIB: "/work/home/perl5/lib/perl5"}
-  test_command: "prove -v {test_file}"
+  test_command: "prove -v -Ilib {test_file}"
   ```
 
   Three things about it are not optional:
@@ -77,7 +77,17 @@ metadata:
   consumer that parses its child's stream and discards everything that is not TAP, so without
   `-v` every `HARNESS_` marker is thrown away and a correct probe is recorded as having reached
   nothing — the Perl equivalent of running pytest without `-s`. `-Ilib` puts the repository's own
-  modules on `@INC` (adjust to the repo's real layout: `-Ilib`, `-It/lib`, `-I.`).
+  modules on `@INC`, and **`lib` is a default, not a fact**: measured against real layouts,
+  `-Ilib` on a distribution whose modules live in `blib/lib` or under `src/perl` dies on
+  `Can't locate Runner.pm` before the probe prints a single marker. Look at where the `.pm` files
+  actually are — `lib`, `blib/lib`, `t/lib`, `.`, `src/perl` — and name that:
+  `prove -v -b {test_file}` for a built `blib`, `prove -v -Isrc/perl {test_file}` for a nested
+  source root.
+- **A repository with no dependency declaration at all needs no install step.** `--installdeps .`
+  has nothing to read without a `cpanfile`, `Makefile.PL` or `Build.PL`, and a Perl module that
+  uses only core (`Exporter`, `strict`, `warnings`) is entirely probe-able with an empty
+  `install_commands`. `Build.PL` counts: cpanm reads Module::Build's declaration exactly as it
+  reads a `Makefile.PL`.
 - **Partial builds:** install deps for and test a single module directory.
 
 <!-- generated: constraints (scripts/restructure_skills.py) -->
@@ -95,7 +105,8 @@ metadata:
 - The test runner itself is installed, not merely assumed present.
 - No install command swallows its own failure (`|| true`, `|| :`, `; true`). A dependency install that reports success when it failed surfaces only at probe time, where probe repair cannot fix it and build repair never sees it.
 - `test_command` contains the literal `{test_file}` placeholder — never a hardcoded test path. The harness writes the probe to the path its author chose and substitutes it here; a hardcoded path runs a file that does not exist and no test executes.
-- The `prove` command is verbose (`prove -v {test_file}`). prove parses its child's TAP and discards every other line, so without `-v` the probe's markers are thrown away and a correct probe is recorded as having reached nothing — the Perl form of pytest's `-s`.
-- Every module the repository's cpanfile/Makefile.PL declares is installed, and if the install used a local lib then `env.PERL5LIB` points at it.
+- The `prove` command is verbose (`prove -v -Ilib {test_file}`). prove parses its child's TAP and discards every other line, so without `-v` the probe's markers are thrown away and a correct probe is recorded as having reached nothing — the Perl form of pytest's `-s`.
+- The `-I` path is the repository's real module root, which is not always `lib`. Measured: a distribution whose modules live in `blib/lib` (use `-b`, or `-Iblib/lib`) or under `src/perl` dies on `Can't locate Runner.pm` with `-Ilib`, before the probe prints anything.
+- Every module the repository's cpanfile/Makefile.PL/Build.PL declares is installed, and if the install used a local lib then `env.PERL5LIB` points at it.
 
 <!-- /generated: constraints -->

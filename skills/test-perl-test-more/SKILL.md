@@ -24,9 +24,20 @@ metadata:
 
 - Place the file at `t/harness_probe_<id>.t`. Add `use lib 'lib';` so it can load the modules.
 - Inline the nonce. Print markers to STDOUT; the verdict does not depend on `ok()` results.
-- **Always end with `done_testing();`** (or declare `use Test::More tests => N;` up front). A
-  `.t` file with no plan makes `prove` report a bad plan and exit nonzero however well the
-  probe behaved, which the harness reads as a probe defect.
+- **Always declare a plan.** A `.t` file with none makes `prove` report
+  `Parse errors: No plan found in TAP output` and exit nonzero however well the probe behaved,
+  which the harness reads as a probe defect. Each dialect spells it differently, and *only* these
+  spellings count — measured on perl 5.34 with prove 3.43:
+
+  | the repository's `t/` uses | declare the plan as |
+  | --- | --- |
+  | `Test::More` | `done_testing();` last, or `use Test::More tests => 1;` first |
+  | `Test2::V0` | `done_testing();` last, or `plan 1;` first — Test2 has no `tests =>` form |
+  | no Test:: module at all (a bare prove-run script) | print `1..1` yourself, with `ok 1` |
+
+  All three exit 0 with every marker on stdout. Writing `plan tests => 1` under Test2::V0, or
+  reaching for `Test::More` in a `Test2::V0` distribution, is how a correct probe ends up being
+  rewritten by probe repair for a defect it does not have.
 
 ```perl
 use strict; use warnings;
@@ -49,8 +60,12 @@ if ($@) {
 done_testing();                                    # never omit this
 ```
 
-- Run with `prove -v {test_file}` — `prove` discards its child's non-TAP output unless verbose,
-  so without `-v` none of these markers reaches the harness.
+- Run with `prove -v -Ilib {test_file}` — `prove` discards its child's non-TAP output unless
+  verbose, so without `-v` none of these markers reaches the harness. `-I` must name the
+  repository's real module root: `use lib 'lib';` in the probe covers a `lib/` layout on its own,
+  but a distribution whose modules sit in `blib/lib` needs `prove -v -b {test_file}` and one
+  under `src/perl` needs `prove -v -Isrc/perl {test_file}`, or the script dies on
+  `Can't locate Runner.pm` having printed nothing.
 - For a canary oracle, let the payload create `/tmp/harness_canary_<nonce>`; skip the print.
 
 ## Never skip
@@ -82,5 +97,6 @@ probe's job is to report what it observed, and "I chose not to look" is not an o
 - It runs to completion and exits cleanly either way.
 - Framework output is not captured away, so the markers reach the runner's stdout.
 - The probe cannot decline to run: no skip, no disable, no assumption guard. A skipped test prints no markers, which the harness cannot distinguish from a broken probe, so probe repair is handed a correct probe and exhausts its budget on it.
+- The script declares a plan in its own dialect's spelling: `done_testing();` (Test::More or Test2::V0), `use Test::More tests => 1;`, `plan 1;` (Test2::V0 — it has no `tests =>` form), or a printed `1..1` line in a script that loads no Test:: module at all. With no plan, prove reports `Parse errors: No plan found in TAP output` and exits nonzero however well the probe behaved.
 
 <!-- /generated: constraints -->
