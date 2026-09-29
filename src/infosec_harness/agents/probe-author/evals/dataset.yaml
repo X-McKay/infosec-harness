@@ -1,4 +1,6 @@
-version: "1"
+# Version 2 records diagnostic-only runsc traces for selected Python SQLi cases.
+# Scores remain structural; these forgeable observations are not target attestation.
+version: "2"
 # Scored structurally: does the probe print the precondition marker, carry an oracle signal,
 # and call the callable it was told to exercise? Whether the oracle *fires* is a question only
 # the sandbox can answer, but a probe missing any of these three cannot answer anything however
@@ -7,9 +9,8 @@ version: "1"
 # One case per corpus ecosystem, because "print a marker and call the target" is the part most
 # sensitive to the framework: the marker has to survive the runner's output capture (pytest -s,
 # `prove -v`, Maven's surefire) and the target has to be reached the way that language exposes
-# it. `target_callable` is spelled the way the repository forces the call — `Runner::run` for a
-# Perl module that exports nothing — so the substring check cannot be satisfied by a probe that
-# reimplements the sink instead of calling it.
+# it. A target-name substring alone does not establish target invocation. Version 2 adds
+# diagnostic traces only; independent target attestation remains unimplemented.
 #
 # The scorer's four labels are not the whole gate. `agents/validators.py::validate_probe` runs
 # first and raises ModelRetry for a probe missing HARNESS_PRECONDITION or HARNESS_SINK_RETURNED,

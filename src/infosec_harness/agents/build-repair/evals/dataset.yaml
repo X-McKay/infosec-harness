@@ -1,7 +1,8 @@
-version: "1"
-# Scored on whether the repaired spec actually mentions the thing the log says is missing.
-# Deliberately not "does the build now pass" — that needs a sandbox; this asks whether the
-# agent read the failure or guessed.
+version: "2"
+# Most cases are scored on whether the repaired spec actually mentions the thing the log says
+# is missing. Cases carrying `execution_check` are instead built and checked in the secure
+# sandbox, because a manifest-consuming command can address a dependency without repeating its
+# literal name. An unavailable sandbox is recorded as not_checked and cannot clear release gates.
 #
 # Two kinds of case, because the adapter's label is two-sided:
 #
@@ -151,12 +152,14 @@ cases:
     category: regression
     # Measured on the Perl corpus, and the reason eval-corpus/perl/*/cpanfile now declares
     # DBD::SQLite under `on 'test'`: UserDao takes a handle rather than opening one, so the
-    # module is driver-agnostic and the manifest under-declared the driver every test needs.
+    # module is driver-agnostic and the historical manifest under-declared the driver every test
+    # needs. The current fixture contains that correction, so a repaired `--installdeps` command
+    # may consume it without repeating the module name; only execution can decide that case.
     # The build went green and the probe died with "install_driver(SQLite) failed", which reads
     # as a probe defect and is not one. Unlike its Java twin below, this one *is* repairable
-    # from a spec: cpanm can install a module the cpanfile never named. The log names the
-    # module, so the needle is not a guess.
+    # from a spec: cpanm can install a module explicitly or consume the corrected manifest.
     repo: eval-corpus/perl/sqli/vulnerable
+    execution_check: perl_dbd_sqlite_v1
     expect_mentions: "DBD::SQLite"
     payload:
       failed_spec: {base_image: "perl:5.40", system_packages: [],

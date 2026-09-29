@@ -216,9 +216,7 @@ def _cost_ceiling(
         if source in {"stub", "custom-zero"}:
             candidate_costs.append(0.0)
         elif source == "genai-prices":
-            candidate_costs.append(
-                resolved.budget.effective.max_cost_usd * MAX_SIZE_FACTOR
-            )
+            candidate_costs.append(resolved.budget.effective.max_cost_usd * MAX_SIZE_FACTOR)
         else:
             # PydanticAI cannot enforce a pre-request dollar ceiling from our custom fallback
             # table, and an unknown table cannot enforce one at all. Reject before egress.
@@ -242,12 +240,17 @@ def _passes_hard_gates(metrics: dict[str, Any] | None) -> bool:
         and metrics.get("budget_enforcement_violations") == 0
         and metrics.get("unexpected_budget_stops") == 0
         and metrics.get("unevidenced_safe_verdicts") == 0
+        # Evaluator v4 distinguishes an execution-backed wrong answer from a case whose
+        # secure execution never ran. Missing is unknown evidence and fails closed just like
+        # a non-zero count; older evaluator reports cannot select a current candidate.
+        and metrics.get("execution_not_checked_count") == 0
+        and metrics.get("execution_failed_count") == 0
     )
 
 
 def _selection_key(trial: TrialResult) -> tuple[float, float, float]:
     metrics = trial.metrics or {}
-    latency = ((metrics.get("distributions") or {}).get("p95_latency_s"))
+    latency = (metrics.get("distributions") or {}).get("p95_latency_s")
     avg_tokens = metrics.get("avg_tokens")
     return (
         float(metrics.get("task_success_rate") or 0.0),
@@ -285,7 +288,8 @@ async def run_calibration(spec: CalibrationSpec) -> CalibrationReport:
     from infosec_harness.agents import models as model_factory
 
     backend = model_factory.resolve_config(
-        spec.subject, spec.model or base_spec.model or "sonnet",
+        spec.subject,
+        spec.model or base_spec.model or "sonnet",
         model_settings=dict(base_spec.model_settings or {}),
     ).backend_name
     if spec.backend_profile and spec.backend_profile != backend:
@@ -295,9 +299,7 @@ async def run_calibration(spec: CalibrationSpec) -> CalibrationReport:
 
     planned_cost_ceiling: float | None = None
     if spec.constraints.maximum_cost_usd is not None:
-        planned_cost_ceiling, _ = _cost_ceiling(
-            spec, base_spec, calibration_n, held_out_n
-        )
+        planned_cost_ceiling, _ = _cost_ceiling(spec, base_spec, calibration_n, held_out_n)
         if planned_cost_ceiling > spec.constraints.maximum_cost_usd:
             raise ValueError(
                 f"planned worst-case cost ${planned_cost_ceiling:.6f} exceeds "
@@ -312,7 +314,9 @@ async def run_calibration(spec: CalibrationSpec) -> CalibrationReport:
     spent = 0.0
     cost_is_unknown = False
 
-    async def run_one(candidate: object, groups: set[str], split: str) -> tuple[str, dict[str, Any]]:
+    async def run_one(
+        candidate: object, groups: set[str], split: str
+    ) -> tuple[str, dict[str, Any]]:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise TimeoutError("calibration experiment deadline exhausted")
@@ -331,12 +335,14 @@ async def run_calibration(spec: CalibrationSpec) -> CalibrationReport:
         resolved = _candidate_config(spec, base_spec, candidate)
         digest = resolved.effective_digest
         if digest in first_by_digest:
-            trials.append(TrialResult(
-                candidate=candidate,
-                effective_config_digest=digest,
-                status="duplicate_effective",
-                duplicate_of=first_by_digest[digest],
-            ))
+            trials.append(
+                TrialResult(
+                    candidate=candidate,
+                    effective_config_digest=digest,
+                    status="duplicate_effective",
+                    duplicate_of=first_by_digest[digest],
+                )
+            )
             continue
         first_by_digest[digest] = candidate
         try:
@@ -346,20 +352,24 @@ async def run_calibration(spec: CalibrationSpec) -> CalibrationReport:
         except (KeyboardInterrupt, asyncio.CancelledError):
             raise
         except BaseException as exc:
-            trials.append(TrialResult(
+            trials.append(
+                TrialResult(
+                    candidate=candidate,
+                    effective_config_digest=digest,
+                    status="failed",
+                    error=f"{type(exc).__name__}: {str(exc)[:500]}",
+                )
+            )
+            continue
+        trials.append(
+            TrialResult(
                 candidate=candidate,
                 effective_config_digest=digest,
-                status="failed",
-                error=f"{type(exc).__name__}: {str(exc)[:500]}",
-            ))
-            continue
-        trials.append(TrialResult(
-            candidate=candidate,
-            effective_config_digest=digest,
-            status="complete",
-            experiment_id=experiment_id,
-            metrics=metrics,
-        ))
+                status="complete",
+                experiment_id=experiment_id,
+                metrics=metrics,
+            )
+        )
         measured_cost = metrics.get("cost_usd_total")
         if measured_cost is None:
             cost_is_unknown = True
@@ -367,15 +377,20 @@ async def run_calibration(spec: CalibrationSpec) -> CalibrationReport:
             spent += float(measured_cost)
         if spec.constraints.maximum_cost_usd is not None:
             if cost_is_unknown:
-                raise RuntimeError("cost became unknown; the experiment cost cap cannot be enforced")
+                raise RuntimeError(
+                    "cost became unknown; the experiment cost cap cannot be enforced"
+                )
             if spent > spec.constraints.maximum_cost_usd:
                 raise RuntimeError(
                     f"experiment cost ${spent:.6f} crossed maximum_cost_usd="
                     f"${spec.constraints.maximum_cost_usd:.6f}"
                 )
 
-    admissible = [trial for trial in trials if trial.status == "complete"
-                  and _passes_hard_gates(trial.metrics)]
+    admissible = [
+        trial
+        for trial in trials
+        if trial.status == "complete" and _passes_hard_gates(trial.metrics)
+    ]
     selected = max(admissible, key=_selection_key) if admissible else None
     held_out_id = None
     held_out_metrics = None
@@ -389,7 +404,9 @@ async def run_calibration(spec: CalibrationSpec) -> CalibrationReport:
             spent += float(held_out_cost)
         if spec.constraints.maximum_cost_usd is not None:
             if cost_is_unknown:
-                raise RuntimeError("held-out cost is unknown; the experiment cost cap cannot be enforced")
+                raise RuntimeError(
+                    "held-out cost is unknown; the experiment cost cap cannot be enforced"
+                )
             if spent > spec.constraints.maximum_cost_usd:
                 raise RuntimeError(
                     f"experiment cost ${spent:.6f} crossed maximum_cost_usd="
@@ -404,15 +421,19 @@ async def run_calibration(spec: CalibrationSpec) -> CalibrationReport:
     if held_out_metrics is not None and not _passes_hard_gates(held_out_metrics):
         limitations.append("selected candidate failed held-out hard gates")
     selected_quality = bool(
-        selected and (selected.metrics or {}).get("task_success_rate", 0)
+        selected
+        and (selected.metrics or {}).get("task_success_rate", 0)
         >= spec.constraints.minimum_task_success_rate
     )
     held_out_quality = bool(
-        held_out_metrics and held_out_metrics.get("task_success_rate", 0)
+        held_out_metrics
+        and held_out_metrics.get("task_success_rate", 0)
         >= spec.constraints.minimum_task_success_rate
     )
     if selected is not None and not selected_quality:
-        limitations.append("selected candidate missed the predeclared calibration quality threshold")
+        limitations.append(
+            "selected candidate missed the predeclared calibration quality threshold"
+        )
     if held_out_metrics is not None and not held_out_quality:
         limitations.append("selected candidate missed the predeclared held-out quality threshold")
     if code.git_dirty:
@@ -441,8 +462,11 @@ async def run_calibration(spec: CalibrationSpec) -> CalibrationReport:
             "minimum_task_success_rate": spec.constraints.minimum_task_success_rate,
             "maximum_model_requests": spec.constraints.maximum_model_requests,
             "maximum_duration_seconds": spec.constraints.maximum_duration_seconds,
-            **({"maximum_cost_usd": spec.constraints.maximum_cost_usd}
-               if spec.constraints.maximum_cost_usd is not None else {}),
+            **(
+                {"maximum_cost_usd": spec.constraints.maximum_cost_usd}
+                if spec.constraints.maximum_cost_usd is not None
+                else {}
+            ),
         },
         repetitions=spec.repetitions,
         calibration_groups=spec.dataset.calibration,

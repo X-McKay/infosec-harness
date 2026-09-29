@@ -37,6 +37,7 @@ def _block(report: str, symbol: str) -> str:
 
 # --- the measured failure ----------------------------------------------------------------
 
+
 def test_the_javascript_named_export_is_reported_as_named_and_destructured():
     report = _describe("javascript/cmdi/vulnerable", "src/cmd.js")
     block = _block(report, "countLines")
@@ -45,7 +46,7 @@ def test_the_javascript_named_export_is_reported_as_named_and_destructured():
     assert "export=default" not in block
     # The reach form must be a destructuring require, not a default binding.
     assert 'const { countLines } = require("./src/cmd");' in block
-    assert 'const countLines = require(' not in report, (
+    assert "const countLines = require(" not in report, (
         "the tool must never print the default-import form for a named export"
     )
     assert "kind=function" in block and "params=(path, cb)" in block
@@ -60,8 +61,7 @@ def test_the_javascript_report_says_why_a_default_import_would_fail():
 
 def test_a_javascript_default_export_is_not_destructured(tmp_path):
     """The inverse error: `module.exports = fn` must not be reported as a named export."""
-    (tmp_path / "solo.js").write_text(
-        "function only(a) { return a; }\nmodule.exports = only;\n")
+    (tmp_path / "solo.js").write_text("function only(a) { return a; }\nmodule.exports = only;\n")
     ctx = SimpleNamespace(deps=AgentDeps(repo_path=str(tmp_path)))
     block = _block(caps.describe_callables(ctx, "solo.js"), "only")
     assert "export=default" in block
@@ -74,6 +74,7 @@ def test_a_javascript_default_export_is_not_destructured(tmp_path):
 # This tool exists to stop one false negative, so a file it *refuses* is the worst outcome
 # available: the probe author then writes the import from memory, which is the exact mistake.
 
+
 @pytest.mark.parametrize("name", ["render.ts", "render.tsx", "render.mts", "render.cts"])
 def test_typescript_is_described_rather_than_refused(tmp_path, name):
     """`.ts` was absent from _LANG_BY_SUFFIX, so this tool raised ModelRetry on every file in a
@@ -82,7 +83,8 @@ def test_typescript_is_described_rather_than_refused(tmp_path, name):
     in TypeScript; only the annotations differ, and they sit inside the parameter list."""
     (tmp_path / name).write_text(
         "export function renderComment(text: string): string {\n"
-        "  return \"<div>\" + text + \"</div>\";\n}\n")
+        '  return "<div>" + text + "</div>";\n}\n'
+    )
     ctx = SimpleNamespace(deps=AgentDeps(repo_path=str(tmp_path)))
     report = caps.describe_callables(ctx, name)
     block = _block(report, "renderComment")
@@ -99,7 +101,8 @@ def test_an_esm_specifier_keeps_its_extension(tmp_path):
     printing the form that works under every runner is strictly better than printing the other."""
     (tmp_path / "src").mkdir()
     (tmp_path / "src/render.js").write_text(
-        "export function renderComment(t) { return \"<div>\" + t + \"</div>\"; }\n")
+        'export function renderComment(t) { return "<div>" + t + "</div>"; }\n'
+    )
     ctx = SimpleNamespace(deps=AgentDeps(repo_path=str(tmp_path)))
     report = caps.describe_callables(ctx, "src/render.js")
     assert 'import { renderComment } from "./src/render.js";' in report
@@ -111,7 +114,8 @@ def test_a_commonjs_require_specifier_stays_extensionless(tmp_path):
     """CommonJS resolution *does* guess, and the corpus case this tool was built for is CJS: the
     require form must not acquire an extension just because ESM needs one."""
     (tmp_path / "cmd.js").write_text(
-        "function countLines(p) { return p; }\nmodule.exports = { countLines };\n")
+        "function countLines(p) { return p; }\nmodule.exports = { countLines };\n"
+    )
     ctx = SimpleNamespace(deps=AgentDeps(repo_path=str(tmp_path)))
     report = caps.describe_callables(ctx, "cmd.js")
     assert 'const { countLines } = require("./cmd");' in report
@@ -124,6 +128,7 @@ def test_an_mjs_module_keeps_the_mjs_extension(tmp_path):
 
 
 # --- one file per corpus language --------------------------------------------------------
+
 
 def test_python_is_parsed_not_guessed():
     report = _describe("python/sqli/vulnerable", "app.py")
@@ -196,15 +201,18 @@ def test_perl_distinguishes_export_from_export_ok_from_neither(tmp_path):
 
 # --- honesty about what was and was not found --------------------------------------------
 
+
 def test_every_language_states_what_is_certain_and_what_is_inferred():
-    for case, path in [("python/sqli/vulnerable", "app.py"),
-                       ("javascript/cmdi/vulnerable", "src/cmd.js"),
-                       ("java/cmdi/vulnerable", "src/main/java/com/example/Runner.java"),
-                       ("perl/cmdi/vulnerable", "lib/Runner.pm")]:
+    for case, path in [
+        ("python/sqli/vulnerable", "app.py"),
+        ("javascript/cmdi/vulnerable", "src/cmd.js"),
+        ("java/cmdi/vulnerable", "src/main/java/com/example/Runner.java"),
+        ("perl/cmdi/vulnerable", "lib/Runner.pm"),
+    ]:
         report = _describe(case, path)
         certainty = next(ln for ln in report.splitlines() if ln.startswith("certainty:"))
         assert "CERTAIN" in certainty, certainty
-        assert ("INFERRED" in certainty or "`ast`" in certainty), certainty
+        assert "INFERRED" in certainty or "`ast`" in certainty, certainty
 
 
 def test_a_file_with_no_callables_says_so_rather_than_inventing_one(tmp_path):
@@ -254,12 +262,15 @@ def test_a_fully_qualified_class_name_is_answered_with_the_file_that_defines_it(
     assert "not a class or package name" in message
 
 
-@pytest.mark.parametrize("wrong", [
-    "UserDao",                    # bare type name
-    "com/example/UserDao",        # package path, extension dropped
-    "com/example/UserDao.java",   # right file, wrong depth (the source root is stripped)
-    "UserDao.class",              # the compiled artefact instead of the source
-])
+@pytest.mark.parametrize(
+    "wrong",
+    [
+        "UserDao",  # bare type name
+        "com/example/UserDao",  # package path, extension dropped
+        "com/example/UserDao.java",  # right file, wrong depth (the source root is stripped)
+        "UserDao.class",  # the compiled artefact instead of the source
+    ],
+)
 def test_a_path_that_points_at_the_right_file_by_the_wrong_route_names_that_file(wrong):
     message = _retry_message(JAVA_CASE, wrong)
     assert JAVA_FILE in message, message
@@ -330,6 +341,7 @@ def test_a_path_outside_the_root_is_never_named_back_to_the_model():
 
 # --- the same confinement as the other read tools ----------------------------------------
 
+
 @pytest.mark.parametrize("bad", ["../../etc/passwd", "src/../../../etc/hosts", "/etc/passwd"])
 def test_path_escape_is_rejected_like_read_file(bad):
     with pytest.raises(ModelRetry):
@@ -343,8 +355,9 @@ def test_a_missing_path_inside_the_root_is_a_retry_not_a_crash():
 
 def test_output_stays_inside_the_declared_toolset_bound(tmp_path):
     """max_output_bytes in tool.yaml has to remain truthful for a hostile-sized file."""
-    body = "".join(f"def f{i}({', '.join(f'a{j}' for j in range(40))}):\n    pass\n"
-                   for i in range(500))
+    body = "".join(
+        f"def f{i}({', '.join(f'a{j}' for j in range(40))}):\n    pass\n" for i in range(500)
+    )
     (tmp_path / "huge.py").write_text(body)
     ctx = SimpleNamespace(deps=AgentDeps(repo_path=str(tmp_path)))
     report = caps.describe_callables(ctx, "huge.py")
@@ -355,6 +368,7 @@ def test_output_stays_inside_the_declared_toolset_bound(tmp_path):
 
 
 # --- registration ------------------------------------------------------------------------
+
 
 def test_the_tool_is_on_the_stable_repo_ro_toolset_instance():
     """A fresh toolset per call is rejected as a runtime addition under Temporal."""
@@ -378,5 +392,6 @@ def test_the_agents_that_need_it_are_told_to_use_it_imperatively(agent):
     from infosec_harness.agents.registry import load_spec
 
     text = "\n".join(load_spec(agent).instructions or [])
-    assert "describe_callables" in text, f"{agent} is not told the tool exists"
-    assert "Call `describe_callables`" in text or "call `describe_callables`" in text
+    tool = "describe_callables" if agent == "context" else "inspect_target"
+    assert tool in text, f"{agent} is not told the tool exists"
+    assert f"Call `{tool}`" in text or f"call `{tool}`" in text

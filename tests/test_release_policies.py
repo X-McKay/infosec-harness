@@ -18,8 +18,7 @@ from infosec_harness.evals.adapters import UNEVIDENCED_SAFETY_AGENTS, is_unevide
 from infosec_harness.resources import agents_dir
 from infosec_harness.settings import REPO_ROOT
 
-POLICIES = {name: agents_dir() / name / "evals" / "release-policy.yaml"
-            for name in AGENT_BINDINGS}
+POLICIES = {name: agents_dir() / name / "evals" / "release-policy.yaml" for name in AGENT_BINDINGS}
 
 
 def _policy(name: str) -> dict:
@@ -38,10 +37,11 @@ def test_every_gate_the_policy_names_is_a_metric_the_report_emits(name):
     # Verified against a real report: `harness eval run <agent> --report` writes each of
     # these. uncovered_material_scenarios comes from evals.coverage and is computed
     # statically, so it is emitted even when no case ran.
-    emitted = {"schema_validity_rate", "budget_exhausted_count",
-               "uncovered_material_scenarios"}
+    emitted = {"schema_validity_rate", "budget_exhausted_count", "uncovered_material_scenarios"}
     if name in UNEVIDENCED_SAFETY_AGENTS:
         emitted.add("unevidenced_safe_verdicts")
+    if name == "build-repair":
+        emitted.update({"execution_not_checked_count", "execution_failed_count"})
     assert set(policy["hard_gates"]) <= emitted, (
         f"{name}: policy names gates the report never writes: "
         f"{sorted(set(policy['hard_gates']) - emitted)}"
@@ -67,11 +67,21 @@ def test_the_agents_on_the_false_negative_path_carry_the_safety_gate():
         assert "unevidenced_safe_verdicts" in _policy(name)["hard_gates"], name
 
 
+def test_unattested_probe_observations_are_not_release_gates():
+    for name in ("probe-author", "probe-repair"):
+        gates = _policy(name)["hard_gates"]
+        assert "execution_not_checked_count" not in gates
+        assert "execution_failed_count" not in gates
+    assert _policy("build-repair")["hard_gates"]["execution_not_checked_count"] == 0
+    assert _policy("build-repair")["hard_gates"]["execution_failed_count"] == 0
+
+
 def test_a_stricter_governance_tier_demands_a_higher_success_floor():
     tiers = {}
     for name in AGENT_BINDINGS:
         assessment = yaml.safe_load(
-            (REPO_ROOT / "docs" / "risk-assessments" / f"{name}.yaml").read_text())
+            (REPO_ROOT / "docs" / "risk-assessments" / f"{name}.yaml").read_text()
+        )
         tiers[name] = assessment["classification"]["governance_tier"]
     for name, tier in tiers.items():
         floor = _policy(name)["thresholds"]["task_success_rate"]["min"]
@@ -83,14 +93,19 @@ def test_a_stricter_governance_tier_demands_a_higher_success_floor():
 
 def test_policies_are_regenerable():
     before = {p: p.read_text() for p in POLICIES.values()}
-    subprocess.run([sys.executable, str(REPO_ROOT / "scripts" / "gen_release_policies.py")],
-                   check=True, capture_output=True, cwd=REPO_ROOT)
+    subprocess.run(
+        [sys.executable, str(REPO_ROOT / "scripts" / "gen_release_policies.py")],
+        check=True,
+        capture_output=True,
+        cwd=REPO_ROOT,
+    )
     assert {p: p.read_text() for p in POLICIES.values()} == before, (
         "release policies are out of date — run `uv run python scripts/gen_release_policies.py`"
     )
 
 
 # --- The unevidenced-safety predicate ---------------------------------------------------
+
 
 def test_diagnosis_claiming_a_negative_without_reaching_the_sink_is_unevidenced():
     case = {"payload": {"probe_execution": {"precondition_reached": False}}}
@@ -108,8 +123,14 @@ def test_context_calling_an_exploitable_sink_unreachable_is_unevidenced():
 def test_verdict_needs_a_complete_valid_negative_execution():
     unsupported = {"facts": {"last_diagnosis": "environment_issue"}}
     assert is_unevidenced_safe("verdict", unsupported, "likely_not_exploitable")
-    supported = {"facts": {"last_diagnosis": "valid_negative", "precondition_reached": True,
-                           "sink_returned": True, "oracle_fired": False}}
+    supported = {
+        "facts": {
+            "last_diagnosis": "valid_negative",
+            "precondition_reached": True,
+            "sink_returned": True,
+            "oracle_fired": False,
+        }
+    }
     assert not is_unevidenced_safe("verdict", supported, "likely_not_exploitable")
     unreachable = {"facts": {"reachability": "unreachable"}}
     assert is_unevidenced_safe("verdict", unreachable, "likely_not_exploitable")

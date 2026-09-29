@@ -4,7 +4,7 @@
 schema_version: 1
 assessment:
   agent: context
-  agent_version: 1.0.0
+  agent_version: 1.1.0
   assessment_version: 1.0.0
   status: draft
   assessed_at: '2026-09-26'

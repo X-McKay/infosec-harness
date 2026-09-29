@@ -66,7 +66,8 @@ def _scripted(calls):
             return ModelResponse(parts=next(it))
         except StopIteration:
             return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {
-                "summary": "s", "reachability": "reachable", "reachability_rationale": "r"})])
+                "summary": "s", "reachability": "reachable", "reachability_rationale": "r",
+                "source": None, "sink": None, "path": [], "sanitizers": []})])
 
     return FunctionModel(fn)
 

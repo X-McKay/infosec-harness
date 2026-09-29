@@ -481,6 +481,7 @@ SKILLS = {
         safety=BUILD_SAFETY,
         completion=BUILD_COMPLETION + PATH_RUNNER_COMPLETION + JS_RUNNER_COMPLETION),
     "build-cpanm": dict(
+        version="1.0.1",
         description=("Recipe for building a Perl test environment in the sandbox. Use this when "
                      "planning or repairing a build for a cpanfile or Makefile.PL project."),
         use_when=["You are producing or repairing an EnvironmentSpec for a Perl repository.",

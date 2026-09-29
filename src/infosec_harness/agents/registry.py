@@ -19,7 +19,7 @@ from typing import Any
 from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.agent.spec import AgentSpec
-from pydantic_ai.capabilities import ResolveModelId
+from pydantic_ai.capabilities import PrepareOutputTools, ResolveModelId
 from pydantic_ai.durable_exec.temporal import TemporalDurability
 from pydantic_ai_harness.compaction import ClearToolResults
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
@@ -37,6 +37,13 @@ from infosec_harness.agents.budgets import (
 from infosec_harness.agents.capabilities import CUSTOM_CAPABILITIES
 from infosec_harness.agents.deps import AgentDeps
 from infosec_harness.agents.governance import GovernanceError, assert_governed
+from infosec_harness.agents.outputs import (
+    VERDICT_OUTPUTS,
+    ContextOutput,
+    PartialEnvironmentOutput,
+    prepare_verdict_tools,
+    verdict_contract_instructions,
+)
 from infosec_harness.agents.validators import OUTPUT_VALIDATORS
 from infosec_harness.domain.models import (
     EnvironmentSpec,
@@ -96,18 +103,31 @@ ACTIVITY_MAX_ATTEMPTS = 3
 # Retrying these cannot change the outcome: permanent provider rejections, a semantic
 # failure pydantic-ai has already exhausted its own retries on, and programming errors.
 NON_RETRYABLE_ERRORS = [
-    "AuthenticationError", "PermissionDeniedError", "BadRequestError", "NotFoundError",
-    "UnprocessableEntityError", "UnexpectedModelBehavior",
-    "ValidationError", "TypeError", "ValueError", "KeyError", "AttributeError",
+    "AuthenticationError",
+    "PermissionDeniedError",
+    "BadRequestError",
+    "NotFoundError",
+    "UnprocessableEntityError",
+    "UnexpectedModelBehavior",
+    "ValidationError",
+    "TypeError",
+    "ValueError",
+    "KeyError",
+    "AttributeError",
 ]
-ACTIVITY_RETRY = RetryPolicy(maximum_attempts=ACTIVITY_MAX_ATTEMPTS,
-                             non_retryable_error_types=NON_RETRYABLE_ERRORS)
+ACTIVITY_RETRY = RetryPolicy(
+    maximum_attempts=ACTIVITY_MAX_ATTEMPTS, non_retryable_error_types=NON_RETRYABLE_ERRORS
+)
 
 # Model calls can be slow; tool calls are fast except the sandbox shell.
-MODEL_ACTIVITY = ActivityConfig(start_to_close_timeout=timedelta(minutes=10),
-                                retry_policy=ACTIVITY_RETRY)
-TOOL_ACTIVITY = {"sandbox_shell": ActivityConfig(start_to_close_timeout=timedelta(minutes=5),
-                                                 retry_policy=ACTIVITY_RETRY)}
+MODEL_ACTIVITY = ActivityConfig(
+    start_to_close_timeout=timedelta(minutes=10), retry_policy=ACTIVITY_RETRY
+)
+TOOL_ACTIVITY = {
+    "sandbox_shell": ActivityConfig(
+        start_to_close_timeout=timedelta(minutes=5), retry_policy=ACTIVITY_RETRY
+    )
+}
 
 # History size (estimated tokens) at which `ClearToolResults` starts blanking the oldest tool
 # results, for an agent whose spec sets `metadata.clear_tool_results`. This is a *shape*
@@ -133,7 +153,9 @@ class ResolvedAgentConfig(BaseModel):
 
     @property
     def digest(self) -> str:
-        return hashlib.sha256(canonical_json(self.model_dump(mode="json")).encode()).hexdigest()[:16]
+        return hashlib.sha256(canonical_json(self.model_dump(mode="json")).encode()).hexdigest()[
+            :16
+        ]
 
     @property
     def effective_digest(self) -> str:
@@ -152,7 +174,9 @@ class ResolvedAgentConfig(BaseModel):
             # Routing policy is provenance for the requested tier; the resolved model below is
             # the behavior. Two policies resolving to the same concrete model are equivalent.
             metadata.pop("model_policy", None)
-        model = self.model.model_dump(mode="json", exclude={"requested_model", "requested_settings"})
+        model = self.model.model_dump(
+            mode="json", exclude={"requested_model", "requested_settings"}
+        )
         budget = {
             "agent_name": self.budget.agent_name,
             "source_files": self.budget.source_files,
@@ -279,9 +303,7 @@ def config_hash(
     durable: bool = False,
 ) -> str:
     """Agent config identity (§6): effective spec + skill contents + resolved model."""
-    return resolve_agent_config(
-        name, spec, source_files=source_files, durable=durable
-    ).digest
+    return resolve_agent_config(name, spec, source_files=source_files, durable=durable).digest
 
 
 def _absolutize_skill_dirs(spec: AgentSpec) -> AgentSpec:
@@ -372,7 +394,7 @@ def _assert_tools_are_declared(name: str, spec: AgentSpec) -> None:
     because `RepoReadOnly(tools=[...])` lets a spec name a subset -- and a typo in that list
     would otherwise silently narrow the agent's tools instead of failing.
     """
-    from infosec_harness.agents.capabilities import DEFAULT_REPO_RO_TOOLS
+    from infosec_harness.agents.capabilities import DEFAULT_REPO_RO_TOOLS, REPO_RO_TOOLS
     from infosec_harness.tools.policies import load_policies
 
     declared = {t.name for t in load_policies()["repo-read-only"].tools}
@@ -380,11 +402,11 @@ def _assert_tools_are_declared(name: str, spec: AgentSpec) -> None:
         if cap.name != "RepoReadOnly":
             continue
         selected = (cap.kwargs or {}).get("tools") or DEFAULT_REPO_RO_TOOLS
-        unknown = sorted(set(selected) - set(DEFAULT_REPO_RO_TOOLS))
+        unknown = sorted(set(selected) - set(REPO_RO_TOOLS))
         if unknown:
             raise GovernanceError(
                 f"Agent {name!r} selects repo tools that do not exist: {unknown}. "
-                f"Available: {sorted(DEFAULT_REPO_RO_TOOLS)}"
+                f"Available: {sorted(REPO_RO_TOOLS)}"
             )
         undeclared = sorted(set(selected) - declared)
         if undeclared:
@@ -400,6 +422,8 @@ def build_agent(
     *,
     durable: bool = True,
     production_transport: bool | None = None,
+    legacy_output_contract: bool = False,
+    execution_name: str | None = None,
 ) -> Agent[AgentDeps, Any]:
     """Build an agent with independently selected execution and transport layers.
 
@@ -419,32 +443,55 @@ def build_agent(
     _assert_tools_are_declared(name, spec)
     spec = _absolutize_skill_dirs(effective_spec(name, spec))
     transport = durable if production_transport is None else production_transport
-    capabilities: list[Any] = [ResolveModelId(
-        lambda ctx, model_id, _n=name, _d=transport: model_factory.resolve(
-            _n, model_id, durable=_d
-        ))]
+    capabilities: list[Any] = [
+        ResolveModelId(
+            lambda ctx, model_id, _n=name, _d=transport: model_factory.resolve(
+                _n, model_id, durable=_d
+            )
+        )
+    ]
     # Cross-cutting robustness, attached in code (see ALLOWED_CAPABILITIES note).
     if any(cap.name in {"RepoReadOnly", "SandboxShell"} for cap in spec.capabilities):
         capabilities.append(RepairToolArguments())
     metadata = spec.metadata or {}
     if metadata.get("clear_tool_results"):
-        capabilities.append(ClearToolResults(
-            max_tokens=metadata.get("clear_tool_tokens", DEFAULT_CLEAR_TOOL_TOKENS)))
+        capabilities.append(
+            ClearToolResults(
+                max_tokens=metadata.get("clear_tool_tokens", DEFAULT_CLEAR_TOOL_TOKENS)
+            )
+        )
     if durable:
-        capabilities.append(TemporalDurability(model_activity_config=MODEL_ACTIVITY,
-                                               toolset_activity_config=TOOL_ACTIVITY))
+        capabilities.append(
+            TemporalDurability(
+                model_activity_config=MODEL_ACTIVITY, toolset_activity_config=TOOL_ACTIVITY
+            )
+        )
+    output_type = AGENT_BINDINGS[name]
+    if not legacy_output_contract:
+        if name == "partial-build":
+            output_type = PartialEnvironmentOutput
+        elif name == "context":
+            output_type = ContextOutput
+        elif name == "verdict":
+            output_type = VERDICT_OUTPUTS
+            capabilities.append(PrepareOutputTools(prepare_verdict_tools))
     agent = Agent.from_spec(
         spec,
         deps_type=AgentDeps,
-        output_type=AGENT_BINDINGS[name],
+        output_type=output_type,
         custom_capability_types=ALLOWED_CAPABILITIES,
         capabilities=capabilities,
-        name=name,
+        # Temporal derives model/tool activity identities from this name. Output-contract
+        # revisions therefore need a distinct execution name; the logical name above still
+        # owns model routing, governance, budgets, telemetry and persisted AgentOutcome data.
+        name=execution_name or name,
         defer_model_check=True,
     )
     from infosec_harness.telemetry import private_instrumentation
 
     agent.instrument = private_instrumentation()
+    if name == "verdict" and not legacy_output_contract:
+        agent.instructions(verdict_contract_instructions)
     for validator in OUTPUT_VALIDATORS.get(name, ()):
         agent.output_validator(validator)
     return agent
@@ -452,8 +499,24 @@ def build_agent(
 
 @lru_cache
 def durable_agents() -> dict[str, Agent[AgentDeps, Any]]:
-    """Baseline agents, built once at worker import and registered with Temporal."""
-    return {name: build_agent(name) for name in AGENT_BINDINGS}
+    """Current agents, with distinct Temporal identities for revised output contracts."""
+    revised = {"partial-build", "context", "verdict"}
+    return {
+        name: build_agent(
+            name,
+            execution_name=f"{name}-output-v2" if name in revised else None,
+        )
+        for name in AGENT_BINDINGS
+    }
+
+
+@lru_cache
+def legacy_output_agents() -> dict[str, Agent[AgentDeps, Any]]:
+    """Original Temporal identities and parsers retained solely for history replay."""
+    return {
+        name: build_agent(name, legacy_output_contract=True)
+        for name in ("partial-build", "context", "verdict")
+    }
 
 
 @lru_cache
@@ -491,8 +554,7 @@ def agent_config_hashes() -> dict[str, str]:
 def resolved_agent_configs() -> dict[str, ResolvedAgentConfig]:
     """Durable base configs loaded outside workflow execution."""
     return {
-        name: resolve_agent_config(name, load_spec(name), durable=True)
-        for name in AGENT_BINDINGS
+        name: resolve_agent_config(name, load_spec(name), durable=True) for name in AGENT_BINDINGS
     }
 
 
@@ -520,9 +582,15 @@ def validate_all() -> list[str]:
     for name in sorted(on_disk & set(AGENT_BINDINGS)):
         try:
             spec = load_spec(name)
-            instructions = spec.instructions if isinstance(spec.instructions, list) else [spec.instructions or ""]
+            instructions = (
+                spec.instructions
+                if isinstance(spec.instructions, list)
+                else [spec.instructions or ""]
+            )
             if any("{{" in str(i) for i in instructions):
-                problems.append(f"{name}: instructions must be static (no Handlebars templates, §6.2)")
+                problems.append(
+                    f"{name}: instructions must be static (no Handlebars templates, §6.2)"
+                )
             if not spec.model:
                 problems.append(f"{name}: spec must name a model tier")
             build_agent(name, durable=True)

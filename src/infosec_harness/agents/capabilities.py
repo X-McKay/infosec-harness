@@ -36,6 +36,7 @@ from infosec_harness.agents.symbol_inspection import (
     MAX_SYMBOLS,
     describe_callables,
 )
+from infosec_harness.agents.target_context import MAX_TARGET_CONTEXT_BYTES, inspect_target
 
 __all__ = [
     "CUSTOM_CAPABILITIES",
@@ -55,11 +56,13 @@ __all__ = [
     "MAX_TREE_BYTES",
     "MAX_TREE_DIRS",
     "MAX_TREE_NAMED_FILES",
+    "MAX_TARGET_CONTEXT_BYTES",
     "REPO_RO_TOOLS",
     "RepoReadOnly",
     "SandboxShell",
     "_EXTRACTORS",
     "describe_callables",
+    "inspect_target",
     "list_files",
     "list_tree",
     "read_file",
@@ -80,8 +83,11 @@ REPO_RO_TOOLS = {
     "read_files": read_files,
     "search_code": search_code,
     "describe_callables": describe_callables,
+    "inspect_target": inspect_target,
 }
-DEFAULT_REPO_RO_TOOLS: tuple[str, ...] = tuple(REPO_RO_TOOLS)
+DEFAULT_REPO_RO_TOOLS: tuple[str, ...] = tuple(
+    name for name in REPO_RO_TOOLS if name != "inspect_target"
+)
 
 
 @cache

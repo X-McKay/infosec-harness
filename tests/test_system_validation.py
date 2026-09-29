@@ -41,8 +41,15 @@ from infosec_harness.settings import get_settings
 # digest would restate what they already know and cost a 20-40 kB tool result that every later
 # request of the run resends. Widening this set is a design decision, not a formality: assert
 # the tools each agent should have, not the tools it happens to have.
-REPO = {"load_capability", "list_tree", "list_files", "read_file", "read_files", "search_code",
-        "describe_callables"}
+REPO = {
+    "load_capability",
+    "list_tree",
+    "list_files",
+    "read_file",
+    "read_files",
+    "search_code",
+    "describe_callables",
+}
 PROFILING = REPO | {"repo_digest"}
 EXPECTED_TOOLS = {
     "intake": {"load_capability"},
@@ -52,9 +59,9 @@ EXPECTED_TOOLS = {
     "partial-build": REPO | {"run_in_sandbox"},
     "context": REPO,
     "probe-planner": {"load_capability"},
-    "probe-author": REPO,
+    "probe-author": REPO | {"inspect_target"},
     "probe-diagnosis": {"load_capability"},
-    "probe-repair": REPO,
+    "probe-repair": REPO | {"inspect_target"},
     "verdict": set(),
 }
 
@@ -114,25 +121,39 @@ def test_skills_load_with_real_content():
 
     root = str(get_settings().agents_dir.parent / "skills")
     sk = Skills(root, include=["cwe-89-sql-injection", "probe-oracle-protocol"])
-    discovered = {getattr(c, "name", getattr(c, "id", "?")) for c in getattr(sk, "_deferred_capabilities", ())}
+    discovered = {
+        getattr(c, "name", getattr(c, "id", "?")) for c in getattr(sk, "_deferred_capabilities", ())
+    }
     assert {"cwe-89-sql-injection", "probe-oracle-protocol"} <= discovered
 
 
 @pytest.mark.parametrize("name", list(AGENT_BINDINGS))
 async def test_agent_emits_typed_contract(name):
-    stack = StackFingerprint(languages={"python": 3}, test_frameworks=["pytest"], manifests=["requirements.txt"])
+    stack = StackFingerprint(
+        languages={"python": 3}, test_frameworks=["pytest"], manifests=["requirements.txt"]
+    )
     payload = {"oracle_nonce": "testnonce"}
     if name == "probe-diagnosis":
-        payload = {"probe_execution": ProbeExecution(
-            attempt=1, exit_code=0, oracle_fired=True, precondition_reached=True).model_dump()}
+        payload = {
+            "probe_execution": ProbeExecution(
+                attempt=1, exit_code=0, oracle_fired=True, precondition_reached=True
+            ).model_dump()
+        }
     facts = None
     if name == "verdict":
-        facts = VerdictFacts(environment_ready=True, oracle_fired=True, precondition_reached=True,
-                             last_diagnosis=DiagnosisKind.valid_positive, reachability=Reachability.reachable)
+        facts = VerdictFacts(
+            environment_ready=True,
+            oracle_fired=True,
+            precondition_reached=True,
+            last_diagnosis=DiagnosisKind.valid_positive,
+            reachability=Reachability.reachable,
+        )
     agent = build_agent(name, durable=False)
-    result = await agent.run(render_prompt("do the task", payload, stack=stack),
-                             deps=AgentDeps(repo_path="/tmp", sandbox_image="img", facts=facts))
-    assert type(result.output) is AGENT_BINDINGS[name]
+    result = await agent.run(
+        render_prompt("do the task", payload, stack=stack),
+        deps=AgentDeps(repo_path="/tmp", sandbox_image="img", facts=facts),
+    )
+    assert isinstance(result.output, AGENT_BINDINGS[name])
 
 
 CONFORMANT_PROBE = (
@@ -152,20 +173,40 @@ def test_probe_guard_rejects_bad_probes(tmp_path):
     with pytest.raises(ModelRetry, match="sink-returned"):
         # Reaching the sink is not the same as the call completing; without the second marker a
         # probe that threw on the way in is indistinguishable from a clean negative.
-        validate_probe(ctx, ProbeSource(
-            test_file_path="tests/t.py",
-            content="print('HARNESS_PRECONDITION::x')\nprint('HARNESS_ORACLE::x')\n"))
+        validate_probe(
+            ctx,
+            ProbeSource(
+                test_file_path="tests/t.py",
+                content="print('HARNESS_PRECONDITION::x')\nprint('HARNESS_ORACLE::x')\n",
+            ),
+        )
     with pytest.raises(ModelRetry, match="oracle signal"):
         # A probe with no oracle branch can never report exploitability, so it is useless.
-        validate_probe(ctx, ProbeSource(
-            test_file_path="tests/t.py",
-            content="print('HARNESS_PRECONDITION::x')\nprint('HARNESS_SINK_RETURNED::x')\n"))
+        validate_probe(
+            ctx,
+            ProbeSource(
+                test_file_path="tests/t.py",
+                content="print('HARNESS_PRECONDITION::x')\nprint('HARNESS_SINK_RETURNED::x')\n",
+            ),
+        )
     with pytest.raises(ModelRetry):  # path traversal
         validate_probe(ctx, ProbeSource(test_file_path="../evil.py", content="HARNESS_ORACLE::x"))
 
 
 def test_verdict_guard_blocks_unsupported_exploitable_claim():
     v = Verdict(label=VerdictLabel.potentially_exploitable, confidence=0.9, rationale="x")
-    assert verdict_violations(v, VerdictFacts(environment_ready=True, oracle_fired=False))  # blocked
-    assert verdict_violations(v, VerdictFacts(environment_ready=True, oracle_fired=True,
-                              precondition_reached=True, last_diagnosis=DiagnosisKind.valid_positive)) == []
+    assert verdict_violations(
+        v, VerdictFacts(environment_ready=True, oracle_fired=False)
+    )  # blocked
+    assert (
+        verdict_violations(
+            v,
+            VerdictFacts(
+                environment_ready=True,
+                oracle_fired=True,
+                precondition_reached=True,
+                last_diagnosis=DiagnosisKind.valid_positive,
+            ),
+        )
+        == []
+    )

@@ -51,6 +51,11 @@ def policy_for(agent: str) -> dict:
     # failed case, so the probe-writing agents do not carry this gate.
     if agent in UNEVIDENCED_SAFETY_AGENTS:
         gates["unevidenced_safe_verdicts"] = 0
+    # These agents have declared execution-backed cases. Stub mode or an unavailable secure
+    # runtime is unknown evidence, so average task quality may never compensate for skipping it.
+    if agent == "build-repair":
+        gates["execution_not_checked_count"] = 0
+        gates["execution_failed_count"] = 0
     # agent-playbook 07: "Missing required coverage ... blocks release. Passing average quality
     # cannot compensate for an uncovered material risk." Zero is the only passing value, so a
     # high- or critical-tier scenario with no eval case fails the gate rather than being

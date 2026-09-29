@@ -19,6 +19,7 @@ from typing import Any
 
 import yaml
 from pydantic import BaseModel
+from pydantic_ai import capture_run_messages
 
 from infosec_harness.agents.render import render_prompt
 from infosec_harness.evals.adapters import (
@@ -27,17 +28,23 @@ from infosec_harness.evals.adapters import (
     is_unevidenced_safe,
 )
 from infosec_harness.evals.provenance import code_version
-from infosec_harness.evals.trajectory import inspect_messages
+from infosec_harness.evals.trajectory import summarize_calls
 from infosec_harness.settings import get_settings
 
-EVALUATOR_VERSION = "deterministic-agent-output-v3"
+EVALUATOR_VERSION = "deterministic-agent-output-v4"
 EVAL_EXECUTION_MODE = "local-eval-production-transport-v1"
 
 
 _DIAGNOSTIC_OUTPUT_LIMIT = 16_000
 _SENSITIVE_OUTPUT_KEYS = {
-    "api_key", "authorization", "credential", "credentials", "password",
-    "secret", "access_token", "refresh_token",
+    "api_key",
+    "authorization",
+    "credential",
+    "credentials",
+    "password",
+    "secret",
+    "access_token",
+    "refresh_token",
 }
 
 
@@ -51,8 +58,7 @@ def _bounded_typed_output(output: Any) -> dict[str, Any]:
         if isinstance(item, dict):
             return {
                 str(key): "[REDACTED]"
-                if str(key).lower().replace("-", "_").replace(" ", "_")
-                in _SENSITIVE_OUTPUT_KEYS
+                if str(key).lower().replace("-", "_").replace(" ", "_") in _SENSITIVE_OUTPUT_KEYS
                 else redact(child)
                 for key, child in item.items()
             }
@@ -65,7 +71,8 @@ def _bounded_typed_output(output: Any) -> dict[str, Any]:
     diagnostic = {"type": type(output).__name__, "truncated": False, "value": value}
     if len(encoded) > _DIAGNOSTIC_OUTPUT_LIMIT:
         diagnostic = {
-            "type": type(output).__name__, "truncated": True,
+            "type": type(output).__name__,
+            "truncated": True,
             "original_chars": len(encoded),
             "json_prefix": encoded[:_DIAGNOSTIC_OUTPUT_LIMIT],
         }
@@ -94,14 +101,10 @@ def _usage_metrics(
 ) -> dict[str, object]:
     """Publish aggregate usage only when every attempted run supplied usage."""
     attempt_count = len(attempts)
-    observed_count = sum(
-        attempt.get("usage_status") == "observed" for attempt in attempts
-    )
+    observed_count = sum(attempt.get("usage_status") == "observed" for attempt in attempts)
     observed_average = round(tokens / observed_count, 1) if observed_count else None
     observed_cache_ratio = (
-        round(cache_read / tokens, 4)
-        if tokens
-        else 0.0 if observed_count else None
+        round(cache_read / tokens, 4) if tokens else 0.0 if observed_count else None
     )
     complete = attempt_count > 0 and observed_count == attempt_count
     return {
@@ -137,8 +140,6 @@ def _dataset_identity(cases: list[dict]) -> dict[str, object]:
         # only comparable between runs carrying this same execution contract.
         "execution_mode": EVAL_EXECUTION_MODE,
     }
-
-
 
 
 def _pricing_label(model_name: str) -> str:
@@ -180,8 +181,6 @@ class TruncatedExperiment(SystemExit):
             f"EXPERIMENT_ID={experiment_id}, marked status=truncated: its metrics cover only "
             f"the cases that ran and must not be compared against a complete experiment."
         )
-
-
 
 
 async def run_experiment(
@@ -232,9 +231,7 @@ async def run_experiment(
     # The runner itself is local, while the model/provider contract intentionally mirrors the
     # durable worker. This keeps transport retry settings in the effective identity and on the
     # actual client aligned with production without requiring a Temporal activity context.
-    built = build_agent(
-        agent, agent_overlay, durable=False, production_transport=True
-    )
+    built = build_agent(agent, agent_overlay, durable=False, production_transport=True)
     spec = load_spec(agent, agent_overlay)
     cfg_hash = config_hash(agent, spec, durable=True)
     base_effective_config = resolve_agent_config(agent, spec, durable=True)
@@ -251,10 +248,15 @@ async def run_experiment(
     code = code_version()
 
     overlay_label = str(overlay) if isinstance(overlay, Path) else "inline" if overlay else ""
-    exp_id = "exp-" + hashlib.sha256(
-        f"{agent}:{version}:{cfg_hash}:{overlay_label}:{uuid.uuid4()}".encode()).hexdigest()[:16]
+    exp_id = (
+        "exp-"
+        + hashlib.sha256(
+            f"{agent}:{version}:{cfg_hash}:{overlay_label}:{uuid.uuid4()}".encode()
+        ).hexdigest()[:16]
+    )
 
     total = passed = invalid_output = budget_exhausted = unevidenced_safe = 0
+    execution_not_checked = execution_failed = 0
     completed_cases = 0
     cost = cache_read = tokens = 0.0
     cost_unknown = usage_unknown = 0
@@ -278,7 +280,8 @@ async def run_experiment(
         usage_metrics = _usage_metrics(attempts, tokens, cache_read)
         metrics = {
             "accuracy": round(passed / total, 4) if total else 0.0,
-            "n": total, "passed": passed,
+            "n": total,
+            "passed": passed,
             "cost_usd_total": complete_cost,
             "cost_usd_per_case": per_case_cost,
             **usage_metrics,
@@ -289,7 +292,9 @@ async def run_experiment(
                 # launders a bad run into an acceptable number.
                 "worst_repetition_pass_rate": (
                     round(min(p / t for p, t in per_repetition.values()), 4)
-                    if per_repetition else 0.0),
+                    if per_repetition
+                    else 0.0
+                ),
                 "p50_latency_s": round(_pct(latencies, 0.50), 3),
                 "p95_latency_s": round(_pct(latencies, 0.95), 3),
                 "p50_cost_usd": round(_pct(costs, 0.50), 6) if costs else None,
@@ -301,9 +306,18 @@ async def run_experiment(
                 # Why cases failed, not just how many: a wrong answer, a run stopped by its
                 # budget, and an output that never validated are three different problems.
                 "failure_categories": {
-                    "wrong_answer": total - passed - budget_exhausted - invalid_output,
+                    "wrong_answer": (
+                        total
+                        - passed
+                        - budget_exhausted
+                        - invalid_output
+                        - execution_not_checked
+                        - execution_failed
+                    ),
                     "budget_exhausted": budget_exhausted,
                     "invalid_output": invalid_output,
+                    "execution_not_checked": execution_not_checked,
+                    "execution_failed": execution_failed,
                 },
             },
             # Named to match the release policy's gates and thresholds so the contract is
@@ -313,12 +327,14 @@ async def run_experiment(
             "budget_exhausted_count": budget_exhausted,
             "budget_enforcement_violations": 0,
             "expected_budget_stops": sum(
-                1 for attempt in attempts
+                1
+                for attempt in attempts
                 if attempt.get("outcome") == "budget_exhausted"
                 and attempt.get("expected") == "budget_exhausted"
             ),
             "unexpected_budget_stops": sum(
-                1 for attempt in attempts
+                1
+                for attempt in attempts
                 if attempt.get("outcome") == "budget_exhausted"
                 and attempt.get("expected") != "budget_exhausted"
             ),
@@ -327,6 +343,10 @@ async def run_experiment(
             "average_cost_usd": per_case_cost,
             "p95_model_requests": _p95(model_requests),
             "unevidenced_safe_verdicts": unevidenced_safe,
+            # Execution-backed cases are material quality checks. Missing secure runtime or
+            # stub mode is unknown evidence and must remain a failing hard-gate value.
+            "execution_not_checked_count": execution_not_checked,
+            "execution_failed_count": execution_failed,
             # Coverage travels with the numbers: every metric above is over `n` of
             # `n_planned` case runs, and only `status == "complete"` means they are equal.
             # `harness eval compare` refuses to read anything else as a like-for-like run.
@@ -356,13 +376,25 @@ async def run_experiment(
         model call fails or the process is killed.
         """
         async with db.session() as s:
-            await s.merge(db.EvalExperiment(
-                id=exp_id, agent=agent, dataset=str(dataset_path.name),
-                dataset_version=version, git_sha=code.git_commit, git_dirty=code.git_dirty,
-                harness_version=code.harness_version,
-                overlay=overlay_label, config_hash=cfg_hash,
-                model_tier=model_tier, model_name=model_name, backend=backend, pricing=pricing,
-                repetitions=repeat, metrics=build_metrics(status, truncation)))
+            await s.merge(
+                db.EvalExperiment(
+                    id=exp_id,
+                    agent=agent,
+                    dataset=str(dataset_path.name),
+                    dataset_version=version,
+                    git_sha=code.git_commit,
+                    git_dirty=code.git_dirty,
+                    harness_version=code.harness_version,
+                    overlay=overlay_label,
+                    config_hash=cfg_hash,
+                    model_tier=model_tier,
+                    model_name=model_name,
+                    backend=backend,
+                    pricing=pricing,
+                    repetitions=repeat,
+                    metrics=build_metrics(status, truncation),
+                )
+            )
             for row in rows:
                 s.add(row)
             await s.commit()
@@ -393,20 +425,47 @@ async def run_experiment(
                 usage_record: dict[str, object] | None = None
                 outcome = "answered"
                 diagnostic: dict[str, object] = {}
+                messages = []
                 try:
-                    result = await asyncio.wait_for(
-                        built.run(
-                            prompt,
-                            deps=deps,
-                            usage_limits=invocation_config.budget.to_usage_limits(),
-                        ),
-                        timeout=get_settings().agent_run_timeout_s,
-                    )
+                    with capture_run_messages() as messages:
+                        result = await asyncio.wait_for(
+                            built.run(
+                                prompt,
+                                deps=deps,
+                                usage_limits=invocation_config.budget.to_usage_limits(),
+                            ),
+                            timeout=get_settings().agent_run_timeout_s,
+                        )
                     predicted = predict(result.output)
                     diagnostic["typed_output"] = _bounded_typed_output(result.output)
+                    from infosec_harness.evals.execution_checks import run_execution_check
+
+                    execution = await run_execution_check(
+                        case, result.output, stub=pricing == "stub"
+                    )
+                    if execution is not None:
+                        predicted = execution.predicted
+                        diagnostic["execution_check"] = execution.as_score()
+                        if execution.status == "not_checked":
+                            outcome = "execution_not_checked"
+                            execution_not_checked += 1
+                        elif execution.status == "failed":
+                            outcome = "execution_failed"
+                            execution_failed += 1
+                    from infosec_harness.evals.probe_execution import evaluate_probe_execution
+
+                    probe_check = await evaluate_probe_execution(
+                        agent, case, result.output, stub=pricing == "stub"
+                    )
+                    if probe_check is not None:
+                        # Same-process tracing is useful diagnostic evidence, but candidate
+                        # code can tamper with or forge it. It must not change the structural
+                        # score or satisfy release-grade execution gates.
+                        diagnostic["probe_observation"] = probe_check.as_score()
                     requests = result.usage.requests or 0
                     model_requests.append(requests)
-                    tool_calls.append(len(inspect_messages(result.all_messages())[0]))
+                    messages = result.all_messages()
+                    tool_calls.append(summarize_calls(messages)["tool_call_count"])
                     c, _ = model_factory.estimate_cost(model_name, result.usage)
                     if c is None and pricing in {"stub", "zero_priced"}:
                         c = 0.0
@@ -422,26 +481,32 @@ async def run_experiment(
                         "cache_write_tokens": result.usage.cache_write_tokens or 0,
                     }
                 except UsageLimitExceeded:
-                    diagnostic = {"error_type": "UsageLimitExceeded",
-                                  "error_category": "budget_exhausted"}
+                    diagnostic = {
+                        "error_type": "UsageLimitExceeded",
+                        "error_category": "budget_exhausted",
+                    }
                     # The run hit its declared budget: it was stopped, not answered. This is a
                     # hard gate, so it is counted separately from a wrong answer.
-                    predicted, c = "budget_exhausted", (
-                        0.0 if pricing in {"stub", "zero_priced"} else None
+                    predicted, c = (
+                        "budget_exhausted",
+                        (0.0 if pricing in {"stub", "zero_priced"} else None),
                     )
                     outcome = "budget_exhausted"
                     budget_exhausted += 1
                     usage_unknown += 1
                     cost_unknown += int(c is None)
                 except UnexpectedModelBehavior:
-                    diagnostic = {"error_type": "UnexpectedModelBehavior",
-                                  "error_category": "output_contract_invalid",
-                                  "provider_body_retained": False}
+                    diagnostic = {
+                        "error_type": "UnexpectedModelBehavior",
+                        "error_category": "output_contract_invalid",
+                        "provider_body_retained": False,
+                    }
                     # The model could not produce a valid output within its retry budget
                     # (e.g. it kept violating an output contract). That is a failed case, and an
                     # output that does not validate is no answer rather than a wrong one.
-                    predicted, c = "invalid_output", (
-                        0.0 if pricing in {"stub", "zero_priced"} else None
+                    predicted, c = (
+                        "invalid_output",
+                        (0.0 if pricing in {"stub", "zero_priced"} else None),
                     )
                     outcome = "invalid_output"
                     invalid_output += 1
@@ -452,49 +517,57 @@ async def run_experiment(
                     usage_unknown += 1
                     failed_cost_unknown = pricing not in {"stub", "zero_priced"}
                     cost_unknown += int(failed_cost_unknown)
-                    attempts.append({
-                        "case": case_name,
-                        "group": case_group(case),
-                        "repetition": rep,
-                        "expected": expected,
-                        "outcome": "failed",
-                        "error_type": type(exc).__name__,
-                        "error": str(exc)[:500] or repr(exc)[:500],
-                        "latency_s": latency,
-                        "usage": None,
-                        "usage_status": "unknown",
-                        "cost_usd": None if failed_cost_unknown else 0.0,
-                        "cost_status": "unknown" if failed_cost_unknown else "known_zero",
-                        "effective_config_digest": invocation_config.digest,
-                        "effective_budget_digest": invocation_config.budget.digest,
-                    })
+                    attempts.append(
+                        {
+                            "case": case_name,
+                            "group": case_group(case),
+                            "repetition": rep,
+                            "expected": expected,
+                            "outcome": "failed",
+                            "call_summary": summarize_calls(messages),
+                            "error_type": type(exc).__name__,
+                            "error": str(exc)[:500] or repr(exc)[:500],
+                            "latency_s": latency,
+                            "usage": None,
+                            "usage_status": "unknown",
+                            "cost_usd": None if failed_cost_unknown else 0.0,
+                            "cost_status": "unknown" if failed_cost_unknown else "known_zero",
+                            "effective_config_digest": invocation_config.digest,
+                            "effective_budget_digest": invocation_config.budget.digest,
+                        }
+                    )
                     raise
                 # Recorded on every path, including the two failure branches above: a run
                 # that was stopped by its budget still took time, and excluding it would make
                 # the latency distribution describe only the cases that behaved.
+                diagnostic["call_summary"] = summarize_calls(messages)
                 latency = time.monotonic() - started
                 latencies.append(latency)
                 if c is not None:
                     costs.append(c)
-                attempts.append({
-                    "case": case_name,
-                    "group": case_group(case),
-                    "repetition": rep,
-                    "expected": expected,
-                    "outcome": outcome,
-                    "latency_s": latency,
-                    "usage": usage_record,
-                    "usage_status": "observed" if usage_record is not None else "unknown",
-                    "cost_usd": c,
-                    "cost_status": (
-                        "known_zero" if c == 0.0 and pricing in {"stub", "zero_priced"}
-                        else "observed" if c is not None
-                        else "unknown"
-                    ),
-                    "effective_config_digest": invocation_config.digest,
-                    "effective_budget_digest": invocation_config.budget.digest,
-                    **diagnostic,
-                })
+                attempts.append(
+                    {
+                        "case": case_name,
+                        "group": case_group(case),
+                        "repetition": rep,
+                        "expected": expected,
+                        "outcome": outcome,
+                        "latency_s": latency,
+                        "usage": usage_record,
+                        "usage_status": "observed" if usage_record is not None else "unknown",
+                        "cost_usd": c,
+                        "cost_status": (
+                            "known_zero"
+                            if c == 0.0 and pricing in {"stub", "zero_priced"}
+                            else "observed"
+                            if c is not None
+                            else "unknown"
+                        ),
+                        "effective_config_digest": invocation_config.digest,
+                        "effective_budget_digest": invocation_config.budget.digest,
+                        **diagnostic,
+                    }
+                )
                 if is_unevidenced_safe(agent, case, predicted):
                     unevidenced_safe += 1
                 ok = predicted == expected
@@ -505,25 +578,30 @@ async def run_experiment(
                 passed += int(ok)
                 cost += c or 0.0
                 confusion[(expected, predicted)] = confusion.get((expected, predicted), 0) + 1
-                pending_rows.append(db.EvalCaseResult(
-                    experiment_id=exp_id, case_name=case["name"], repetition=rep, passed=ok,
-                    scores={
-                        "expected": expected,
-                        "predicted": predicted,
-                        "outcome": outcome,
-                        "usage": usage_record,
-                        "usage_status": "observed" if usage_record is not None else "unknown",
-                        "cost_usd": c,
-                        "cost_status": attempts[-1]["cost_status"],
-                        "group": case_group(case),
-                        "effective_config_digest": invocation_config.digest,
-                        "effective_budget": invocation_config.budget.model_dump(mode="json"),
-                        **diagnostic,
-                    },
-                    # Legacy non-null column: truth lives in scores.cost_usd/status when unknown.
-                    cost_usd=c or 0.0,
-                    latency_s=latency,
-                ))
+                pending_rows.append(
+                    db.EvalCaseResult(
+                        experiment_id=exp_id,
+                        case_name=case["name"],
+                        repetition=rep,
+                        passed=ok,
+                        scores={
+                            "expected": expected,
+                            "predicted": predicted,
+                            "outcome": outcome,
+                            "usage": usage_record,
+                            "usage_status": "observed" if usage_record is not None else "unknown",
+                            "cost_usd": c,
+                            "cost_status": attempts[-1]["cost_status"],
+                            "group": case_group(case),
+                            "effective_config_digest": invocation_config.digest,
+                            "effective_budget": invocation_config.budget.model_dump(mode="json"),
+                            **diagnostic,
+                        },
+                        # Legacy non-null column: truth lives in scores.cost_usd/status when unknown.
+                        cost_usd=c or 0.0,
+                        latency_s=latency,
+                    )
+                )
             completed_cases += 1
             await persist("running", pending_rows)
             pending_rows = []
@@ -542,12 +620,16 @@ async def run_experiment(
             "planned_cases": len(cases),
         }
         await persist("truncated", pending_rows, truncation)
-        print(f"experiment {exp_id}: TRUNCATED on case {case_name!r} rep {rep} after "
-              f"{total}/{planned_runs} case runs ({type(exc).__name__}: {str(exc)[:200]}); "
-              f"the {total} scored case runs are saved and the experiment is marked truncated")
+        print(
+            f"experiment {exp_id}: TRUNCATED on case {case_name!r} rep {rep} after "
+            f"{total}/{planned_runs} case runs ({type(exc).__name__}: {str(exc)[:200]}); "
+            f"the {total} scored case runs are saved and the experiment is marked truncated"
+        )
         if report is not None:
-            print(f"no release report written to {report}: a truncated run cannot clear "
-                  f"release gates it did not measure")
+            print(
+                f"no release report written to {report}: a truncated run cannot clear "
+                f"release gates it did not measure"
+            )
         if isinstance(exc, KeyboardInterrupt | SystemExit | asyncio.CancelledError):
             raise  # an interrupt or a cancellation keeps its own semantics
         raise TruncatedExperiment(exp_id, truncation) from exc
@@ -555,25 +637,53 @@ async def run_experiment(
     metrics = build_metrics("complete")
     await persist("complete", pending_rows)
 
-    cost_label = (f"${metrics['cost_usd_per_case']:.4f}"
-                  if metrics["cost_usd_per_case"] is not None else "unknown")
-    cache_label = (f"{metrics['cache_hit_ratio']:.2%}"
-                   if metrics["cache_hit_ratio"] is not None else "unknown")
-    print(f"experiment {exp_id}: accuracy={metrics['accuracy']:.2%} "
-          f"cost/case={cost_label} cache_hit={cache_label} "
-          f"(model {model_name} [{pricing}], config {cfg_hash}, code {code.label()})")
+    cost_label = (
+        f"${metrics['cost_usd_per_case']:.4f}"
+        if metrics["cost_usd_per_case"] is not None
+        else "unknown"
+    )
+    cache_label = (
+        f"{metrics['cache_hit_ratio']:.2%}" if metrics["cache_hit_ratio"] is not None else "unknown"
+    )
+    print(
+        f"experiment {exp_id}: accuracy={metrics['accuracy']:.2%} "
+        f"cost/case={cost_label} cache_hit={cache_label} "
+        f"(model {model_name} [{pricing}], config {cfg_hash}, code {code.label()})"
+    )
     if code.git_dirty:
         # Said once, at the point the number is produced: this result cannot be filed against
         # a commit, so it is not a baseline and is not reproducible from the SHA it carries.
-        print("  ! the working tree is dirty, so this result does not describe "
-              f"{code.git_commit[:12] or 'any commit'} -- commit before recording a baseline")
+        print(
+            "  ! the working tree is dirty, so this result does not describe "
+            f"{code.git_commit[:12] or 'any commit'} -- commit before recording a baseline"
+        )
     if report is not None:
         write_release_report(
-            report, agent=agent, metrics=metrics, cfg_hash=cfg_hash, model_name=model_name,
-            dataset_version=version, experiment_id=exp_id, repeat=repeat, spec=spec,
+            report,
+            agent=agent,
+            metrics=metrics,
+            cfg_hash=cfg_hash,
+            model_name=model_name,
+            dataset_version=version,
+            experiment_id=exp_id,
+            repeat=repeat,
+            spec=spec,
             agent_version=str((spec.metadata or {}).get("version", "0.0.0")),
-            extra_gates=({"unevidenced_safe_verdicts": metrics["unevidenced_safe_verdicts"]}
-                         if agent in UNEVIDENCED_SAFETY_AGENTS else None),
+            extra_gates={
+                **(
+                    {"unevidenced_safe_verdicts": metrics["unevidenced_safe_verdicts"]}
+                    if agent in UNEVIDENCED_SAFETY_AGENTS
+                    else {}
+                ),
+                **(
+                    {
+                        "execution_not_checked_count": metrics["execution_not_checked_count"],
+                        "execution_failed_count": metrics["execution_failed_count"],
+                    }
+                    if agent == "build-repair"
+                    else {}
+                ),
+            },
         )
         print(f"release report written to {report}")
     return exp_id
