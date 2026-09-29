@@ -43,9 +43,10 @@ builder and sandbox, never host execution of candidate commands.
 
 ## Status
 
-Implementation is complete pending the final combined checks and clean candidate commit.
-No new live inference or promotion has run. An initial complete offline run passed 1,578 tests;
-the final Perl and execution-gate changes receive fresh combined validation before freezing.
+The output-contract, secure Perl check, probe diagnostics, and calibration changes passed
+1,585 deterministic tests on clean revision `f8aabf5`. The first live sweep was stopped after
+51 attempts when it exposed the evaluator dependency mismatch described below. All earlier
+measurements remain preserved; they do not qualify the corrected evaluator.
 
 The Perl check exposed a native-module loading failure under the existing noexec work mount.
 Resolve this through read-only installed libraries; do not broaden sandbox mount permissions.
@@ -89,3 +90,29 @@ The clean-commit offline check exposed a separate eligibility bug: stub calibrat
 be marked promotion-eligible. The next revision fixes that reporting predicate and adds
 deterministic clean/dirty tests. Agent behavior and the trial's settings remain unchanged.
 The all-agent repetition sweep and fresh holdouts will share that next clean revision.
+
+## Evaluator production-parity correction
+
+The first full sweep exposed an evaluator defect: build-repair and partial-build had the
+SandboxShell capability, but their adapters omitted `sandbox_image`. Production binds this
+to `failed_spec.base_image`. A sandbox tool call therefore exhausted retries before any command
+ran. Evaluator v5 binds the same dependency as production and rejects malformed fixtures early.
+This changes evaluation behavior, not agent prompts, quality thresholds, or expected labels.
+
+Evaluator v5 also distinguishes its own agent wall-clock deadline from an inner transport
+failure. An exceeded agent deadline is a failed budget gate and remaining dataset cases run;
+transport failures and cancellation still truncate the experiment. The broad model exception
+category is now `no_accepted_output`, because exhausted function-tool retries do not establish
+that an output schema was invalid. Exception/provider bodies remain excluded.
+
+All first-sweep records remain under their original source/evaluator identity: 51 attempts,
+48 scored, including two coordinator cancellations. No failed result is replaced or relabeled.
+The new sweep uses a separate database and one clean revision, with one complete pass of all
+agents before second/third passes. Build repair and partial build run first to test the fix.
+
+The prospective attempt envelope is amended to 450, allowing 16 completed calibration attempts,
+51 stopped-sweep attempts, 354 corrected-sweep attempts, and 10 fresh holdouts (431 planned).
+The previously amended six-hour aggregate wall-clock ceiling, two-suite concurrency ceiling,
+production invocation limits, and quality gates remain unchanged. The corrected full sweep
+retains the original full-sweep absolute deadline; missing coverage cannot clear qualification.
+Fresh holdouts remain unopened by the candidate developer and unused for tuning.

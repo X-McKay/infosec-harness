@@ -27,11 +27,12 @@ from infosec_harness.evals.adapters import (
     UNEVIDENCED_SAFETY_AGENTS,
     is_unevidenced_safe,
 )
+from infosec_harness.evals.invocation import AgentRunTimeout, run_with_timeout
 from infosec_harness.evals.provenance import code_version
 from infosec_harness.evals.trajectory import summarize_calls
 from infosec_harness.settings import get_settings
 
-EVALUATOR_VERSION = "deterministic-agent-output-v4"
+EVALUATOR_VERSION = "deterministic-agent-output-v5"
 EVAL_EXECUTION_MODE = "local-eval-production-transport-v1"
 
 
@@ -428,13 +429,13 @@ async def run_experiment(
                 messages = []
                 try:
                     with capture_run_messages() as messages:
-                        result = await asyncio.wait_for(
+                        result = await run_with_timeout(
                             built.run(
                                 prompt,
                                 deps=deps,
                                 usage_limits=invocation_config.budget.to_usage_limits(),
                             ),
-                            timeout=get_settings().agent_run_timeout_s,
+                            seconds=get_settings().agent_run_timeout_s,
                         )
                     predicted = predict(result.output)
                     diagnostic["typed_output"] = _bounded_typed_output(result.output)
@@ -480,9 +481,9 @@ async def run_experiment(
                         "cache_read_tokens": result.usage.cache_read_tokens or 0,
                         "cache_write_tokens": result.usage.cache_write_tokens or 0,
                     }
-                except UsageLimitExceeded:
+                except (UsageLimitExceeded, AgentRunTimeout) as exc:
                     diagnostic = {
-                        "error_type": "UsageLimitExceeded",
+                        "error_type": type(exc).__name__,
                         "error_category": "budget_exhausted",
                     }
                     # The run hit its declared budget: it was stopped, not answered. This is a
@@ -498,12 +499,13 @@ async def run_experiment(
                 except UnexpectedModelBehavior:
                     diagnostic = {
                         "error_type": "UnexpectedModelBehavior",
-                        "error_category": "output_contract_invalid",
+                        "error_category": "no_accepted_output",
                         "provider_body_retained": False,
                     }
-                    # The model could not produce a valid output within its retry budget
-                    # (e.g. it kept violating an output contract). That is a failed case, and an
-                    # output that does not validate is no answer rather than a wrong one.
+                    # This exception also covers exhausted function-tool retries and provider
+                    # protocol failures. No typed answer was accepted; do not claim that the
+                    # output schema itself was the cause. Keep the conservative failure gate
+                    # and omit exception/provider text, which may contain sensitive content.
                     predicted, c = (
                         "invalid_output",
                         (0.0 if pricing in {"stub", "zero_priced"} else None),
