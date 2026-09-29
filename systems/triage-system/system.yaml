@@ -194,6 +194,7 @@ members:
       include:
       - probe-oracle-protocol
       - test-pytest
+      - test-junit4
       - test-junit5
       - test-jest
       - test-perl-test-more
@@ -215,6 +216,7 @@ members:
       include:
       - probe-oracle-protocol
       - test-pytest
+      - test-junit4
       - test-junit5
       - test-jest
       - test-perl-test-more
@@ -236,6 +238,7 @@ members:
       include:
       - probe-oracle-protocol
       - test-pytest
+      - test-junit4
       - test-junit5
       - test-jest
       - test-perl-test-more

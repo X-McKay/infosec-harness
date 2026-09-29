@@ -32,14 +32,20 @@ def stack_key(stack: StackFingerprint) -> str:
 
     Only shape goes in. File *counts* are excluded, since two Maven projects of different sizes
     want the same recipe, and so are `test_dirs` and `registries`, which vary per project. What
-    remains -- the dominant language, the build systems, the test frameworks, and the manifest
-    filenames -- is exactly what determines how a repo is built and tested.
+    remains -- the dominant language, the build systems, the test frameworks, the declared Java
+    level, and the manifest filenames -- is exactly what determines how a repo is built and
+    tested.
+
+    `java_release` is part of the identity because it decides the base image, and both directions
+    of mismatch are hard build failures: sharing one recipe between a Java 7 and a Java 17 project
+    hands one of them a JDK whose javac refuses its language level.
     """
     top = max(stack.languages, key=lambda k: (stack.languages[k], k)) if stack.languages else ""
     parts = [
         f"lang={top}",
         "build=" + ",".join(sorted(stack.build_systems)),
         "test=" + ",".join(sorted(stack.test_frameworks)),
+        f"java={stack.java_release if stack.java_release is not None else ''}",
         "manifests=" + ",".join(sorted(stack.manifests)),
     ]
     return hashlib.sha256("|".join(parts).encode()).hexdigest()[:16]

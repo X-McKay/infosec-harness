@@ -4,12 +4,12 @@ Why this module is smaller than the requirement looks
 -----------------------------------------------------
 The playbook (07-evaluation) asks for nine case types per skill — activation,
 non-activation, ambiguity, procedure adherence, cross-skill interaction, tool use, stopping,
-safety, and context cost. Twenty-three skills times nine is 207 cases, and the honest answer
+safety, and context cost. Twenty-four skills times nine is 216 cases, and the honest answer
 is that most of them could not fail.
 
 That is the same hazard :mod:`infosec_harness.evals.inert_gates` exists to name: a check that
 is structurally incapable of failing is worse than no check, because it reads as coverage. A
-suite of 207 cases in which 150 are filler would report "every skill fully evaluated" while
+suite of 216 cases in which most are filler would report "every skill fully evaluated" while
 testing four things. So each case type is triaged here, once, and the triage is *reported*
 (see :func:`coverage_summary` and :func:`format_coverage_notice`) rather than hidden: a skill
 with no behavioural cases says so, with the reason, at the point the evidence is produced.
@@ -20,7 +20,7 @@ Three questions decide where a case type lands.
 
 1. *Can it fail without a model?* Context cost, activation/non-activation structure, stopping
    criteria, enumeration counts and body substance are all properties of the file. They are
-   checked statically for **all 23** skills, and they are cheap.
+   checked statically for **all 24** skills, and they are cheap.
 2. *Does the skill carry a recipe the harness itself can judge?* The ``build-*`` and ``test-*``
    skills show commands and probe bodies, and this repository already owns deterministic
    judges for exactly those artifacts —
@@ -358,9 +358,17 @@ UPSTREAM_DESCRIPTION_LIMIT = 1024
 # this is generous; its job is to make a description that grows into a second procedure a
 # decision somebody takes rather than a drift nobody sees.
 MAX_DESCRIPTION_CHARS = 400
-# Largest body today is build-maven at ~2.4k tokens. A skill is read in full once loaded, so a
+# Largest body today is build-maven at ~3.3k tokens. A skill is read in full once loaded, so a
 # body that doubles doubles what every agent loading it pays.
-MAX_BODY_TOKENS = 3_000
+#
+# Raised from 3000 deliberately, which is what this constant exists to force. build-maven grew by
+# roughly 700 tokens when the Maven recipe stopped assuming JUnit 5: the framework/provider table,
+# the framework-specific warm-up, the measured javac source floors (JDK 11 refuses -source 5, 17
+# refuses 6, 21 refuses 7), what a pom's own Surefire `<configuration>` overrides, and Maven 3.8+'s
+# http blocker. Each is a measurement that decides whether a Java target scores at all, and a
+# compression pass took the body from 4.7k to 3.3k before this line moved. Only build-maven is near
+# the limit; the next largest is test-junit4 at ~2.2k.
+MAX_BODY_TOKENS = 3_400
 # The share of an agent's own declared per-request input ceiling that its skills may occupy in
 # the worst case (catalog always, plus every enabled body loaded). Highest today is intake at
 # 37%, which is high because intake's ceiling is deliberately small (20k) while it enables all
@@ -593,7 +601,7 @@ def _pair(a: str, b: str) -> tuple[str, str]:
 
 
 # Pairs a single repository, finding, or task can satisfy on both sides. Each was reached by
-# reading the activation criteria of all 23 skills and asking what input satisfies both; the
+# reading the activation criteria of all 24 skills and asking what input satisfies both; the
 # situation is recorded so the list can be argued with rather than trusted. Deliberately short.
 # The families that merely *overlap* are in COMPOSING_PAIRS below and are not listed here,
 # because a resolution asserted between two skills that never disagree is the decorative
@@ -641,6 +649,15 @@ COMPETING_PAIRS = (
         "an SSRF probe has to substitute the transport because the sandbox has no egress, which "
         "is precisely what the protocol's 'do not mock the sink' rule forbids",
     ),
+    CompetingPair(
+        "test-junit4", "test-junit5",
+        "a repository with both junit:junit and junit-jupiter on its test classpath -- a "
+        "migration part-done, which is ordinary -- satisfies each skill's positive criteria "
+        "while each skill's negative criteria send the reader to the other. The tie is decided "
+        "by a measurement rather than taste: Surefire 3.2.5 selects the JUnit Platform provider "
+        "as soon as jupiter is present, and a JUnit-4-annotated probe then reports "
+        "`Tests run: 0` and exits 0",
+    ),
 )
 
 _COMPOSE_LANG_BUILD = (
@@ -672,7 +689,8 @@ COMPOSING_PAIRS: dict[tuple[str, str], str] = {
        for build in ("build-python", "build-maven", "build-gradle", "build-npm",
                      "build-cpanm")},
     **{_pair("probe-oracle-protocol", test): _COMPOSE_PROTOCOL_TEST
-       for test in ("test-pytest", "test-junit5", "test-jest", "test-perl-test-more")},
+       for test in ("test-pytest", "test-junit4", "test-junit5", "test-jest",
+                    "test-perl-test-more")},
 }
 
 
@@ -807,7 +825,7 @@ def enumeration_problems(skill: SkillDoc) -> list[str]:
 
 # --- Body substance ------------------------------------------------------------------------
 
-# A generator that inferred its regions from heading positions once deleted the body of all 23
+# A generator that inferred its regions from heading positions once deleted the body of all 24
 # skills, and every structural test still passed because the required sections were present.
 # A floor on the skill's *own* content is the cheap insurance against that repeating.
 MIN_PROCEDURE_TOKENS = 60
@@ -1025,8 +1043,12 @@ def command_violations(command: ShellCommand) -> list[str]:
 def probe_exemplar_violations(test_file_path: str, content: str) -> list[str]:
     """The harness's own objections to a probe body, via the production validator.
 
-    ``validate_probe`` never touches its ``RunContext``; passing ``None`` runs the real rules
-    rather than a restatement of them that could drift.
+    Passing ``None`` for the ``RunContext`` runs the real rules rather than a restatement of them
+    that could drift. ``validate_probe`` reads the checkout through the context when it has one,
+    to know the repository's test framework and language level, and tolerates its absence: the
+    framework-dependent rules simply stay silent here, so a case can only pin the ones that hold
+    for any repository. The repo-aware pairings are covered in tests/test_validators.py, which can
+    build a checkout.
     """
     try:
         validate_probe(None, ProbeSource(test_file_path=test_file_path, content=content))

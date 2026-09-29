@@ -1,0 +1,25 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.example</groupId>
+  <artifactId>xxe-fixed</artifactId>
+  <version>1.0.0</version>
+  <properties>
+    <!-- Deliberately the shape the *harvested* corpus actually has, which the seeded corpus did
+         not: JUnit 4 on `maven.compiler.source` 1.7. Of the 51 Maven entries harvested from
+         Vul4J, 50 are JUnit 4 and 14 declare Java 7 - so before this case the whole Java corpus
+         exercised a recipe (JUnit 5, release 17) that fits one harvested entry out of 51. A
+         jupiter warm-up here fails `test-compile` with "cannot find symbol: class Test", and a
+         probe using `var` fails with "cannot find symbol: class var"; both were measured. -->
+    <maven.compiler.source>1.7</maven.compiler.source>
+    <maven.compiler.target>1.7</maven.compiler.target>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+  </properties>
+  <dependencies>
+    <dependency>
+      <groupId>junit</groupId>
+      <artifactId>junit</artifactId>
+      <version>4.12</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+</project>

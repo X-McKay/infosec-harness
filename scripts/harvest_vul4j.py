@@ -71,6 +71,10 @@ from pathlib import Path
 from typing import Protocol
 
 REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO / "src"))
+# The harness's own build-file classifier, so what is recorded here and what the harness detects
+# in a checkout cannot disagree about a repository's test framework.
+from infosec_harness.repo.detect import jvm_test_framework  # noqa: E402
 
 DATASET_URL = "https://raw.githubusercontent.com/tuhh-softsec/vul4j/main/dataset/vul4j_dataset.csv"
 
@@ -524,7 +528,7 @@ def classify_cwe(cwe_id: str, covered: tuple[str, ...]) -> dict:
 
 
 def build_pair(entry: Entry, fix_sha: str, parent_sha: str, pov: Pov, sink: tuple,
-               coverage: dict) -> list[dict]:
+               coverage: dict, test_framework: str | None = None) -> list[dict]:
     """Two cases from one entry: the parent commit is vulnerable, the fix commit is fixed."""
     sink_file, sink_line, target = sink
     base = f"vul4j-{entry.vul_id.removeprefix('VUL4J-').lower()}"
@@ -542,8 +546,12 @@ def build_pair(entry: Entry, fix_sha: str, parent_sha: str, pov: Pov, sink: tupl
     }
     # Facts about the toolchain, not a recipe. Vul4J's compile_cmd/test_cmd/cmd_options are
     # deliberately dropped: deriving them is what env-planner and build-repair are for.
+    # `test_framework` is as load-bearing as `jdk` and was missing: the Maven recipe's warm-up
+    # is compiled against the project's own test classpath, so a JUnit 5 warm-up in a JUnit 4
+    # project fails `test-compile` and no image is ever built. 50 of the 51 Maven entries here are
+    # JUnit 4, so a consumer that assumes JUnit 5 fails essentially the whole harvest.
     build = {"system": entry.build_system.lower() or "unknown", "jdk": entry.jdk or None,
-             "module": entry.module or "root",
+             "module": entry.module or "root", "test_framework": test_framework,
              "note": "Vul4J's pinned build and test commands are intentionally not carried over."}
 
     cases = []
@@ -606,6 +614,35 @@ def build_pair(entry: Entry, fix_sha: str, parent_sha: str, pov: Pov, sink: tupl
     return cases
 
 
+
+def detect_test_framework(entry: Entry, resolver: Resolver, revision: str) -> str | None:
+    """Which JVM test framework the entry's build files declare, at the vulnerable revision.
+
+    Read rather than assumed, and read from the module pom as well as the root: the module is
+    where a multi-module project declares its own test dependencies. Returns None when nothing
+    can be read, which is honest -- the framework then comes from whatever the consumer detects
+    in the checkout, not from a guess recorded as a fact.
+    """
+    names = ("pom.xml",) if entry.build_system.lower() == "maven" else ("build.gradle",
+                                                                       "build.gradle.kts")
+    module = (entry.module or "").strip("/")
+    parts = [] if module in ("", "root") else module.split("/")
+    # Innermost first, then each enclosing directory, then the root: a multi-module project often
+    # declares the shared test dependency at an intermediate level (onos does it in
+    # `protocols/pom.xml`), and reading only the module and the root misses it.
+    paths = [f"{'/'.join(parts[:depth])}/{name}"
+             for depth in range(len(parts), 0, -1) for name in names]
+    paths += list(names)
+    for path in paths:
+        try:
+            text = resolver.file_at(entry.fix_slug, revision, path)
+        except LookupError:
+            continue
+        if text and (framework := jvm_test_framework(text)):
+            return framework
+    return None
+
+
 # --------------------------------------------------------------------------------------
 # Harvest
 
@@ -659,7 +696,9 @@ def harvest(entries: list[Entry], resolver: Resolver, covered: tuple[str, ...]) 
             out.skip(entry, "fix commit changes no non-test Java file, so no sink location can be derived")
             continue
 
-        pair = build_pair(entry, commit["sha"], parent_sha, pov, sink, coverage)
+        framework = detect_test_framework(entry, resolver, parent_sha)
+        pair = build_pair(entry, commit["sha"], parent_sha, pov, sink, coverage,
+                          framework)
         # `None` means we could not establish presence. An entry we cannot clear is treated
         # exactly like one we have caught leaking.
         if pov.present_at_vulnerable is not False:
@@ -691,6 +730,12 @@ NOTE = (
     "are listed under `quarantined` with the reason. "
     "`truth.sink_file`/`sink_line` are a heuristic taken from the fix commit's largest non-test "
     "hunk, not an analysed sink; `truth.sink_confidence` says so. "
+    "`build.test_framework` is read from the module's build file and each pom enclosing it, "
+    "innermost first; `null` means none of them declares one (a parent pom outside the "
+    "repository does), so a consumer must detect it in the checkout rather than assume. It is "
+    "recorded because it decides the *build*, not just the probe: the Maven warm-up is "
+    "compiled against the project's own test classpath, so a JUnit 5 warm-up in a JUnit 4 "
+    "project fails test-compile and no image is built at all. "
     "Vul4J's pinned Docker images and build/test commands are deliberately not carried over: "
     "deriving the build is what env-planner and build-repair exist to measure."
 )

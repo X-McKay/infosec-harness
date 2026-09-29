@@ -83,11 +83,16 @@ MAVEN_COMPLETION = [
     "and so discovers no JUnit 5 test at all.",
     "`test_command` uses `-B` and never `-q`, and passes "
     "`-Dmaven.test.redirectTestOutputToFile=false`, so the probe's markers reach stdout.",
-    "An install command warms Surefire's JUnit Platform provider by *running* a test — a "
-    "throwaway JUnit 5 class written, run under the pinned goal with `-Dtest=`, and deleted — "
-    "and not merely by invoking the plugin with `-DfailIfNoTests=false`. Surefire resolves the "
-    "provider at test-execution time, so a warm-up that runs no test fetches the plugin and none "
-    "of the provider, and the offline probe fails on `surefire-junit-platform:jar:… (absent)`.",
+    "The base image's JDK still accepts the language level the project declares. Measured with "
+    "Zulu 8/11/17/21: JDK 11 refuses `-source 5`, JDK 17 refuses 6, JDK 21 refuses 7 — so "
+    "Java 5 needs temurin-8, Java 6 temurin-11, Java 7 temurin-17.",
+    "An install command warms Surefire's provider by *running* a test written in the "
+    "repository's own framework — a throwaway class run under the pinned goal with `-Dtest=` and "
+    "then deleted — and not merely by invoking the plugin with `-DfailIfNoTests=false`. Surefire "
+    "resolves the provider at test-execution time, so a warm-up that runs no test fetches the "
+    "plugin and none of the provider and the offline probe fails on "
+    "`surefire-junit4:jar:… (absent)`; and a warm-up written in the *wrong* framework does not "
+    "compile at all, so the image is never built.",
 ]
 GRADLE_COMPLETION = [
     "`test_command` runs at the INFO log level (`-i`): Gradle's `Test` task forwards a test's "
@@ -454,14 +459,62 @@ SKILLS = {
         avoid_when=["The repository uses a different framework; load that `test-*` skill.",
                     "You have not yet read `probe-oracle-protocol`; read it first."],
         safety=TEST_SAFETY, completion=TEST_COMPLETION),
-    "test-junit5": dict(
-        description=("How to write a probe as a JUnit 5 test that emits the oracle markers. Use "
-                     "this when authoring or repairing a probe for a JUnit repository."),
+    "test-junit4": dict(
+        description=("How to write a probe as a JUnit 4 (or JUnit 3) test that emits the oracle "
+                     "markers. Use this when authoring or repairing a probe for a repository "
+                     "whose tests use org.junit.Test or junit.framework.TestCase."),
         use_when=["You are writing or repairing a probe and the repository's test framework is "
-                  "JUnit 5."],
-        avoid_when=["The repository uses a different framework; load that `test-*` skill.",
+                  "JUnit 4 — its tests import `org.junit.Test`, or extend "
+                  "`junit.framework.TestCase`, and its build declares `junit:junit`.",
+                  "The repository declares no JUnit at all and you must choose: JUnit 4 is what "
+                  "the overwhelming majority of Java in the wild has on its test classpath."],
+        avoid_when=["`junit-jupiter` is on the test classpath — use `test-junit5`.",
+                    "The repository uses a different framework; load that `test-*` skill.",
                     "You have not yet read `probe-oracle-protocol`; read it first."],
-        safety=TEST_SAFETY, completion=TEST_COMPLETION + NO_SKIP_COMPLETION),
+        relations=[dict(
+            skill="test-junit5", verdict="yields",
+            text="`test-junit5` also fires on the repositories that have *both* `junit:junit` and "
+                 "`junit-jupiter` on the test classpath — a migration part-done, which is common "
+                 "— and each skill's negative criteria send the reader to the other. **That skill "
+                 "wins** whenever jupiter is present at all, and the reason is measured: with "
+                 "`junit-jupiter` on the classpath Surefire 3.2.5 selects the JUnit Platform "
+                 "provider, and a JUnit-4-annotated probe then reports `Tests run: 0` and still "
+                 "exits 0 — a correct probe recorded as having reached nothing. It runs again "
+                 "only if `junit-vintage-engine` is also present, so use this skill when jupiter "
+                 "is absent (or vintage is present and the code under test is JUnit 4)."
+        )],
+        safety=TEST_SAFETY, completion=TEST_COMPLETION + NO_SKIP_COMPLETION + [
+            "The probe's class and its `@Test` method are both `public`. JUnit 4 does not run a "
+            "package-private method: the JUnit4Provider reports `initializationError` "
+            "(\"No runnable methods\"), prints no markers, and exits nonzero, which reads "
+            "downstream as a defective probe.",
+            "The probe compiles at the level the project declares: no `var` below Java 10, no "
+            "multi-catch below Java 7. A JUnit 4 project is usually old enough for this to bite.",
+        ]),
+    "test-junit5": dict(
+        description=("How to write a probe as a JUnit 5 (Jupiter) test that emits the oracle "
+                     "markers. Use this when authoring or repairing a probe for a repository "
+                     "with junit-jupiter on its test classpath."),
+        use_when=["You are writing or repairing a probe and the repository's test framework is "
+                  "JUnit 5 — `junit-jupiter` or `junit-platform` is on the test classpath."],
+        avoid_when=["The repository's tests are JUnit 4 (`org.junit.Test`, `junit:junit`) and "
+                    "jupiter is absent — use `test-junit4`.",
+                    "The repository uses a different framework; load that `test-*` skill.",
+                    "You have not yet read `probe-oracle-protocol`; read it first."],
+        relations=[dict(
+            skill="test-junit4", verdict="wins",
+            text="`test-junit4` also fires on the repositories that have *both* `junit:junit` and "
+                 "`junit-jupiter` on the test classpath, and each skill's negative criteria send "
+                 "the reader to the other. **This skill wins** whenever jupiter is present at "
+                 "all: Surefire 3.2.5 then selects the JUnit Platform provider, which does not "
+                 "run a JUnit-4-annotated test — measured as `Tests run: 0` with exit 0, the one "
+                 "shape the harness cannot tell from a probe that reached nothing. Defer to "
+                 "`test-junit4` only when jupiter is absent from the test classpath."
+        )],
+        safety=TEST_SAFETY, completion=TEST_COMPLETION + NO_SKIP_COMPLETION + [
+            "The probe compiles at the level the project declares: `var` needs Java 10 or newer, "
+            "and a JUnit 5 project can still be pinned to `maven.compiler.source` 8.",
+        ]),
     "test-jest": dict(
         description=("How to write a probe as a Jest or Vitest test that emits the oracle "
                      "markers. Use this when authoring or repairing a probe for a Jest "

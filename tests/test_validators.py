@@ -869,10 +869,39 @@ def test_a_modern_jdk_is_rejected_for_a_project_that_declares_an_old_source_leve
 
     problems = jdk_compatibility_violations("maven:3.9-eclipse-temurin-21", 7)
     assert problems and "no longer supported" in problems[0]
-    # Names a working image rather than only the defect, per the house style.
-    assert "eclipse-temurin-11" in problems[0]
+    # Names a working image rather than only the defect, per the house style -- and the *newest*
+    # image that works, which for source 7 is temurin-17. Measured: Zulu 17 compiles -source 1.7
+    # with a deprecation warning, and Zulu 21 fails with "Source option 7 is no longer supported".
+    assert "eclipse-temurin-17" in problems[0]
     # And must not suggest editing the project's compiler level, which changes the subject.
     assert "changes what is being tested" in problems[0]
+
+
+def test_the_javac_source_floors_are_the_ones_that_were_measured():
+    """Each floor was executed, not read off a release note: javac from Zulu 8/11/17/21 under
+    Maven 3.9.16 was asked for -source 1.5/1.6/1.7/1.8. JDK 8 accepted all four, JDK 11 rejected
+    5, JDK 17 rejected 6, JDK 21 rejected 7.
+
+    The 11-floor was missing before this, and three poms in the harvested Vul4J corpus declare
+    `<source>1.5</source>` -- so their specs were accepted here naming temurin-11 and then died in
+    the image build on the very message this check exists to predict.
+    """
+    from infosec_harness.agents.validators import (
+        jdk_compatibility_violations,
+        maven_image_for_release,
+    )
+
+    assert jdk_compatibility_violations("maven:3.9-eclipse-temurin-11", 5)
+    assert "eclipse-temurin-8" in jdk_compatibility_violations("maven:3.9-eclipse-temurin-11", 5)[0]
+    assert jdk_compatibility_violations("maven:3.9-eclipse-temurin-11", 6) == []
+    assert jdk_compatibility_violations("maven:3.9-eclipse-temurin-17", 6)
+    assert jdk_compatibility_violations("maven:3.9-eclipse-temurin-17", 7) == []
+    assert jdk_compatibility_violations("maven:3.9-eclipse-temurin-8", 5) == []
+    # The image the message names must itself be one the floors accept, for every level in the
+    # corpus: a remedy that fails the same check is what made the old message useless.
+    for release in (5, 6, 7, 8, 11, 17, 21):
+        image = maven_image_for_release(release)
+        assert jdk_compatibility_violations(image, release) == [], (release, image)
 
 
 def test_a_jdk_older_than_the_project_is_rejected_too():
@@ -909,3 +938,238 @@ def test_the_declared_level_is_read_from_a_real_repository(tmp_path):
     assert repo_java_release(str(tmp_path)) == 7
     assert repo_java_release(None) is None
     assert repo_java_release(str(tmp_path / "nope")) is None
+
+
+# --- The JUnit 4 / JUnit 5 compatibility matrix ----------------------------------------------
+#
+# Everything asserted below was executed before it was written down: Maven 3.9.16 with Surefire
+# 3.2.5 on Zulu JDK 8/11/17/21, against minimal fixture projects at source levels 1.5 to 1.8 and
+# against three harvested corpus repositories at their vulnerable revisions (zeroturnaround/zt-zip,
+# apache/commons-imaging, apache/commons-fileupload). The harness previously assumed JUnit 5
+# everywhere, and 50 of the 51 Maven entries harvested from Vul4J are JUnit 4.
+
+JUNIT4_POM = ("<project><properties>"
+              "<maven.compiler.source>1.8</maven.compiler.source></properties>"
+              "<dependencies><dependency><groupId>junit</groupId>"
+              "<artifactId>junit</artifactId><version>4.12</version><scope>test</scope>"
+              "</dependency></dependencies></project>")
+JUNIT5_POM = ("<project><properties>"
+              "<maven.compiler.source>1.8</maven.compiler.source></properties>"
+              "<dependencies><dependency><groupId>org.junit.jupiter</groupId>"
+              "<artifactId>junit-jupiter</artifactId><version>5.10.2</version><scope>test</scope>"
+              "</dependency></dependencies></project>")
+
+
+def test_the_jvm_test_framework_is_read_from_the_build_file():
+    """`junit` in the pom used to mean `junit5`, which is wrong for most Java in the wild.
+
+    Precedence is the provider Surefire actually selects: with jupiter present it uses the JUnit
+    Platform provider, and a JUnit-4-annotated test then runs zero tests and still exits 0 -- so
+    jupiter wins over junit4 even when both are declared. With junit and testng together it uses
+    the TestNG provider, which runs a JUnit 4 test anyway, so junit4 is the safe answer there.
+    """
+    from infosec_harness.repo.detect import jvm_test_framework
+
+    assert jvm_test_framework(JUNIT4_POM) == "junit4"
+    assert jvm_test_framework(JUNIT5_POM) == "junit5"
+    assert jvm_test_framework(JUNIT4_POM + JUNIT5_POM) == "junit5"
+    assert jvm_test_framework("<artifactId>testng</artifactId>") == "testng"
+    assert jvm_test_framework("testImplementation 'junit:junit:4.13.2'") == "junit4"
+    assert jvm_test_framework("<project><artifactId>batik-dom</artifactId></project>") is None
+
+
+def test_a_junit5_warmup_in_a_junit4_project_is_rejected(tmp_path):
+    """The defect that would have failed 50 of the 51 harvested Maven entries.
+
+    The warm-up's throwaway test is compiled against the project's own test classpath, so a
+    jupiter warm-up in a JUnit-4-only project dies inside the warm-up's own `test-compile` with
+    `HarnessWarmupTest.java:[1,63] cannot find symbol / symbol: class Test` -- the image is never
+    built, so there is no probe run at all. Executed on zt-zip, commons-imaging and
+    commons-fileupload at their harvested revisions: all three fail, and all three then pass with
+    all three markers once the warm-up is JUnit 4.
+    """
+    from infosec_harness.agents.validators import (
+        MAVEN_WARMUP_COMMANDS,
+        offline_warmup_violations,
+        repo_jvm_test_framework,
+    )
+    from infosec_harness.domain.models import EnvironmentSpec
+
+    (tmp_path / "pom.xml").write_text(JUNIT4_POM)
+    framework = repo_jvm_test_framework(str(tmp_path))
+    assert framework == "junit4"
+
+    jupiter = EnvironmentSpec(
+        base_image="maven:3.9-eclipse-temurin-17",
+        install_commands=[MAVEN_COMPILE_COMMAND, MAVEN_WARMUP_COMMANDS["junit5"]],
+        test_command=MAVEN_PROBE_COMMAND)
+    problems = offline_warmup_violations(jupiter, framework)
+    assert problems, "a jupiter warm-up in a JUnit 4 project must be rejected"
+    assert any(MAVEN_WARMUP_COMMANDS["junit4"] in p for p in problems), (
+        "the violation must name the corrected install command, not just the symptom"
+    )
+    assert any("cannot find symbol" in p for p in problems)
+
+    matching = jupiter.model_copy(update={
+        "install_commands": [MAVEN_COMPILE_COMMAND, MAVEN_WARMUP_COMMANDS["junit4"]]})
+    assert offline_warmup_violations(matching, framework) == []
+
+
+def test_an_unwarmed_junit4_build_names_the_provider_it_will_actually_need():
+    """`surefire-junit4`, not `surefire-junit-platform`: the provider is per-project.
+
+    Measured -- a JUnit-4 project warmed by invoking the plugin with nothing to run failed its
+    offline probe on `org.apache.maven.surefire:surefire-junit4:jar:3.2.5 (absent)`. A message
+    naming the JUnit 5 artifact sends build repair looking for the wrong absence.
+    """
+    from infosec_harness.agents.validators import offline_warmup_violations
+    from infosec_harness.domain.models import EnvironmentSpec
+
+    spec = EnvironmentSpec(
+        base_image="maven:3.9-eclipse-temurin-17",
+        install_commands=[MAVEN_COMPILE_COMMAND],
+        test_command=MAVEN_PROBE_COMMAND)
+    assert any("surefire-junit4" in p for p in offline_warmup_violations(spec, "junit4"))
+    assert any("surefire-testng" in p for p in offline_warmup_violations(spec, "testng"))
+    assert any("surefire-junit-platform" in p for p in offline_warmup_violations(spec, "junit5"))
+
+
+def test_every_shipped_maven_warmup_satisfies_the_checks_that_judge_it():
+    """Each warm-up the harness hands out must itself pass, or an agent that copies one verbatim
+    is rejected for following the instruction -- the oscillation that exhausted java-sqli's
+    output retries once already."""
+    from infosec_harness.agents.validators import (
+        MAVEN_WARMUP_COMMANDS,
+        install_path_violations,
+        offline_warmup_violations,
+    )
+    from infosec_harness.domain.models import EnvironmentSpec
+
+    for framework, warmup in MAVEN_WARMUP_COMMANDS.items():
+        spec = EnvironmentSpec(
+            base_image="maven:3.9-eclipse-temurin-17",
+            install_commands=[MAVEN_COMPILE_COMMAND, warmup],
+            test_command=MAVEN_PROBE_COMMAND)
+        assert offline_warmup_violations(spec, framework) == [], framework
+        assert install_path_violations(spec) == [], framework
+
+
+def test_a_java_probe_written_for_the_wrong_framework_is_rejected():
+    """Both directions, and both were measured as silent failures rather than loud ones.
+
+    A jupiter probe in a JUnit-4 project does not compile. A JUnit-4-annotated probe in a project
+    with jupiter on the classpath compiles, is selected by `-Dtest=`, and then reports
+    `Tests run: 0` with **exit 0** -- the shape the harness cannot tell from a probe that reached
+    nothing, because that is exactly what it looks like.
+    """
+    from infosec_harness.agents.validators import _java_probe_violations
+    from infosec_harness.domain.models import ProbeSource
+
+    jupiter_probe = ProbeSource(
+        test_file_path="src/test/java/com/example/HarnessProbeTest.java",
+        content=("import org.junit.jupiter.api.Test;\n"
+                 "class HarnessProbeTest { @Test void probe() {} }\n"))
+    junit4_probe = ProbeSource(
+        test_file_path="src/test/java/com/example/HarnessProbeTest.java",
+        content=("import org.junit.Test;\n"
+                 "public class HarnessProbeTest { @Test public void probe() {} }\n"))
+
+    wrong = _java_probe_violations(jupiter_probe, "junit4", 8)
+    assert any("org.junit.jupiter.api does not exist" in p for p in wrong)
+    assert any("test-junit4" in p for p in wrong)
+    assert _java_probe_violations(junit4_probe, "junit4", 8) == []
+
+    wrong = _java_probe_violations(junit4_probe, "junit5", 8)
+    assert any("Tests run: 0" in p for p in wrong)
+    assert _java_probe_violations(jupiter_probe, "junit5", 8) == []
+    # No repository to read: the framework-dependent rules stay silent rather than guess.
+    assert _java_probe_violations(jupiter_probe, None, None) == []
+
+
+def test_a_junit4_probe_that_is_not_public_is_rejected():
+    """`class X { @Test void probe() }` is correct JUnit 5 and broken JUnit 4.
+
+    Measured: the JUnit4Provider reports `com.example.HarnessProbeTest.initializationError`,
+    prints no markers, and exits 1. Downstream that is indistinguishable from a defective probe,
+    so probe repair is handed a probe whose logic is right.
+    """
+    from infosec_harness.agents.validators import _java_probe_violations
+    from infosec_harness.domain.models import ProbeSource
+
+    def probe(body):
+        return ProbeSource(test_file_path="src/test/java/HarnessProbeTest.java",
+                           content="import org.junit.Test;\n" + body)
+
+    both_private = _java_probe_violations(
+        probe("class HarnessProbeTest {\n    @Test\n    void probe() {}\n}\n"), "junit4", 8)
+    assert any("public class HarnessProbeTest" in p for p in both_private)
+    assert any("public void" in p for p in both_private)
+
+    method_private = _java_probe_violations(
+        probe("public class HarnessProbeTest {\n    @Test\n    void probe() {}\n}\n"), "junit4", 8)
+    assert [p for p in method_private if "public void" in p]
+    assert not [p for p in method_private if "public class" in p]
+
+    ok = probe("public class HarnessProbeTest {\n    @Test\n    public void probe() {}\n}\n")
+    assert _java_probe_violations(ok, "junit4", 8) == []
+    # JUnit 3 style on the JUnit 4 artefact: two harvested entries write their tests this way,
+    # and it runs under the same provider (measured).
+    junit3 = ProbeSource(
+        test_file_path="src/test/java/HarnessProbeTest.java",
+        content=("public class HarnessProbeTest extends junit.framework.TestCase {\n"
+                 "    public void testProbe() {}\n}\n"))
+    assert _java_probe_violations(junit3, "junit4", 8) == []
+
+
+def test_a_probe_using_syntax_the_project_cannot_compile_is_rejected():
+    """The published JUnit 5 exemplar used `var`, and the corpus is Java 7 and 8.
+
+    javac at source 8 fails the whole build with `cannot find symbol: class var`, and at source 5
+    or 6 the exemplar's multi-catch fails too -- three harvested poms pin `<source>1.5</source>`.
+    Both were executed. The probe reads as correct, so nothing downstream can attribute it.
+    """
+    from infosec_harness.agents.validators import _java_probe_violations
+    from infosec_harness.domain.models import ProbeSource
+
+    var_probe = ProbeSource(
+        test_file_path="src/test/java/HarnessProbeTest.java",
+        content=("import org.junit.Test;\n"
+                 "public class HarnessProbeTest {\n    @Test\n    public void probe() {\n"
+                 "        var payload = \"x\";\n    }\n}\n"))
+    assert any("cannot find symbol: class var" in p
+               for p in _java_probe_violations(var_probe, "junit4", 8))
+    assert _java_probe_violations(var_probe, "junit4", 11) == []
+
+    multi_catch = ProbeSource(
+        test_file_path="src/test/java/HarnessProbeTest.java",
+        content=("import org.junit.Test;\n"
+                 "public class HarnessProbeTest {\n    @Test\n    public void probe() {\n"
+                 "        try { sink(); } catch (IllegalArgumentException | SecurityException e) {}\n"
+                 "    }\n}\n"))
+    assert any("multi-catch" in p for p in _java_probe_violations(multi_catch, "junit4", 5))
+    assert _java_probe_violations(multi_catch, "junit4", 7) == []
+
+
+def test_the_stub_java_plan_is_read_from_the_fingerprint_and_survives_its_own_validators():
+    """The stub is the offline stand-in for env-planner, so a stub plan the validators reject
+    makes every offline Java test a lie -- and a stub that hardcodes JUnit 5 and temurin-21 makes
+    the offline tests agree with the two defects this change fixes."""
+    from infosec_harness.agents.stubs import _env_plan
+    from infosec_harness.agents.validators import (
+        environment_spec_violations,
+        install_path_violations,
+        offline_warmup_violations,
+    )
+    from infosec_harness.domain.models import EnvironmentSpec
+
+    for framework, release, image in (("junit4", 7, "maven:3.9-eclipse-temurin-17"),
+                                      ("junit5", 8, "maven:3.9-eclipse-temurin-17"),
+                                      ("testng", 5, "maven:3.9-eclipse-temurin-8"),
+                                      ("junit4", None, "maven:3.9-eclipse-temurin-17")):
+        plan = _env_plan({"languages": {"java": 10}, "manifests": ["pom.xml"],
+                          "test_frameworks": [framework], "java_release": release})
+        assert plan["base_image"] == image, (framework, release)
+        spec = EnvironmentSpec.model_validate(plan)
+        assert environment_spec_violations(spec) == []
+        assert install_path_violations(spec) == []
+        assert offline_warmup_violations(spec, framework) == []

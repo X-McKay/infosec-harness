@@ -6,6 +6,7 @@ correct itself within its ``retries.output`` budget.
 
 from __future__ import annotations
 
+import contextlib
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -24,6 +25,11 @@ from infosec_harness.domain.models import (
     VerdictFacts,
     VerdictLabel,
 )
+
+# The fingerprinter's build-file readers, reused rather than reimplemented: the recon profile the
+# probe author reads, the recipe cache key, and the warm-up this module demands all have to agree
+# on the framework and the language level, and copies of those rules would drift.
+from infosec_harness.repo.detect import declared_java_release, jvm_test_framework
 
 
 def verdict_violations(verdict: Verdict, facts: VerdictFacts) -> list[str]:
@@ -57,6 +63,16 @@ def verdict_violations(verdict: Verdict, facts: VerdictFacts) -> list[str]:
     return problems
 
 
+def _repo_path(ctx: RunContext[AgentDeps] | None) -> str | None:
+    """The checkout the validated output is about, when there is one.
+
+    Defensive on both hops: the skill-eval harness calls these validators with no context at all,
+    and a repo-aware check that raised AttributeError there would make the eval suite fail on
+    probes it is meant to accept.
+    """
+    return getattr(getattr(ctx, "deps", None), "repo_path", None)
+
+
 def validate_verdict(ctx: RunContext[AgentDeps], output: Verdict) -> Verdict:
     facts = ctx.deps.facts
     if facts is None:
@@ -65,6 +81,88 @@ def validate_verdict(ctx: RunContext[AgentDeps], output: Verdict) -> Verdict:
     if problems:
         raise ModelRetry("Verdict violates the evidence contract:\n- " + "\n- ".join(problems))
     return output
+
+
+# --- JVM probe shape -------------------------------------------------------------------------
+#
+# Three ways a Java probe that reads correctly never reports anything, all measured under
+# Maven 3.9.16 / Surefire 3.2.5:
+#
+# 1. The wrong framework's annotation. A `org.junit.jupiter.api.Test` probe in a JUnit 4 project
+#    does not compile ("package org.junit.jupiter.api does not exist"); the reverse does not
+#    either. And with junit-jupiter *and* junit 4 both on the classpath, Surefire picks the JUnit
+#    Platform provider and a JUnit-4-annotated probe runs **zero tests and still exits 0** --
+#    unless junit-vintage-engine is present, which makes it run again.
+# 2. JUnit 4 visibility. `class HarnessProbeTest { @Test void probe() }` is correct JUnit 5 and
+#    broken JUnit 4: the JUnit4Provider reports `initializationError` ("No runnable methods") and
+#    prints no markers. The class *and* the method must be public.
+# 3. Language level. The published probe template used `var`, which needs source 10+. The Vul4J
+#    corpus is Java 7 and 8, and three of its poms declare source 1.5 -- where even the template's
+#    multi-catch (`catch (A | B e)`, source 7+) does not compile.
+_JUPITER_IMPORT = "org.junit.jupiter"
+_JUNIT4_IMPORT = re.compile(r"import\s+org\.junit\.(?:Test|Assert|Before|After|Ignore)\b")
+_JUNIT3_BASE = "junit.framework.TestCase"
+_PUBLIC_PROBE_CLASS = re.compile(r"\bpublic\s+(?:final\s+)?(?:abstract\s+)?class\s+(\w+)")
+_ANNOTATED_METHOD = re.compile(r"@Test[^\n]*\n\s*(?P<modifiers>[\w\s<>,\[\]]*?)\s*\w+\s*\(")
+_VAR_DECLARATION = re.compile(r"(?:^|[^.\w])var\s+\w+\s*=")
+_MULTI_CATCH = re.compile(r"catch\s*\([^)]*\|[^)]*\)")
+
+
+def _java_probe_violations(output: ProbeSource, framework: str | None,
+                           declared_release: int | None) -> list[str]:
+    """A Java probe that compiles, is discovered, and prints its markers. Pure, for tests."""
+    if not (output.test_file_path.endswith(".java") or "org.junit" in output.content
+            or _JUNIT3_BASE in output.content):
+        return []
+    problems: list[str] = []
+    content = output.content
+    uses_jupiter = _JUPITER_IMPORT in content
+    uses_junit4 = bool(_JUNIT4_IMPORT.search(content)) or _JUNIT3_BASE in content
+    if framework == "junit4" and uses_jupiter:
+        problems.append(
+            "this repository's test framework is JUnit 4, so the probe must import "
+            "org.junit.Test and not org.junit.jupiter.api.Test: jupiter is not on the test "
+            "classpath and test-compile fails with 'package org.junit.jupiter.api does not "
+            "exist'. Declare the class and the @Test method `public` as JUnit 4 requires, and "
+            "see the test-junit4 skill."
+        )
+    if framework == "junit5" and uses_junit4 and not uses_jupiter:
+        problems.append(
+            "this repository's test framework is JUnit 5, so the probe must import "
+            "org.junit.jupiter.api.Test. With junit-jupiter on the test classpath Surefire "
+            "selects the JUnit Platform provider, which does not run a JUnit-4-annotated test at "
+            "all: the run reports 'Tests run: 0' and still exits 0, so a correct probe is "
+            "recorded as having reached nothing. See the test-junit5 skill."
+        )
+    if uses_junit4 and not uses_jupiter:
+        declared = _PUBLIC_PROBE_CLASS.search(content)
+        if not declared:
+            problems.append(
+                "a JUnit 4 probe's test class must be declared `public class HarnessProbeTest`. "
+                "With a package-private class the JUnit4Provider reports initializationError "
+                "('No runnable methods'), prints no markers, and exits nonzero -- which reads "
+                "downstream as a defective probe."
+            )
+        method = _ANNOTATED_METHOD.search(content)
+        if method and "public" not in method.group("modifiers"):
+            problems.append(
+                "a JUnit 4 @Test method must be `public void`: a package-private one is not a "
+                "runnable method, so the JUnit4Provider reports initializationError and the "
+                "probe prints nothing. Write `@Test public void probe() throws Exception`."
+            )
+    if declared_release is not None:
+        if declared_release < 10 and _VAR_DECLARATION.search(content):
+            problems.append(
+                f"this project compiles at Java {declared_release}, where `var` is not a type: "
+                f"javac fails with 'cannot find symbol: class var'. Write the declaration out "
+                f"(`String payload = ...`)."
+            )
+        if declared_release < 7 and _MULTI_CATCH.search(content):
+            problems.append(
+                f"this project compiles at Java {declared_release}, which has no multi-catch: "
+                f"split `catch (A | B e)` into one catch clause per exception type."
+            )
+    return problems
 
 
 def validate_probe(ctx: RunContext[AgentDeps], output: ProbeSource) -> ProbeSource:
@@ -86,7 +184,9 @@ def validate_probe(ctx: RunContext[AgentDeps], output: ProbeSource) -> ProbeSour
         raise ModelRetry("The probe must emit an oracle signal when the exploit condition holds: "
                          "print HARNESS_ORACLE::<nonce>, or create the canary file the plan's "
                          "canary_file oracle names.")
-    problems = _skipping_probe_violations(output)
+    repo_path = _repo_path(ctx)
+    problems = _skipping_probe_violations(output) + _java_probe_violations(
+        output, repo_jvm_test_framework(repo_path), repo_java_release(repo_path))
     if problems:
         raise ModelRetry("The probe could report nothing when it runs:\n- " + "\n- ".join(problems))
     return output
@@ -412,30 +512,51 @@ def _pathish_selector_violation(command: str) -> str | None:
 _JAVAC_SOURCE_FLOOR = (
     (20, 8),   # JDK 20 removed -source/-target 7: "Source option 7 is no longer supported."
     (12, 7),   # JDK 12 removed 6 (deprecated in 11).
+    (11, 6),   # JDK 11 removed 5: "Source option 5 is no longer supported. Use 6 or later."
 )
+# Each floor above was executed rather than read off JEP 182: javac from Zulu 8/11/17/21 was
+# asked for -source 1.5/1.6/1.7/1.8 under Maven 3.9.16. JDK 8 accepted all four; JDK 11 rejected
+# 5; JDK 17 rejected 6; JDK 21 rejected 7. The 11-floor was missing, and three poms in the
+# harvested Vul4J corpus declare `<source>1.5</source>` -- so a spec pinning temurin-11 for them
+# was accepted here and then died in the image build on a message this check exists to predict.
+# The oldest JDK the allowlisted images offer is 8, so that is the floor of the advice as well.
+# The JDKs the official `maven:3.9-eclipse-temurin-*` line actually publishes, confirmed
+# against the registry tag list rather than assumed: 8, 11, 17 and 21 all exist (as do 19,
+# 20 and 22+), so every image this module names can be pulled. 9, 10 and 12-16 do not.
+_MAVEN_IMAGE_JDKS = (8, 11, 17, 21)
+
+
+def _javac_floor(jdk: int) -> int | None:
+    """The oldest -source level ``jdk``'s javac still accepts, or None when it accepts any."""
+    return next((floor for threshold, floor in _JAVAC_SOURCE_FLOOR if jdk >= threshold), None)
+
+
+# The default JDK, and the ceiling on what this function recommends for old code. 21 compiles
+# source 8 perfectly well (measured), so the cap is not a compatibility floor -- it keeps this
+# function's answer identical to the table skills/build-maven publishes, and it keeps 2017-era
+# projects on the LTS they are most likely to have been built under. A project that declares 21
+# still gets 21, because `declared_release` overrides the cap below.
+_PREFERRED_IMAGE_JDK = 17
+
+
+def maven_image_for_release(declared_release: int) -> str:
+    """An allowlisted Maven image whose JDK still compiles ``declared_release``.
+
+    Naming temurin-11 unconditionally was wrong for the levels JDK 11 itself removed: the
+    message told the planner to pin the very image that fails with the error being reported.
+    """
+    usable = [jdk for jdk in _MAVEN_IMAGE_JDKS
+              if jdk >= declared_release and (_javac_floor(jdk) or 0) <= declared_release]
+    if not usable:
+        return f"maven:3.9-eclipse-temurin-{max(_MAVEN_IMAGE_JDKS)}"
+    capped = [jdk for jdk in usable if jdk <= _PREFERRED_IMAGE_JDK]
+    return f"maven:3.9-eclipse-temurin-{max(capped) if capped else min(usable)}"
 _IMAGE_JDK_PATTERNS = (
     re.compile(r"-jdk[-]?(\d+)"),              # gradle:8-jdk21, eclipse-temurin:17-jdk
     re.compile(r"eclipse-temurin[:-](\d+)"),   # maven:3.9-eclipse-temurin-17
     re.compile(r"\bopenjdk[:-](\d+)"),         # openjdk:11
     re.compile(r"\bamazoncorretto[:-](\d+)"),
 )
-# `maven:3.9-...` and `gradle:8-...` lead with the BUILD TOOL's version, so a naive "first
-# number" read picks 3 or 8 and silently validates against the wrong JDK.
-_JAVA_RELEASE_TAGS = (
-    re.compile(r"<maven\.compiler\.release>\s*(\d+)\s*</maven\.compiler\.release>"),
-    re.compile(r"<maven\.compiler\.source>\s*(?:1\.)?(\d+)\s*</maven\.compiler\.source>"),
-    re.compile(r"<maven\.compiler\.target>\s*(?:1\.)?(\d+)\s*</maven\.compiler\.target>"),
-    re.compile(r"<java\.version>\s*(?:1\.)?(\d+)\s*</java\.version>"),
-    re.compile(r"<source>\s*(?:1\.)?(\d+)\s*</source>"),
-    re.compile(r"<target>\s*(?:1\.)?(\d+)\s*</target>"),
-)
-_GRADLE_RELEASE_TAGS = (
-    re.compile(r"sourceCompatibility\s*=?\s*['\"]?(?:1\.)?(\d+)"),
-    re.compile(r"targetCompatibility\s*=?\s*['\"]?(?:1\.)?(\d+)"),
-    re.compile(r"languageVersion\s*=\s*JavaLanguageVersion\.of\((\d+)\)"),
-)
-
-
 def image_jdk_major(base_image: str) -> int | None:
     """The JDK major version a base image provides, or None when it cannot be read."""
     for pattern in _IMAGE_JDK_PATTERNS:
@@ -443,18 +564,6 @@ def image_jdk_major(base_image: str) -> int | None:
         if match:
             return int(match.group(1))
     return None
-
-
-def declared_java_release(build_file_text: str) -> int | None:
-    """The oldest language level a build file asks for, or None if it says nothing.
-
-    The *oldest* rather than the newest: a pom setting source 7 and target 8 has to be compiled
-    by a JDK that still accepts 7, so the lower number is the binding constraint.
-    """
-    found = [int(m.group(1))
-             for pattern in _JAVA_RELEASE_TAGS + _GRADLE_RELEASE_TAGS
-             for m in pattern.finditer(build_file_text)]
-    return min(found) if found else None
 
 
 def jdk_compatibility_violations(base_image: str, declared_release: int | None) -> list[str]:
@@ -473,15 +582,16 @@ def jdk_compatibility_violations(base_image: str, declared_release: int | None) 
             f"Use an image providing JDK {declared_release} or newer, e.g. "
             f"'maven:3.9-eclipse-temurin-{declared_release}'."
         ]
-    floor = next((f for threshold, f in _JAVAC_SOURCE_FLOOR if jdk >= threshold), None)
+    floor = _javac_floor(jdk)
     if floor is not None and declared_release < floor:
         return [
             f"base_image {base_image!r} provides JDK {jdk}, which no longer accepts "
             f"-source/-target {declared_release}: javac fails with 'Source option "
             f"{declared_release} is no longer supported. Use {floor} or later.' The project "
             f"declares Java {declared_release}, so pin an older JDK -- "
-            f"'maven:3.9-eclipse-temurin-11' builds Java {declared_release} -- rather than "
-            f"editing the project's compiler level, which changes what is being tested."
+            f"{maven_image_for_release(declared_release)!r} still compiles Java "
+            f"{declared_release} -- rather than editing the project's compiler level, which "
+            "changes what is being tested."
         ]
     return []
 
@@ -608,16 +718,59 @@ def install_path_violations(spec: EnvironmentSpec) -> list[str]:
 # success, and they are exactly what makes a warm-up a silent no-op.
 _WARMUP_NO_OPS = ("-DfailIfNoTests=false", "-Dsurefire.failIfNoTests=false",
                   "-DfailIfNoSpecifiedTests=false", "-Dsurefire.failIfNoSpecifiedTests=false")
-# A throwaway JUnit 5 test, written and removed inside one install step, so the warm-up has
-# something to run in a project whose test tree is empty. One line of Java on purpose:
-# render_dockerfile emits each install command as a single `RUN`, so a heredoc would not survive.
-MAVEN_WARMUP_COMMAND = (
-    "mkdir -p src/test/java && echo 'import org.junit.jupiter.api.Test; class HarnessWarmupTest "
-    "{ @Test void warm() {} }' > src/test/java/HarnessWarmupTest.java && "
-    f"mvn -B -Dmaven.repo.local={BUILD_HOME}/.m2/repository test-compile "
-    "org.apache.maven.plugins:maven-surefire-plugin:3.2.5:test -Dtest=HarnessWarmupTest && "
-    "rm -f src/test/java/HarnessWarmupTest.java target/test-classes/HarnessWarmupTest.class"
-)
+# A throwaway test, written and removed inside one install step, so the warm-up has something to
+# run in a project whose test tree is empty. One line of Java on purpose: render_dockerfile emits
+# each install command as a single `RUN`, so a heredoc would not survive.
+#
+# **The throwaway test has to be written in the project's own framework.** The warm-up used to be
+# JUnit 5 unconditionally, and that is not a detail: in a JUnit-4 project the `test-compile` in
+# this very command fails with
+#   HarnessWarmupTest.java:[1,63] cannot find symbol / symbol: class Test
+# so the image never builds at all. Executed against three real corpus repositories (zt-zip,
+# commons-imaging, commons-fileupload at their harvested revisions) and against minimal fixtures:
+# the JUnit 5 warm-up fails the build on every one of them, and the matching-framework warm-up
+# then makes the offline probe pass with all three markers. The corpus is 50 JUnit-4 Maven
+# entries to 1 JUnit 5, so the old default was wrong for essentially the whole of it.
+def _warmup(import_line: str, declaration: str) -> str:
+    return (
+        f"mkdir -p src/test/java && echo '{import_line} {declaration}' > "
+        "src/test/java/HarnessWarmupTest.java && "
+        f"mvn -B -Dmaven.repo.local={BUILD_HOME}/.m2/repository test-compile "
+        "org.apache.maven.plugins:maven-surefire-plugin:3.2.5:test -Dtest=HarnessWarmupTest && "
+        "rm -f src/test/java/HarnessWarmupTest.java target/test-classes/HarnessWarmupTest.class"
+    )
+
+
+MAVEN_WARMUP_COMMANDS: dict[str, str] = {
+    # JUnit 4 wants a *public* class and a *public* method: with either left package-private the
+    # JUnit4Provider reports `initializationError` and prints no markers (measured).
+    "junit4": _warmup("import org.junit.Test;",
+                      "public class HarnessWarmupTest { @Test public void warm() {} }"),
+    "junit5": _warmup("import org.junit.jupiter.api.Test;",
+                      "class HarnessWarmupTest { @Test void warm() {} }"),
+    "testng": _warmup("import org.testng.annotations.Test;",
+                      "public class HarnessWarmupTest { @Test public void warm() {} }"),
+}
+# Kept under its original name because every existing Maven retry message and test names it.
+MAVEN_WARMUP_COMMAND = MAVEN_WARMUP_COMMANDS["junit5"]
+# What each framework's warm-up (and probe) must import, and what it must not. Order matters:
+# `org.junit.jupiter` also contains `org.junit`, so jupiter is tested first.
+_FRAMEWORK_IMPORTS: dict[str, str] = {
+    "junit5": "org.junit.jupiter.api.Test",
+    "junit4": "org.junit.Test",
+    "testng": "org.testng.annotations.Test",
+}
+
+
+def warmup_framework(command: str) -> str | None:
+    """Which framework a warm-up command's throwaway test is written in, if it can be read."""
+    if "org.junit.jupiter" in command:
+        return "junit5"
+    if "org.testng" in command:
+        return "testng"
+    if "org.junit" in command or "junit.framework.TestCase" in command:
+        return "junit4"
+    return None
 
 
 def _warms_the_surefire_provider(install_commands: list[str]) -> bool:
@@ -638,7 +791,7 @@ def _warms_the_surefire_provider(install_commands: list[str]) -> bool:
     return False
 
 
-def offline_warmup_violations(spec: EnvironmentSpec) -> list[str]:
+def offline_warmup_violations(spec: EnvironmentSpec, framework: str | None = None) -> list[str]:
     """A Maven probe runs with no network, so the build must have fetched *everything* first.
 
     Sibling of ``install_path_violations``: same two-phase layout, but about what is in the
@@ -647,24 +800,52 @@ def offline_warmup_violations(spec: EnvironmentSpec) -> list[str]:
     the offline probe dying on `surefire-junit-platform:jar:3.2.5 ... has not been downloaded
     from it before` — a build that exits 0 and a probe that reports nothing, which is the
     failure shape neither probe repair nor build repair can see the cause of.
+
+    ``framework`` is the repository's own test framework, when it is known. The warm-up's
+    throwaway test is compiled against the project's test classpath, so a warm-up written in the
+    wrong framework does not compile and the image never builds — and the provider Surefire
+    fetches is the one the *project's* classpath selects (surefire-junit4, surefire-testng,
+    surefire-junit-platform), so the absent-artifact message differs per framework too.
     """
     problems: list[str] = []
     command = spec.test_command or ""
     if "mvn" not in command:
         return problems
+    wanted = MAVEN_WARMUP_COMMANDS.get(framework or "", MAVEN_WARMUP_COMMAND)
+    provider = {"junit4": "surefire-junit4", "testng": "surefire-testng"}.get(
+        framework or "", "surefire-junit-platform")
     if not _warms_the_surefire_provider(spec.install_commands):
         problems.append(
-            "the build must warm Surefire's JUnit Platform provider by *running* a test, not by "
-            f"invoking the plugin with nothing to run: add the install command {MAVEN_WARMUP_COMMAND!r}. "
-            "Surefire resolves its provider lazily at test-execution time, from the JUnit "
-            "version on the test classpath, so a warm-up with an empty test tree (or with "
+            f"the build must warm Surefire's {provider} provider by *running* a test, not by "
+            f"invoking the plugin with nothing to run: add the install command {wanted!r}. "
+            "Surefire resolves its provider lazily at test-execution time, from the test "
+            "framework on the test classpath, so a warm-up with an empty test tree (or with "
             "-DfailIfNoTests=false, which makes 'no tests ran' a success) fetches the plugin and "
-            "all of its own dependencies and never the provider. The offline probe then fails "
-            "with \"surefire-junit-platform:jar:3.2.5 (absent) ... has not been downloaded from "
+            f"all of its own dependencies and never the provider. The offline probe then fails "
+            f"with \"{provider}:jar:3.2.5 (absent) ... has not been downloaded from "
             "it before\". Pinning the provider with dependency:get does not fix it either: the "
             "next missing artifact is junit-platform-launcher, whose version Surefire derives "
             "from the project's own JUnit and which no fixed artifact list can predict."
         )
+    elif framework in _FRAMEWORK_IMPORTS:
+        # The warm-up runs a test, but in which framework? A JUnit 5 warm-up in a JUnit 4
+        # project fails `test-compile` with "cannot find symbol: class Test" and the image is
+        # never built; the reverse fails identically. Measured on zt-zip, commons-imaging and
+        # commons-fileupload at their harvested revisions.
+        for install in spec.install_commands or ():
+            if not (_SUREFIRE_PIN.search(install) and ":test" in install):
+                continue
+            written = warmup_framework(install)
+            if written and written != framework:
+                problems.append(
+                    f"the warm-up's throwaway test is written in {written}, but this project's "
+                    f"test framework is {framework}: use {wanted!r}. The warm-up is compiled "
+                    f"against the project's own test classpath, so its test must import "
+                    f"{_FRAMEWORK_IMPORTS[framework]} — otherwise test-compile fails with "
+                    f"\"cannot find symbol: class Test\" and the image never builds, which is a "
+                    f"build failure in the *harness's* command rather than in the repository."
+                )
+                break
     return problems
 
 
@@ -700,13 +881,70 @@ def repo_java_release(repo_path: str | None) -> int | None:
     return min(declared) if declared else None
 
 
+def _java_build_texts(repo_path: str | None) -> list[str]:
+    """The repository's own build files, root and one level down. Same reach as the JDK check."""
+    if not repo_path:
+        return []
+    root = Path(repo_path)
+    if not root.is_dir():
+        return []
+    candidates = [root / name for name in _JAVA_BUILD_FILES]
+    with contextlib.suppress(OSError):
+        candidates += [child / name for child in sorted(root.iterdir())[:40]
+                       if child.is_dir() for name in _JAVA_BUILD_FILES]
+    texts = []
+    for path in candidates:
+        try:
+            if path.is_file():
+                texts.append(path.read_text(errors="replace"))
+        except OSError:
+            continue
+    return texts
+
+
+def repo_jvm_test_framework(repo_path: str | None) -> str | None:
+    """The repository's JVM test framework: junit5, junit4, testng, or None when unreadable.
+
+    The warm-up command and the probe's own shape both depend on this, and getting it from the
+    repository is the only honest way: the harness's previous assumption (always JUnit 5) is
+    wrong for 50 of the 51 Maven entries in the harvested Vul4J corpus.
+    """
+    for text in _java_build_texts(repo_path):
+        framework = jvm_test_framework(text)
+        if framework:
+            return framework
+    return None
+
+
+# Two Surefire settings a repository can put in its *plugin-level* `<configuration>` that the
+# corresponding `-D` flag cannot undo, because an explicit plugin configuration beats a
+# parameter's default-value user property. Both were executed under Surefire 3.2.5, and neither
+# is a violation here, because neither has a fix an EnvironmentSpec could name:
+#
+#   <redirectTestOutputToFile>true</redirectTestOutputToFile>
+#       the probe runs and passes, `-Dmaven.test.redirectTestOutputToFile=false` is ignored, and
+#       every marker goes to target/surefire-reports/<class>-output.txt. Exit 0, no markers.
+#       Handled in run_probe, which now reads those files back onto stdout.
+#   <skipTests>true</skipTests>
+#       the probe is never run, `-DskipTests=false` is ignored, and no reports are written.
+#       Exit 0, no markers. `no_tests_executed` names Surefire's "Tests are skipped." so the
+#       diagnosis says what happened instead of sending repair after a correct probe.
+#
+# The same settings inside an `<executions><execution>` block do *not* apply to a direct CLI goal
+# invocation (measured), and as a pom `<properties>` entry they *are* overridable from the command
+# line (measured: `-DskipTests=false` restored the markers), so only the plugin-level and
+# pluginManagement-level forms behave this way.
+
+
 def validate_environment_spec(ctx: RunContext[AgentDeps], output: EnvironmentSpec) -> EnvironmentSpec:
+    repo_path = _repo_path(ctx)
     problems = (environment_spec_violations(output) + install_path_violations(output)
-                + offline_warmup_violations(output)
-                # Repo-aware, unlike the three above: the binding constraint is what the
-                # project declares, which no amount of inspecting the spec alone can reveal.
+                # Repo-aware, unlike the two above: the binding constraints are what the project
+                # declares -- its test framework and its language level -- which no amount of
+                # inspecting the spec alone can reveal.
+                + offline_warmup_violations(output, repo_jvm_test_framework(repo_path))
                 + jdk_compatibility_violations(
-                    output.base_image, repo_java_release(getattr(ctx.deps, "repo_path", None))))
+                    output.base_image, repo_java_release(repo_path)))
     if problems:
         raise ModelRetry("The environment spec cannot run a probe:\n- " + "\n- ".join(problems))
     return output

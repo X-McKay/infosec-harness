@@ -531,6 +531,54 @@
       }
     },
     {
+      "name": "java-xxe-vulnerable",
+      "language": "java",
+      "finding": {
+        "title": "XML external entity expansion in loadTitle",
+        "repo_url": "eval-corpus/java/xxe/vulnerable",
+        "revision": "HEAD",
+        "file_path": "src/main/java/com/example/XmlLoader.java",
+        "start_line": 10,
+        "symbol": "loadTitle",
+        "cwe": "CWE-611",
+        "severity": "high",
+        "source_tool": "seed-corpus",
+        "description": "Untrusted xml argument reaches the CWE-611 sink in loadTitle."
+      },
+      "truth": {
+        "expected_verdict": "potentially_exploitable",
+        "reachability": "reachable",
+        "sink_file": "src/main/java/com/example/XmlLoader.java",
+        "sink_line": 13,
+        "source": "xml argument",
+        "target_callable": "loadTitle"
+      }
+    },
+    {
+      "name": "java-xxe-fixed",
+      "language": "java",
+      "finding": {
+        "title": "XML external entity expansion in loadTitle",
+        "repo_url": "eval-corpus/java/xxe/fixed",
+        "revision": "HEAD",
+        "file_path": "src/main/java/com/example/XmlLoader.java",
+        "start_line": 13,
+        "symbol": "loadTitle",
+        "cwe": "CWE-611",
+        "severity": "high",
+        "source_tool": "seed-corpus",
+        "description": "Untrusted xml argument reaches the CWE-611 sink in loadTitle."
+      },
+      "truth": {
+        "expected_verdict": "likely_not_exploitable",
+        "reachability": "neutralized",
+        "sink_file": "src/main/java/com/example/XmlLoader.java",
+        "sink_line": 21,
+        "source": "xml argument",
+        "target_callable": "loadTitle"
+      }
+    },
+    {
       "name": "javascript-cmdi-vulnerable",
       "language": "javascript",
       "finding": {

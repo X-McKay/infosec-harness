@@ -1,8 +1,8 @@
 """The skill eval suite: everything about a skill that can be decided without a model.
 
-Scope, and why it is not 23 x 9
+Scope, and why it is not 24 x 9
 -------------------------------
-The playbook asks for nine case types per skill. Most of the 207 cells that implies could not
+The playbook asks for nine case types per skill. Most of the 216 cells that implies could not
 fail, and a suite padded to fill them would report "every skill fully evaluated" while testing
 four things — the decorative-coverage failure `evals/inert_gates.py` exists to name. The
 triage lives in `evals/skills.py` and is *reported* by `test_the_coverage_summary_names_its_own_gaps`
@@ -253,7 +253,7 @@ def test_a_stated_count_matches_what_the_skill_enumerates(skill):
 
 @pytest.mark.parametrize("skill", SKILLS, ids=IDS)
 def test_a_skill_still_has_a_body(skill):
-    """Cheap insurance against the incident where a faulty generator deleted all 23 skill bodies
+    """Cheap insurance against the incident where a faulty generator deleted all 24 skill bodies
     and every structural test still passed, because the required sections were all present."""
     assert not body_substance_problems(skill), body_substance_problems(skill)
 
@@ -557,7 +557,7 @@ def test_the_summary_does_not_claim_coverage_another_suite_owns(capsys):
 
     A `lang-*` or `cwe-*` skill shows no probe body, so nothing here judges its safety
     constraints — tests/test_skills_consistency.py does. Marking those STATIC would have this
-    file reporting 23/23 on safety while testing 11, which is the same overstatement as an
+    file reporting 24/24 on safety while testing 11, which is the same overstatement as an
     inert gate, arrived at by a different route.
     """
     summary = coverage_summary(SKILLS)

@@ -261,6 +261,16 @@ async def run_probe(image: str, test_file_path: str, content: str, test_command:
         f"export HOME={WORK_HOME}; cd {shlex.quote(workdir)}; "
         f"mkdir -p \"$(dirname {shlex.quote(rel)})\"; cat > {shlex.quote(rel)}; "
         f"set +e; ( {cmd} ); rc=$?; "
+        # Surefire can be *configured by the repository* to redirect a test's stdout to
+        # target/surefire-reports/<class>-output.txt, and -Dmaven.test.redirectTestOutputToFile=
+        # false does not override an explicit plugin-level <configuration> (measured under
+        # Surefire 3.2.5, both in <build><plugins> and in <pluginManagement>). The probe then
+        # runs, passes, and every HARNESS_ marker lands in that file: exit 0 and nothing on
+        # stdout, the one failure shape neither diagnosis nor repair can see the cause of. So
+        # the files are read back here. Additive and cheap: nothing matches for a non-Maven
+        # project, and for a Maven one whose output was not redirected there is no such file.
+        "for f in target/surefire-reports/*-output.txt */target/surefire-reports/*-output.txt; "
+        "do [ -f \"$f\" ] && cat \"$f\"; done; "
         f"if [ -e {canary} ]; then echo '{CANARY_PREFIX}{nonce}'; fi; exit $rc"
     )
     argv = ["docker", "run", "-i", *_hardening_args(network=False, read_only=s.sandbox_read_only_root),
@@ -348,6 +358,14 @@ _NO_TESTS_SIGNATURES: tuple[tuple[str, str], ...] = (
     ("No tests to run", "surefire: found no tests to run"),
     ("No tests matching pattern", "surefire: the -Dtest selector matched no test class"),
     ("No tests were executed", "surefire: no tests were executed"),
+    # A pom that configures maven-surefire-plugin with <skipTests>true</skipTests> at plugin
+    # level. `-DskipTests=false` does not override an explicit plugin configuration (measured),
+    # so the probe run exits 0 having executed nothing and written no reports at all. Named here
+    # because the cause is the repository's build, not the probe: without this the diagnosis has
+    # only a clean exit and no markers to go on, and repair rewrites a correct probe.
+    ("Tests are skipped.", "surefire: the build itself skipped the tests -- the pom configures "
+                           "maven-surefire-plugin with <skipTests>true</skipTests>, which "
+                           "-DskipTests=false cannot override"),
     # Jest
     ("No tests found", "jest: found no test files"),
     ("Tests:       0 total", "jest: ran 0 tests"),

@@ -310,3 +310,59 @@ def test_the_written_corpus_matches_the_schema_the_loader_expects():
                                       "target_callable", "pov"}
         assert case["finding"]["repo_url"].startswith("https://github.com/")
         assert SHA40.match(case["finding"]["revision"])
+
+
+def test_the_test_framework_is_read_from_the_module_pom_and_its_enclosing_poms():
+    """`build.test_framework` is as load-bearing as `build.jdk`, and it has to be *read*.
+
+    The Maven recipe's warm-up is compiled against the project's own test classpath, so a JUnit 5
+    warm-up in a JUnit 4 project fails `test-compile` with "cannot find symbol: class Test" and no
+    image is ever built (measured). 43 of the 58 harvested entries are JUnit 4 and one is JUnit 5,
+    so a consumer that assumes JUnit 5 fails essentially the whole harvest.
+
+    Innermost first, then upwards: a multi-module project often declares the shared test dependency
+    at an intermediate level rather than in the module or the root -- onos declares it in
+    `protocols/pom.xml`, which is why walking up matters and reading only the two ends does not.
+    """
+    entry = harvest_vul4j.Entry(
+        vul_id="VUL4J-63", cve_id="", cwe_id="CWE-20", cwe_name="", repo_slug="opennetworkinglab/onos",
+        human_patch="", build_system="Maven", jdk="8", failing_tests=(),
+        module="protocols/ovsdb/rfc", src_dir="", test_dir="")
+    jupiter = ("<dependency><groupId>org.junit.jupiter</groupId>"
+               "<artifactId>junit-jupiter</artifactId></dependency>")
+    junit4 = "<dependency><groupId>junit</groupId><artifactId>junit</artifactId></dependency>"
+
+    intermediate = FakeResolver({}, {
+        ("opennetworkinglab/onos", "abc", "protocols/pom.xml"): junit4,
+        ("opennetworkinglab/onos", "abc", "pom.xml"): jupiter,
+    })
+    assert harvest_vul4j.detect_test_framework(entry, intermediate, "abc") == "junit4", (
+        "the nearest enclosing pom that declares a framework wins over the root"
+    )
+
+    module_only = FakeResolver({}, {
+        ("opennetworkinglab/onos", "abc", "protocols/ovsdb/rfc/pom.xml"): jupiter,
+        ("opennetworkinglab/onos", "abc", "pom.xml"): junit4,
+    })
+    assert harvest_vul4j.detect_test_framework(entry, module_only, "abc") == "junit5"
+
+    root_only = FakeResolver({}, {("opennetworkinglab/onos", "abc", "pom.xml"): junit4})
+    assert harvest_vul4j.detect_test_framework(entry, root_only, "abc") == "junit4"
+
+    # Nothing declared anywhere the harvester can see: `null`, not a guess. 11 of the 58 entries
+    # are like this -- a parent pom outside the repository declares it -- and recording a guess as
+    # a dataset fact is worse than recording that it is unknown.
+    assert harvest_vul4j.detect_test_framework(entry, FakeResolver({}, {}), "abc") is None
+
+
+def test_the_written_corpus_records_a_test_framework_for_every_case():
+    written = json.loads((REPO_ROOT / "eval-corpus" / "external" / "vul4j.json").read_text())
+    for case in written["cases"] + written["quarantined"]:
+        assert "test_framework" in case["build"], case["name"]
+        assert case["build"]["test_framework"] in (None, "junit4", "junit5", "testng"), case["name"]
+    declared = [c["build"]["test_framework"] for c in written["cases"]
+                if c["name"].endswith("-vulnerable")]
+    # The number this whole change exists for: the seeded corpus is 100% JUnit 5 and the harvest
+    # is not. If this ever flips to a JUnit 5 majority, the Maven recipe's default is worth
+    # revisiting -- until then, assuming JUnit 5 is assuming the rare case.
+    assert declared.count("junit4") > 10 * max(declared.count("junit5"), 1)
