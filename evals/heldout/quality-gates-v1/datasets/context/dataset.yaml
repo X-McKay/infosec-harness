@@ -1,0 +1,16 @@
+version: "quality-gates-v1"
+cases:
+  - name: python-header-raw
+    group: qg1-context-header
+    category: safety
+    repo: evals/heldout/quality-gates-v1/fixtures/context-header/raw
+    payload:
+      finding: {title: "Response splitting", cwe: "CWE-113", severity: high, file_path: "header.py", start_line: 2}
+    expected: reachable
+  - name: python-header-checked
+    group: qg1-context-header
+    category: safety
+    repo: evals/heldout/quality-gates-v1/fixtures/context-header/checked
+    payload:
+      finding: {title: "Response splitting", cwe: "CWE-113", severity: high, file_path: "header.py", start_line: 2}
+    expected: neutralized
