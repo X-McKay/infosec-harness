@@ -43,6 +43,51 @@ def _primary_language(stack: dict | None) -> str:
     return max(langs, key=langs.get) if langs else "unknown"
 
 
+# One command per Node runner, because the runner is not interchangeable with its selector.
+# Measured on real fixtures under node 18/20/22:
+#   * `--runTestsByPath` is a jest-only flag; `vitest run --runTestsByPath <path>` dies in vitest's
+#     argument parser before a single test runs.
+#   * every one of these carries a defeat for the project's own console silencing where one
+#     exists: a repository `jest.config.js` or `vitest.config.js` with `silent: true` erases all
+#     three HARNESS_ markers while still exiting 0, and `--silent=false` restores them. mocha and
+#     node:test never capture a test's stdout, so they need no flag.
+_JS_TEST_COMMANDS = {
+    "jest": "npx jest --silent=false --runTestsByPath {test_file}",
+    "vitest": "npx vitest run --silent=false {test_file}",
+    "mocha": "npx mocha {test_file}",
+    "node:test": "node --test {test_file}",
+    "jasmine": "npx jasmine {test_file}",
+}
+# ts-jest type-checks the probe, so a TS project also needs the *type* declarations for whichever
+# runner's globals the probe uses: without @types/jest the run fails with
+# "TS2582: Cannot find name 'test'" and reports `Tests: 0 total`, never executing the probe.
+_TS_JEST_PACKAGES = ("ts-jest", "typescript", "@types/jest", "@types/node")
+
+
+def _node_plan(stack: dict, manifests: set[str], typescript: bool) -> dict:
+    frameworks = [f for f in (stack.get("test_frameworks") or []) if f in _JS_TEST_COMMANDS]
+    runner = frameworks[0] if frameworks else "jest"
+    install = ["npm ci --no-audit --no-fund" if "package-lock.json" in manifests
+               else "npm install --no-audit --no-fund"]
+    command = _JS_TEST_COMMANDS[runner]
+    note = f"stub heuristic: node, runner {runner}"
+    if typescript:
+        # A .ts probe reaches nothing under a bare `npx jest`: the default babel transform has no
+        # TypeScript plugin and the suite fails to parse. vitest compiles TS with no configuration
+        # at all, tsx does the same for node:test, and jest needs ts-jest named on the command
+        # line because the spec may not edit the repository's jest.config.
+        if runner == "jest":
+            install.append("npm install --no-audit --no-fund --no-save " + " ".join(_TS_JEST_PACKAGES))
+            command = command.replace("npx jest", "npx jest --preset ts-jest")
+            note += " + ts-jest (TypeScript sources)"
+        elif runner == "node:test":
+            install.append("npm install --no-audit --no-fund --no-save tsx")
+            command = "npx tsx --test {test_file}"
+            note += " via tsx (TypeScript sources)"
+    return {"base_image": "node:22-slim", "install_commands": install,
+            "test_command": command, "rationale": note}
+
+
 def _env_plan(stack: dict | None) -> dict:
     stack = stack or {}
     manifests = set(stack.get("manifests") or [])
@@ -58,9 +103,7 @@ def _env_plan(stack: dict | None) -> dict:
                 "env": {"PYTHONDONTWRITEBYTECODE": "1", "PATH": "/work/home/.local/bin:/usr/local/bin:/usr/bin:/bin"},
                 "rationale": "stub heuristic: python"}
     if lang in {"javascript", "typescript"}:
-        return {"base_image": "node:22-slim",
-                "install_commands": ["npm install --no-audit --no-fund"],
-                "test_command": "npx jest --runTestsByPath {test_file}", "rationale": "stub heuristic: node"}
+        return _node_plan(stack, manifests, typescript=lang == "typescript")
     if lang == "java":
         # Compile with test-compile and then invoke a *pinned* surefire goal: the version Maven
         # 3.x binds to the `test` phase is 2.12.4, which has no JUnit Platform provider, and a
@@ -103,9 +146,33 @@ def _env_plan(stack: dict | None) -> dict:
                 "system_packages": ["gcc", "make", "libc6-dev"],
                 "install_commands": ["cpanm --notest --local-lib=/opt/home/perl5 --installdeps ."],
                 "env": {"PERL5LIB": "/work/home/perl5/lib/perl5"},
-                "test_command": "prove -v {test_file}", "rationale": "stub heuristic: perl"}
+                # -Ilib, not just -v: measured on a fixture whose modules live in blib/lib and
+                # one whose live in src/perl, a probe with no `use lib` and a prove with no -I
+                # dies on `Can't locate Runner.pm`. The recipe in skills/build-cpanm says both
+                # flags are load-bearing and this stub used to carry only one of them.
+                "test_command": "prove -v -Ilib {test_file}", "rationale": "stub heuristic: perl"}
     return {"base_image": "debian:bookworm-slim", "install_commands": [],
             "test_command": "sh {test_file}", "rationale": "stub heuristic: unknown stack"}
+
+
+# A bare `test(...)` is a global under jest only. vitest ships `globals: false` by default and
+# mocha's default BDD interface names it `it`, so the same body that passes under jest dies with
+# `ReferenceError: test is not defined` under either -- measured on real fixtures. The stub's
+# probe has to match the runner its own env plan chose, or every offline run of a vitest or mocha
+# repository fails for a reason that has nothing to do with the code under test.
+_JS_PROBE_BODY = (
+    "{head}test('harness probe', () => {{\n"
+    "  console.log('HARNESS_PRECONDITION::{{nonce}}');\n"
+    "  console.log('HARNESS_SINK_RETURNED::{{nonce}}');\n"
+    "  const observed = false;  // the stub never observes the condition\n"
+    "  if (observed) {{ console.log('HARNESS_ORACLE::{{nonce}}'); }}\n"
+    "}});\n")
+_JS_PROBE_TEMPLATES = {
+    "jest": _JS_PROBE_BODY.format(head=""),
+    "vitest": _JS_PROBE_BODY.format(head="import { test } from 'vitest';\n"),
+    "node:test": _JS_PROBE_BODY.format(head="const test = require('node:test');\n"),
+    "mocha": _JS_PROBE_BODY.format(head="").replace("test('harness probe'", "it('harness probe'"),
+}
 
 
 # The stub carries all three markers with the oracle branch present but never taken: a probe
@@ -119,13 +186,7 @@ _PROBE_TEMPLATES = {
                "    observed = False  # the stub never observes the exploit condition\n"
                "    if observed:\n"
                "        print('HARNESS_ORACLE::{nonce}')\n"),
-    "javascript": ("__tests__/harness_probe.test.js",
-                   "test('harness probe', () => {\n"
-                   "  console.log('HARNESS_PRECONDITION::{nonce}');\n"
-                   "  console.log('HARNESS_SINK_RETURNED::{nonce}');\n"
-                   "  const observed = false;  // the stub never observes the condition\n"
-                   "  if (observed) { console.log('HARNESS_ORACLE::{nonce}'); }\n"
-                   "});\n"),
+    "javascript": ("__tests__/harness_probe.test.js", _JS_PROBE_BODY.format(head="")),
     "perl": ("t/harness_probe.t",
              "use Test::More tests => 1;\n"
              "print \"HARNESS_PRECONDITION::{nonce}\\n\";\n"
@@ -137,7 +198,8 @@ _PROBE_TEMPLATES = {
 
 
 def _probe(text: str) -> dict:
-    lang = _primary_language(_tag(text, "stack_fingerprint"))
+    stack = _tag(text, "stack_fingerprint") or {}
+    lang = _primary_language(stack)
     nonce = _tag(text, "oracle_nonce") or "none"
     plan = _tag(text, "probe_plan") or {}
     fallback = ("harness_probe.sh",
@@ -145,6 +207,11 @@ def _probe(text: str) -> dict:
                 "echo HARNESS_SINK_RETURNED::{nonce}\n"
                 "if false; then echo HARNESS_ORACLE::{nonce}; fi\n")
     path, body = _PROBE_TEMPLATES.get(lang, fallback)
+    if lang in {"javascript", "typescript"}:
+        runner = next((f for f in (stack.get("test_frameworks") or []) if f in _JS_PROBE_TEMPLATES),
+                      "jest")
+        body = _JS_PROBE_TEMPLATES[runner]
+        path = _PROBE_TEMPLATES["javascript"][0]
     path = plan.get("test_file_path") or path
     return {"test_file_path": path, "content": body.replace("{nonce}", str(nonce)),
             "explanation": "stub probe: reaches the sink and returns; observes nothing"}
@@ -153,7 +220,15 @@ def _probe(text: str) -> dict:
 # Stderr shapes that mean the environment lacked something the test needed, rather than the
 # probe being wrong. Measured on java-sqli: a missing JDBC driver at probe time.
 _ENVIRONMENT_SIGNATURES = ("no suitable driver", "can't locate", "cannot find module",
-                           "modulenotfounderror", "classnotfoundexception")
+                           "modulenotfounderror", "classnotfoundexception",
+                           # Node. Both were measured as exit-1 runs with no test output at all,
+                           # so without them the stub read each as a probe defect and sent the
+                           # graph to probe repair, which can install nothing: `npx` refusing to
+                           # fetch a runner the project never declared, and a jest config naming
+                           # a test environment package (jest-environment-jsdom, removed from
+                           # jest core in 28) that the install did not provide.
+                           "npx canceled due to missing packages",
+                           "cannot be found. make sure the testenvironment")
 
 
 def _diagnosis(text: str) -> dict:
@@ -168,13 +243,16 @@ def _diagnosis(text: str) -> dict:
     """
     execution = _tag(text, "probe_execution") or {}
     stderr = str(execution.get("stderr_tail") or "").lower()
-    if execution.get("runner_reported_no_tests"):
+    if execution.get("oracle_fired"):
+        # Ahead of the zero-test check, and mirroring graph.triage._ground_zero_test_diagnosis:
+        # the exploit condition was observed, so what the runner counted while it was observed
+        # cannot unmake that. A run with markers and `Tests: 0` is a real shape, not a hypothesis.
+        kind = "valid_positive"
+    elif execution.get("runner_reported_no_tests"):
         # Nothing exercised the sink, so the run says nothing about exploitability.
         kind = "probe_defect"
     elif any(sig in stderr for sig in _ENVIRONMENT_SIGNATURES):
         kind = "environment_issue"
-    elif execution.get("oracle_fired"):
-        kind = "valid_positive"
     elif execution.get("exit_code") is None:
         # No exit status at all: the probe never ran, so nothing here is about the code
         # under test. This is the shape execute_probe_activity returns when the isolation

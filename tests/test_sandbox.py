@@ -148,6 +148,46 @@ def test_every_supported_runner_has_a_zero_test_signature():
         "pytest": "collected 0 items\n\nno tests ran in 0.01s\n",
         "surefire": "[INFO] Tests run: 0, Failures: 0, Errors: 0, Skipped: 0\n",
         "jest": "No tests found, exiting with code 1\n",
+        # Captured verbatim from real runs. None of these contains any phrase the jest/pytest/
+        # prove/surefire signatures match, so before they were added a zero-test run under any
+        # of the three fell through as "the probe ran and observed nothing".
+        "vitest (no suite in file)": (
+            " FAIL  empty.test.js [ empty.test.js ]\n"
+            "Error: No test suite found in file /work/empty.test.js\n"),
+        "vitest (no file matched)": "filter:  missing.test.js\n\nNo test files found, exiting with code 1\n",
+        "mocha": "\n\n  0 passing (0ms)\n  1 pending\n",
+        "node:test": ("TAP version 13\n# Subtest: harness probe\nok 1 - harness probe # SKIP\n"
+                      "1..1\n# tests 1\n# suites 0\n# pass 0\n# fail 0\n# skipped 1\n"),
     }
     for runner, output in samples.items():
         assert docker.no_tests_executed(output) is not None, f"{runner} zero-test run unrecognised"
+
+
+def test_a_healthy_mocha_run_is_not_read_as_a_zero_test_run():
+    """`"0 passing" in output` is TRUE for "10 passing" — measured, and the reason the mocha
+    signature is a pattern with a digit boundary rather than a substring. Reporting a ten-test
+    run as having executed nothing would turn a real positive into a probe defect."""
+    for count in (1, 5, 10, 20, 100, 1000):
+        output = f"\n  {count} passing (3ms)\n"
+        assert docker.no_tests_executed(output) is None, output
+
+
+def test_a_healthy_node_test_run_is_not_read_as_a_zero_test_run():
+    """`# pass 0` must not match `# pass 10`, and a real pass must stay a real pass."""
+    for count in (1, 10, 20, 100):
+        output = (f"TAP version 13\nok 1 - harness probe\n1..1\n# tests {count}\n"
+                  f"# pass {count}\n# fail 0\n")
+        assert docker.no_tests_executed(output) is None, output
+
+
+def test_the_node_runners_that_were_unsmoke_testable_now_have_checks():
+    """mocha, tsx and node's own runner fell through to the trivial shell check, so an absent
+    runner surfaced at probe time (exit 1, `npx canceled due to missing packages`, no test
+    output) where probe repair is handed a correct probe and build repair never sees a failure.
+    """
+    from infosec_harness.sandbox.docker import runner_check_command
+
+    assert "mocha" in (runner_check_command("npx mocha {test_file}") or "")
+    assert "tsx" in (runner_check_command("npx tsx --test {test_file}") or "")
+    assert runner_check_command("node --test {test_file}") == "node --version"
+    assert "vitest" in (runner_check_command("npx vitest run --silent=false {test_file}") or "")

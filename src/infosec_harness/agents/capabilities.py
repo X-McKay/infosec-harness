@@ -134,6 +134,17 @@ _LANG_BY_SUFFIX = {
     ".jsx": "javascript",
     ".mjs": "javascript",
     ".cjs": "javascript",
+    # TypeScript goes through the JavaScript scanner. It has to: `detect_stack` reports a `.ts`
+    # repository as `typescript`, and with these four suffixes absent this tool refused every file
+    # in one — so the single tool that exists to stop the named-vs-default false negative was
+    # unavailable on exactly the repositories most likely to have a deep export chain. The
+    # declaration forms the scanner matches (`export function`, `export {}`, `module.exports`) are
+    # spelled identically in TypeScript; only the type annotations differ, and they sit inside the
+    # parameter list this scan already reports verbatim.
+    ".ts": "javascript",
+    ".tsx": "javascript",
+    ".mts": "javascript",
+    ".cts": "javascript",
     ".java": "java",
     ".pl": "perl",
     ".pm": "perl",
@@ -289,7 +300,25 @@ _JS_METHOD = re.compile(
 _JS_NOT_A_METHOD = {"if", "for", "while", "switch", "catch", "function", "return", "do", "else"}
 
 
-def _js_specifier(rel: Path) -> str:
+_TS_SUFFIXES = (".ts", ".tsx", ".mts", ".cts")
+
+
+def _js_specifier(rel: Path, esm: bool) -> str:
+    """The specifier a test writes for this file, relative to the snapshot root.
+
+    An ESM specifier KEEPS its `.js` extension. Node's ESM resolver does no extension guessing,
+    so an extensionless `import { x } from "../src/render"` dies with ERR_MODULE_NOT_FOUND under
+    `node --test` and under plain node -- measured -- while vitest and jest's vm-modules mode
+    forgive it. Printing the form that works everywhere is strictly better than printing the one
+    that works under two runners out of four.
+
+    TypeScript is the opposite: the extension comes off, because `./src/render.ts` is what
+    ts-jest and tsc's own resolver reject.
+    """
+    if rel.suffix in _TS_SUFFIXES:
+        return "./" + rel.with_suffix("").as_posix()
+    if esm:
+        return "./" + rel.as_posix()
     stem = rel.with_suffix("") if rel.suffix in (".js", ".jsx") else rel
     return "./" + stem.as_posix()
 
@@ -367,8 +396,21 @@ def _js_reach(local: str, named: dict[str, str], default: str | None, spec: str,
 def _javascript_symbols(text: str, rel: Path) -> tuple[list[_Symbol], list[str]]:
     named, default, system = _js_exports(text)
     esm = system.startswith("ES modules")
-    spec = _js_specifier(rel)
+    spec = _js_specifier(rel, esm)
     header = [f"module system: {system}"]
+    if rel.suffix in _TS_SUFFIXES:
+        header.append(
+            "TypeScript source: the specifier below is extensionless on purpose, and the probe "
+            "needs a runner that compiles TS. A bare `npx jest` does not — its default transform "
+            "has no TypeScript plugin and the suite fails to parse before any test runs. vitest "
+            "and `npx tsx --test` compile it with no configuration; jest needs ts-jest AND the "
+            "type declarations for the test globals (@types/jest), because ts-jest type-checks "
+            "the probe and stops on `TS2582: Cannot find name 'test'`.")
+    if esm and rel.suffix not in _TS_SUFFIXES:
+        header.append(
+            "ES module: keep the file extension in the specifier exactly as printed. Node's ESM "
+            "resolver does no extension guessing, so dropping it fails with ERR_MODULE_NOT_FOUND "
+            "under `node --test` and plain node.")
     if re.search(r"module\.exports\s*=\s*\{[^}]*[{]", text):
         header.append("WARNING: `module.exports = { ... }` contains a nested object literal; this "
                       "scan does not descend into it, so the export list below may be incomplete.")

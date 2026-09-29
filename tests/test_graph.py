@@ -402,6 +402,28 @@ def test_a_zero_test_run_can_never_come_back_as_a_positive_or_a_negative():
         assert _ground_zero_test_diagnosis(diagnosis, execution).kind is DiagnosisKind.probe_defect
 
 
+def test_a_fired_oracle_outranks_the_runners_test_count():
+    """The exploit condition was observed; the runner's bookkeeping cannot unmake that.
+
+    Not hypothetical. Measured on perl 5.34 + prove 3.43: a `.t` script that prints all three
+    markers and declares no plan makes prove report `No subtests run` / `Tests: 0` with exit 1 —
+    a run whose oracle fired and whose runner says it ran nothing. Overriding that to
+    probe_defect sends a true positive into a repair loop it cannot end and it lands
+    `inconclusive`, which is the cost this whole function exists to avoid, in the other
+    direction. Every runner signature added to `no_tests_executed` widens this surface, so the
+    guard belongs here rather than in each signature's phrasing.
+    """
+    from infosec_harness.domain.models import DiagnosisKind, ProbeDiagnosis, ProbeExecution
+    from infosec_harness.graph.triage import _ground_zero_test_diagnosis
+
+    execution = ProbeExecution(
+        attempt=1, exit_code=1, oracle_fired=True, precondition_reached=True, sink_returned=True,
+        runner_reported_no_tests="prove: no tests were run. Zero tests ran, so this is not a "
+                                 "negative result.")
+    diagnosis = ProbeDiagnosis(kind=DiagnosisKind.valid_positive, explanation="oracle fired")
+    assert _ground_zero_test_diagnosis(diagnosis, execution) is diagnosis
+
+
 def _diagnosis_ops(ops, kinds):
     """Wrap `ops` so probe-diagnosis returns `kinds` in order (last value repeats).
 

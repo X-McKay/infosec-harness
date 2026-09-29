@@ -229,7 +229,13 @@ def _ground_zero_test_diagnosis(diagnosis: ProbeDiagnosis,
     sent the repair loop the wrong way. Deterministic for the same reason as above — it is a
     recorded fact, and the model was not being unreasonable about the evidence it could see.
     """
-    if not execution.runner_reported_no_tests:
+    # A fired oracle outranks the runner's bookkeeping. The exploit condition was *observed*;
+    # whether the runner counted a test while observing it is beside the point, and rewriting that
+    # reading to probe_defect loses a true positive to a repair loop — the same cost as the false
+    # negative this function was written to prevent, in the other direction. Not hypothetical: a
+    # prove-run script that emits its markers and then reports `Tests: 0` is exactly this shape,
+    # measured on perl 5.34, and every new runner signature widens the surface for it.
+    if not execution.runner_reported_no_tests or execution.oracle_fired:
         return diagnosis
     return diagnosis.model_copy(update={
         "kind": DiagnosisKind.probe_defect,
