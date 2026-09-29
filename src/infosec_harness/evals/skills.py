@@ -523,7 +523,7 @@ def _normalise(text: str) -> str:
     return " ".join(re.findall(r"[a-z0-9{}]+", text.lower()))
 
 
-def non_activation_problems(skill: SkillDoc, known_skills: frozenset[str]) -> list[str]:
+def non_activation_problems(skill: SkillDoc) -> list[str]:
     """The negative criteria must exist, not redirect to the skill itself, and not restate a
     positive criterion verbatim.
 

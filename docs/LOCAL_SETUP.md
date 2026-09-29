@@ -1,12 +1,7 @@
 # Local setup
 
 How to run the harness on your own machine, including a live-model run against the test
-endpoint. Everything is on the branch `claude/infosec-harness-redesign-0akr9w`.
-
-```bash
-git fetch origin
-git checkout claude/infosec-harness-redesign-0akr9w
-```
+endpoint. Day-to-day work lands on `develop`; `main` is what has been released.
 
 ## Prerequisites
 

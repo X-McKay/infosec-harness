@@ -8,3 +8,6 @@ node_modules/
 web/dist/
 .ruff_cache/
 deploy/extra-ca.crt
+# Agent worktrees checked out inside the repository, and the pre-redesign research notes.
+.claude/worktrees/
+research/

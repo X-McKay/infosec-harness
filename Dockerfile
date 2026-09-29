@@ -18,9 +18,6 @@ ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
 RUN pip install --no-cache-dir uv
 COPY pyproject.toml uv.lock* ./
 COPY src ./src
-COPY agents ./agents
-COPY skills ./skills
-COPY config ./config
 RUN uv pip install --system --no-cache .
 ENV HARNESS_WORKSPACE_DIR=/workspace
 CMD ["harness", "api", "--host", "0.0.0.0", "--port", "8000"]

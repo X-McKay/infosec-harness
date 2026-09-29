@@ -116,7 +116,7 @@ def test_a_skill_says_when_it_applies(skill):
 
 @pytest.mark.parametrize("skill", SKILLS, ids=IDS)
 def test_a_skill_says_when_it_does_not_apply_without_contradicting_itself(skill):
-    assert not non_activation_problems(skill, SKILL_NAMES), non_activation_problems(skill, SKILL_NAMES)
+    assert not non_activation_problems(skill), non_activation_problems(skill)
 
 
 # --- Ambiguity: which skill wins when two of them fire -------------------------------------

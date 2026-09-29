@@ -35,7 +35,6 @@ class Settings(BaseSettings):
     temporal_address: str = "localhost:7233"
     temporal_namespace: str = "default"
     task_queue: str = "triage"
-    sandbox_task_queue: str = "sandbox"
 
     # Artifacts (S3-compatible; MinIO locally). When ``s3_endpoint`` is empty the
     # filesystem store under ``workspace_dir/artifacts`` is used instead.
