@@ -183,7 +183,17 @@ def _skipping_probe_violations(output: ProbeSource) -> list[str]:
 
 # pytest buffers stdout unless told not to, and the oracle markers are stdout. Either of
 # these disables that capture.
+PYTEST_TEST_COMMAND = "python -m pytest -q -s -o addopts= {test_file}"
 _PYTEST_UNBUFFERED = ("-s", "--capture=no", "--capture no")
+# A project's own `addopts` are prepended to every pytest invocation, including ours, from
+# pytest.ini / setup.cfg / tox.ini / pyproject.toml. Verified against real pytest: `-s` does
+# override an inherited `--capture=sys`, so capture is not the hazard -- but
+# `addopts = --collect-only` produces **exit 0, no markers, and no "collected 0 items" text**.
+# Output is literally "tests/test_probe.py: 1". The probe never runs, the run looks clean, and
+# `no_tests_executed` cannot see it either. `-x` and `-p no:...` are the same shape.
+# `-o addopts=` neutralises the lot, verified for both the ini and pyproject forms.
+_PYTEST_ADDOPTS_NEUTRALISED = ("-o addopts=", "-o addopts =", "--override-ini addopts=",
+                               "--override-ini=addopts=")
 # prove parses its child's TAP stream and throws away everything that is not TAP unless it is
 # verbose, so a non-verbose `prove` swallows every marker exactly as an un-`-s`ed pytest does.
 # JVM runners select a test by class name rather than by file path.
@@ -518,6 +528,16 @@ def environment_spec_violations(spec: EnvironmentSpec) -> list[str]:
             "test_command must contain the literal placeholder {test_file}; the harness "
             "substitutes the probe's real path into it. Replace the hardcoded test path with "
             "{test_file}, e.g. 'python -m pytest -q -s {test_file}'."
+        )
+    if "pytest" in command and not any(f in command for f in _PYTEST_ADDOPTS_NEUTRALISED):
+        problems.append(
+            f"Add `-o addopts=` to the pytest command: {PYTEST_TEST_COMMAND}. A project's own "
+            "`addopts` are "
+            "prepended to our invocation, and `addopts = --collect-only` makes pytest exit 0 "
+            "having printed neither the markers nor the words 'collected 0 items' -- the probe "
+            "silently never runs and nothing downstream can tell. `-x` and `-p no:...` do the "
+            "same. Overriding costs nothing when a project sets no addopts, and if a project "
+            "genuinely needs one the prepare-phase canary fails loudly instead of silently."
         )
     if "pytest" in command and not any(flag in command for flag in _PYTEST_UNBUFFERED):
         # Without this the probe runs, passes, and prints its markers into pytest's capture

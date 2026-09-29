@@ -54,7 +54,7 @@ def _env_plan(stack: dict | None) -> dict:
         if "pyproject.toml" in manifests or "setup.py" in manifests:
             install.insert(0, "python -m pip install --no-cache-dir --user -e .")
         return {"base_image": "python:3.12-slim", "install_commands": install,
-                "test_command": "python -m pytest -q -s {test_file}",
+                "test_command": "python -m pytest -q -s -o addopts= {test_file}",
                 "env": {"PYTHONDONTWRITEBYTECODE": "1", "PATH": "/work/home/.local/bin:/usr/local/bin:/usr/bin:/bin"},
                 "rationale": "stub heuristic: python"}
     if lang in {"javascript", "typescript"}:

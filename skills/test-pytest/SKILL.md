@@ -43,7 +43,14 @@ def test_probe():
         print(f"HARNESS_ORACLE::{NONCE}", flush=True)
 ```
 
-- Run with `python -m pytest -q -s {test_file}` so stdout is not swallowed.
+- Run with `python -m pytest -q -s -o addopts= {test_file}`. Both flags are load-bearing.
+  `-s` keeps stdout out of pytest's capture. `-o addopts=` discards the project's own
+  `addopts`, which pytest prepends to *our* invocation from pytest.ini, setup.cfg, tox.ini or
+  pyproject.toml. Verified against real pytest: `-s` does override an inherited
+  `--capture=sys`, so capture is not the danger — but `addopts = --collect-only` makes pytest
+  exit **0** having printed neither the markers nor the words "collected 0 items". The probe
+  silently never runs, and nothing downstream can tell the difference from a probe that ran and
+  saw nothing. `-x` and `-p no:...` in a project's addopts do the same.
 - For a canary-file oracle, do not print the oracle marker; let the payload create
   `/tmp/harness_canary_<nonce>` and assert nothing.
 

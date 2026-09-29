@@ -33,8 +33,10 @@ metadata:
   - installable package: `python -m pip install --no-cache-dir --user -e .`
   - always ensure the test runner: `python -m pip install --no-cache-dir --user pytest`
   - put `/work/home/.local/bin` on `PATH`.
-- **test_command:** `python -m pytest -q -s {test_file}` (`-s` so probe stdout markers are not
-  captured away). For `unittest`: `python -m pytest -q -s {test_file}` still runs it.
+- **test_command:** `python -m pytest -q -s -o addopts= {test_file}` (`-s` so probe stdout
+  markers are not captured away, `-o addopts=` so the project's own addopts cannot silence or
+  skip the probe — see test-pytest for why that is not theoretical). For `unittest`:
+  `python -m pytest -q -s -o addopts= {test_file}` still runs it.
 - Registries: honor `pip.conf` / `[tool.uv]`/`[tool.pip]` index settings the repo declares.
 
 <!-- generated: constraints (scripts/restructure_skills.py) -->

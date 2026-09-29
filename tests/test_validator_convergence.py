@@ -20,6 +20,7 @@ from infosec_harness.agents.validators import (
     GRADLE_TEST_COMMAND,
     MAVEN_TEST_COMMAND,
     MAVEN_WARMUP_COMMAND,
+    PYTEST_TEST_COMMAND,
     environment_spec_violations,
     install_path_violations,
     offline_warmup_violations,
@@ -58,7 +59,7 @@ def pytest_spec(**kw) -> EnvironmentSpec:
     base = {
         "base_image": "python:3.12-slim",
         "install_commands": ["pip install -e ."],
-        "test_command": "python -m pytest -q -s {test_file}",
+        "test_command": PYTEST_TEST_COMMAND,
     }
     return EnvironmentSpec(**{**base, **kw})
 
@@ -95,9 +96,11 @@ MUTATIONS = {
         lambda: gradle_spec(test_command=GRADLE_TEST_COMMAND.replace(
             "'*HarnessProbeTest'", "'src/test/java/FooTest.java'")),
     "pytest: output captured away":
-        lambda: pytest_spec(test_command="python -m pytest -q {test_file}"),
+        lambda: pytest_spec(test_command="python -m pytest -q -o addopts= {test_file}"),
     "pytest: hardcoded path instead of the placeholder":
-        lambda: pytest_spec(test_command="python -m pytest -q -s tests/test_app.py"),
+        lambda: pytest_spec(test_command="python -m pytest -q -s -o addopts= tests/test_app.py"),
+    "pytest: inherits the project's addopts":
+        lambda: pytest_spec(test_command="python -m pytest -q -s {test_file}"),
 }
 
 

@@ -70,6 +70,7 @@ from pydantic_ai_harness.compaction._shared import estimate_text_tokens
 from pydantic_ai_harness.skills._loader import load_skill_libraries
 
 from infosec_harness.agents.validators import (
+    PYTEST_TEST_COMMAND,
     environment_spec_violations,
     install_path_violations,
     offline_warmup_violations,
@@ -996,7 +997,10 @@ def spec_violations(spec: EnvironmentSpec) -> list[str]:
 # because `install_path_violations` couples a cpanm install to it: judging a lone install
 # command without it would report the *spec's* incoherence as a fault of the command. Spec
 # coherence is judged instead by `extract_exemplar_specs`, where a whole spec is actually shown.
-_FILLER_TEST_COMMAND = "python -m pytest -q -s {test_file}"
+# The canonical command, not a copy of it: a new pytest rule must not make every *install*
+# command in every skill fail because this filler went stale. That is what happened when
+# `-o addopts=` was added.
+_FILLER_TEST_COMMAND = PYTEST_TEST_COMMAND
 _FILLER_ENV = {"PERL5LIB": "/work/home/perl5/lib/perl5"}
 
 

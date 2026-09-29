@@ -13,13 +13,16 @@ cases:
     scenario: >
       env-planner follows build-python for a requirements.txt project.
     shown_in_skill:
-      - "python -m pytest -q -s {test_file}"
+      - "python -m pytest -q -s -o addopts= {test_file}"
     environment_spec:
       base_image: python:3.12-slim
       install_commands:
         - python -m pip install --no-cache-dir --user -r requirements.txt
         - python -m pip install --no-cache-dir --user pytest
-      test_command: python -m pytest -q -s {test_file}
+      # `-o addopts=` as well as `-s`: a project's own addopts are prepended to our invocation,
+      # and `addopts = --collect-only` makes pytest exit 0 having printed neither the markers
+      # nor "collected 0 items" -- verified against real pytest.
+      test_command: python -m pytest -q -s -o addopts= {test_file}
 
   - id: a-pytest-command-without-s-is-rejected
     type: safety

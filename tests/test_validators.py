@@ -140,8 +140,10 @@ def test_a_pytest_command_that_captures_output_is_rejected():
     captured = EnvironmentSpec(base_image="python:3.12-slim",
                               test_command="python -m pytest -q {test_file}")
     assert any("-s" in p for p in environment_spec_violations(captured))
-    for ok in ("python -m pytest -q -s {test_file}",
-               "python -m pytest --capture=no {test_file}"):
+    # A clean pytest command also has to neutralise the project's own addopts, which can make
+    # pytest exit 0 without running the probe; see the addopts test below.
+    for ok in ("python -m pytest -q -s -o addopts= {test_file}",
+               "python -m pytest --capture=no -o addopts= {test_file}"):
         spec = EnvironmentSpec(base_image="python:3.12-slim", test_command=ok)
         assert environment_spec_violations(spec) == [], ok
 
@@ -909,3 +911,39 @@ def test_the_declared_level_is_read_from_a_real_repository(tmp_path):
     assert repo_java_release(str(tmp_path)) == 7
     assert repo_java_release(None) is None
     assert repo_java_release(str(tmp_path / "nope")) is None
+
+
+def test_a_pytest_command_that_inherits_the_projects_addopts_is_rejected():
+    """Verified against real pytest, not reasoned about.
+
+    A project's `addopts` are prepended to *our* invocation from pytest.ini, setup.cfg,
+    tox.ini or pyproject.toml. `-s` does override an inherited `--capture=sys` — that much was
+    fine. But `addopts = --collect-only` makes pytest exit **0** having printed neither the
+    markers nor the words "collected 0 items": the observed output is literally
+    `tests/test_probe.py: 1`. The probe never runs, `no_tests_executed` cannot see it, and
+    nothing downstream distinguishes it from a probe that ran and observed nothing. That is the
+    costliest failure shape this system has.
+    """
+    from infosec_harness.agents.validators import environment_spec_violations
+    from infosec_harness.domain.models import EnvironmentSpec
+
+    inheriting = EnvironmentSpec(base_image="python:3.12-slim",
+                                 test_command="python -m pytest -q -s {test_file}")
+    problems = environment_spec_violations(inheriting)
+    assert any("-o addopts=" in p for p in problems), problems
+    assert any("--collect-only" in p for p in problems), "the message must say why"
+
+    for neutralised in ("python -m pytest -q -s -o addopts= {test_file}",
+                        "python -m pytest -q -s --override-ini addopts= {test_file}"):
+        spec = EnvironmentSpec(base_image="python:3.12-slim", test_command=neutralised)
+        assert environment_spec_violations(spec) == [], neutralised
+
+
+def test_only_pytest_is_asked_to_neutralise_addopts():
+    """Invent a requirement only where it is real: no other runner has this behaviour."""
+    from infosec_harness.agents.validators import environment_spec_violations
+    from infosec_harness.domain.models import EnvironmentSpec
+
+    for command in ("npx jest --runTestsByPath {test_file}", "prove -v {test_file}"):
+        spec = EnvironmentSpec(base_image="node:22-slim", test_command=command)
+        assert not any("addopts" in p for p in environment_spec_violations(spec)), command
