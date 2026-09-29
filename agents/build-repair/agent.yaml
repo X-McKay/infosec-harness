@@ -75,6 +75,12 @@ capabilities:
   - Skills:
       directories: skills
       include: [build-python, build-maven, build-gradle, build-npm, build-cpanm]
-  - RepoReadOnly: {}
+  - RepoReadOnly:
+      # No `repo_digest`: this agent is given the repository profile in its prompt, so a
+      # whole-repository digest would add nothing it does not already know and would cost a
+      # large tool result in every later request of the run. It still gets `list_tree` (a
+      # directory census that does not silently truncate) and `read_files` (several files in
+      # one round trip).
+      tools: [list_tree, list_files, read_file, read_files, search_code, describe_callables]
   - SandboxShell: {}
   - WarnOnCacheBusts: {}

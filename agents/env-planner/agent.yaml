@@ -20,6 +20,11 @@ instructions:
     The environment has network access only while installing; tests run offline, so everything
     a test needs must be installed at build time. Use the build-* skills for per-ecosystem
     recipes, and read manifests with the file tools before deciding.
+
+    Get those manifests in one call: `repo_digest` returns the tree, every manifest it found
+    near the root, and the test layout together. If you then need further files, list them all
+    in a single `read_files` call rather than calling `read_file` once per file - every tool call
+    is a full model round trip. Stop and answer as soon as the spec's fields are decided.
 model_settings:
   # Anthropic counts thinking *inside* max_tokens, so a `medium` level (10000 budget
   # tokens) plus the 6000-token answer this agent was written for needs 16000.

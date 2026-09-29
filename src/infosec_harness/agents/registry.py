@@ -226,6 +226,37 @@ def _assert_execution_class_covers_tools(name: str, metadata: Mapping[str, Any] 
         )
 
 
+def _assert_tools_are_declared(name: str, spec: AgentSpec) -> None:
+    """Every repo tool an agent can call must appear in the toolset's own policy.
+
+    The policy in `tools/repo-read-only/tool.yaml` is what `required_execution_class` reads and
+    what a reviewer reads; a tool reachable from a spec but absent from it is governed by
+    nothing. This is checked against the spec rather than against the code's default surface,
+    because `RepoReadOnly(tools=[...])` lets a spec name a subset -- and a typo in that list
+    would otherwise silently narrow the agent's tools instead of failing.
+    """
+    from infosec_harness.agents.capabilities import DEFAULT_REPO_RO_TOOLS
+    from infosec_harness.tools.policies import load_policies
+
+    declared = {t.name for t in load_policies()["repo-read-only"].tools}
+    for cap in spec.capabilities:
+        if cap.name != "RepoReadOnly":
+            continue
+        selected = (cap.kwargs or {}).get("tools") or DEFAULT_REPO_RO_TOOLS
+        unknown = sorted(set(selected) - set(DEFAULT_REPO_RO_TOOLS))
+        if unknown:
+            raise GovernanceError(
+                f"Agent {name!r} selects repo tools that do not exist: {unknown}. "
+                f"Available: {sorted(DEFAULT_REPO_RO_TOOLS)}"
+            )
+        undeclared = sorted(set(selected) - declared)
+        if undeclared:
+            raise GovernanceError(
+                f"Agent {name!r} can call repo tools that tools/repo-read-only/tool.yaml does "
+                f"not declare: {undeclared}"
+            )
+
+
 def build_agent(name: str, overlay: Mapping[str, Any] | None = None, *, durable: bool = True) -> Agent[AgentDeps, Any]:
     if name not in AGENT_BINDINGS:
         raise KeyError(f"Unknown agent {name!r}")
@@ -235,6 +266,7 @@ def build_agent(name: str, overlay: Mapping[str, Any] | None = None, *, durable:
     # and the spec's risk tier must match its assessment's governance tier (§3).
     assert_governed(name, spec.metadata)
     _assert_execution_class_covers_tools(name, spec.metadata)
+    _assert_tools_are_declared(name, spec)
     spec = _absolutize_skill_dirs(spec)
     spec = _apply_backend_token_floor(name, spec)
     capabilities: list[Any] = [ResolveModelId(

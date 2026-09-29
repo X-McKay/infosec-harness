@@ -33,7 +33,10 @@ design and decision log.
   pipeline deterministically with no credentials.
 - **Prompt caching.** A stable→volatile prompt layout, pinned model/thinking per agent, and
   repo-grouped warm-then-fan-out scheduling keep the shared prefix served from cache; cache
-  tokens are recorded per call.
+  tokens are recorded per call. Both halves are checked offline by `tests/test_cache_prefix.py`,
+  which also records the one thing that breaks the prefix: history compaction rewrites it, so a
+  run long enough to need compaction pays full prefill afterwards. That is why the read tools
+  answer in few, large calls (`tests/test_exploration_cost.py`) — a short run needs neither.
 - **Evidence-based tuning.** Every agent has an eval dataset and an executable release
   policy; `harness eval run` / `eval compare` measure the accuracy, cost, and latency impact
   of any model/prompt/skill change, one variable at a time.

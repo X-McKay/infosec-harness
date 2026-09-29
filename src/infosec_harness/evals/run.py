@@ -563,8 +563,14 @@ async def _score_corpus_once(*, language: str, sandbox: bool | None,
         if c.mask_paths:
             masks.setdefault((c.finding.repo_url, c.finding.revision), []).extend(c.mask_paths)
     # Cache off: an eval must exercise every stage and give the same answer twice.
+    # Serial for the same reason, and one more. Concurrency makes per-case latency
+    # unreadable -- N probe containers competing for the same sandbox CPU inflate each other's
+    # timings, so the p50/p95 numbers in the report would describe contention rather than the
+    # pipeline. And a measurement should not be the thing that decides how much hardware the
+    # runner needs: production can fan out, an eval establishes the baseline it fans out from.
+    # Override with `concurrency=` when deliberately measuring the effect of fanning out.
     outputs = await triage_batch_local([c.finding for c in cases], sandbox=sandbox,
-                                       recipe_cache=False, mask_paths=masks,
+                                       recipe_cache=False, mask_paths=masks, concurrency=1,
                                        prepare_sink=prepare_sink)
     by_fp = {o.finding.fingerprint: o for o in outputs}
 

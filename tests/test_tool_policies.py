@@ -44,6 +44,50 @@ def test_every_toolset_bounds_its_output():
         assert policy.max_output_bytes > 0, policy.name
 
 
+def test_the_policy_declares_exactly_the_tools_the_code_exposes():
+    """A tool in the code and not in the policy is governed by nothing.
+
+    The policy is what `required_execution_class` reads and what a reviewer reads. Nothing tied
+    the two together, so adding a tool to `capabilities.py` silently left its effect, its
+    output bound and its confinement undeclared — which is the same gap that made
+    `execution_class` a label before this file existed. Both directions are checked: a stale
+    entry for a tool that no longer exists is also a lie about the surface.
+    """
+    from infosec_harness.agents.capabilities import DEFAULT_REPO_RO_TOOLS
+
+    declared = {t.name for t in load_policies()["repo-read-only"].tools}
+    assert declared == set(DEFAULT_REPO_RO_TOOLS), {
+        "in the code, undeclared": sorted(set(DEFAULT_REPO_RO_TOOLS) - declared),
+        "declared, not in the code": sorted(declared - set(DEFAULT_REPO_RO_TOOLS)),
+    }
+
+
+def test_the_declared_output_bound_covers_every_tools_own_cap():
+    """The number in the policy has to be the real worst case, not the oldest one.
+
+    `max_output_bytes` was 120000 when the largest single result was a 100000-byte
+    `describe_callables`. A tool whose own cap exceeded it would make the declaration false
+    without anything failing.
+    """
+    from infosec_harness.agents import capabilities as cap
+
+    declared = load_policies()["repo-read-only"].max_output_bytes
+    for name, limit in (("describe_callables", cap.MAX_DESCRIBE_BYTES),
+                        ("read_files", cap.MAX_BATCH_BYTES),
+                        ("list_tree", cap.MAX_TREE_BYTES),
+                        ("repo_digest", cap.MAX_DIGEST_BYTES)):
+        assert limit <= declared, f"{name} can return {limit} bytes, over the declared {declared}"
+
+
+def test_an_agent_cannot_expose_a_tool_the_policy_does_not_declare():
+    """Enforced at build time, like the execution-class floor, not only asserted here."""
+    import pytest as _pytest
+
+    with _pytest.raises(GovernanceError, match="do not exist"):
+        build_agent("recon", {"capabilities": [{"RepoReadOnly": {"tools": ["read_everything"]}}]},
+                    durable=False)
+
+
 def test_the_sandbox_shell_key_is_stable_for_one_logical_call():
     """A retry must produce the same container name; a different call must not."""
     from infosec_harness.sandbox.docker import container_name

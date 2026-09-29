@@ -6,6 +6,7 @@ LocalOps; sandbox build/probe run for real when Docker is available, else pass s
 
 from __future__ import annotations
 
+import asyncio
 from collections import defaultdict
 
 from infosec_harness.agents.deps import AgentDeps
@@ -27,6 +28,7 @@ from infosec_harness.graph.triage import TRIAGE_GRAPH, PreFilter, TriageDeps, Tr
 from infosec_harness.intake import adapters
 from infosec_harness.repo.checkout import checkout
 from infosec_harness.repo.detect import detect_stack
+from infosec_harness.settings import get_settings
 
 
 def _inconclusive(finding: Finding, reason: InconclusiveReason, rationale: str, status: str,
@@ -66,6 +68,7 @@ async def triage_one(ops: LocalOps, inp: FindingInput, prepared) -> TriageRunOut
 
 async def triage_batch_local(findings: list[FindingInput], *, sandbox: bool = True,
                              recipe_cache: bool = True,
+                             concurrency: int | None = None,
                              prepare_sink: dict[tuple[str, str], list] | None = None,
                              mask_paths: dict[tuple[str, str], list[str]] | None = None,
                              ) -> list[TriageRunOutput]:
@@ -79,7 +82,32 @@ async def triage_batch_local(findings: list[FindingInput], *, sandbox: bool = Tr
     case ships the proof-of-vulnerability test that established its ground truth, and on a
     `-fixed` revision that test is in the tree because the fix commit added it — an agent can
     copy it instead of writing a probe, which turns the probe-author measurement into a
-    measurement of transcription."""
+    measurement of transcription.
+
+    ``concurrency`` is how many of one repository's findings may be triaged at a time; None
+    takes `settings.per_repo_concurrency`, which is what `TriageBatchWorkflow` already uses.
+    This path ignored that setting and ran strictly sequentially, so the offline pipeline — the
+    one the CLI, the corpus scorer and every test exercise — had a different shape from the
+    durable one it exists to mirror, and its measured wall clock could not be read as a
+    prediction of production's. Same schedule as the workflow, for the same reasons:
+
+    * Repository groups stay sequential. `run_prepare` writes the shared recipe cache, builds
+      images, and is why image-cache GC has a bound to respect; two prepares at once would race
+      that cache and double the peak disk. Nothing here changes that.
+    * Findings *within* a prepared repo share only the finished `PreparedEnvironment` — an
+      image tag and a spec, both read-only by then — so they are independent by construction.
+    * Warm, then fan out: the first finding runs alone so it establishes the shared prompt
+      prefix in the provider's cache, and the rest read that prefix concurrently. Fanning out
+      from the start would have every finding of the repo miss the cache and write it.
+
+    What it costs is real: each concurrent finding runs its own probe container against the
+    same image, so N in flight means N containers and N times the sandbox CPU, memory and disk,
+    plus N concurrent request streams against a shared rate limit. `per_repo_concurrency` is
+    the one place to say how much of that the runner has capacity for."""
+    if concurrency is None:
+        concurrency = get_settings().per_repo_concurrency
+    if concurrency < 1:
+        raise ValueError(f"concurrency must be at least 1, got {concurrency}")
     ops = LocalOps(sandbox=sandbox, recipe_cache=recipe_cache)
     groups: dict[tuple[str, str], list[FindingInput]] = defaultdict(list)
     for f in findings:
@@ -123,19 +151,38 @@ async def triage_batch_local(findings: list[FindingInput], *, sandbox: bool = Tr
             continue
         if prepare_sink is not None:
             prepare_sink[(repo_url, revision)] = prep.invocations
-        for f in group:
-            try:
-                results[order[id(f)]] = await triage_one(ops, f, prep.prepared)
-            except Exception as e:  # noqa: BLE001 - one finding must not sink the batch
-                # In the durable path each finding is its own child workflow, so a failure is
-                # already contained. Here the batch shares a process, and an agent that
-                # exhausts a retry budget on one finding used to discard every result in the
-                # run — including findings already triaged. Record why it failed and go on,
-                # through the same classifier the prepare phase uses so one taxonomy covers
-                # both: a finding stopped by its own budget is not the same event as a
-                # provider outage, and neither is a bug in the harness.
-                results[order[id(f)]] = _inconclusive(
-                    adapters.to_finding(f), classify_pipeline_failure(e),
-                    f"Triage failed for this finding: {type(e).__name__}: {e}",
-                    prep.prepared.status)
+        # Same deterministic order the workflow uses, so the two paths warm on the same finding.
+        group.sort(key=lambda f: (f.cwe or "", f.file_path or ""))
+        for f, out in zip(group, await _triage_group(ops, group, prep.prepared, concurrency),
+                          strict=True):
+            results[order[id(f)]] = out
     return [results[i] for i in sorted(results)]
+
+
+async def _triage_group(ops: LocalOps, group: list[FindingInput], prepared,
+                        concurrency: int) -> list[TriageRunOutput]:
+    """One repository's findings, warmed then fanned out under `concurrency`."""
+
+    async def one(f: FindingInput) -> TriageRunOutput:
+        try:
+            return await triage_one(ops, f, prepared)
+        except Exception as e:  # noqa: BLE001 - one finding must not sink the batch
+            # In the durable path each finding is its own child workflow, so a failure is
+            # already contained. Here the batch shares a process, and an agent that exhausts a
+            # retry budget on one finding used to discard every result in the run — including
+            # findings already triaged. Record it as inconclusive/error, which is what the
+            # three-way contract reserves for exactly this, and go on. That is also why
+            # `gather` below needs no `return_exceptions`: a failure is already an outcome.
+            return _inconclusive(
+                adapters.to_finding(f), classify_pipeline_failure(e),
+                f"Triage failed for this finding: {type(e).__name__}: {e}",
+                prepared.status)
+
+    gate = asyncio.Semaphore(concurrency)
+
+    async def bounded(f: FindingInput) -> TriageRunOutput:
+        async with gate:
+            return await one(f)
+
+    first = await one(group[0])
+    return [first, *await asyncio.gather(*(bounded(f) for f in group[1:]))]
