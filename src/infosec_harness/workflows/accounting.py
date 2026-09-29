@@ -31,7 +31,7 @@ class RootAccounting:
         self.exact_operations: set[str] = set()
         self.zero_cost_operations: set[str] = set()
 
-    async def reserve(self, config: ResolvedAgentConfig) -> tuple[str, str] | None:
+    def _root_id(self) -> str | None:
         if not workflow.patched("root-budget-v1"):
             return None
         info = workflow.info()
@@ -45,6 +45,14 @@ class RootAccounting:
         if not root.startswith("batch:"):
             return None
         root_id = root.removeprefix("batch:")
+        return root_id
+
+    async def reserve(self, config: ResolvedAgentConfig, *,
+                      configuration_digest: str | None = None) -> tuple[str, str] | None:
+        root_id = self._root_id()
+        if root_id is None:
+            return None
+        info = workflow.info()
         operation = f"{info.workflow_id}:{self.sequence}:{config.agent_name}"
         self.sequence += 1
         budget = config.budget.effective
@@ -54,10 +62,15 @@ class RootAccounting:
         reserved = {"requests": budget.max_requests * factor,
                     "tokens": (budget.max_input_tokens + budget.max_output_tokens) * factor,
                     "cost_usd": 0.0 if config.model.pricing_status == "known_zero" else budget.max_cost_usd * factor}
+        if workflow.patched("root-budget-dimensions-v2"):
+            reserved.update(tool_calls=budget.max_tool_calls * factor, agent_runs=1,
+                            execution_seconds=budget.max_tool_calls * 300 * ACTIVITY_MAX_ATTEMPTS)
+        args = {"root_id": root_id, "operation_id": operation, "requested": reserved,
+                "agent": config.agent_name}
+        if workflow.patched("root-config-identity-v1"):
+            args["configuration_digest"] = configuration_digest
         try:
-            result = await workflow.execute_activity(reserve_budget_activity,
-                {"root_id": root_id, "operation_id": operation, "requested": reserved,
-                 "agent": config.agent_name}, **_POLICY)
+            result = await workflow.execute_activity(reserve_budget_activity, args, **_POLICY)
         except ActivityError as exc:
             if isinstance(exc.cause, ApplicationError) and exc.cause.type == "UsageLimitExceeded":
                 raise UsageLimitExceeded(str(exc.cause)) from exc
@@ -76,6 +89,26 @@ class RootAccounting:
                  "detail": f"Started {config.agent_name}; root budget reserved."}, **_POLICY)
         return (root_id, operation) if result is not None else None
 
+    async def reserve_execution(self, name: str, seconds: float) -> tuple[str, str] | None:
+        if not workflow.patched("root-execution-budget-v1"):
+            return None
+        root_id = self._root_id()
+        if root_id is None:
+            return None
+        operation = f"{workflow.info().workflow_id}:{self.sequence}:{name}"
+        self.sequence += 1
+        try:
+            result = await workflow.execute_activity(reserve_budget_activity,
+                {"root_id": root_id, "operation_id": operation,
+                 "requested": {"requests": 0, "tokens": 0, "cost_usd": 0,
+                               "tool_calls": 0, "agent_runs": 0, "execution_seconds": seconds},
+                 "agent": name, "operation_kind": "execution"}, **_POLICY)
+        except ActivityError as exc:
+            if isinstance(exc.cause, ApplicationError) and exc.cause.type == "UsageLimitExceeded":
+                raise UsageLimitExceeded(str(exc.cause)) from exc
+            raise
+        return (root_id, operation) if result is not None else None
+
     async def settle(self, identity: tuple[str, str] | None, outcome: AgentOutcome | None,
                      failure: str = "") -> None:
         if identity is None:
@@ -86,10 +119,15 @@ class RootAccounting:
         # PydanticAI exposes the completed attempt, not billed usage for lost transport
         # attempts. Keep a conservative reservation until provider reconciliation exists.
         observed = None
-        if outcome is not None and identity[1] in self.exact_operations:
+        if (outcome is not None and identity[1] in self.exact_operations
+                and (not workflow.patched("root-budget-dimensions-v2")
+                     or outcome.tool_calls is not None)):
             observed = {"requests": outcome.requests,
                         "tokens": outcome.input_tokens + outcome.output_tokens,
                         "cost_usd": outcome.cost_usd or 0.0}
+            if workflow.patched("root-budget-dimensions-v2"):
+                observed.update(tool_calls=outcome.tool_calls or 0, agent_runs=1,
+                                execution_seconds=0)  # Stub agents execute no real workloads.
         await asyncio.shield(workflow.execute_activity(settle_budget_activity,
             {"root_id": identity[0], "operation_id": identity[1], "observed": observed,
              "record": record}, **_POLICY))

@@ -248,10 +248,11 @@ def _passes_hard_gates(metrics: dict[str, Any] | None) -> bool:
 def _selection_key(trial: TrialResult) -> tuple[float, float, float]:
     metrics = trial.metrics or {}
     latency = ((metrics.get("distributions") or {}).get("p95_latency_s"))
+    avg_tokens = metrics.get("avg_tokens")
     return (
         float(metrics.get("task_success_rate") or 0.0),
         -float(latency if latency is not None else float("inf")),
-        -float(metrics.get("avg_tokens") or float("inf")),
+        -float(avg_tokens if avg_tokens is not None else float("inf")),
     )
 
 

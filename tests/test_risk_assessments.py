@@ -49,6 +49,14 @@ def test_the_committed_files_match_the_scenario_library():
 
 
 @pytest.mark.parametrize("path", _agent_assessments(), ids=lambda p: p.stem)
+def test_assessment_version_matches_the_agent_spec(path: Path) -> None:
+    from infosec_harness.agents.registry import load_spec
+
+    assessment = _load(path)["assessment"]
+    assert assessment["agent_version"] == load_spec(path.stem).metadata["version"]
+
+
+@pytest.mark.parametrize("path", _agent_assessments(), ids=lambda p: p.stem)
 def test_spec_risk_tier_equals_assessment_governance_tier(path):
     from infosec_harness.agents.governance import tier_matches_assessment
     from infosec_harness.agents.registry import load_spec

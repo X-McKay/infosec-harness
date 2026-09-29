@@ -6,6 +6,7 @@ activity boundary so the test needs neither a daemon nor a registry.
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 import tempfile
 import uuid
@@ -172,6 +173,126 @@ async def test_durable_acceptance_restart_results_and_history_replay(fixture_rep
         assert (await store.batch_summary(batch_id))["status"] == "complete"
         history = await handle.fetch_history()
         await Replayer(workflows=WORKFLOWS, plugins=[PydanticAIPlugin()]).replay_workflow(history)
+    finally:
+        await env.shutdown()
+
+
+async def test_finding_failure_preserves_completed_invocations_and_budget_reason(
+    fixture_repo, monkeypatch,
+):
+    """A later budget failure cannot erase earlier paid finding-stage calls."""
+    from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
+    from pydantic_ai.exceptions import UsageLimitExceeded
+    from temporalio.client import Client
+    from temporalio.testing import WorkflowEnvironment
+    from temporalio.worker import Worker
+
+    from infosec_harness.domain.models import FindingInput, InconclusiveReason
+    from infosec_harness.integrations import ado
+    from infosec_harness.persistence import db, lifecycle, store
+    from infosec_harness.sandbox import docker
+    from infosec_harness.settings import get_settings
+    from infosec_harness.workflows.activities import ALL_ACTIVITIES
+    from infosec_harness.workflows.temporal_ops import TemporalOps
+    from infosec_harness.workflows.worker import WORKFLOWS
+    from infosec_harness.workflows.workflows import TriageBatchWorkflow
+
+    monkeypatch.setattr(get_settings(), "recipe_cache_enabled", False)
+    monkeypatch.setattr(docker, "image_exists", lambda tag: _true())
+    monkeypatch.setattr(docker, "run_probe", _fake_probe)
+    monkeypatch.setattr(docker, "run_shell", _fake_shell)
+    monkeypatch.setattr(docker, "runtime_available", lambda runtime=None: _true())
+    monkeypatch.setattr(get_settings(), "ado_writeback_enabled", True)
+    writebacks = []
+
+    async def fake_post(work_item_id, text, comment_id):
+        writebacks.append((work_item_id, comment_id))
+        return 9002
+
+    monkeypatch.setattr(ado, "post_or_update_comment", fake_post)
+    original = TemporalOps._run_agent
+
+    async def fail_verdict(self, name, prompt, deps):
+        if name == "verdict":
+            raise UsageLimitExceeded("finding-stage root budget exhausted")
+        return await original(self, name, prompt, deps)
+
+    monkeypatch.setattr(TemporalOps, "_run_agent", fail_verdict)
+    await db.create_all()
+    batch_id = f"partial-{uuid.uuid4().hex[:10]}"
+    finding = FindingInput(title="Partial finding", repo_url=fixture_repo, file_path="app.py",
+                           start_line=2, cwe="CWE-89", severity="high", ado_work_item_id=43)
+    payload = {"batch_id": batch_id, "findings": [finding.model_dump(mode="json")]}
+    await lifecycle.accept_batch(batch_id, [finding], "Partial failure", payload)
+    env = await WorkflowEnvironment.start_local(dev_server_existing_path=temporal_bin)
+    try:
+        client = await Client.connect(env.client.service_client.config.target_host,
+                                      plugins=[PydanticAIPlugin()])
+        async with Worker(client, task_queue="partial-failure", workflows=WORKFLOWS,
+                          activities=ALL_ACTIVITIES):
+            outputs = await client.execute_workflow(TriageBatchWorkflow.run, payload,
+                id=f"batch:{batch_id}", task_queue="partial-failure")
+        output = outputs[0]
+        assert output.result.verdict.inconclusive_reason is InconclusiveReason.budget_exhausted
+        assert "context" in {inv.agent for inv in output.invocations}
+        assert "verdict" not in {inv.agent for inv in output.invocations}
+        detail = await store.get_run(store._run_id(batch_id, output.finding.fingerprint))
+        assert "context" in {inv["agent"] for inv in detail["invocations"]}
+        assert writebacks == [(43, None)]
+    finally:
+        await env.shutdown()
+
+
+async def test_cancellation_during_optional_writeback_cancels_batch(fixture_repo, monkeypatch):
+    """Cancelling blocked ADO postprocessing still cancels the durable workflow."""
+    from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
+    from temporalio.client import Client, WorkflowFailureError
+    from temporalio.testing import WorkflowEnvironment
+    from temporalio.worker import Worker
+
+    from infosec_harness.domain.models import FindingInput
+    from infosec_harness.integrations import ado
+    from infosec_harness.persistence import db, lifecycle, store
+    from infosec_harness.sandbox import docker
+    from infosec_harness.settings import get_settings
+    from infosec_harness.workflows.activities import ALL_ACTIVITIES
+    from infosec_harness.workflows.worker import WORKFLOWS
+    from infosec_harness.workflows.workflows import TriageBatchWorkflow
+
+    monkeypatch.setattr(get_settings(), "recipe_cache_enabled", False)
+    monkeypatch.setattr(get_settings(), "root_max_tokens", 100_000_000)
+    monkeypatch.setattr(get_settings(), "root_max_requests", 10000)
+    monkeypatch.setattr(get_settings(), "ado_writeback_enabled", True)
+    monkeypatch.setattr(docker, "image_exists", lambda tag: _true())
+    monkeypatch.setattr(docker, "run_probe", _fake_probe)
+    monkeypatch.setattr(docker, "run_shell", _fake_shell)
+    monkeypatch.setattr(docker, "runtime_available", lambda runtime=None: _true())
+    entered = asyncio.Event()
+
+    async def blocked_post(work_item_id, text, comment_id):
+        entered.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(ado, "post_or_update_comment", blocked_post)
+    await db.create_all()
+    batch_id = f"writeback-cancel-{uuid.uuid4().hex[:10]}"
+    finding = FindingInput(title="Blocked writeback", repo_url=fixture_repo, file_path="app.py",
+                           start_line=2, cwe="CWE-89", severity="high", ado_work_item_id=44)
+    payload = {"batch_id": batch_id, "findings": [finding.model_dump(mode="json")]}
+    await lifecycle.accept_batch(batch_id, [finding], "Blocked writeback", payload)
+    env = await WorkflowEnvironment.start_local(dev_server_existing_path=temporal_bin)
+    try:
+        client = await Client.connect(env.client.service_client.config.target_host,
+                                      plugins=[PydanticAIPlugin()])
+        async with Worker(client, task_queue="writeback-cancel", workflows=WORKFLOWS,
+                          activities=ALL_ACTIVITIES):
+            handle = await client.start_workflow(TriageBatchWorkflow.run, payload,
+                id=f"batch:{batch_id}", task_queue="writeback-cancel")
+            await asyncio.wait_for(entered.wait(), timeout=30)
+            await handle.cancel()
+            with pytest.raises(WorkflowFailureError):
+                await asyncio.wait_for(handle.result(), timeout=30)
+        assert (await store.batch_summary(batch_id))["status"] == "cancelled"
     finally:
         await env.shutdown()
 

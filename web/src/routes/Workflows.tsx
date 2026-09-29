@@ -26,7 +26,8 @@ export function Workflows() {
         <p className="eyebrow">Execution</p>
         <h1>Workflows</h1>
         <p className="text-sm text-muted-foreground mt-2">
-          Durable batches and their current recorded state.
+          Latest recorded batch status. Select a batch to inspect its finding
+          records and per-run event history.
         </p>
       </div>
       <Freshness

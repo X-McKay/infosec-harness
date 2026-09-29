@@ -1,68 +1,28 @@
-import type { components } from "./schema";
-export type RunSummary = {
-  id: string;
-  batch_id: string;
-  fingerprint: string;
-  title: string;
-  repo_url: string;
-  revision: string;
-  cwe: string | null;
-  severity: string;
-  status: string;
-  verdict: string | null;
-  confidence: number | null;
-  inconclusive_reason: string | null;
-  priority: string | null;
-  priority_score: number | null;
-  environment_scope: string;
-  phase: string;
-  telemetry: {
-    cost_usd?: number | null;
-    total_tokens?: number | null;
-    wall_time_s?: number | null;
-    cost_coverage?: number | null;
-  } | null;
-  early_exit: string | null;
-  cost_usd: number | null;
-  total_tokens: number;
-  cache_read_tokens: number;
-  latency_s: number;
-  created_at: string;
-};
-export type RunDetail = RunSummary & {
-  evidence: Record<string, unknown> | null;
-  events: Array<{
-    id: string;
-    phase: string;
-    detail: string;
-    created_at: string;
-  }>;
-  review_history: Array<{
-    reviewer: string;
-    decision: string;
-    override_label?: string | null;
-    reason: string;
-    created_at: string;
-  }>;
-  finding: Record<string, unknown>;
-  result: Record<string, unknown>;
-  invocations: Array<Record<string, unknown>>;
-  review: null | {
-    reviewer: string;
-    decision: string;
-    override_label: string | null;
-    reason: string;
-    created_at: string;
-  };
-};
-export type Batch = {
-  id: string;
-  status: string;
-  label: string;
-  source_kind: string;
-  finding_count: number;
-  created_at: string;
-};
+import type { components, operations } from "./schema";
+
+type Success<Operation extends keyof operations> =
+  operations[Operation] extends {
+    responses: { 200: { content: { "application/json": infer Response } } };
+  }
+    ? Response
+    : never;
+type Query<Operation extends keyof operations> = operations[Operation] extends {
+  parameters: { query?: infer Parameters };
+}
+  ? NonNullable<Parameters>
+  : never;
+export type RunPageQuery = Query<"run_page_api_run_page_get">;
+export type MetricsPopulation = NonNullable<
+  Query<"metrics_api_metrics_get">["population"]
+>;
+
+export type RunSummary = components["schemas"]["RunSummary"];
+export type RunDetail = components["schemas"]["RunDetail"];
+export type Batch = components["schemas"]["BatchSummary"];
+export type BatchDetail = components["schemas"]["BatchDetail"];
+export type ExperimentSummary = components["schemas"]["ExperimentSummary"];
+export type ExperimentDetail = components["schemas"]["ExperimentDetail"];
+export type ExperimentCase = components["schemas"]["ExperimentCase"];
 
 const BASE = "";
 
@@ -76,28 +36,12 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  metrics: (population = "operational") =>
-    req<components["schemas"]["MetricsResponse"]>(
+  metrics: (population: MetricsPopulation = "operational") =>
+    req<Success<"metrics_api_metrics_get">>(
       `/api/metrics?population=${population}`,
     ),
-  runPage: (params: {
-    batch_id?: string;
-    verdict?: string;
-    search?: string;
-    offset?: number;
-    population?: string;
-    metric?: string;
-    lower?: number;
-    upper?: number;
-    upper_inclusive?: boolean;
-  }) =>
-    req<{
-      items: RunSummary[];
-      total: number;
-      offset: number;
-      limit: number;
-      as_of: string;
-    }>(
+  runPage: (params: RunPageQuery) =>
+    req<Success<"run_page_api_run_page_get">>(
       `/api/run-page?${new URLSearchParams(
         Object.entries(params)
           .filter(([, v]) => v !== undefined && v !== "")
@@ -105,52 +49,32 @@ export const api = {
       )}`,
     ),
   experiment: (id: string) =>
-    req<{
-      id: string;
-      agent: string;
-      metrics: Record<string, unknown>;
-      cases: Array<{
-        case_name: string;
-        repetition: number;
-        passed: boolean;
-        latency_s: number;
-        cost_usd: number;
-        scores: Record<string, unknown>;
-      }>;
-    }>(`/api/experiments/${id}`),
-  batches: () => req<Batch[]>("/api/batches"),
-  runs: (params: { batch_id?: string; verdict?: string } = {}) => {
+    req<Success<"experiment_detail_api_experiments__experiment_id__get">>(
+      `/api/experiments/${id}`,
+    ),
+  batches: () => req<Success<"batches_api_batches_get">>("/api/batches"),
+  batch: (id: string) =>
+    req<Success<"batch_api_batches__batch_id__get">>(`/api/batches/${id}`),
+  runs: (params: Query<"runs_api_runs_get"> = {}) => {
     const q = new URLSearchParams(params as Record<string, string>).toString();
-    return req<RunSummary[]>(`/api/runs${q ? `?${q}` : ""}`);
+    return req<Success<"runs_api_runs_get">>(`/api/runs${q ? `?${q}` : ""}`);
   },
-  run: (id: string) => req<RunDetail>(`/api/runs/${id}`),
-  submit: (body: { findings: unknown[]; label?: string; mode?: string }) =>
-    req<{ batch_id: string }>("/api/batches", {
+  run: (id: string) =>
+    req<Success<"run_api_runs__run_id__get">>(`/api/runs/${id}`),
+  submit: (body: components["schemas"]["SubmitRequest"]) =>
+    req<Success<"submit_api_batches_post">>("/api/batches", {
       method: "POST",
       body: JSON.stringify(body),
     }),
-  review: (
-    id: string,
-    body: {
-      reviewer: string;
-      decision: string;
-      override_label?: string | null;
-      reason?: string;
-    },
-  ) =>
-    req<{ ok: boolean }>(`/api/runs/${id}/review`, {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
-  experiments: () => req<Array<Record<string, unknown>>>("/api/experiments"),
-  config: () =>
-    req<{
-      model_mode: string;
-      agents: Array<{
-        name: string;
-        model_tier: string;
-        config_hash: string;
-        resolved_model: string;
-      }>;
-    }>("/api/config"),
+  review: (id: string, body: components["schemas"]["ReviewRequest"]) =>
+    req<Success<"review_api_runs__run_id__review_post">>(
+      `/api/runs/${id}/review`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      },
+    ),
+  experiments: () =>
+    req<Success<"experiments_api_experiments_get">>("/api/experiments"),
+  config: () => req<Success<"config_api_config_get">>("/api/config"),
 };

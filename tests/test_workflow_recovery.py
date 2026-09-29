@@ -167,3 +167,92 @@ async def test_worker_replacement_resumes_accepted_batch(tmp_path, monkeypatch):
         assert len({event["id"] for event in detail["events"]}) == len(detail["events"])
     finally:
         await env.shutdown()
+
+
+async def test_terminal_persistence_retries_past_transient_database_outage(monkeypatch):
+    """A closed Temporal workflow must not leave its accepted batch permanently running."""
+    from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
+    from temporalio.client import Client
+    from temporalio.testing import WorkflowEnvironment
+    from temporalio.worker import Worker
+
+    from infosec_harness.persistence import db, lifecycle, store
+    from infosec_harness.workflows import worker
+    from infosec_harness.workflows.workflows import TriageBatchWorkflow
+
+    await db.create_all()
+    batch_id = f"terminal-retry-{uuid.uuid4().hex[:12]}"
+    payload = {"batch_id": batch_id, "findings": []}
+    await lifecycle.accept_batch(batch_id, [], "Terminal retry", payload)
+    original = lifecycle.finish_pending
+    attempts = 0
+
+    async def transient_failure(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts <= 3:
+            raise ConnectionError("database temporarily unavailable")
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(lifecycle, "finish_pending", transient_failure)
+    env = await WorkflowEnvironment.start_local(dev_server_existing_path=TEMPORAL)
+    try:
+        client = await Client.connect(env.client.service_client.config.target_host,
+                                      plugins=[PydanticAIPlugin()])
+        async with Worker(client, task_queue="terminal-retry-test", workflows=worker.WORKFLOWS,
+                          activities=worker.ALL_ACTIVITIES):
+            result = await client.execute_workflow(TriageBatchWorkflow.run, payload,
+                id=f"batch:{batch_id}", task_queue="terminal-retry-test")
+        assert result == []
+        assert attempts == 4
+        assert (await store.batch_summary(batch_id))["status"] == "complete"
+    finally:
+        await env.shutdown()
+
+
+async def test_root_elapsed_deadline_cancels_inflight_work_and_persists_failure(tmp_path, monkeypatch):
+    from datetime import timedelta
+
+    from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
+    from temporalio.client import Client, WorkflowFailureError
+    from temporalio.testing import WorkflowEnvironment
+    from temporalio.worker import Worker
+
+    from infosec_harness.domain.models import FindingInput
+    from infosec_harness.persistence import db, lifecycle, store
+    from infosec_harness.settings import get_settings
+    from infosec_harness.workflows import activities, worker
+    from infosec_harness.workflows.workflows import TriageBatchWorkflow
+
+    await db.create_all()
+    monkeypatch.setattr(get_settings(), 'root_max_elapsed_seconds', 5)
+    entered, cancelled = asyncio.Event(), asyncio.Event()
+    async def blocked_checkout(ref):
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+    monkeypatch.setattr(activities, 'checkout', blocked_checkout)
+    env = await WorkflowEnvironment.start_local(dev_server_existing_path=TEMPORAL)
+    try:
+        client = await Client.connect(env.client.service_client.config.target_host,
+                                      plugins=[PydanticAIPlugin()])
+        finding = FindingInput(title='Root deadline fixture', repo_url=str(tmp_path), file_path='a.py')
+        batch_id = f'deadline-{uuid.uuid4().hex[:12]}'
+        payload = {'batch_id': batch_id, 'findings': [finding.model_dump(mode='json')]}
+        await lifecycle.accept_batch(batch_id, [finding], 'Deadline fixture', payload)
+        async with Worker(client, task_queue='deadline-test', workflows=worker.WORKFLOWS,
+                          activities=activities.ALL_ACTIVITIES,
+                          max_heartbeat_throttle_interval=timedelta(seconds=1)):
+            handle = await client.start_workflow(TriageBatchWorkflow.run, payload,
+                id=f'batch:{batch_id}', task_queue='deadline-test')
+            await asyncio.wait_for(entered.wait(), timeout=10)
+            with pytest.raises(WorkflowFailureError, match='Workflow execution failed'):
+                await asyncio.wait_for(handle.result(), timeout=15)
+            await asyncio.wait_for(cancelled.wait(), timeout=10)
+        summary = await store.batch_summary(batch_id)
+        assert summary['status'] == 'failed'
+        assert summary['status_counts'] == {'failed': 1}
+    finally:
+        await env.shutdown()

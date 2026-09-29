@@ -2,16 +2,12 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "@/api/client";
 import { Freshness, QueryState } from "@/components/QueryState";
-import {
-  ExperimentContent,
-  normalize,
-  type ExperimentDetail,
-} from "@/components/evaluations/ExperimentReport";
+import { ExperimentContent } from "@/components/evaluations/ExperimentReport";
 
 export function Experiments() {
   const listQuery = useQuery({
     queryKey: ["experiments"],
-    queryFn: async () => (await api.experiments()).map(normalize),
+    queryFn: api.experiments,
   });
   const experiments = listQuery.data || [];
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -20,8 +16,7 @@ export function Experiments() {
     : experiments[0];
   const detailQuery = useQuery({
     queryKey: ["experiment", selected?.id],
-    queryFn: async () =>
-      api.experiment(selected!.id) as Promise<ExperimentDetail>,
+    queryFn: async () => api.experiment(selected!.id),
     enabled: !!selected?.id,
   });
 

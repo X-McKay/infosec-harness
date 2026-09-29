@@ -15,6 +15,19 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from infosec_harness.api.contracts import (
+    AdoBatchAccepted,
+    BatchAccepted,
+    BatchDetail,
+    BatchSummary,
+    CancelResponse,
+    ConfigResponse,
+    ExperimentSummary,
+    HealthResponse,
+    ReviewSaved,
+    RunDetail,
+    RunSummary,
+)
 from infosec_harness.api.observations import router
 from infosec_harness.domain.models import FindingInput, VerdictLabel
 from infosec_harness.persistence import db, store
@@ -78,16 +91,16 @@ async def _submit(findings: list[FindingInput], label: str, mode: str) -> str:
     return await runner.submit_via_temporal(findings, label=label)
 
 
-@app.post("/api/batches")
-async def submit(req: SubmitRequest) -> dict:
+@app.post("/api/batches", response_model=BatchAccepted)
+async def submit(req: SubmitRequest) -> BatchAccepted:
     if not req.findings:
         raise HTTPException(400, "no findings supplied")
     batch_id = await _submit(req.findings, req.label, req.mode)
-    return {"batch_id": batch_id}
+    return BatchAccepted(batch_id=batch_id)
 
 
-@app.post("/api/batches/ado")
-async def submit_ado(req: SubmitADORequest) -> dict:
+@app.post("/api/batches/ado", response_model=AdoBatchAccepted)
+async def submit_ado(req: SubmitADORequest) -> AdoBatchAccepted:
     from infosec_harness.integrations import ado
 
     s = get_settings()
@@ -96,37 +109,38 @@ async def submit_ado(req: SubmitADORequest) -> dict:
     items = await ado.fetch_work_items(req.work_item_ids)
     findings = [ado.work_item_to_finding(i, s.ado_field_map) for i in items]
     batch_id = await _submit(findings, req.label or "ado", "auto")
-    return {"batch_id": batch_id, "imported": len(findings)}
+    return AdoBatchAccepted(batch_id=batch_id, imported=len(findings))
 
 
-@app.get("/api/batches")
-async def batches() -> list[dict]:
+@app.get("/api/batches", response_model=list[BatchSummary])
+async def batches() -> list[BatchSummary]:
     return await store.list_batches()
 
 
-@app.get("/api/batches/{batch_id}")
-async def batch(batch_id: str) -> dict:
+@app.get("/api/batches/{batch_id}", response_model=BatchDetail)
+async def batch(batch_id: str) -> BatchDetail:
     summary = await store.batch_summary(batch_id)
     if summary is None:
         raise HTTPException(404, "batch not found")
     return summary
 
 
-@app.get("/api/runs")
-async def runs(batch_id: str | None = None, verdict: str | None = None, limit: int = Query(200, ge=1, le=1000)) -> list[dict]:
+@app.get("/api/runs", response_model=list[RunSummary])
+async def runs(batch_id: str | None = None, verdict: str | None = None,
+               limit: int = Query(200, ge=1, le=1000)) -> list[RunSummary]:
     return await store.list_runs(batch_id=batch_id, verdict=verdict, limit=limit)
 
 
-@app.get("/api/runs/{run_id}")
-async def run(run_id: str) -> dict:
+@app.get("/api/runs/{run_id}", response_model=RunDetail)
+async def run(run_id: str) -> RunDetail:
     detail = await store.get_run(run_id)
     if detail is None:
         raise HTTPException(404, "run not found")
     return detail
 
 
-@app.post("/api/runs/{run_id}/review")
-async def review(run_id: str, req: ReviewRequest) -> dict:
+@app.post("/api/runs/{run_id}/review", response_model=ReviewSaved)
+async def review(run_id: str, req: ReviewRequest) -> ReviewSaved:
     if req.decision not in ("confirm", "override"):
         raise HTTPException(400, "decision must be 'confirm' or 'override'")
     if req.decision == "override" and req.override_label is None:
@@ -136,11 +150,11 @@ async def review(run_id: str, req: ReviewRequest) -> dict:
                                  reason=req.reason)
     if not ok:
         raise HTTPException(404, "run not found")
-    return {"ok": True}
+    return ReviewSaved(ok=True)
 
 
-@app.get("/api/experiments")
-async def experiments() -> list[dict]:
+@app.get("/api/experiments", response_model=list[ExperimentSummary])
+async def experiments() -> list[ExperimentSummary]:
     from sqlalchemy import select
 
     async with db.session() as s:
@@ -153,8 +167,8 @@ async def experiments() -> list[dict]:
                  "harness_version": e.harness_version, "created_at": e.created_at.isoformat()} for e in rows]
 
 
-@app.get("/api/config")
-async def config() -> dict:
+@app.get("/api/config", response_model=ConfigResponse)
+async def config() -> ConfigResponse:
     from infosec_harness.agents import models as model_factory
     from infosec_harness.agents.registry import AGENT_BINDINGS, agent_config_hashes, load_spec
 
@@ -167,15 +181,15 @@ async def config() -> dict:
     return {"model_mode": get_settings().model_mode, "agents": agents}
 
 
-@app.get("/api/health")
-async def health() -> dict:
-    return {"status": "ok"}
+@app.get("/api/health", response_model=HealthResponse)
+async def health() -> HealthResponse:
+    return HealthResponse(status="ok")
 
 
-@app.post("/api/batches/{batch_id}/cancel")
-async def cancel_batch(batch_id: str) -> dict:
+@app.post("/api/batches/{batch_id}/cancel", response_model=CancelResponse)
+async def cancel_batch(batch_id: str) -> CancelResponse:
     from infosec_harness.workflows.runner import cancel_durable_batch
     try:
-        return {"status": await cancel_durable_batch(batch_id)}
+        return CancelResponse(status=await cancel_durable_batch(batch_id))
     except KeyError as exc:
         raise HTTPException(404, "batch not found") from exc

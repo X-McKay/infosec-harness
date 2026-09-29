@@ -7,12 +7,13 @@ only ever touch this interface, so the exact same topology runs standalone and d
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from typing import Protocol
 
 import httpx
 from pydantic_ai.exceptions import ModelAPIError, UsageLimitExceeded
 from pydantic_ai.messages import UserContent
+from temporalio.exceptions import ApplicationError
 
 from infosec_harness.agents.deps import AgentDeps
 from infosec_harness.domain.models import (
@@ -28,6 +29,16 @@ from infosec_harness.domain.models import (
 )
 
 
+def _failure_chain(e: BaseException) -> Iterator[BaseException]:
+    """Yield wrapper causes once, including Temporal's serialized failure chain."""
+    seen: set[int] = set()
+    current: BaseException | None = e
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        yield current
+        current = getattr(current, "cause", None) or current.__cause__
+
+
 def is_infrastructure_failure(e: BaseException) -> bool:
     """True when the harness's own dependencies failed, rather than the work failing.
 
@@ -35,7 +46,11 @@ def is_infrastructure_failure(e: BaseException) -> bool:
     the finding, so it must not be recorded as `environment_unbuildable` -- an eval reading
     that cannot tell an endpoint being down from a pipeline regression.
     """
-    return isinstance(e, ModelAPIError | httpx.TransportError | TimeoutError)
+    serialized_types = {"ModelAPIError", "ModelHTTPError", "APIConnectionError", "APITimeoutError",
+                        "ConnectError", "ReadTimeout", "TimeoutError"}
+    return any(isinstance(cause, ModelAPIError | httpx.TransportError | TimeoutError)
+        or (isinstance(cause, ApplicationError) and cause.type in serialized_types)
+        for cause in _failure_chain(e))
 
 
 def classify_pipeline_failure(e: BaseException) -> InconclusiveReason:
@@ -64,7 +79,9 @@ def classify_pipeline_failure(e: BaseException) -> InconclusiveReason:
     exception is not that claim: a preparation that crashed never reached a verdict on the
     repository, so recording one put the blame on a stage that had not finished being tried.
     """
-    if isinstance(e, UsageLimitExceeded):
+    if any(isinstance(cause, UsageLimitExceeded)
+           or (isinstance(cause, ApplicationError) and cause.type == "UsageLimitExceeded")
+           for cause in _failure_chain(e)):
         return InconclusiveReason.budget_exhausted
     if is_infrastructure_failure(e):
         return InconclusiveReason.infrastructure_error

@@ -6,7 +6,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import func, or_, select
 
-from infosec_harness.api.contracts import MetricsResponse, RunPage
+from infosec_harness.api.contracts import ExperimentDetail, MetricsResponse, RunPage
 from infosec_harness.persistence import db, store
 from infosec_harness.persistence.metrics import aggregate_metrics
 
@@ -62,8 +62,8 @@ async def metrics(batch_id: str | None = None,
     return await aggregate_metrics(batch_id=batch_id, population=population, since=since, until=until)
 
 
-@router.get("/experiments/{experiment_id}")
-async def experiment_detail(experiment_id: str) -> dict:
+@router.get("/experiments/{experiment_id}", response_model=ExperimentDetail)
+async def experiment_detail(experiment_id: str) -> ExperimentDetail:
     async with db.session() as session:
         experiment = await session.get(db.EvalExperiment, experiment_id)
         if experiment is None:

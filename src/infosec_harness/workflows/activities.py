@@ -30,6 +30,7 @@ from infosec_harness.persistence.artifacts import get_store
 from infosec_harness.repo.checkout import checkout
 from infosec_harness.repo.detect import detect_stack
 from infosec_harness.sandbox import canary, docker, evidence
+from infosec_harness.workflows.heartbeat import with_heartbeat
 from infosec_harness.workflows.progress import ACTIVITIES as PROGRESS_ACTIVITIES
 
 DEFAULT_TIMEOUTS = {"start_to_close_timeout": timedelta(minutes=5)}
@@ -41,6 +42,7 @@ async def normalize_finding_activity(inp: FindingInput) -> Finding:
 
 
 @activity.defn
+@with_heartbeat
 async def checkout_activity(ref: RepoRef) -> RepoSnapshot:
     return await checkout(ref)
 
@@ -52,6 +54,7 @@ async def detect_stack_activity(snapshot: RepoSnapshot) -> StackFingerprint:
 
 
 @activity.defn
+@with_heartbeat
 async def build_environment_activity(args: dict) -> BuildResult:
     """Render a Dockerfile from the spec and build it (cached by repo hash + spec).
 
@@ -95,6 +98,7 @@ async def build_environment_activity(args: dict) -> BuildResult:
 
 
 @activity.defn
+@with_heartbeat
 async def smoke_test_activity(args: dict | str) -> SmokeResult:
     """Prove the image starts *and* that its test runner is installed.
 
@@ -195,6 +199,7 @@ async def _canary_result(image_tag: str, test_command: str, language: str, modul
 
 
 @activity.defn
+@with_heartbeat
 async def execute_probe_activity(args: dict) -> ProbeExecution:
     """Run a probe in the built image with no network (F5)."""
     image_tag = args["image_tag"]

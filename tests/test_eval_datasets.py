@@ -21,6 +21,7 @@ an accuracy number, which is why they are asserted here instead.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -82,3 +83,56 @@ def test_every_repo_a_case_names_exists(agent):
         if not (REPO_ROOT / repo).is_dir():
             missing.append(f"{case['name']} -> {repo}")
     assert not missing, f"{agent}: case(s) naming a repo that is not on disk: {missing}"
+
+
+def _recon_predict():
+    case = next(case for case in _cases("recon") if case["name"] == "java-junit5")
+    return ADAPTERS["recon"](case)[3]
+
+
+@pytest.mark.parametrize("framework", [
+    "junit5",
+    "JUnit 5",
+    "JUnit 5 (Jupiter 5.10.2)",
+    "JUnit 5 (JUnit-Jupiter 5.10.2)",
+    "JUnit Jupiter 5.10.2",
+])
+def test_recon_scorer_accepts_bounded_unambiguous_junit5_aliases(framework):
+    profile = SimpleNamespace(primary_language="Java", test_framework=framework)
+    assert _recon_predict()(profile) == "java/junit5"
+    # Canonical scoring must not rewrite the evidence returned by the model.
+    assert profile.test_framework == framework
+
+
+@pytest.mark.parametrize("framework", [
+    "junit4",
+    "JUnit 4.13",
+    "JUnit 4 4.13",
+])
+def test_recon_scorer_accepts_only_junit4_versions_with_major_four(framework):
+    profile = SimpleNamespace(primary_language="Java", test_framework=framework)
+    assert _recon_predict()(profile) == "java/junit4"
+
+
+@pytest.mark.parametrize("framework", [
+    "JUnit 4 5.10.2",
+    "JUnit 4.13 and JUnit 5.10",
+])
+def test_recon_scorer_rejects_contradictory_junit4_labels(framework):
+    profile = SimpleNamespace(primary_language="Java", test_framework=framework)
+    assert _recon_predict()(profile) != "java/junit4"
+
+
+@pytest.mark.parametrize("framework", [
+    "not pytest",
+    "JUnit 4 and JUnit 5",
+    "JUnit 5 / JUnit 4",
+    "JUnit 5 (Jupiter 4.13)",
+    "JUnit 5 (JUnit-Jupiter 4.13)",
+    "JUnit Jupiter 4.13",
+    "pytest or unittest",
+    "JUnit 5" + " " * 130,
+])
+def test_recon_scorer_does_not_launder_negated_mixed_or_unbounded_labels(framework):
+    profile = SimpleNamespace(primary_language="Java", test_framework=framework)
+    assert _recon_predict()(profile) != "java/junit5"

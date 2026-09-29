@@ -16,6 +16,7 @@ Two rules shape the labels below:
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -81,13 +82,38 @@ def intake_adapter(case: dict):
             lambda o: (o.cwe or "none"), case["expected"])
 
 
+_FRAMEWORK_LABELS = (
+    ("junit5", re.compile(
+        r"(?:junit\s*5(?:\.\d+)*(?:\s*\(\s*(?:junit[\s-]+)?jupiter"
+        r"(?:\s+5(?:\.\d+)*)?\s*\))?"
+        r"|junit[\s-]+jupiter(?:\s+5(?:\.\d+)*)?)", re.IGNORECASE)),
+    ("junit4", re.compile(
+        r"junit\s*4(?:\.\d+)*(?:\s+4(?:\.\d+)*)?", re.IGNORECASE)),
+    ("pytest", re.compile(r"pytest(?:\s+v?\d+(?:\.\d+)*)?", re.IGNORECASE)),
+    ("jest", re.compile(r"jest(?:\s+v?\d+(?:\.\d+)*)?", re.IGNORECASE)),
+    ("test::more", re.compile(
+        r"(?:perl\s+)?test::more(?:\s+v?\d+(?:\.\d+)*)?", re.IGNORECASE)),
+)
+
+
+def _canonical_framework_label(value: str) -> str:
+    """Canonicalize one unambiguous framework name; never fish an alias from prose."""
+    source = value or ""
+    if len(source) > 128:
+        return "unrecognized"
+    raw = " ".join(source.split())
+    matches = [label for label, pattern in _FRAMEWORK_LABELS if pattern.fullmatch(raw)]
+    return matches[0] if len(matches) == 1 else raw.lower()
+
+
 # --- Repository-reading agents ----------------------------------------------------------
 
 
 def recon_adapter(case: dict):
     """Scored on language and test framework: everything downstream builds on those."""
     def predict(profile: Any) -> str:
-        return f"{(profile.primary_language or '').lower()}/{(profile.test_framework or '').lower()}"
+        framework = _canonical_framework_label(profile.test_framework or "")
+        return f"{(profile.primary_language or '').lower()}/{framework}"
 
     return ("Profile this repository for a triage run.", _with_detected_stack(case),
             _deps(case), predict, case["expected"])

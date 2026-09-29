@@ -7,7 +7,15 @@ execution at construction) instead of rebuilding agents inside the workflow.
 
 from __future__ import annotations
 
-from infosec_harness.agents.registry import durable_agents
+from infosec_harness.agents.registry import (
+    durable_agents,
+    resolved_agent_configs,
+    resolved_model_names,
+)
 
 AGENTS = durable_agents()
 AGENT_LIST = list(AGENTS.values())
+
+# Resolve eagerly on the worker host; workflow execution must never warm these I/O caches.
+CONFIGS = resolved_agent_configs()
+MODELS = resolved_model_names()

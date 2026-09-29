@@ -7,6 +7,8 @@ from sqlalchemy import select
 
 from infosec_harness.evals.calibration import (
     CalibrationSpec,
+    TrialResult,
+    _selection_key,
     load_calibration,
     run_calibration,
     write_report,
@@ -22,6 +24,21 @@ def test_grouping_keeps_related_variants_together():
     assert case_group({"name": "sqli-fixed", "repo": "corpus/sqli/fixed"}) \
         == "corpus/sqli"
     assert case_group({"name": "anything", "group": "repo-17"}) == "repo-17"
+
+
+def test_candidate_ranking_preserves_observed_zero_and_penalizes_unknown_usage():
+    def trial(tokens):
+        return TrialResult(
+            candidate=str(tokens), effective_config_digest=str(tokens), status="complete",
+            metrics={
+                "task_success_rate": 1.0,
+                "distributions": {"p95_latency_s": 1.0},
+                "avg_tokens": tokens,
+            },
+        )
+
+    assert _selection_key(trial(0)) > _selection_key(trial(1))
+    assert _selection_key(trial(1)) > _selection_key(trial(None))
 
 
 def test_calibration_schema_rejects_leakage_and_safety_variables():

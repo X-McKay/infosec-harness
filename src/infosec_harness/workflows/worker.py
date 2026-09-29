@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import timedelta
 
 from temporalio.client import Client
 from temporalio.worker import Worker
@@ -52,7 +53,8 @@ async def run_worker() -> None:
     except Exception:  # noqa: BLE001 - retain worker access to status/recovery activities
         logger.exception("Sandbox builder unavailable; environment builds will fail closed until runtime setup succeeds")
     client = await connect()
-    worker = Worker(client, task_queue=s.task_queue, workflows=WORKFLOWS, activities=ALL_ACTIVITIES)
+    worker = Worker(client, task_queue=s.task_queue, workflows=WORKFLOWS, activities=ALL_ACTIVITIES,
+                    max_heartbeat_throttle_interval=timedelta(seconds=5))
     logger.info("Worker listening on task queue %s at %s", s.task_queue, s.temporal_address)
     await worker.run()
 

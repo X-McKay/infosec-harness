@@ -247,7 +247,11 @@ def _print_pairwise(b, c) -> None:
     print()
 
     def delta(key: str) -> str:
-        bv, cv = b.metrics.get(key, 0), c.metrics.get(key, 0)
+        bv, cv = b.metrics.get(key), c.metrics.get(key)
+        if bv is None or cv is None:
+            before = "unknown" if bv is None else str(bv)
+            after = "unknown" if cv is None else str(cv)
+            return f"{before:>10} -> {after:<10} (unknown)"
         return f"{bv:>10} -> {cv:<10} ({cv - bv:+.4f})"
 
     incomplete = [(label, exp) for label, exp in (("baseline", b), ("candidate", c))

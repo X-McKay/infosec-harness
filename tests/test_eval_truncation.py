@@ -9,15 +9,21 @@ fails loudly with the truncation on the record.
 
 from __future__ import annotations
 
+import json
+
 import httpx
 import openai
 import pytest
 import yaml
+from pydantic import BaseModel
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from sqlalchemy import func, select
 
 from infosec_harness.evals.run import (
     IncomparableExperiments,
     TruncatedExperiment,
+    _bounded_typed_output,
+    _usage_metrics,
     compare_experiments,
     run_experiment,
 )
@@ -74,6 +80,16 @@ async def _experiment(exp_id: str):
         return await s.get(db.EvalExperiment, exp_id)
 
 
+async def _case_rows(exp_id: str):
+    from infosec_harness.persistence import db
+
+    async with db.session() as s:
+        return (await s.execute(
+            select(db.EvalCaseResult)
+            .where(db.EvalCaseResult.experiment_id == exp_id)
+            .order_by(db.EvalCaseResult.id))).scalars().all()
+
+
 async def test_transport_failure_keeps_the_scored_cases_and_fails_the_run(monkeypatch):
     planned = len(_dataset_cases()) * 2
     _break_endpoint_after(monkeypatch, 3)
@@ -103,6 +119,12 @@ async def test_transport_failure_keeps_the_scored_cases_and_fails_the_run(monkey
     assert truncation["failed_case"] == _dataset_cases()[1]["name"]
     assert truncation["failed_repetition"] == 1
     assert truncation["completed_cases"] == 1
+    assert exp.metrics["avg_tokens"] is None
+    assert exp.metrics["cache_hit_ratio"] is None
+    observations = exp.metrics["usage_observations"]
+    assert observations["attempts_observed"] == 3
+    assert observations["attempts_total"] == 4
+    assert observations["attempt_coverage_rate"] == 0.75
 
 
 async def test_truncated_run_writes_no_release_report(monkeypatch, tmp_path, capsys):
@@ -123,6 +145,102 @@ async def test_complete_run_is_marked_complete_and_fully_covered():
     assert exp.metrics["status"] == "complete"
     assert exp.metrics["n"] == exp.metrics["n_planned"] == len(_dataset_cases())
     assert "truncated" not in exp.metrics
+
+
+def test_complete_observed_zero_usage_remains_numeric_zero():
+    unknown = _usage_metrics([], 0, 0)
+    assert unknown["avg_tokens"] is None
+    assert unknown["cache_hit_ratio"] is None
+    assert unknown["usage_observations"]["attempt_coverage_rate"] is None
+
+    metrics = _usage_metrics([{"usage_status": "observed"}], 0, 0)
+    assert metrics["avg_tokens"] == 0.0
+    assert metrics["cache_hit_ratio"] == 0.0
+    assert metrics["usage_observations"]["attempt_coverage_rate"] == 1.0
+
+
+async def test_complete_case_retains_bounded_typed_output_without_the_prompt():
+    exp_id = await run_experiment(AGENT)
+    first = (await _case_rows(exp_id))[0].scores
+    diagnostic = first["typed_output"]
+    assert diagnostic["type"] == "ProbeDiagnosis"
+    assert diagnostic["value"]["kind"] == first["predicted"] == "valid_positive"
+    assert not diagnostic["truncated"]
+    assert "prompt" not in first and "messages" not in first
+
+
+def test_typed_output_is_bounded_and_sensitive_keys_are_redacted():
+    class DiagnosticFixture(BaseModel):
+        visible: str
+        payload: dict
+
+    diagnostic = _bounded_typed_output(DiagnosticFixture(
+        visible="x" * 20_000,
+        payload={"Authorization": "Bearer secret", "nested": {"api-key": "secret-2"}},
+    ))
+    encoded = json.dumps(diagnostic)
+    assert diagnostic["truncated"] and len(diagnostic["json_prefix"]) == 16_000
+    assert "Bearer secret" not in encoded and "secret-2" not in encoded
+    assert "[REDACTED]" in encoded
+
+
+async def test_invalid_output_retains_category_but_not_exception_text(monkeypatch, capsys):
+    from infosec_harness.agents import registry
+
+    class InvalidOutputAgent:
+        async def run(self, *args, **kwargs):
+            raise UnexpectedModelBehavior(
+                "sensitive reason should-not-be-stored",
+                body='{"authorization":"Bearer should-not-be-stored"}',
+            )
+
+    monkeypatch.setattr(registry, "build_agent", lambda *args, **kwargs: InvalidOutputAgent())
+    exp_id = await run_experiment(AGENT)
+    exp = await _experiment(exp_id)
+    rows = await _case_rows(exp_id)
+
+    assert exp.metrics["status"] == "complete"
+    assert exp.metrics["schema_validity_rate"] == 0.0
+    assert len(rows) == len(_dataset_cases())
+    assert {row.scores["error_type"] for row in rows} == {"UnexpectedModelBehavior"}
+    encoded = json.dumps([row.scores for row in rows])
+    assert "should-not-be-stored" not in encoded and "sensitive reason" not in encoded
+    assert {row.scores["error_category"] for row in rows} == {"output_contract_invalid"}
+    assert all(row.scores["provider_body_retained"] is False for row in rows)
+    assert exp.metrics["avg_tokens"] is None
+    assert exp.metrics["cache_hit_ratio"] is None
+    assert exp.metrics["usage_observations"]["attempts_observed"] == 0
+    assert "cache_hit=unknown" in capsys.readouterr().out
+
+
+async def test_answered_and_invalid_attempts_do_not_publish_partial_usage(monkeypatch):
+    from infosec_harness.agents import registry
+
+    real_build = registry.build_agent
+
+    class InvalidAfterOne:
+        def __init__(self, inner):
+            self.inner = inner
+            self.calls = 0
+
+        async def run(self, *args, **kwargs):
+            self.calls += 1
+            if self.calls > 1:
+                raise UnexpectedModelBehavior("not retained", body="not retained")
+            return await self.inner.run(*args, **kwargs)
+
+    monkeypatch.setattr(
+        registry, "build_agent", lambda *args, **kwargs: InvalidAfterOne(
+            real_build(*args, **kwargs)
+        )
+    )
+    exp = await _experiment(await run_experiment(AGENT))
+    observations = exp.metrics["usage_observations"]
+    assert observations["attempts_observed"] == 1
+    assert observations["attempts_total"] == len(_dataset_cases())
+    assert observations["observed_avg_tokens"] > 0
+    assert exp.metrics["avg_tokens"] is None
+    assert exp.metrics["cache_hit_ratio"] is None
 
 
 async def test_compare_flags_a_truncated_side(monkeypatch, capsys):

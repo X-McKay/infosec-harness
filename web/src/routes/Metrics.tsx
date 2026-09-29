@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { api } from "@/api/client";
+import { api, type MetricsPopulation } from "@/api/client";
 import {
   DistributionChart,
   type Distribution,
@@ -12,7 +12,8 @@ import { money, number, seconds } from "@/lib/format";
 type MetricsData = Awaited<ReturnType<typeof api.metrics>>;
 
 export function Metrics() {
-  const [population, setPopulation] = useState("operational");
+  const [population, setPopulation] =
+    useState<MetricsPopulation>("operational");
   const [tokenMetric, setTokenMetric] = useState<
     "tokens" | "input_tokens" | "output_tokens"
   >("tokens");
@@ -43,7 +44,9 @@ export function Metrics() {
           <select
             className="field ml-2"
             value={population}
-            onChange={(event) => setPopulation(event.target.value)}
+            onChange={(event) =>
+              setPopulation(event.target.value as MetricsPopulation)
+            }
           >
             <option value="operational">Operational</option>
             <option value="demo">Demo</option>

@@ -1,3 +1,5 @@
+import pytest
+
 from infosec_harness.agents.validators import verdict_violations
 from infosec_harness.domain.models import (
     CodeRef,
@@ -265,6 +267,66 @@ def test_the_environment_agents_all_carry_the_contract():
 
     for agent in ("env-planner", "build-repair", "partial-build"):
         assert validate_environment_spec in OUTPUT_VALIDATORS[agent], agent
+
+
+def test_partial_build_adds_its_scope_contract_without_changing_other_agents():
+    from infosec_harness.agents.validators import (
+        OUTPUT_VALIDATORS,
+        validate_environment_spec,
+        validate_partial_build_scope,
+    )
+
+    assert OUTPUT_VALIDATORS["env-planner"] == (validate_environment_spec,)
+    assert OUTPUT_VALIDATORS["build-repair"] == (validate_environment_spec,)
+    assert OUTPUT_VALIDATORS["partial-build"] == (
+        validate_environment_spec,
+        validate_partial_build_scope,
+    )
+
+
+def test_partial_build_rejects_the_shared_full_scope_default():
+    from pydantic_ai import ModelRetry
+
+    from infosec_harness.agents.validators import validate_partial_build_scope
+    from infosec_harness.domain.models import EnvironmentSpec
+
+    spec = EnvironmentSpec(
+        base_image="python:3.12-slim",
+        test_command="python -m pytest -q -s -o addopts= {test_file}",
+    )
+    with pytest.raises(ModelRetry, match="scope.*partial"):
+        validate_partial_build_scope(None, spec)
+
+
+@pytest.mark.parametrize("module_path", [None, "", "   "])
+def test_partial_build_rejects_missing_or_blank_module_path(module_path):
+    from pydantic_ai import ModelRetry
+
+    from infosec_harness.agents.validators import validate_partial_build_scope
+    from infosec_harness.domain.models import EnvironmentSpec
+
+    spec = EnvironmentSpec(
+        base_image="python:3.12-slim",
+        test_command="python -m pytest -q -s -o addopts= {test_file}",
+        scope="partial",
+        module_path=module_path,
+    )
+    with pytest.raises(ModelRetry, match="module_path"):
+        validate_partial_build_scope(None, spec)
+
+
+@pytest.mark.parametrize("module_path", [".", "services/api"])
+def test_partial_build_accepts_root_or_named_module(module_path):
+    from infosec_harness.agents.validators import validate_partial_build_scope
+    from infosec_harness.domain.models import EnvironmentSpec
+
+    spec = EnvironmentSpec(
+        base_image="python:3.12-slim",
+        test_command="python -m pytest -q -s -o addopts= {test_file}",
+        scope="partial",
+        module_path=module_path,
+    )
+    assert validate_partial_build_scope(None, spec) is spec
 
 
 def test_the_retry_message_names_the_fix_rather_than_the_violation():
@@ -617,6 +679,29 @@ def test_the_stub_models_own_specs_satisfy_the_contract():
         problems = (environment_spec_violations(spec) + install_path_violations(spec)
                     + offline_warmup_violations(spec))
         assert problems == [], (languages, spec.test_command, problems)
+
+
+async def test_partial_build_stub_runs_through_its_validator_with_a_root_module():
+    """The offline agent must satisfy the role-specific output contract it exercises."""
+    from infosec_harness.agents.deps import AgentDeps
+    from infosec_harness.agents.registry import build_agent
+    from infosec_harness.agents.render import render_prompt
+    from infosec_harness.domain.models import StackFingerprint
+
+    stack = StackFingerprint(languages={"python": 1}, manifests=["requirements.txt"])
+    result = await build_agent("partial-build", durable=False).run(
+        render_prompt("narrow the failed environment", {"stack_fingerprint": stack}, stack=stack),
+        deps=AgentDeps(repo_path="/tmp"),
+    )
+    assert result.output.scope == "partial"
+    assert result.output.module_path == "."
+
+
+def test_partial_build_stub_preserves_a_failed_spec_module_path():
+    from infosec_harness.agents.stubs import _partial_build_plan
+
+    text = '<failed_spec>\n{"scope": "full", "module_path": "services/api"}\n</failed_spec>'
+    assert _partial_build_plan(text)["module_path"] == "services/api"
 
 
 def test_the_stub_models_own_probes_satisfy_the_contract():

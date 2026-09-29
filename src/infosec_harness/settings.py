@@ -105,6 +105,13 @@ class Settings(BaseSettings):
     root_max_tokens: int = Field(default=100_000_000, gt=0)
     root_max_cost_usd: float = Field(default=100.0, gt=0)
 
+    root_max_tool_calls: int = Field(default=50000, gt=0)
+    root_max_agent_runs: int = Field(default=1000, gt=0)
+    # Aggregate reserved workload seconds at the configured per-container resource caps.
+    # This includes retried build/probe/smoke activities and agent sandbox-tool allowances.
+    root_max_execution_seconds: int = Field(default=1_000_000, gt=0)
+    root_max_elapsed_seconds: int = Field(default=28800, gt=0)
+
     # Budgets (D6)
     max_build_repairs: int = 6
     max_partial_build_attempts: int = 4

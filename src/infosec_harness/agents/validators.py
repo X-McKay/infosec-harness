@@ -378,11 +378,35 @@ def validate_environment_spec(
     return output
 
 
+def validate_partial_build_scope(
+    ctx: RunContext[AgentDeps], output: EnvironmentSpec
+) -> EnvironmentSpec:
+    """Require the role-specific narrowing contract after generic spec validation.
+
+    ``EnvironmentSpec`` is shared with env-planner and build-repair, where ``full`` is valid
+    and the default. Partial-build is called only after that full scope has failed, so allowing
+    its shared model default to survive would silently schedule the same whole-repository build
+    again. The sandbox validates path confinement later; this check only enforces the role's
+    required shape.
+    """
+    problems: list[str] = []
+    if output.scope != "partial":
+        problems.append("set scope to 'partial'; this agent is the narrowed-build fallback")
+    if not output.module_path or not output.module_path.strip():
+        problems.append(
+            "set module_path to the repo-relative unit directory (use '.' for the repository "
+            "root or a named subdirectory such as 'services/api')"
+        )
+    if problems:
+        raise ModelRetry("The partial-build scope contract is incomplete:\n- " + "\n- ".join(problems))
+    return output
+
+
 OUTPUT_VALIDATORS: dict[str, tuple[Callable[[RunContext[AgentDeps], Any], Any], ...]] = {
     "verdict": (validate_verdict,),
     "probe-author": (validate_probe,),
     "probe-repair": (validate_probe,),
     "env-planner": (validate_environment_spec,),
     "build-repair": (validate_environment_spec,),
-    "partial-build": (validate_environment_spec,),
+    "partial-build": (validate_environment_spec, validate_partial_build_scope),
 }

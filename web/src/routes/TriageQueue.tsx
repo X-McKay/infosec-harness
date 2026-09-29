@@ -100,8 +100,8 @@ export function TriageQueue() {
             variant="outline"
             onClick={() =>
               updateSearch({
-                population: "",
-                metric: "",
+                population: undefined,
+                metric: undefined,
                 lower: undefined,
                 upper: undefined,
                 upper_inclusive: false,

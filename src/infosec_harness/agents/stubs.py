@@ -344,6 +344,12 @@ def _diagnosis(text: str) -> dict:
     return {"kind": kind, "explanation": "stub diagnosis from the recorded execution facts"}
 
 
+def _partial_build_plan(text: str) -> dict:
+    """Keep the partial-build stub inside the narrowed-output contract."""
+    plan = _tag(text, "failed_spec") or _env_plan(_tag(text, "stack_fingerprint"))
+    return {**plan, "scope": "partial", "module_path": plan.get("module_path") or "."}
+
+
 _STUBS: dict[str, Callable[[str], dict]] = {
     "intake": lambda t: {"evidence": []},
     "recon": lambda t: {
@@ -353,8 +359,7 @@ _STUBS: dict[str, Callable[[str], dict]] = {
         "test_layout": "unknown"},
     "env-planner": lambda t: _env_plan(_tag(t, "stack_fingerprint")),
     "build-repair": lambda t: (_tag(t, "failed_spec") or _env_plan(_tag(t, "stack_fingerprint"))),
-    "partial-build": lambda t: {**(_tag(t, "failed_spec") or _env_plan(_tag(t, "stack_fingerprint"))),
-                                "scope": "partial", "module_path": None},
+    "partial-build": _partial_build_plan,
     "context": lambda t: {"summary": "stub context", "reachability": "unknown",
                           "reachability_rationale": "stub model does not analyse code"},
     "probe-planner": lambda t: {

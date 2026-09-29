@@ -6,10 +6,51 @@ Callers store bytes and get back a ``sha256:...`` ref; the DB keeps refs, not by
 from __future__ import annotations
 
 import hashlib
+import os
+import re
+import tempfile
 from functools import lru_cache
+from pathlib import Path
 
 from infosec_harness.sandbox.docker import default_workspace
 from infosec_harness.settings import get_settings
+
+_REF = re.compile(r"^sha256:([0-9a-f]{64})$")
+
+
+class ArtifactError(RuntimeError):
+    """Base class for an artifact reference that cannot supply trustworthy bytes."""
+
+
+class InvalidArtifactReference(ArtifactError):
+    """The reference is not a canonical SHA-256 content address."""
+
+
+class ArtifactMissingError(ArtifactError):
+    """The referenced content-addressed object is no longer retained."""
+
+
+class ArtifactIntegrityError(ArtifactError):
+    """The stored bytes do not match the digest in their reference."""
+
+
+def _digest_from_ref(ref: str) -> str:
+    match = _REF.fullmatch(ref)
+    if match is None:
+        raise InvalidArtifactReference(
+            "artifact reference must be 'sha256:' followed by 64 lowercase hexadecimal digits"
+        )
+    return match.group(1)
+
+
+def _verify(ref: str, data: bytes) -> bytes:
+    expected = _digest_from_ref(ref)
+    actual = hashlib.sha256(data).hexdigest()
+    if actual != expected:
+        raise ArtifactIntegrityError(
+            f"artifact {ref} is corrupt: stored content has sha256:{actual}"
+        )
+    return data
 
 
 class ArtifactStore:
@@ -22,6 +63,10 @@ class ArtifactStore:
     def get_bytes(self, ref: str) -> bytes:  # pragma: no cover
         raise NotImplementedError
 
+    def delete(self, ref: str) -> None:  # pragma: no cover
+        """Explicitly delete one shared object; callers must first retire every referencing run."""
+        raise NotImplementedError
+
     def get_text(self, ref: str) -> str:
         return self.get_bytes(ref).decode(errors="replace")
 
@@ -31,19 +76,35 @@ class FilesystemStore(ArtifactStore):
         self.root = default_workspace() / "artifacts"
         self.root.mkdir(parents=True, exist_ok=True)
 
-    def _path(self, digest: str):
+    def _path(self, digest: str) -> Path:
         return self.root / digest[:2] / digest[2:]
 
     def put_bytes(self, data: bytes, *, media_type: str = "application/octet-stream") -> str:
         digest = hashlib.sha256(data).hexdigest()
         p = self._path(digest)
         p.parent.mkdir(parents=True, exist_ok=True)
-        if not p.exists():
-            p.write_bytes(data)
+        # Publish atomically. Concurrent writers produce the same bytes for this key, and a put
+        # repairs an object whose contents were damaged out of band.
+        descriptor, temporary = tempfile.mkstemp(prefix=f".{digest}.", dir=p.parent)
+        try:
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(data)
+            os.replace(temporary, p)
+        finally:
+            Path(temporary).unlink(missing_ok=True)
         return f"sha256:{digest}"
 
     def get_bytes(self, ref: str) -> bytes:
-        return self._path(ref.removeprefix("sha256:")).read_bytes()
+        digest = _digest_from_ref(ref)
+        try:
+            data = self._path(digest).read_bytes()
+        except FileNotFoundError as exc:
+            raise ArtifactMissingError(f"artifact {ref} is not retained") from exc
+        return _verify(ref, data)
+
+    def delete(self, ref: str) -> None:
+        digest = _digest_from_ref(ref)
+        self._path(digest).unlink(missing_ok=True)
 
 
 class S3Store(ArtifactStore):
@@ -70,8 +131,27 @@ class S3Store(ArtifactStore):
         return f"sha256:{digest}"
 
     def get_bytes(self, ref: str) -> bytes:
-        obj = self._client.get_object(Bucket=self.bucket, Key=self._key(ref.removeprefix("sha256:")))
-        return obj["Body"].read()
+        digest = _digest_from_ref(ref)
+        try:
+            obj = self._client.get_object(Bucket=self.bucket, Key=self._key(digest))
+        except Exception as exc:
+            response = getattr(exc, "response", {})
+            code = str(response.get("Error", {}).get("Code", ""))
+            if code in {"404", "NoSuchKey", "NotFound"}:
+                raise ArtifactMissingError(f"artifact {ref} is not retained") from exc
+            raise
+        body = obj["Body"]
+        try:
+            data = body.read()
+        finally:
+            close = getattr(body, "close", None)
+            if callable(close):
+                close()
+        return _verify(ref, data)
+
+    def delete(self, ref: str) -> None:
+        digest = _digest_from_ref(ref)
+        self._client.delete_object(Bucket=self.bucket, Key=self._key(digest))
 
 
 @lru_cache

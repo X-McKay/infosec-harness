@@ -302,9 +302,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Experiment Detail Api Experiments  Experiment Id  Get"
+                  "$ref": "#/components/schemas/ExperimentDetail"
                 }
               }
             }
@@ -333,8 +331,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "additionalProperties": true,
-                    "type": "object"
+                    "$ref": "#/components/schemas/BatchSummary"
                   },
                   "type": "array",
                   "title": "Response Batches Api Batches Get"
@@ -363,9 +360,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Submit Api Batches Post"
+                  "$ref": "#/components/schemas/BatchAccepted"
                 }
               }
             }
@@ -403,9 +398,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Submit Ado Api Batches Ado Post"
+                  "$ref": "#/components/schemas/AdoBatchAccepted"
                 }
               }
             }
@@ -444,9 +437,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Batch Api Batches  Batch Id  Get"
+                  "$ref": "#/components/schemas/BatchDetail"
                 }
               }
             }
@@ -522,8 +513,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "type": "object",
-                    "additionalProperties": true
+                    "$ref": "#/components/schemas/RunSummary"
                   },
                   "title": "Response Runs Api Runs Get"
                 }
@@ -564,9 +554,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Run Api Runs  Run Id  Get"
+                  "$ref": "#/components/schemas/RunDetail"
                 }
               }
             }
@@ -615,9 +603,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Review Api Runs  Run Id  Review Post"
+                  "$ref": "#/components/schemas/ReviewSaved"
                 }
               }
             }
@@ -646,8 +632,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "additionalProperties": true,
-                    "type": "object"
+                    "$ref": "#/components/schemas/ExperimentSummary"
                   },
                   "type": "array",
                   "title": "Response Experiments Api Experiments Get"
@@ -668,9 +653,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Config Api Config Get"
+                  "$ref": "#/components/schemas/ConfigResponse"
                 }
               }
             }
@@ -688,9 +671,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Health Api Health Get"
+                  "$ref": "#/components/schemas/HealthResponse"
                 }
               }
             }
@@ -719,9 +700,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Cancel Batch Api Batches  Batch Id  Cancel Post"
+                  "$ref": "#/components/schemas/CancelResponse"
                 }
               }
             }
@@ -742,6 +721,172 @@
   },
   "components": {
     "schemas": {
+      "AdoBatchAccepted": {
+        "properties": {
+          "batch_id": {
+            "type": "string",
+            "title": "Batch Id"
+          },
+          "imported": {
+            "type": "integer",
+            "title": "Imported"
+          }
+        },
+        "type": "object",
+        "required": [
+          "batch_id",
+          "imported"
+        ],
+        "title": "AdoBatchAccepted"
+      },
+      "AgentConfig": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "model_tier": {
+            "type": "string",
+            "title": "Model Tier"
+          },
+          "config_hash": {
+            "type": "string",
+            "title": "Config Hash"
+          },
+          "resolved_model": {
+            "type": "string",
+            "title": "Resolved Model"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "model_tier",
+          "config_hash",
+          "resolved_model"
+        ],
+        "title": "AgentConfig"
+      },
+      "BatchAccepted": {
+        "properties": {
+          "batch_id": {
+            "type": "string",
+            "title": "Batch Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "batch_id"
+        ],
+        "title": "BatchAccepted"
+      },
+      "BatchDetail": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "source_kind": {
+            "type": "string",
+            "title": "Source Kind"
+          },
+          "finding_count": {
+            "type": "integer",
+            "title": "Finding Count"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "budget": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Budget"
+          },
+          "status_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Status Counts"
+          },
+          "verdict_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Verdict Counts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "label",
+          "source_kind",
+          "finding_count",
+          "created_at",
+          "budget",
+          "status_counts",
+          "verdict_counts"
+        ],
+        "title": "BatchDetail"
+      },
+      "BatchSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "source_kind": {
+            "type": "string",
+            "title": "Source Kind"
+          },
+          "finding_count": {
+            "type": "integer",
+            "title": "Finding Count"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "label",
+          "source_kind",
+          "finding_count",
+          "created_at"
+        ],
+        "title": "BatchSummary"
+      },
       "Bin": {
         "properties": {
           "lower": {
@@ -764,6 +909,40 @@
           "count"
         ],
         "title": "Bin"
+      },
+      "CancelResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "CancelResponse"
+      },
+      "ConfigResponse": {
+        "properties": {
+          "model_mode": {
+            "type": "string",
+            "title": "Model Mode"
+          },
+          "agents": {
+            "items": {
+              "$ref": "#/components/schemas/AgentConfig"
+            },
+            "type": "array",
+            "title": "Agents"
+          }
+        },
+        "type": "object",
+        "required": [
+          "model_mode",
+          "agents"
+        ],
+        "title": "ConfigResponse"
       },
       "Distribution": {
         "properties": {
@@ -845,6 +1024,181 @@
           "coverage"
         ],
         "title": "Distribution"
+      },
+      "ExperimentCase": {
+        "properties": {
+          "case_name": {
+            "type": "string",
+            "title": "Case Name"
+          },
+          "repetition": {
+            "type": "integer",
+            "title": "Repetition"
+          },
+          "passed": {
+            "type": "boolean",
+            "title": "Passed"
+          },
+          "scores": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Scores"
+          },
+          "cost_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Usd"
+          },
+          "latency_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency S"
+          }
+        },
+        "type": "object",
+        "required": [
+          "case_name",
+          "repetition",
+          "passed",
+          "scores",
+          "cost_usd",
+          "latency_s"
+        ],
+        "title": "ExperimentCase"
+      },
+      "ExperimentDetail": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "agent": {
+            "type": "string",
+            "title": "Agent"
+          },
+          "metrics": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Metrics"
+          },
+          "cases": {
+            "items": {
+              "$ref": "#/components/schemas/ExperimentCase"
+            },
+            "type": "array",
+            "title": "Cases"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "agent",
+          "metrics",
+          "cases"
+        ],
+        "title": "ExperimentDetail"
+      },
+      "ExperimentSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "agent": {
+            "type": "string",
+            "title": "Agent"
+          },
+          "dataset": {
+            "type": "string",
+            "title": "Dataset"
+          },
+          "dataset_version": {
+            "type": "string",
+            "title": "Dataset Version"
+          },
+          "git_sha": {
+            "type": "string",
+            "title": "Git Sha"
+          },
+          "overlay": {
+            "type": "string",
+            "title": "Overlay"
+          },
+          "repetitions": {
+            "type": "integer",
+            "title": "Repetitions"
+          },
+          "metrics": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Metrics"
+          },
+          "config_hash": {
+            "type": "string",
+            "title": "Config Hash"
+          },
+          "git_dirty": {
+            "type": "boolean",
+            "title": "Git Dirty"
+          },
+          "model_name": {
+            "type": "string",
+            "title": "Model Name"
+          },
+          "backend": {
+            "type": "string",
+            "title": "Backend"
+          },
+          "pricing": {
+            "type": "string",
+            "title": "Pricing"
+          },
+          "harness_version": {
+            "type": "string",
+            "title": "Harness Version"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "agent",
+          "dataset",
+          "dataset_version",
+          "git_sha",
+          "overlay",
+          "repetitions",
+          "metrics",
+          "config_hash",
+          "git_dirty",
+          "model_name",
+          "backend",
+          "pricing",
+          "harness_version",
+          "created_at"
+        ],
+        "title": "ExperimentSummary"
       },
       "FindingInput": {
         "properties": {
@@ -1009,6 +1363,114 @@
         "type": "object",
         "title": "HTTPValidationError"
       },
+      "HealthResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "HealthResponse"
+      },
+      "InvocationRecord": {
+        "properties": {
+          "agent": {
+            "type": "string",
+            "title": "Agent"
+          },
+          "model_name": {
+            "type": "string",
+            "title": "Model Name"
+          },
+          "config_hash": {
+            "type": "string",
+            "title": "Config Hash"
+          },
+          "input_tokens": {
+            "type": "integer",
+            "title": "Input Tokens"
+          },
+          "output_tokens": {
+            "type": "integer",
+            "title": "Output Tokens"
+          },
+          "cache_read_tokens": {
+            "type": "integer",
+            "title": "Cache Read Tokens"
+          },
+          "cache_write_tokens": {
+            "type": "integer",
+            "title": "Cache Write Tokens"
+          },
+          "cost_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Usd"
+          },
+          "cost_estimated": {
+            "type": "boolean",
+            "title": "Cost Estimated"
+          },
+          "latency_s": {
+            "type": "number",
+            "title": "Latency S"
+          },
+          "requests": {
+            "type": "integer",
+            "title": "Requests"
+          },
+          "repeated_tool_calls": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Repeated Tool Calls"
+          },
+          "tools_called": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tools Called"
+          },
+          "skills_loaded": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Skills Loaded"
+          }
+        },
+        "type": "object",
+        "required": [
+          "agent",
+          "model_name",
+          "config_hash",
+          "input_tokens",
+          "output_tokens",
+          "cache_read_tokens",
+          "cache_write_tokens",
+          "cost_usd",
+          "cost_estimated",
+          "latency_s",
+          "requests",
+          "repeated_tool_calls",
+          "tools_called",
+          "skills_loaded"
+        ],
+        "title": "InvocationRecord"
+      },
+      "JsonValue": {},
       "MetricsResponse": {
         "properties": {
           "schema_version": {
@@ -1101,6 +1563,45 @@
         ],
         "title": "MetricsResponse"
       },
+      "ReviewRecord": {
+        "properties": {
+          "reviewer": {
+            "type": "string",
+            "title": "Reviewer",
+            "default": ""
+          },
+          "decision": {
+            "type": "string",
+            "title": "Decision"
+          },
+          "override_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Override Label"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason",
+            "default": ""
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "decision",
+          "created_at"
+        ],
+        "title": "ReviewRecord"
+      },
       "ReviewRequest": {
         "properties": {
           "reviewer": {
@@ -1133,6 +1634,305 @@
           "decision"
         ],
         "title": "ReviewRequest"
+      },
+      "ReviewSaved": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "title": "ReviewSaved"
+      },
+      "RunDetail": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "batch_id": {
+            "type": "string",
+            "title": "Batch Id"
+          },
+          "fingerprint": {
+            "type": "string",
+            "title": "Fingerprint"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "repo_url": {
+            "type": "string",
+            "title": "Repo Url"
+          },
+          "revision": {
+            "type": "string",
+            "title": "Revision"
+          },
+          "cwe": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cwe"
+          },
+          "severity": {
+            "type": "string",
+            "title": "Severity"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "verdict": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verdict"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "inconclusive_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inconclusive Reason"
+          },
+          "priority": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Priority"
+          },
+          "priority_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Priority Score"
+          },
+          "environment_scope": {
+            "type": "string",
+            "title": "Environment Scope"
+          },
+          "early_exit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Early Exit"
+          },
+          "cost_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Usd"
+          },
+          "total_tokens": {
+            "type": "integer",
+            "title": "Total Tokens"
+          },
+          "cache_read_tokens": {
+            "type": "integer",
+            "title": "Cache Read Tokens"
+          },
+          "latency_s": {
+            "type": "number",
+            "title": "Latency S"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "telemetry": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunTelemetry"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "phase": {
+            "type": "string",
+            "title": "Phase"
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/RunEvent"
+            },
+            "type": "array",
+            "title": "Events"
+          },
+          "review_history": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewRecord"
+            },
+            "type": "array",
+            "title": "Review History"
+          },
+          "finding": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Finding"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "invocations": {
+            "items": {
+              "$ref": "#/components/schemas/InvocationRecord"
+            },
+            "type": "array",
+            "title": "Invocations"
+          },
+          "review": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReviewRecord"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "batch_id",
+          "fingerprint",
+          "title",
+          "repo_url",
+          "revision",
+          "cwe",
+          "severity",
+          "status",
+          "verdict",
+          "confidence",
+          "inconclusive_reason",
+          "priority",
+          "priority_score",
+          "environment_scope",
+          "early_exit",
+          "cost_usd",
+          "total_tokens",
+          "cache_read_tokens",
+          "latency_s",
+          "created_at",
+          "telemetry",
+          "phase",
+          "evidence",
+          "events",
+          "review_history",
+          "finding",
+          "result",
+          "invocations",
+          "review"
+        ],
+        "title": "RunDetail"
+      },
+      "RunEvent": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "phase": {
+            "type": "string",
+            "title": "Phase"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "phase",
+          "detail",
+          "created_at"
+        ],
+        "title": "RunEvent"
       },
       "RunPage": {
         "properties": {
@@ -1315,14 +2115,12 @@
           "telemetry": {
             "anyOf": [
               {
-                "additionalProperties": true,
-                "type": "object"
+                "$ref": "#/components/schemas/RunTelemetry"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Telemetry"
+            ]
           },
           "phase": {
             "type": "string",
@@ -1356,6 +2154,178 @@
           "phase"
         ],
         "title": "RunSummary"
+      },
+      "RunTelemetry": {
+        "properties": {
+          "schema_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schema Version"
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase"
+          },
+          "accepted_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accepted At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "wall_time_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wall Time S"
+          },
+          "agent_time_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Time S"
+          },
+          "cost_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Usd"
+          },
+          "known_cost_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Known Cost Usd"
+          },
+          "accounting_complete": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accounting Complete"
+          },
+          "cost_accounting_complete": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Accounting Complete"
+          },
+          "known_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Known Tokens"
+          },
+          "input_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Tokens"
+          },
+          "output_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Tokens"
+          },
+          "cost_coverage": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Coverage"
+          },
+          "total_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Tokens"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "RunTelemetry"
       },
       "Severity": {
         "type": "string",

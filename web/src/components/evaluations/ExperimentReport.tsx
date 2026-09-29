@@ -1,35 +1,17 @@
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { QueryState } from "@/components/QueryState";
+import type {
+  ExperimentCase,
+  ExperimentDetail,
+  ExperimentSummary,
+} from "@/api/client";
 import { money, seconds } from "@/lib/format";
 import { CaseTable, ResourceDistribution, Scatter } from "./ExperimentCharts";
 
-export type Metrics = Record<string, unknown>;
-export type Experiment = {
-  id: string;
-  agent: string;
-  dataset: string;
-  dataset_version: string;
-  model_name: string | null;
-  backend: string | null;
-  config_hash: string | null;
-  git_sha: string | null;
-  git_dirty: boolean | null;
-  harness_version: string | null;
-  overlay: unknown;
-  repetitions: number;
-  created_at: string;
-  metrics: Metrics;
-};
-export type ExperimentCase = {
-  case_name: string;
-  repetition: number;
-  passed: boolean;
-  latency_s: number | null;
-  cost_usd: number | null;
-  scores: Metrics;
-};
-export type ExperimentDetail = Experiment & { cases?: ExperimentCase[] };
+export type Metrics = ExperimentSummary["metrics"];
+export type Experiment = ExperimentSummary;
+export type { ExperimentCase, ExperimentDetail };
 export type Gate = { label: string; status: string; detail: string };
 
 export const text = (value: unknown): string | null =>
@@ -48,25 +30,6 @@ export function metricNumber(metrics: Metrics, ...keys: string[]) {
   }
   return null;
 }
-export function normalize(value: Record<string, unknown>): Experiment {
-  return {
-    id: String(value.id || ""),
-    agent: String(value.agent || "Unknown agent"),
-    dataset: String(value.dataset || "Unknown dataset"),
-    dataset_version: String(value.dataset_version || "unknown"),
-    model_name: text(value.model_name),
-    backend: text(value.backend),
-    config_hash: text(value.config_hash),
-    git_sha: text(value.git_sha),
-    git_dirty: typeof value.git_dirty === "boolean" ? value.git_dirty : null,
-    harness_version: text(value.harness_version),
-    overlay: value.overlay,
-    repetitions: numeric(value.repetitions) ?? 0,
-    created_at: String(value.created_at || ""),
-    metrics: record(value.metrics),
-  };
-}
-
 export function gateObservations(experiment: Experiment): Gate[] {
   const metrics = experiment.metrics;
   const total = metricNumber(metrics, "n", "cases_completed");
@@ -172,8 +135,9 @@ export function ExperimentContent({
             <CardTitle>Descriptive efficacy / cost comparison</CardTitle>
             <p className="text-xs text-muted-foreground">
               Same agent, dataset, and version; complete experiments with
-              recorded accuracy and cost only. This is a descriptive plot, not a
-              computed frontier.
+              recorded accuracy and cost only. This related-run view does not
+              establish release comparability or compute a frontier; use the
+              strict comparison report for an eligibility decision.
             </p>
           </CardHeader>
           <CardContent>
@@ -181,8 +145,8 @@ export function ExperimentContent({
               <Scatter points={points} />
             ) : (
               <p className="empty">
-                No comparable accuracy and cost measurements are available for
-                this cohort.
+                No related completed runs have both accuracy and cost
+                measurements.
               </p>
             )}
           </CardContent>

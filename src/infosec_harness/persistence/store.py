@@ -9,6 +9,7 @@ from typing import Any
 from sqlalchemy import func, select, update
 
 from infosec_harness.domain.models import TriageRunOutput, canonical_json
+from infosec_harness.graph.manifests import persisted_manifest
 from infosec_harness.persistence import db
 
 
@@ -32,9 +33,14 @@ def _output_values(out: TriageRunOutput, previous: dict, operations: dict) -> di
     latency = sum(i.latency_s for i in out.invocations)
     own_operations = [operation for key, operation in operations.items()
                       if out.finding.fingerprint in key]
-    accounting_complete = all(op["status"] == "settled" for op in own_operations)
+    # Execution operations account wall-clock workload reservations. They deliberately stay
+    # uncertain when a worker cannot observe the full external runtime, but that says nothing
+    # about provider token/cost usage returned by a settled agent operation. Records written
+    # before operation kinds existed are agent operations by definition.
+    agent_operations = [op for op in own_operations if op.get("kind", "agent") == "agent"]
+    accounting_complete = all(op["status"] == "settled" for op in agent_operations)
     cost_complete = all(op["status"] == "settled" or
-        op.get("record", {}).get("pricing_status") == "known_zero" for op in own_operations)
+        op.get("record", {}).get("pricing_status") == "known_zero" for op in agent_operations)
     accepted = previous.get("accepted_at")
     elapsed = max(0.0, (datetime.now(UTC) - datetime.fromisoformat(accepted)).total_seconds()) if accepted else None
     costs = [i.cost_usd for i in out.invocations]
@@ -66,6 +72,7 @@ def _output_values(out: TriageRunOutput, previous: dict, operations: dict) -> di
 
 async def save_run_output(batch_id: str, out: TriageRunOutput) -> str:
     """Persist one output atomically; a cancellation/failure fences every late write."""
+    out = out.model_copy(update={"manifest": persisted_manifest(out.manifest)})
     run_id = _run_id(batch_id, out.finding.fingerprint)
     async with db.session() as session:
         run = await session.get(db.TriageRun, run_id)
@@ -184,6 +191,7 @@ async def batch_summary(batch_id: str) -> dict | None:
             return None
         counts = dict((await s.execute(
             select(db.TriageRun.verdict, func.count()).where(db.TriageRun.batch_id == batch_id)
+            .where(db.TriageRun.verdict.is_not(None))
             .group_by(db.TriageRun.verdict))).all())
         states = dict((await s.execute(select(db.TriageRun.status, func.count())
             .where(db.TriageRun.batch_id == batch_id).group_by(db.TriageRun.status))).all())

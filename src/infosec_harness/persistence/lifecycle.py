@@ -16,6 +16,7 @@ TERMINAL = frozenset({"complete", "needs_info", "failed", "cancelled"})
 async def accept_batch(batch_id: str, findings: list[FindingInput], label: str,
                        payload: dict) -> None:
     """Atomically record start intent and all findings. Duplicate fingerprints coalesce."""
+    from infosec_harness.agents.registry import resolved_agent_configs
     from infosec_harness.persistence.budgets import initial_state
     from infosec_harness.settings import get_settings
     settings = get_settings()
@@ -24,9 +25,15 @@ async def accept_batch(batch_id: str, findings: list[FindingInput], label: str,
     async with db.session() as session:
         if await session.get(db.Batch, batch_id):
             return
-        session.add(db.BudgetLedger(root_id=batch_id, state=initial_state({
+        budget_state = initial_state({
             "requests": settings.root_max_requests, "tokens": settings.root_max_tokens,
-            "cost_usd": settings.root_max_cost_usd})))
+            "cost_usd": settings.root_max_cost_usd,
+            "tool_calls": settings.root_max_tool_calls, "agent_runs": settings.root_max_agent_runs,
+            "execution_seconds": settings.root_max_execution_seconds},
+            elapsed_seconds=settings.root_max_elapsed_seconds)
+        budget_state["agent_config_digests"] = {name: config.digest
+            for name, config in resolved_agent_configs().items()}
+        session.add(db.BudgetLedger(root_id=batch_id, state=budget_state))
         session.add(db.Batch(id=batch_id, label=label, source_kind="generic_json",
                             status="accepted", workflow_id=f"batch:{batch_id}",
                             finding_count=len(normalized), submission=payload))

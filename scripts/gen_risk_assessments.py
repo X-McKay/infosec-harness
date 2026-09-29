@@ -31,7 +31,7 @@ ASSESSED_AT = "2026-09-26"
 # Review cadence from agent-playbook §13: 1 month critical, 3 high, 6 medium, 12 low.
 REVIEW_BY = {"low": "2027-09-26", "medium": "2027-03-26", "high": "2026-12-26",
              "critical": "2026-10-26"}
-AGENT_VERSION = "1.0.0"
+SYSTEM_VERSION = "1.0.0"
 
 INTENDED_USE = (
     "Triage pre-identified vulnerability findings for exploitability by building the target "
@@ -233,10 +233,11 @@ def build(subject: str, ids: list[str], *, is_system: bool) -> dict:
             [classification["governance_tier"], member_tier])
         classification["maximum_member_tier"] = member_tier
         extra = {"member_assessments": members, "monitoring": MONITORING}
-        identity = {"system": subject, "system_version": AGENT_VERSION}
+        identity = {"system": subject, "system_version": SYSTEM_VERSION}
     else:
         extra = {}
-        identity = {"agent": subject, "agent_version": AGENT_VERSION}
+        member = next(member for member in members if member["agent"] == subject)
+        identity = {"agent": subject, "agent_version": member["agent_version"]}
     return {
         "schema_version": 1,
         "assessment": {

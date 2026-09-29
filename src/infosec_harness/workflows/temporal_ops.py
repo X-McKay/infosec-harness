@@ -8,7 +8,7 @@ precomputed, cached maps so nothing here does disk or config I/O inside the work
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import timedelta
 
 from pydantic_ai.messages import UserContent
@@ -29,11 +29,7 @@ from infosec_harness.graph.ops import AgentOutcome
 
 with workflow.unsafe.imports_passed_through():
     from infosec_harness.agents import models as model_factory
-    from infosec_harness.agents.durable import AGENTS
-    from infosec_harness.agents.registry import (
-        resolved_agent_configs,
-        resolved_model_names,
-    )
+    from infosec_harness.agents.durable import AGENTS, CONFIGS, MODELS
     from infosec_harness.evals.trajectory import count_repeated_calls, inspect_messages
     from infosec_harness.workflows import activities
     from infosec_harness.workflows.accounting import RootAccounting
@@ -53,14 +49,15 @@ class TemporalOps:
     def __init__(self) -> None:
         self._accounting = RootAccounting()
         self._agents = AGENTS
-        self._configs = resolved_agent_configs()
-        self._models = resolved_model_names()
+        self._configs = CONFIGS
+        self._models = MODELS
         # Precomputed on the host: reading a spec inside a workflow would be I/O. The immutable
         # config retains its declared budget and applies repository-size scaling replay-safely.
 
     async def run_agent(self, name: str, prompt: Sequence[UserContent], deps: AgentDeps) -> AgentOutcome:
         config = self._configs[name].for_source_files(deps.source_files)
-        identity = await self._accounting.reserve(config)
+        identity = await self._accounting.reserve(
+            config, configuration_digest=self._configs[name].digest)
         try:
             outcome = await self._run_agent(name, prompt, deps)
         except (Exception, asyncio.CancelledError) as exc:
@@ -90,7 +87,7 @@ class TemporalOps:
             cost_usd=cost, cost_estimated=estimated,
             latency_s=(workflow.now() - started).total_seconds(),
             tools_called=tools_called, skills_loaded=skills_loaded,
-            requests=usage.requests or 0, repeated_tool_calls=repeated,
+            requests=usage.requests or 0, tool_calls=usage.tool_calls, repeated_tool_calls=repeated,
         )
 
     async def new_nonce(self) -> str:
@@ -100,7 +97,7 @@ class TemporalOps:
         )
 
     async def build_environment(self, snapshot: RepoSnapshot, spec: EnvironmentSpec) -> BuildResult:
-        return await workflow.execute_activity(
+        return await self._execute_workload(
             activities.build_environment_activity,
             {"snapshot": snapshot.model_dump(), "spec": spec.model_dump()},
             start_to_close_timeout=timedelta(minutes=40),
@@ -109,7 +106,7 @@ class TemporalOps:
 
     async def smoke_test(self, image_tag: str, test_command: str = "", *,
                          language: str = "", module_path: str = "") -> SmokeResult:
-        return await workflow.execute_activity(
+        return await self._execute_workload(
             activities.smoke_test_activity,
             {"image_tag": image_tag, "test_command": test_command,
              "language": language, "module_path": module_path},
@@ -139,10 +136,32 @@ class TemporalOps:
     async def execute_probe(
         self, image_tag: str, probe: ProbeSource, spec: EnvironmentSpec, nonce: str, attempt: int
     ) -> ProbeExecution:
-        return await workflow.execute_activity(
+        return await self._execute_workload(
             activities.execute_probe_activity,
             {"image_tag": image_tag, "probe": probe.model_dump(), "spec": spec.model_dump(),
              "nonce": nonce, "attempt": attempt},
             start_to_close_timeout=timedelta(minutes=10),
             retry_policy=_RETRY,
         )
+
+
+    async def _execute_workload[T](self, activity: Callable[[dict], Awaitable[T]], args: dict, *,
+                                start_to_close_timeout: timedelta,
+                                retry_policy: RetryPolicy) -> T:
+        """Reserve the full retry envelope before any sandbox workload is dispatched."""
+        identity = await self._accounting.reserve_execution(
+            activity.__name__, start_to_close_timeout.total_seconds()
+            * (retry_policy.maximum_attempts or 1))
+        options = {}
+        if workflow.patched("workload-heartbeat-v1"):
+            options = {"heartbeat_timeout": timedelta(seconds=30),
+                       "cancellation_type": workflow.ActivityCancellationType.WAIT_CANCELLATION_COMPLETED}
+        try:
+            result = await workflow.execute_activity(activity, args,
+                start_to_close_timeout=start_to_close_timeout, retry_policy=retry_policy, **options)
+        except (Exception, asyncio.CancelledError) as exc:
+            await self._accounting.settle(identity, None, type(exc).__name__)
+            raise
+        # An activity return does not expose resource use of lost/retried attempts.
+        await self._accounting.settle(identity, None, "completed; retry resource usage unobserved")
+        return result

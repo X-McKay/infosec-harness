@@ -119,6 +119,26 @@ def test_latency_is_recorded_even_for_cases_that_failed():
     )
 
 
+def test_pairwise_descriptive_output_handles_unknown_aggregate_usage(capsys):
+    from infosec_harness.evals.reporting import _print_pairwise
+
+    baseline = SimpleNamespace(
+        id="baseline", config_hash="a", metrics={
+            "accuracy": 1.0, "cost_usd_per_case": None,
+            "avg_tokens": None, "cache_hit_ratio": None,
+        }
+    )
+    candidate = SimpleNamespace(
+        id="candidate", config_hash="b", metrics={
+            "accuracy": 1.0, "cost_usd_per_case": 0.0,
+            "avg_tokens": 0.0, "cache_hit_ratio": 0.0,
+        }
+    )
+    _print_pairwise(baseline, candidate)
+    output = capsys.readouterr().out
+    assert output.count("(unknown)") == 3
+
+
 def _comparable_row(identifier: str, *, digest: str = "source-a", dirty: bool = False):
     metrics = {
         "status": "complete", "n": 2, "n_planned": 2, "passed": 2,

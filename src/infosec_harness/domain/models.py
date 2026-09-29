@@ -543,6 +543,7 @@ class AgentOutcome(_Model):
     # budget is indistinguishable in the record from one that finished comfortably, so a
     # `request_limit` breach cannot be told from a loop without re-running live.
     requests: int = 0
+    tool_calls: int | None = None
     # Tool calls repeated with identical arguments, `tool(args)` -> count, only where count > 1.
     # Empty on a healthy run; non-empty is the signature of a loop rather than of hard work.
     repeated_tool_calls: dict[str, int] = Field(default_factory=dict)

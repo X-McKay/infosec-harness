@@ -15,8 +15,10 @@ import time
 import uuid
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 import yaml
+from pydantic import BaseModel
 
 from infosec_harness.agents.render import render_prompt
 from infosec_harness.evals.adapters import (
@@ -28,8 +30,46 @@ from infosec_harness.evals.provenance import code_version
 from infosec_harness.evals.trajectory import inspect_messages
 from infosec_harness.settings import get_settings
 
-EVALUATOR_VERSION = "deterministic-agent-output-v2"
+EVALUATOR_VERSION = "deterministic-agent-output-v3"
 EVAL_EXECUTION_MODE = "local-eval-production-transport-v1"
+
+
+_DIAGNOSTIC_OUTPUT_LIMIT = 16_000
+_SENSITIVE_OUTPUT_KEYS = {
+    "api_key", "authorization", "credential", "credentials", "password",
+    "secret", "access_token", "refresh_token",
+}
+
+
+def _bounded_typed_output(output: Any) -> dict[str, Any]:
+    """Retain bounded typed evidence under the eval store's existing classification."""
+    if not isinstance(output, BaseModel):
+        return {"type": type(output).__name__, "truncated": False, "unsupported": True}
+    value = output.model_dump(mode="json")
+
+    def redact(item: Any) -> Any:
+        if isinstance(item, dict):
+            return {
+                str(key): "[REDACTED]"
+                if str(key).lower().replace("-", "_").replace(" ", "_")
+                in _SENSITIVE_OUTPUT_KEYS
+                else redact(child)
+                for key, child in item.items()
+            }
+        if isinstance(item, list):
+            return [redact(child) for child in item]
+        return item
+
+    value = redact(value)
+    encoded = json.dumps(value, sort_keys=True, default=repr)
+    diagnostic = {"type": type(output).__name__, "truncated": False, "value": value}
+    if len(encoded) > _DIAGNOSTIC_OUTPUT_LIMIT:
+        diagnostic = {
+            "type": type(output).__name__, "truncated": True,
+            "original_chars": len(encoded),
+            "json_prefix": encoded[:_DIAGNOSTIC_OUTPUT_LIMIT],
+        }
+    return diagnostic
 
 
 def case_group(case: Mapping[str, object]) -> str:
@@ -47,6 +87,38 @@ def case_group(case: Mapping[str, object]) -> str:
         if name.endswith(suffix):
             return name.removesuffix(suffix)
     return name
+
+
+def _usage_metrics(
+    attempts: list[dict[str, object]], tokens: float, cache_read: float
+) -> dict[str, object]:
+    """Publish aggregate usage only when every attempted run supplied usage."""
+    attempt_count = len(attempts)
+    observed_count = sum(
+        attempt.get("usage_status") == "observed" for attempt in attempts
+    )
+    observed_average = round(tokens / observed_count, 1) if observed_count else None
+    observed_cache_ratio = (
+        round(cache_read / tokens, 4)
+        if tokens
+        else 0.0 if observed_count else None
+    )
+    complete = attempt_count > 0 and observed_count == attempt_count
+    return {
+        "avg_tokens": observed_average if complete else None,
+        "cache_hit_ratio": observed_cache_ratio if complete else None,
+        "usage_observations": {
+            "attempts_observed": observed_count,
+            "attempts_total": attempt_count,
+            "attempt_coverage_rate": (
+                round(observed_count / attempt_count, 4) if attempt_count else None
+            ),
+            "observed_tokens_total": tokens,
+            "observed_avg_tokens": observed_average,
+            "observed_cache_read_tokens": cache_read,
+            "observed_cache_hit_ratio": observed_cache_ratio,
+        },
+    }
 
 
 def _dataset_identity(cases: list[dict]) -> dict[str, object]:
@@ -203,13 +275,13 @@ async def run_experiment(
     def build_metrics(status: str, truncation: dict | None = None) -> dict:
         complete_cost = round(cost, 6) if cost_unknown == 0 else None
         per_case_cost = round(cost / total, 6) if total and cost_unknown == 0 else None
+        usage_metrics = _usage_metrics(attempts, tokens, cache_read)
         metrics = {
             "accuracy": round(passed / total, 4) if total else 0.0,
             "n": total, "passed": passed,
             "cost_usd_total": complete_cost,
             "cost_usd_per_case": per_case_cost,
-            "avg_tokens": round(tokens / total, 1) if total else 0.0,
-            "cache_hit_ratio": round(cache_read / tokens, 4) if tokens else 0.0,
+            **usage_metrics,
             "confusion": {f"{k[0]}->{k[1]}": v for k, v in sorted(confusion.items())},
             "distributions": {
                 "percentile_method": PERCENTILE_METHOD,
@@ -320,6 +392,7 @@ async def run_experiment(
                 started = time.monotonic()
                 usage_record: dict[str, object] | None = None
                 outcome = "answered"
+                diagnostic: dict[str, object] = {}
                 try:
                     result = await asyncio.wait_for(
                         built.run(
@@ -330,6 +403,7 @@ async def run_experiment(
                         timeout=get_settings().agent_run_timeout_s,
                     )
                     predicted = predict(result.output)
+                    diagnostic["typed_output"] = _bounded_typed_output(result.output)
                     requests = result.usage.requests or 0
                     model_requests.append(requests)
                     tool_calls.append(len(inspect_messages(result.all_messages())[0]))
@@ -348,6 +422,8 @@ async def run_experiment(
                         "cache_write_tokens": result.usage.cache_write_tokens or 0,
                     }
                 except UsageLimitExceeded:
+                    diagnostic = {"error_type": "UsageLimitExceeded",
+                                  "error_category": "budget_exhausted"}
                     # The run hit its declared budget: it was stopped, not answered. This is a
                     # hard gate, so it is counted separately from a wrong answer.
                     predicted, c = "budget_exhausted", (
@@ -358,6 +434,9 @@ async def run_experiment(
                     usage_unknown += 1
                     cost_unknown += int(c is None)
                 except UnexpectedModelBehavior:
+                    diagnostic = {"error_type": "UnexpectedModelBehavior",
+                                  "error_category": "output_contract_invalid",
+                                  "provider_body_retained": False}
                     # The model could not produce a valid output within its retry budget
                     # (e.g. it kept violating an output contract). That is a failed case, and an
                     # output that does not validate is no answer rather than a wrong one.
@@ -414,6 +493,7 @@ async def run_experiment(
                     ),
                     "effective_config_digest": invocation_config.digest,
                     "effective_budget_digest": invocation_config.budget.digest,
+                    **diagnostic,
                 })
                 if is_unevidenced_safe(agent, case, predicted):
                     unevidenced_safe += 1
@@ -438,6 +518,7 @@ async def run_experiment(
                         "group": case_group(case),
                         "effective_config_digest": invocation_config.digest,
                         "effective_budget": invocation_config.budget.model_dump(mode="json"),
+                        **diagnostic,
                     },
                     # Legacy non-null column: truth lives in scores.cost_usd/status when unknown.
                     cost_usd=c or 0.0,
@@ -476,8 +557,10 @@ async def run_experiment(
 
     cost_label = (f"${metrics['cost_usd_per_case']:.4f}"
                   if metrics["cost_usd_per_case"] is not None else "unknown")
+    cache_label = (f"{metrics['cache_hit_ratio']:.2%}"
+                   if metrics["cache_hit_ratio"] is not None else "unknown")
     print(f"experiment {exp_id}: accuracy={metrics['accuracy']:.2%} "
-          f"cost/case={cost_label} cache_hit={metrics['cache_hit_ratio']:.2%} "
+          f"cost/case={cost_label} cache_hit={cache_label} "
           f"(model {model_name} [{pricing}], config {cfg_hash}, code {code.label()})")
     if code.git_dirty:
         # Said once, at the point the number is produced: this result cannot be filed against

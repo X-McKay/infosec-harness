@@ -15,12 +15,13 @@ from infosec_harness.domain.models import (
     PreparedEnvironment,
     RepoRef,
     RepoSnapshot,
+    SmokeResult,
     SourceMode,
     StackFingerprint,
     canonical_json,
     sha256_text,
 )
-from infosec_harness.graph.manifests import execution_manifest
+from infosec_harness.graph.manifests import execution_manifest, persisted_manifest
 from infosec_harness.repo import checkout as checkout_module
 from infosec_harness.repo.access import RepositoryAccessError
 from infosec_harness.repo.checkout import checkout
@@ -197,11 +198,20 @@ def test_execution_manifest_records_identities_without_environment_values(tmp_pa
                 base_image="python:3.12-slim", install_commands=["pip install -e ."],
                 test_command="pytest {test_file}", env={"PRIVATE_TOKEN": "do-not-persist"},
             ),
+            log_artifact="sha256:" + "c" * 64,
+            duration_s=4.25,
+            error_excerpt="PRIVATE_TOKEN=do-not-persist",
         ),
+        smoke=SmokeResult(ok=True, output_excerpt="PRIVATE_TOKEN=do-not-persist"),
         status="ready",
+        attempts=2,
+        reason="validated",
     )
 
-    manifest = execution_manifest(prepared)
+    workflow_manifest = execution_manifest(prepared)
+    assert workflow_manifest["schema_version"] == 1
+    assert "harness" not in workflow_manifest
+    manifest = persisted_manifest(workflow_manifest)
     assert manifest["environment"]["adapter_contract_version"] == "unit-probe-adapters/v1"
     assert manifest["environment"]["adapter_profiles"] == {
         "profiles": [
@@ -212,4 +222,22 @@ def test_execution_manifest_records_identities_without_environment_values(tmp_pa
 
     assert manifest["source"]["content_hash"] == "a" * 64
     assert manifest["environment"]["env_names"] == ["PRIVATE_TOKEN"]
+    assert manifest["schema_version"] == 2
+    assert manifest["harness"]["identity_scope"] == "persistence_worker"
+    assert manifest["harness"]["version"]
+    assert len(manifest["harness"]["packaged_source_sha256"]) == 64
+    assert len(manifest["harness"]["graph_policy_sha256"]) == 64
+    assert len(manifest["harness"]["verdict_policy_sha256"]) == 64
+    assert manifest["preparation"] == {
+        "status": "ready",
+        "attempts": 2,
+        "reason": "validated",
+        "build": {
+            "ok": True,
+            "image_tag": "harness-target:abc",
+            "duration_s": 4.25,
+            "log_artifact": "sha256:" + "c" * 64,
+        },
+        "smoke": {"ok": True},
+    }
     assert "do-not-persist" not in canonical_json(manifest)

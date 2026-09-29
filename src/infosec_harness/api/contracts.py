@@ -1,7 +1,15 @@
 """Versioned read models shared by OpenAPI and the browser."""
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, JsonValue
+
+JsonObject = dict[str, JsonValue]
+
+
+class _OpenPayload(BaseModel):
+    """Typed known fields while retaining versioned JSON added by older/newer producers."""
+
+    model_config = ConfigDict(extra="allow")
 
 
 class Bin(BaseModel):
@@ -56,6 +64,24 @@ class MetricsResponse(BaseModel):
     definitions: dict[str, str]
 
 
+class RunTelemetry(_OpenPayload):
+    schema_version: int | None = None
+    phase: str | None = None
+    accepted_at: str | None = None
+    completed_at: str | None = None
+    wall_time_s: float | None = None
+    agent_time_s: float | None = None
+    cost_usd: float | None = None
+    known_cost_usd: float | None = None
+    accounting_complete: bool | None = None
+    cost_accounting_complete: bool | None = None
+    known_tokens: int | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cost_coverage: float | None = None
+    total_tokens: int | None = None
+
+
 class RunSummary(BaseModel):
     id: str
     batch_id: str
@@ -78,7 +104,7 @@ class RunSummary(BaseModel):
     cache_read_tokens: int
     latency_s: float
     created_at: str
-    telemetry: dict | None
+    telemetry: RunTelemetry | None
     phase: str
 
 
@@ -88,3 +114,126 @@ class RunPage(BaseModel):
     offset: int
     limit: int
     as_of: str
+
+
+class BatchSummary(BaseModel):
+    id: str
+    status: str
+    label: str
+    source_kind: str
+    finding_count: int
+    created_at: str
+
+
+class BatchDetail(BatchSummary):
+    budget: JsonObject | None
+    status_counts: dict[str, int]
+    verdict_counts: dict[str, int]
+
+
+class RunEvent(BaseModel):
+    id: str
+    phase: str
+    detail: str
+    created_at: str
+
+
+class ReviewRecord(BaseModel):
+    reviewer: str = ""
+    decision: str
+    override_label: str | None = None
+    reason: str = ""
+    created_at: str
+
+
+class InvocationRecord(BaseModel):
+    agent: str
+    model_name: str
+    config_hash: str
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_write_tokens: int
+    cost_usd: float | None
+    cost_estimated: bool
+    latency_s: float
+    requests: int
+    repeated_tool_calls: dict[str, int]
+    tools_called: list[str]
+    skills_loaded: list[str]
+
+
+class RunDetail(RunSummary):
+    evidence: JsonObject | None
+    events: list[RunEvent]
+    review_history: list[ReviewRecord]
+    finding: JsonObject
+    result: JsonObject | None
+    invocations: list[InvocationRecord]
+    review: ReviewRecord | None
+
+
+class ExperimentSummary(BaseModel):
+    id: str
+    agent: str
+    dataset: str
+    dataset_version: str
+    git_sha: str
+    overlay: str
+    repetitions: int
+    metrics: JsonObject
+    config_hash: str
+    git_dirty: bool
+    model_name: str
+    backend: str
+    pricing: str
+    harness_version: str
+    created_at: str
+
+
+class ExperimentCase(BaseModel):
+    case_name: str
+    repetition: int
+    passed: bool
+    scores: JsonObject
+    cost_usd: float | None
+    latency_s: float | None
+
+
+class ExperimentDetail(BaseModel):
+    id: str
+    agent: str
+    metrics: JsonObject
+    cases: list[ExperimentCase]
+
+
+class AgentConfig(BaseModel):
+    name: str
+    model_tier: str
+    config_hash: str
+    resolved_model: str
+
+
+class ConfigResponse(BaseModel):
+    model_mode: str
+    agents: list[AgentConfig]
+
+
+class BatchAccepted(BaseModel):
+    batch_id: str
+
+
+class AdoBatchAccepted(BatchAccepted):
+    imported: int
+
+
+class ReviewSaved(BaseModel):
+    ok: bool
+
+
+class HealthResponse(BaseModel):
+    status: str
+
+
+class CancelResponse(BaseModel):
+    status: str

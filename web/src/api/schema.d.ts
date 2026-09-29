@@ -230,6 +230,71 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AdoBatchAccepted */
+        AdoBatchAccepted: {
+            /** Batch Id */
+            batch_id: string;
+            /** Imported */
+            imported: number;
+        };
+        /** AgentConfig */
+        AgentConfig: {
+            /** Name */
+            name: string;
+            /** Model Tier */
+            model_tier: string;
+            /** Config Hash */
+            config_hash: string;
+            /** Resolved Model */
+            resolved_model: string;
+        };
+        /** BatchAccepted */
+        BatchAccepted: {
+            /** Batch Id */
+            batch_id: string;
+        };
+        /** BatchDetail */
+        BatchDetail: {
+            /** Id */
+            id: string;
+            /** Status */
+            status: string;
+            /** Label */
+            label: string;
+            /** Source Kind */
+            source_kind: string;
+            /** Finding Count */
+            finding_count: number;
+            /** Created At */
+            created_at: string;
+            /** Budget */
+            budget: {
+                [key: string]: components["schemas"]["JsonValue"];
+            } | null;
+            /** Status Counts */
+            status_counts: {
+                [key: string]: number;
+            };
+            /** Verdict Counts */
+            verdict_counts: {
+                [key: string]: number;
+            };
+        };
+        /** BatchSummary */
+        BatchSummary: {
+            /** Id */
+            id: string;
+            /** Status */
+            status: string;
+            /** Label */
+            label: string;
+            /** Source Kind */
+            source_kind: string;
+            /** Finding Count */
+            finding_count: number;
+            /** Created At */
+            created_at: string;
+        };
         /** Bin */
         Bin: {
             /** Lower */
@@ -238,6 +303,18 @@ export interface components {
             upper: number;
             /** Count */
             count: number;
+        };
+        /** CancelResponse */
+        CancelResponse: {
+            /** Status */
+            status: string;
+        };
+        /** ConfigResponse */
+        ConfigResponse: {
+            /** Model Mode */
+            model_mode: string;
+            /** Agents */
+            agents: components["schemas"]["AgentConfig"][];
         };
         /** Distribution */
         Distribution: {
@@ -257,6 +334,71 @@ export interface components {
             maximum?: number | null;
             /** Bins */
             bins?: components["schemas"]["Bin"][];
+        };
+        /** ExperimentCase */
+        ExperimentCase: {
+            /** Case Name */
+            case_name: string;
+            /** Repetition */
+            repetition: number;
+            /** Passed */
+            passed: boolean;
+            /** Scores */
+            scores: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Cost Usd */
+            cost_usd: number | null;
+            /** Latency S */
+            latency_s: number | null;
+        };
+        /** ExperimentDetail */
+        ExperimentDetail: {
+            /** Id */
+            id: string;
+            /** Agent */
+            agent: string;
+            /** Metrics */
+            metrics: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Cases */
+            cases: components["schemas"]["ExperimentCase"][];
+        };
+        /** ExperimentSummary */
+        ExperimentSummary: {
+            /** Id */
+            id: string;
+            /** Agent */
+            agent: string;
+            /** Dataset */
+            dataset: string;
+            /** Dataset Version */
+            dataset_version: string;
+            /** Git Sha */
+            git_sha: string;
+            /** Overlay */
+            overlay: string;
+            /** Repetitions */
+            repetitions: number;
+            /** Metrics */
+            metrics: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Config Hash */
+            config_hash: string;
+            /** Git Dirty */
+            git_dirty: boolean;
+            /** Model Name */
+            model_name: string;
+            /** Backend */
+            backend: string;
+            /** Pricing */
+            pricing: string;
+            /** Harness Version */
+            harness_version: string;
+            /** Created At */
+            created_at: string;
         };
         /**
          * FindingInput
@@ -323,6 +465,45 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /** HealthResponse */
+        HealthResponse: {
+            /** Status */
+            status: string;
+        };
+        /** InvocationRecord */
+        InvocationRecord: {
+            /** Agent */
+            agent: string;
+            /** Model Name */
+            model_name: string;
+            /** Config Hash */
+            config_hash: string;
+            /** Input Tokens */
+            input_tokens: number;
+            /** Output Tokens */
+            output_tokens: number;
+            /** Cache Read Tokens */
+            cache_read_tokens: number;
+            /** Cache Write Tokens */
+            cache_write_tokens: number;
+            /** Cost Usd */
+            cost_usd: number | null;
+            /** Cost Estimated */
+            cost_estimated: boolean;
+            /** Latency S */
+            latency_s: number;
+            /** Requests */
+            requests: number;
+            /** Repeated Tool Calls */
+            repeated_tool_calls: {
+                [key: string]: number;
+            };
+            /** Tools Called */
+            tools_called: string[];
+            /** Skills Loaded */
+            skills_loaded: string[];
+        };
+        JsonValue: unknown;
         /** MetricsResponse */
         MetricsResponse: {
             /**
@@ -359,6 +540,25 @@ export interface components {
                 [key: string]: string;
             };
         };
+        /** ReviewRecord */
+        ReviewRecord: {
+            /**
+             * Reviewer
+             * @default
+             */
+            reviewer: string;
+            /** Decision */
+            decision: string;
+            /** Override Label */
+            override_label?: string | null;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+            /** Created At */
+            created_at: string;
+        };
         /** ReviewRequest */
         ReviewRequest: {
             /**
@@ -374,6 +574,89 @@ export interface components {
              * @default
              */
             reason: string;
+        };
+        /** ReviewSaved */
+        ReviewSaved: {
+            /** Ok */
+            ok: boolean;
+        };
+        /** RunDetail */
+        RunDetail: {
+            /** Id */
+            id: string;
+            /** Batch Id */
+            batch_id: string;
+            /** Fingerprint */
+            fingerprint: string;
+            /** Title */
+            title: string;
+            /** Repo Url */
+            repo_url: string;
+            /** Revision */
+            revision: string;
+            /** Cwe */
+            cwe: string | null;
+            /** Severity */
+            severity: string;
+            /** Status */
+            status: string;
+            /** Verdict */
+            verdict: string | null;
+            /** Confidence */
+            confidence: number | null;
+            /** Inconclusive Reason */
+            inconclusive_reason: string | null;
+            /** Priority */
+            priority: string | null;
+            /** Priority Score */
+            priority_score: number | null;
+            /** Environment Scope */
+            environment_scope: string;
+            /** Early Exit */
+            early_exit: string | null;
+            /** Cost Usd */
+            cost_usd: number | null;
+            /** Total Tokens */
+            total_tokens: number;
+            /** Cache Read Tokens */
+            cache_read_tokens: number;
+            /** Latency S */
+            latency_s: number;
+            /** Created At */
+            created_at: string;
+            telemetry: components["schemas"]["RunTelemetry"] | null;
+            /** Phase */
+            phase: string;
+            /** Evidence */
+            evidence: {
+                [key: string]: components["schemas"]["JsonValue"];
+            } | null;
+            /** Events */
+            events: components["schemas"]["RunEvent"][];
+            /** Review History */
+            review_history: components["schemas"]["ReviewRecord"][];
+            /** Finding */
+            finding: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Result */
+            result: {
+                [key: string]: components["schemas"]["JsonValue"];
+            } | null;
+            /** Invocations */
+            invocations: components["schemas"]["InvocationRecord"][];
+            review: components["schemas"]["ReviewRecord"] | null;
+        };
+        /** RunEvent */
+        RunEvent: {
+            /** Id */
+            id: string;
+            /** Phase */
+            phase: string;
+            /** Detail */
+            detail: string;
+            /** Created At */
+            created_at: string;
         };
         /** RunPage */
         RunPage: {
@@ -432,12 +715,44 @@ export interface components {
             latency_s: number;
             /** Created At */
             created_at: string;
-            /** Telemetry */
-            telemetry: {
-                [key: string]: unknown;
-            } | null;
+            telemetry: components["schemas"]["RunTelemetry"] | null;
             /** Phase */
             phase: string;
+        };
+        /** RunTelemetry */
+        RunTelemetry: {
+            /** Schema Version */
+            schema_version?: number | null;
+            /** Phase */
+            phase?: string | null;
+            /** Accepted At */
+            accepted_at?: string | null;
+            /** Completed At */
+            completed_at?: string | null;
+            /** Wall Time S */
+            wall_time_s?: number | null;
+            /** Agent Time S */
+            agent_time_s?: number | null;
+            /** Cost Usd */
+            cost_usd?: number | null;
+            /** Known Cost Usd */
+            known_cost_usd?: number | null;
+            /** Accounting Complete */
+            accounting_complete?: boolean | null;
+            /** Cost Accounting Complete */
+            cost_accounting_complete?: boolean | null;
+            /** Known Tokens */
+            known_tokens?: number | null;
+            /** Input Tokens */
+            input_tokens?: number | null;
+            /** Output Tokens */
+            output_tokens?: number | null;
+            /** Cost Coverage */
+            cost_coverage?: number | null;
+            /** Total Tokens */
+            total_tokens?: number | null;
+        } & {
+            [key: string]: unknown;
         };
         /**
          * Severity
@@ -621,9 +936,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ExperimentDetail"];
                 };
             };
             /** @description Validation Error */
@@ -652,9 +965,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["BatchSummary"][];
                 };
             };
         };
@@ -678,9 +989,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["BatchAccepted"];
                 };
             };
             /** @description Validation Error */
@@ -713,9 +1022,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["AdoBatchAccepted"];
                 };
             };
             /** @description Validation Error */
@@ -746,9 +1053,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["BatchDetail"];
                 };
             };
             /** @description Validation Error */
@@ -781,9 +1086,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["RunSummary"][];
                 };
             };
             /** @description Validation Error */
@@ -814,9 +1117,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["RunDetail"];
                 };
             };
             /** @description Validation Error */
@@ -851,9 +1152,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ReviewSaved"];
                 };
             };
             /** @description Validation Error */
@@ -882,9 +1181,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["ExperimentSummary"][];
                 };
             };
         };
@@ -904,9 +1201,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ConfigResponse"];
                 };
             };
         };
@@ -926,9 +1221,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["HealthResponse"];
                 };
             };
         };
@@ -950,9 +1243,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["CancelResponse"];
                 };
             };
             /** @description Validation Error */

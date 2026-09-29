@@ -15,7 +15,7 @@ const VERDICTS = [
   "potentially_exploitable",
   "inconclusive",
   "likely_not_exploitable",
-];
+] as const;
 const ACTIVE = new Set([
   "pending",
   "accepted",
@@ -56,7 +56,9 @@ export function FindingDetail() {
   });
   const [reviewer, setReviewer] = useState("");
   const [decision, setDecision] = useState("confirm");
-  const [overrideLabel, setOverrideLabel] = useState(VERDICTS[0]);
+  const [overrideLabel, setOverrideLabel] = useState<(typeof VERDICTS)[number]>(
+    VERDICTS[0],
+  );
   const [reason, setReason] = useState("");
   const review = useMutation({
     mutationFn: () =>
@@ -255,7 +257,11 @@ export function FindingDetail() {
               <select
                 className="field mt-1 w-full"
                 value={overrideLabel}
-                onChange={(event) => setOverrideLabel(event.target.value)}
+                onChange={(event) =>
+                  setOverrideLabel(
+                    event.target.value as (typeof VERDICTS)[number],
+                  )
+                }
               >
                 {VERDICTS.map((value) => (
                   <option key={value} value={value}>
