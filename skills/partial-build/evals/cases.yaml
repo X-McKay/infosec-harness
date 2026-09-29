@@ -75,7 +75,7 @@ cases:
       module_path: service
       install_commands:
         - ./gradlew --no-daemon :service:testClasses
-      test_command: ./gradlew --no-daemon --offline :service:test --tests '*HarnessProbeTest'
+      test_command: ./gradlew --no-daemon --offline --rerun-tasks :service:test --tests '*HarnessProbeTest'
 
   - id: a-composed-partial-gradle-spec-with-i-is-accepted
     type: procedure_adherence
@@ -88,4 +88,4 @@ cases:
       module_path: service
       install_commands:
         - ./gradlew --no-daemon :service:testClasses
-      test_command: ./gradlew --no-daemon --offline -i :service:test --tests '*HarnessProbeTest'
+      test_command: ./gradlew --no-daemon --offline --rerun-tasks -i :service:test --tests '*HarnessProbeTest'

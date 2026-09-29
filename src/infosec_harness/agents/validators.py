@@ -313,7 +313,13 @@ MAVEN_TEST_COMMAND = (
     "-Dtest=HarnessProbeTest -Dmaven.repo.local=/work/home/.m2/repository "
     "-Dmaven.test.redirectTestOutputToFile=false"
 )
-GRADLE_TEST_COMMAND = "./gradlew --no-daemon --offline -i test --tests '*HarnessProbeTest'"
+# `--rerun-tasks` is the Gradle half of the "a run that executes nothing still exits 0" family.
+# Measured on Gradle 8.14.3 / JDK 17: the first `test` run printed all three markers, and running
+# the identical command again printed none and exited 0, with `> Task :test UP-TO-DATE` as the only
+# difference. `cleanTest test` is the other way to say it.
+_GRADLE_UNCONDITIONAL = ("--rerun-tasks", "--rerun")
+GRADLE_TEST_COMMAND = ("./gradlew --no-daemon --offline --rerun-tasks -i test "
+                       "--tests '*HarnessProbeTest'")
 # `cmd || true` makes a failed dependency install invisible: the image builds, the smoke test
 # passes, and the absence surfaces at probe time as a compile error inside the probe — past
 # build repair, the only stage that could have installed anything.
@@ -434,15 +440,24 @@ def _jvm_violations(command: str) -> list[str]:
                 "time, so a command that only invokes a surefire goal runs against the test "
                 "classes baked into the image and never sees the probe at all."
             )
-    if "gradle" in command and not (
-        _short_flag(command, "i") or _short_flag(command, "d")
-        or _long_flag(command, "--info", "--debug")
-    ):
-        problems.append(
-            f"Add -i: {GRADLE_TEST_COMMAND}. Gradle's Test task forwards a test's standard "
-            "streams only from the INFO log level up, so at the default level the probe's "
-            "HARNESS_ markers are dropped and a correct probe reports nothing."
-        )
+    if "gradle" in command:
+        if not (_short_flag(command, "i") or _short_flag(command, "d")
+                or _long_flag(command, "--info", "--debug")):
+            problems.append(
+                f"Add -i: {GRADLE_TEST_COMMAND}. Gradle's Test task forwards a test's standard "
+                "streams only from the INFO log level up, so at the default level the probe's "
+                "HARNESS_ markers are dropped and a correct probe reports nothing."
+            )
+        if not (_long_flag(command, *_GRADLE_UNCONDITIONAL) or "cleanTest" in command):
+            problems.append(
+                f"Add --rerun-tasks: {GRADLE_TEST_COMMAND}. Gradle's `test` task is incremental, "
+                "so a second run with the same inputs is reported UP-TO-DATE: no test executes, "
+                "no marker is printed, and the build still exits 0. Measured on Gradle 8.14.3 — "
+                "the first run printed all three markers and the next two printed none, with "
+                "`> Task :test UP-TO-DATE` as the only difference. Maven has no equivalent, so "
+                "this is a Gradle-only flag and the reason it is not optional is that the failure "
+                "is silent."
+            )
     return problems
 
 

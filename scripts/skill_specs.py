@@ -98,6 +98,14 @@ GRADLE_COMPLETION = [
     "`test_command` runs at the INFO log level (`-i`): Gradle's `Test` task forwards a test's "
     "standard streams only from INFO up, so at the default level the probe's markers are "
     "dropped and a correct probe is recorded as having reached nothing.",
+    "`test_command` makes the run unconditional (`--rerun-tasks`, or `cleanTest test`). Gradle's "
+    "`test` task is incremental, so with unchanged inputs it is reported `UP-TO-DATE`: no test "
+    "runs, no marker is printed, and the build still exits 0. Measured on Gradle 8.14.3, where "
+    "the first run printed all three markers and the next two printed none.",
+    "The probe is written in the framework `build.gradle` declares, not the one on the classpath: "
+    "Gradle runs JUnit 4 unless the build says `test { useJUnitPlatform() }`, and a mismatch "
+    "fails with `No tests found for given includes` (measured). Unlike Surefire, Gradle does not "
+    "auto-detect, and you may not edit the build file.",
 ]
 NO_SKIP_COMPLETION = [
     "The probe cannot decline to run: no skip, no disable, no assumption guard. A skipped test "

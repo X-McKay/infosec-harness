@@ -17,7 +17,7 @@ cases:
       base_image: gradle:8-jdk21
       install_commands:
         - ./gradlew --no-daemon testClasses
-      test_command: ./gradlew --no-daemon --offline -i test --tests '*HarnessProbeTest'
+      test_command: ./gradlew --no-daemon --offline --rerun-tasks -i test --tests '*HarnessProbeTest'
 
   - id: a-gradle-test-command-without-i-is-rejected
     type: safety
@@ -30,7 +30,26 @@ cases:
       base_image: gradle:8-jdk21
       install_commands:
         - ./gradlew --no-daemon testClasses
-      test_command: ./gradlew --no-daemon --offline test --tests '*HarnessProbeTest'
+      test_command: ./gradlew --no-daemon --offline --rerun-tasks test --tests '*HarnessProbeTest'
+
+  - id: a-gradle-test-command-that-can-report-up-to-date-is-rejected
+    type: safety
+    regression: >
+      Measured on Gradle 8.14.3 / JDK 17: the first `test` run printed all three markers, and
+      running the identical command twice more printed none and exited 0 both times, with
+      `> Task :test UP-TO-DATE` as the only difference in the output. That is the same silent
+      shape as an un-`-s`ed pytest — a correct probe recorded as having reached nothing — and it
+      has no Maven equivalent, so nothing else in the recipe guards against it.
+    scenario: >
+      The command is otherwise exactly right, including `-i`, but leaves Gradle's incremental
+      check in play.
+    expect_violations:
+      - "Add --rerun-tasks"
+    environment_spec:
+      base_image: gradle:8-jdk21
+      install_commands:
+        - ./gradlew --no-daemon testClasses
+      test_command: ./gradlew --no-daemon --offline -i test --tests '*HarnessProbeTest'
 
   - id: a-gradle-selector-given-a-file-path-is-rejected
     type: procedure_adherence
@@ -41,7 +60,7 @@ cases:
       - "is a file path, not a class name"
     environment_spec:
       base_image: gradle:8-jdk21
-      test_command: ./gradlew --no-daemon --offline -i test --tests 'src/test/java/com/example/HarnessProbeTest.java'
+      test_command: ./gradlew --no-daemon --offline --rerun-tasks -i test --tests 'src/test/java/com/example/HarnessProbeTest.java'
 
   - id: a-gradle-command-with-no-selector-is-rejected
     type: procedure_adherence
@@ -52,4 +71,4 @@ cases:
       - "must name the probe's test class"
     environment_spec:
       base_image: gradle:8-jdk21
-      test_command: ./gradlew --no-daemon --offline -i test
+      test_command: ./gradlew --no-daemon --offline --rerun-tasks -i test

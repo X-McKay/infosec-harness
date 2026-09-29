@@ -1173,3 +1173,53 @@ def test_the_stub_java_plan_is_read_from_the_fingerprint_and_survives_its_own_va
         assert environment_spec_violations(spec) == []
         assert install_path_violations(spec) == []
         assert offline_warmup_violations(spec, framework) == []
+
+
+def test_a_gradle_test_command_that_can_report_up_to_date_is_rejected():
+    """Gradle's own silent no-op, which Maven has no equivalent of.
+
+    `test` is an incremental task: with unchanged inputs Gradle reports `> Task :test UP-TO-DATE`,
+    executes nothing, prints no marker, and exits 0. Measured on Gradle 8.14.3 / JDK 17 against a
+    JUnit 4 fixture -- the first run printed all three markers, and the identical command twice
+    more printed none and exited 0 both times. Same family as an un-`-s`ed pytest: a correct probe
+    recorded as having reached nothing, with nothing downstream able to attribute it.
+    """
+    from infosec_harness.agents.validators import (
+        GRADLE_TEST_COMMAND,
+        environment_spec_violations,
+    )
+    from infosec_harness.domain.models import EnvironmentSpec
+
+    incremental = EnvironmentSpec(
+        base_image="gradle:8-jdk17",
+        test_command="./gradlew --no-daemon --offline -i test --tests '*HarnessProbeTest'")
+    problems = environment_spec_violations(incremental)
+    assert any("--rerun-tasks" in p for p in problems)
+    assert any("UP-TO-DATE" in p for p in problems), "the message must name the symptom"
+    assert any(GRADLE_TEST_COMMAND in p for p in problems), (
+        "and the corrected command, like every other message here"
+    )
+
+    for ok in (GRADLE_TEST_COMMAND,
+               "./gradlew --no-daemon --offline -i cleanTest test --tests '*HarnessProbeTest'"):
+        assert environment_spec_violations(
+            EnvironmentSpec(base_image="gradle:8-jdk17", test_command=ok)) == [], ok
+
+
+def test_the_gradle_exemplar_satisfies_every_check_that_judges_it():
+    """The same rule as the Maven exemplar: a retry message naming a command the validator would
+    itself reject is what made java-sqli oscillate between two violations until its output retries
+    ran out."""
+    from infosec_harness.agents.validators import (
+        GRADLE_TEST_COMMAND,
+        MAVEN_TEST_COMMAND,
+        environment_spec_violations,
+        install_path_violations,
+    )
+    from infosec_harness.domain.models import EnvironmentSpec
+
+    for image, command in (("gradle:8-jdk17", GRADLE_TEST_COMMAND),
+                           ("maven:3.9-eclipse-temurin-17", MAVEN_TEST_COMMAND)):
+        spec = EnvironmentSpec(base_image=image, test_command=command)
+        assert environment_spec_violations(spec) == [], command
+        assert install_path_violations(spec) == [], command
