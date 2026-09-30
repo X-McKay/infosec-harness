@@ -77,3 +77,39 @@ Only an independently observed binding limit can justify a targeted budget trial
 allowance that still exceeds request-efficiency gates or extends unproductive exploration
 does not clear qualification. A candidate that clears the affected gates must still pass
 fresh complete qualification and the unused heldouts before promotion.
+
+## Completed endpoint retry
+
+The fresh endpoint retry on clean `ee82def5e4cd495badff8e24af6a1d67f0feddeb`
+completed all 38 cases in 940 seconds, with 34 successes and no transport failures.
+Build-repair passed its policy (13/14 successes, no budget stops, p95 requests 10,
+one planned execution check passed). Context passed (14/15 successes, no budget
+stops, p95 requests 5, unsupported-safe-decision counter zero). Partial-build's
+7/9 successes met the 75% floor, but two request-limit stops and p95 requests 14
+failed its unchanged zero-stop and maximum-12-request gates. Those stops identify
+the effective request ceiling of 16; captured tokens and responses remain partial
+observations, not final usage. This is a completed diagnostic pass, not full qualification.
+
+[The independent sanitized summary](validation/agent-quality/focused-v7-retry-summary.json)
+preserves every failed slice and independently verifies the actual database/report
+configuration. The original ignored manifest incorrectly labeled local transport
+metadata (six retries); actual inference used the verified production transport
+(one retry). The original manifest is preserved and this discrepancy is recorded.
+Future manifests must resolve the actual production configuration before inference.
+
+The partial-build traces show unnecessary sandbox experimentation and repeated
+module discovery. Its next candidate removes shell probes from planning: supplied
+image metadata, relevant ecosystem skills and the owning manifests determine the
+plan; the controlled build validates it. Complete manifests without child modules
+justify the repository root as the smallest unit. An unresolved prerequisite stays
+explicit rather than provoking searches for imaginary modules. This narrows the
+planning capability and does not expand execution permissions or change durable
+output contracts, budgets, labels or release gates. Accepted configurations remain
+pinned; use a compatible worker or a newly accepted run for the changed candidate.
+
+The narrowed candidate passed all 1,657 deterministic tests, including packaging and
+local Temporal recovery, with zero failures, errors or skips. Its focused tests, lint,
+compilation, agent validation, generated-artifact and development-skill checks passed.
+The first full launcher lacked the pinned wheel builder and produced seven packaging
+setup errors and one skip; that evidence is preserved separately from the corrected,
+passing run. Live efficacy of this new candidate remains unmeasured until its next trial.

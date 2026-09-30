@@ -56,7 +56,7 @@ EXPECTED_TOOLS = {
     "recon": PROFILING,
     "env-planner": PROFILING,
     "build-repair": REPO | {"run_in_sandbox"},
-    "partial-build": REPO | {"run_in_sandbox"},
+    "partial-build": REPO,
     "context": REPO,
     "probe-planner": {"load_capability"},
     "probe-author": REPO | {"inspect_target"},
@@ -85,6 +85,17 @@ def _configured_skills(spec) -> list[str]:
 @pytest.mark.parametrize("name", list(AGENT_BINDINGS))
 async def test_agent_tool_wiring(name):
     assert await _model_facing_tools(name) == EXPECTED_TOOLS[name]
+
+
+async def test_partial_build_plans_without_shell_but_build_repair_can_inspect_images():
+    """Planning a module boundary needs repository evidence; build repair owns image checks.
+
+    A fresh image has no repository or previous build state, so shell exploration cannot
+    establish the partial module's dependency boundary. Check the actual model surface,
+    independently of the spec's toolset declarations.
+    """
+    assert "run_in_sandbox" not in await _model_facing_tools("partial-build")
+    assert "run_in_sandbox" in await _model_facing_tools("build-repair")
 
 
 @pytest.mark.parametrize("name", list(AGENT_BINDINGS))

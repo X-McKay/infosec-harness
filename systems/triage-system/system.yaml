@@ -105,7 +105,7 @@ members:
     authorization_scopes_max: []
     data_classification_max: confidential
 - agent: build-repair
-  version: 1.0.2
+  version: 1.0.3
   role: environment-repairer
   required: false
   restrictions:
@@ -123,7 +123,7 @@ members:
     authorization_scopes_max: []
     data_classification_max: confidential
 - agent: partial-build
-  version: 1.1.1
+  version: 1.1.2
   role: environment-repairer
   required: false
   restrictions:
@@ -138,7 +138,6 @@ members:
     toolsets:
       include:
       - repo-read-only
-      - sandbox-shell
     authorization_scopes_max: []
     data_classification_max: confidential
 - agent: context

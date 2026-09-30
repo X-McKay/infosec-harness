@@ -13,8 +13,12 @@ instructions:
     previous_attempts. Locate the owning package/module nearest the file under investigation
     and establish which real dependencies its test needs. Use the partial-build skill and
     the relevant ecosystem's build skill. Use known paths from the profile; if paths are
-    missing, use a scoped list_tree or list_files. Batch the owning module's manifest,
-    parent/workspace configuration, and relevant dependency declarations with read_files.
+    missing, use a scoped list_tree or list_files. Batch the nearest owning module's manifest,
+    declared parent/workspace configuration, and relevant dependency declarations with
+    read_files. Once those declarations establish the owner and its required dependencies,
+    stop discovery. A complete owning manifest with no declared child modules establishes
+    that boundary; the repository root "." is a valid unit when it owns the finding. Do not
+    search for an undeclared submodule merely to make the boundary narrower.
     Read source only to resolve a dependency or module boundary that affects this choice;
     do not rediscover the full repository or investigate unrelated modules.
 
@@ -26,17 +30,15 @@ instructions:
     the recorded failure in rationale. Keep the real code under test and its required
     dependencies intact, and keep test_command runnable offline with {test_file}.
 
-    run_in_sandbox starts a fresh container of the configured candidate base image on every
-    call: it has no repository mount, no external network, and no state from prior calls or
-    the failed build. It cannot test the selected module or fetch dependencies. Use it only
-    if a local image fact would change the plan, combine independent checks in one command,
-    and do not repeat answered system probes or attempt remote registry/version lookups.
-    Return the justified plan once the module boundary and build prerequisites are known;
-    the controlled build validates it. If narrowing cannot address the blocker, preserve
-    known fields and state the unresolved prerequisite in rationale. Never invent credentials
-    or undeclared dependency versions, or exclude a required dependency to make a plan appear
-    buildable. Do not repeat a spec that already failed (see previous_attempts) or fabricate
-    changes solely to make it different.
+    Plan from the supplied base image, repository profile, ecosystem skills, and module
+    manifests. This agent has repository read tools and does not probe images or execute
+    commands. The controlled build validates the resulting spec. Return the justified plan
+    once the module boundary and build prerequisites are known. If narrowing cannot address
+    the blocker, preserve the known boundary and fields and state the unresolved prerequisite
+    in rationale. Never invent credentials or undeclared dependency versions, or exclude a
+    required dependency to make a plan appear buildable. Use previous_attempts to explain why
+    a recorded failure remains unresolved rather than repeating it as a claimed repair or
+    fabricating changes solely to make the spec different.
 model_settings:
   # Anthropic counts thinking *inside* max_tokens, so a `medium` level (10000 budget
   # tokens) plus the 6000-token answer this agent was written for needs 16000.
@@ -54,7 +56,7 @@ tool_timeout: 200
 instrument: true
 metadata:
   contract_version: 1
-  version: 1.1.1
+  version: 1.1.2
   owner: appsec
   execution_class: durable
   temporal_enabled: true
@@ -93,7 +95,6 @@ metadata:
     - build-cpanm
   enabled_toolsets:
     - repo-read-only
-    - sandbox-shell
   clear_tool_results: true
 capabilities:
   - Skills:
@@ -106,5 +107,4 @@ capabilities:
       # directory census that does not silently truncate) and `read_files` (several files in
       # one round trip).
       tools: [list_tree, list_files, read_file, read_files, search_code, describe_callables]
-  - SandboxShell: {}
   - WarnOnCacheBusts: {}

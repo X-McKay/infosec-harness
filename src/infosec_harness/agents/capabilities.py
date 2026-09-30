@@ -140,9 +140,14 @@ class RepoReadOnly(AbstractCapability[AgentDeps]):
 
 
 async def run_in_sandbox(ctx: RunContext[AgentDeps], command: str) -> str:
-    """Run a shell command in a fresh sandbox container of the candidate base image, with the
-    repository NOT mounted. Use it to check package names, tool versions, or install commands.
-    Returns exit code, stdout and stderr tails."""
+    """Observe local facts in a fresh sandbox container of the candidate base image.
+
+    It has no repository mount, external network, or state from earlier calls or builds.
+    It cannot validate repository code or fetch dependencies. Use it only when a local image
+    fact would change the plan, combining independent checks in one command. Dependency
+    installation and repository validation belong to the controlled build phase.
+    Returns exit code, stdout and stderr tails.
+    """
     from infosec_harness.sandbox import docker
 
     if not ctx.deps.sandbox_image:
