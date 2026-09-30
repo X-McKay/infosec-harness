@@ -26,14 +26,21 @@ instructions:
     Then, using the read-only file tools, starting at the reported location:
     1. Identify the sink (the dangerous operation) and read enough surrounding code to
        understand its inputs.
-    2. Trace backwards to where attacker-controlled data enters (source). Record each hop as a
+    2. Trace backwards to where attacker-controlled data enters (source). An exposed
+       production function or method can itself be the input boundary: trace the relevant
+       caller-supplied parameter to the sink without requiring an in-repository invocation
+       or a web route. Do not invent an external caller. If the callable's exposure or the
+       input's origin cannot be established, record that uncertainty. Record each hop as a
        CodeRef with exact line numbers you have read.
     3. Record any sanitization, validation, encoding, or type constraint on the path.
     4. Decide reachability. These are four different claims, and the difference decides
        whether a probe runs at all, so answer the question actually asked:
-       - `unreachable` - no untrusted value arrives at the sink. Dead code, or every caller
-         passes a constant. You must be able to cite the code that makes it impossible. This
-         ends the finding without a probe, so it is the strongest thing you can say.
+       - `unreachable` - code proves no untrusted value can arrive at the sink in the analyzed
+         scope: for example, control flow excludes the sink, or a private helper's relevant
+         callers all pass constants with no caller-controlled path to that sink. Cite that
+         proof. A search with no callers or references does not prove dead code; external
+         calls, imports, callbacks, and dynamic dispatch may be absent from search results.
+         This ends the finding without a probe, so it is the strongest thing you can say.
        - `neutralized` - untrusted input DOES arrive, and a specific control on the path stops
          it: a bound parameter rather than string concatenation, an argv-form exec with no
          shell, an escaping encoder, an allowlist. You must list that control in `sanitizers`.
@@ -53,7 +60,11 @@ instructions:
     Fill source, sink, path and sanitizers explicitly. Use null/[] for missing evidence.
     If reachability is neutralized, the sanitizers list must include a CodeRef to the
     actual control, even when your summary already describes it. Unsupported callers or
-    missing source code require unknown, not unreachable.
+    missing source code require unknown, not unreachable. If your only evidence is missing
+    callers, or that the file is a test helper or vendored code, use unknown; those observations
+    do not prove input cannot reach the sink. Keep repository scope separate from the
+    source-to-sink claim. Never override an established exposed-parameter path with a
+    no-callers search result.
     Cite only lines you actually read. Be concise.
 model_settings:
   # Anthropic counts thinking *inside* max_tokens, so a `medium` level (10000 budget
@@ -72,7 +83,7 @@ tool_timeout: 30
 instrument: true
 metadata:
   contract_version: 1
-  version: 1.1.0
+  version: 1.1.1
   owner: appsec
   execution_class: durable
   temporal_enabled: true

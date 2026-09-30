@@ -27,12 +27,14 @@ from infosec_harness.evals.adapters import (
     UNEVIDENCED_SAFETY_AGENTS,
     is_unevidenced_safe,
 )
+from infosec_harness.evals.budget_stop import budget_stop_diagnostic
+from infosec_harness.evals.errors import failure_diagnostic
 from infosec_harness.evals.invocation import AgentRunTimeout, run_with_timeout
 from infosec_harness.evals.provenance import code_version
 from infosec_harness.evals.trajectory import summarize_calls
 from infosec_harness.settings import get_settings
 
-EVALUATOR_VERSION = "deterministic-agent-output-v6"
+EVALUATOR_VERSION = "deterministic-agent-output-v7"
 EVAL_EXECUTION_MODE = "local-eval-production-transport-v1"
 
 
@@ -490,8 +492,9 @@ async def run_experiment(
                     }
                 except (UsageLimitExceeded, AgentRunTimeout) as exc:
                     diagnostic = {
-                        "error_type": type(exc).__name__,
+                        "error_type": "UsageLimitExceeded" if isinstance(exc, UsageLimitExceeded) else "AgentRunTimeout",
                         "error_category": "budget_exhausted",
+                        "budget_stop": budget_stop_diagnostic(exc, invocation_config.budget, messages),
                     }
                     # The run hit its declared budget: it was stopped, not answered. This is a
                     # hard gate, so it is counted separately from a wrong answer.
@@ -548,8 +551,7 @@ async def run_experiment(
                             "expected": expected,
                             "outcome": "failed",
                             "call_summary": summarize_calls(messages),
-                            "error_type": type(exc).__name__,
-                            "error": str(exc)[:500] or repr(exc)[:500],
+                            **failure_diagnostic(exc),
                             "latency_s": latency,
                             "usage": None,
                             "usage_status": "unknown",
@@ -634,8 +636,7 @@ async def run_experiment(
         # model: it is the run falling over (transport error, a cancelled/hung request, Ctrl-C,
         # a bug in an adapter). Record where it stopped, keep the scored cases, then fail.
         truncation = {
-            "error_type": type(exc).__name__,
-            "error": str(exc)[:500] or repr(exc)[:500],
+            **failure_diagnostic(exc),
             "failed_case": case_name,
             "failed_repetition": rep,
             "completed_runs": total,
@@ -646,7 +647,8 @@ async def run_experiment(
         await persist("truncated", pending_rows, truncation)
         print(
             f"experiment {exp_id}: TRUNCATED on case {case_name!r} rep {rep} after "
-            f"{total}/{planned_runs} case runs ({type(exc).__name__}: {str(exc)[:200]}); "
+            f"{total}/{planned_runs} case runs ({truncation['error_type']}, "
+            f"http_status_code={truncation['http_status_code']}); "
             f"the {total} scored case runs are saved and the experiment is marked truncated"
         )
         if report is not None:

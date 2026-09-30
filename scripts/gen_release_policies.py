@@ -31,10 +31,10 @@ PACKAGE = REPO / "src" / "infosec_harness"
 # a budget breach means the run was stopped rather than completed.
 UNIVERSAL_HARD_GATES = {"schema_validity_rate": 1.0, "budget_exhausted_count": 0}
 
-# Minimum task success per governance tier. Tiers come from the risk assessments, so an agent
-# whose errors suppress a real vulnerability is held to a higher bar than one whose errors are
-# caught downstream.
-SUCCESS_FLOOR = {"medium": 0.75, "high": 0.85, "critical": 0.85}
+# Owner-approved task-success floor for iterative development. Governance tiers still
+# determine risk coverage and safety gates; aggregate quality cannot offset a hard-gate
+# failure. See docs/AGENT_QUALITY_PLAN.md for the explicit policy change and its limits.
+SUCCESS_FLOOR = {"medium": 0.75, "high": 0.75, "critical": 0.75}
 REQUIRED_PROVENANCE = ["git_commit", "agent_version", "config_hash", "model", "dataset_version"]
 
 

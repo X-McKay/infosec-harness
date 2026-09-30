@@ -5,7 +5,7 @@ from __future__ import annotations
 import httpx
 import openai
 import pytest
-from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
+from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior, UsageLimitExceeded
 from sqlalchemy import select
 
 from infosec_harness.evals.run import TruncatedExperiment, run_experiment
@@ -86,3 +86,33 @@ async def test_truncation_reports_all_unreached_declared_checks(monkeypatch):
     assert exp.metrics["execution_checks_passed"] == 0
     assert exp.metrics["execution_not_checked_count"] == 1
     assert sum(exp.metrics["distributions"]["failure_categories"].values()) == 0
+
+
+async def test_provider_failure_details_do_not_enter_cli_or_persisted_metrics(monkeypatch, capsys):
+    import json
+
+    from infosec_harness.agents import registry
+
+    sentinel = "SENTINEL_SECRET_PROVIDER_BODY"
+
+    class ProviderFailure:
+        async def run(self, *args, **kwargs):
+            raise ModelHTTPError(503, model_name=sentinel, body={"secret": sentinel},
+                                 headers={"authorization": sentinel}, suggested_model_id=sentinel)
+
+    monkeypatch.setattr(registry, "build_agent", lambda *args, **kwargs: ProviderFailure())
+    with pytest.raises(TruncatedExperiment) as caught:
+        await run_experiment("build-repair")
+    exp = await _experiment(caught.value.experiment_id)
+    assert exp.metrics["status"] == "truncated"
+    for diagnostic in [exp.metrics["truncated"], exp.metrics["attempts"][0]]:
+        assert diagnostic["error_type"] == "ModelHTTPError"
+        assert diagnostic["http_status_code"] == 503
+        assert diagnostic["error"] == "exception details omitted"
+        assert diagnostic["provider_body_retained"] is False
+    assert exp.metrics["attempts"][0]["usage"] is None
+    assert exp.metrics["attempts"][0]["usage_status"] == "unknown"
+    assert sentinel not in json.dumps(exp.metrics)
+    assert sentinel not in str(caught.value)
+    assert sentinel not in capsys.readouterr().out
+    assert await _rows(exp.id) == []

@@ -76,19 +76,11 @@ def test_unattested_probe_observations_are_not_release_gates():
     assert _policy("build-repair")["hard_gates"]["execution_failed_count"] == 0
 
 
-def test_a_stricter_governance_tier_demands_a_higher_success_floor():
-    tiers = {}
+def test_every_agent_uses_the_owner_approved_success_floor():
+    """The 75% quality policy applies to every tier; hard gates stay independent."""
     for name in AGENT_BINDINGS:
-        assessment = yaml.safe_load(
-            (REPO_ROOT / "docs" / "risk-assessments" / f"{name}.yaml").read_text()
-        )
-        tiers[name] = assessment["classification"]["governance_tier"]
-    for name, tier in tiers.items():
         floor = _policy(name)["thresholds"]["task_success_rate"]["min"]
-        if tier in ("high", "critical"):
-            assert floor >= 0.85, f"{name} is {tier} but its success floor is {floor}"
-        else:
-            assert floor >= 0.75, name
+        assert floor == 0.75, name
 
 
 def test_policies_are_regenerable():

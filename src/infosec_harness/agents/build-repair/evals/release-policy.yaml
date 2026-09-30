@@ -9,7 +9,7 @@ hard_gates:
   uncovered_material_scenarios: 0
 thresholds:
   task_success_rate:
-    min: 0.85
+    min: 0.75
   average_cost_usd:
     max: 0.5
   p95_model_requests:

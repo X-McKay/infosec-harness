@@ -23,7 +23,9 @@ The earlier cross-source results are diagnostic evidence, not a controlled new b
 ## Boundaries and experiment limits
 
 The authorized inference endpoint is `https://llm.almckay.io`; live Bedrock is excluded.
-No sandbox access, quality threshold or golden outcome is relaxed. Repository content and model
+The initial experiments did not relax sandbox access, quality thresholds or golden outcomes.
+The owner-approved quality-policy change below applies only to subsequent candidates.
+Repository content and model
 outputs remain untrusted. A requested label is never supplied to the candidate as ground truth.
 Default prices describe token billing only, not hardware cost.
 
@@ -42,6 +44,36 @@ an accepted old configuration under a new identity. Execution checking uses the 
 builder and sandbox, never host execution of candidate commands.
 
 ## Status
+
+### Owner-approved 75% quality policy and remaining blockers
+
+On 2026-09-29 the owner explicitly requested a 75% task-success threshold and work to clear
+the remaining qualification gates. The canonical release-policy generator now uses 0.75 for
+all governance tiers; intake and recon already used that value. This is an intentional policy
+change, not an agent-quality improvement, and is an explicit exception to the repository and
+development-skill rule against lowering thresholds to pass a candidate. Original scores,
+expected outcomes and historical release decisions remain unchanged. The agent playbook
+section 7 permits use-case-specific quality thresholds but still requires every hard gate,
+operational threshold and reproducible-provenance check to pass.
+
+The latest public sweep on clean `f9769bf` was stopped before this policy change, preserving
+its original 85% policies and all results. All eleven first passes completed (118 scored,
+107 successful): eight cleared their policies; build-repair, partial-build and context failed.
+The completed second passes included build-repair 11/14, partial-build 6/9 and context 14/15.
+No model or sandbox limit was raised. The fresh grouped holdouts remain unused.
+
+The 75% floor cannot compensate for usage-limit stops, p95 model requests above 12, or
+unsupported safe decisions. Partial-build's second-pass success rate is also below 75%.
+Proceed in this order: record the actual binding usage limit without raw exception bodies;
+reduce redundant build exploration; repair unsupported context decisions; then test controlled
+parameter changes only where the recorded failure justifies them. New live evidence requires
+a new frozen candidate and declared budget. Never reinterpret this stopped sweep as passing
+qualification under revised policies.
+
+This change affects release eligibility and policy/configuration provenance, not persisted
+outputs, Temporal activity commands or sandbox permissions. Regeneration and policy checks
+must pass; replay effects from later agent behavior changes are assessed separately. Historical
+reports and stopped experiment databases remain available for recovery without score rewrites.
 
 The output-contract, secure Perl check, probe diagnostics, and calibration changes passed
 1,585 deterministic tests on clean revision `f8aabf5`. The first live sweep was stopped after

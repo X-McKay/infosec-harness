@@ -595,15 +595,15 @@ member_assessments:
   governance_tier: critical
   assessment: docs/risk-assessments/env-planner.yaml
 - agent: build-repair
-  agent_version: 1.0.1
+  agent_version: 1.0.2
   governance_tier: critical
   assessment: docs/risk-assessments/build-repair.yaml
 - agent: partial-build
-  agent_version: 1.1.0
+  agent_version: 1.1.1
   governance_tier: critical
   assessment: docs/risk-assessments/partial-build.yaml
 - agent: context
-  agent_version: 1.1.0
+  agent_version: 1.1.1
   governance_tier: high
   assessment: docs/risk-assessments/context.yaml
 - agent: probe-planner
