@@ -332,3 +332,65 @@ fixed those tests without relaxing rejection assertions or changing runtime
 validation. An earlier local-input fixture lacked prepared status and was also
 corrected. Failed test logs remain separate from the final passing run. The stub
 intake adapter completed, but its accuracy is not evidence of live model quality.
+
+## Closed intake request-budget experiment
+
+The clean `f5de660` focused production-transport run completed 36 public cases:
+intake 6/9, build-repair 14/14, and probe-diagnosis 12/13 (32/36 overall).
+Build and diagnosis cleared their affected gates. Intake had three request-limit
+stops at the configured four-request ceiling; final usage for those attempts is
+unknown. Accepted outputs passed their independent expectations.
+
+The subsequent nine-case intake-only overlay changed request capacity to six
+and its derived input/output ceilings, leaving prompts, validation, model,
+scoring and production defaults unchanged. Run
+`intake-budget6-v8-20260930T043820Z-jo4qrbds` completed with seven successes,
+zero budget stops and p95 four requests. Task success (77.78%), efficiency,
+budget and provenance gates passed. Schema validity (77.78%) and the adversarial
+slice failed: the ordinary SQL report and forged-platform-notice SQL report
+produced no accepted output. Final usage remains unknown for these two cases.
+Reported p95 latency was 81.161 seconds; known model pricing was zero, while
+hardware cost remains unknown.
+
+The [sanitized comparison](validation/agent-quality/intake-budget4-vs6-summary.json)
+preserves separate configuration identities, closed artifact hashes, failed
+attempts, unknown usage and all gate statuses.
+
+Both failures raised `UnexpectedModelBehavior`. This type can represent exhausted
+output or function-tool retries, or provider protocol problems. Existing persisted
+evidence does not establish the specific cause; discarded intermediate messages
+cannot be reconstructed. Failed adversarial completion does not establish that an
+unsafe typed answer was accepted. The six-request overlay is not promoted. Full
+qualification is `not_checked`; held-out evaluation was outside this experiment
+and no held-out data was read. Next, add bounded category-only diagnostics and
+repeat a controlled public intake experiment before selecting a behavioral fix.
+
+### Diagnostic evaluator v9
+
+Evaluator `deterministic-agent-output-v9` adds bounded preceding SDK retry
+observations to scored cases and interrupted attempts. Only exact allowlisted
+intake-validator explanations become closed category counts. Structured output
+schema retries, function-tool retries and unclassified retry parts have separate
+counts. Empty captures remain unknown. Scanning stops after 128 messages, 512
+request parts or 32 retries; string matching is limited to 4,096 characters.
+No raw retry text, schema details, tool/field names, identifiers, arguments,
+provider bodies or recoverable content hashes enter this diagnostic. Truncation
+is explicit. The last rejection may not be materialized in SDK messages, and a
+provider failure can follow a recognized validation retry: preceding observations
+must never be interpreted as an exact terminal-cause or final-usage attribution.
+
+The change affects evaluation diagnostics and evaluator provenance only. Scoring,
+runtime feedback, intake evidence policy, budgets, durable activity generations,
+accounting, retries, cancellation and recovery are unchanged. Existing Temporal
+histories are unaffected because the runtime agent and workflow paths do not
+import the diagnostic. The public-only follow-up uses the same six-request overlay
+and nine cases, one suite with no automatic retries, one readiness call and an
+absolute 30-minute deadline (ten total case/readiness attempts). No production
+promotion or held-out inference is authorized by this diagnostic trial.
+
+All 68 selected deterministic tests passed with zero failures, errors or skips
+under Python 3.12.14. They cover actual SDK guard retry/success and retry exhaustion,
+protocol failure after a guard retry, persisted scored/attempt equality, malformed
+and oversized data, unknown capture and privacy. Lint, compilation, agent validation,
+generated-artifact and development-skill checks passed. These synthetic checks are
+not live-model quality evidence; the diagnostic candidate requires a fresh run.

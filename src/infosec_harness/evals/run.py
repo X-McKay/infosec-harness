@@ -31,11 +31,12 @@ from infosec_harness.evals.adapters import (
 from infosec_harness.evals.budget_stop import budget_stop_diagnostic
 from infosec_harness.evals.errors import failure_diagnostic
 from infosec_harness.evals.invocation import AgentRunTimeout, run_with_timeout
+from infosec_harness.evals.output_retries import output_retry_summary
 from infosec_harness.evals.provenance import code_version
 from infosec_harness.evals.trajectory import summarize_calls
 from infosec_harness.settings import get_settings
 
-EVALUATOR_VERSION = "deterministic-agent-output-v8"
+EVALUATOR_VERSION = "deterministic-agent-output-v9"
 EVAL_EXECUTION_MODE = "local-eval-production-transport-v1"
 
 
@@ -552,6 +553,7 @@ async def run_experiment(
                             "expected": expected,
                             "outcome": "failed",
                             "call_summary": summarize_calls(messages),
+                            "output_retry_summary": output_retry_summary(messages, agent=agent),
                             **failure_diagnostic(exc),
                             "latency_s": latency,
                             "usage": None,
@@ -574,6 +576,7 @@ async def run_experiment(
                     usage_record["requests"] if usage_record is not None else None,
                 )
                 diagnostic["call_summary"] = summarize_calls(messages)
+                diagnostic["output_retry_summary"] = output_retry_summary(messages, agent=agent)
                 tool_calls.append(diagnostic["call_summary"]["tool_call_count"])
                 latency = time.monotonic() - started
                 latencies.append(latency)
