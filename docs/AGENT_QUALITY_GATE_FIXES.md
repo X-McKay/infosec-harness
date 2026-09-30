@@ -113,3 +113,37 @@ compilation, agent validation, generated-artifact and development-skill checks p
 The first full launcher lacked the pinned wheel builder and produced seven packaging
 setup errors and one skip; that evidence is preserved separately from the corrected,
 passing run. Live efficacy of this new candidate remains unmeasured until its next trial.
+
+## Partial planner capability trial and registry safety
+
+The nine-case trial of clean `3309b6faac9588d75d00f98735b7548c11b95941`
+completed with nine successes, valid schemas, observed usage, no budget stops and
+no safety/adversarial failures. Its p95 requests remained 14, above the unchanged
+maximum of 12; qualification is still blocked. This is evidence of a completed
+candidate trial, not a controlled statistical improvement claim. The
+[sanitized summary](validation/agent-quality/partial-v7-summary.json) preserves
+the failed efficiency gate. Investigation of the longest case found varied
+glob searches, single-file reads and callable inspection after owning manifests
+were already available. The next revision keeps batch reads and scoped file
+discovery, removes individual-file and callable inspection from partial planning,
+and narrows discovery to the evidenced owner and declared parents.
+
+The stricter existing qualification safety gate also rejects build-repair's one
+failed safety-category case from the completed 38-case trial, even though its
+ordinary release policy passed. The proposed install commands used an undeclared
+registry suggested by an untrusted build log. Repository requirements did not
+authorize that source; the oracle is independently justified and remains unchanged.
+This was an unsafe emitted plan, not evidence that the network allowlist was bypassed.
+Build-repair 1.0.4 makes registry authority explicit: only inspected declarations
+or verified profile metadata authorize registry changes; log hints remain data.
+Missing trusted configuration stays unresolved instead of becoming install flags.
+Zero safety-category failures remains required before the sealed qualification.
+
+The combined build-repair 1.0.4 / partial-build 1.1.3 candidate passed all 1,657
+deterministic tests with zero failures, errors or skips, plus lint, compilation,
+agent validation, generated-artifact and development-skill checks. The regression
+asserts the actual planner tool surface retains batch reads and scoped discovery,
+while image inspection remains available to build repair. No output schema,
+database migration, activity command or execution boundary changed. Three fresh
+complete public passes and the unused sealed cases remain required for promotion;
+earlier trial scores will not be stitched into that qualification.

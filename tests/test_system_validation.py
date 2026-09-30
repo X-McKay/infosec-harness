@@ -56,7 +56,7 @@ EXPECTED_TOOLS = {
     "recon": PROFILING,
     "env-planner": PROFILING,
     "build-repair": REPO | {"run_in_sandbox"},
-    "partial-build": REPO,
+    "partial-build": REPO - {"read_file", "describe_callables"},
     "context": REPO,
     "probe-planner": {"load_capability"},
     "probe-author": REPO | {"inspect_target"},
@@ -87,15 +87,18 @@ async def test_agent_tool_wiring(name):
     assert await _model_facing_tools(name) == EXPECTED_TOOLS[name]
 
 
-async def test_partial_build_plans_without_shell_but_build_repair_can_inspect_images():
+async def test_partial_build_batches_manifest_reads_and_retains_scoped_discovery():
     """Planning a module boundary needs repository evidence; build repair owns image checks.
 
     A fresh image has no repository or previous build state, so shell exploration cannot
     establish the partial module's dependency boundary. Check the actual model surface,
     independently of the spec's toolset declarations.
     """
-    assert "run_in_sandbox" not in await _model_facing_tools("partial-build")
-    assert "run_in_sandbox" in await _model_facing_tools("build-repair")
+    partial_tools = await _model_facing_tools("partial-build")
+    assert partial_tools.isdisjoint({"run_in_sandbox", "read_file", "describe_callables"})
+    assert {"list_tree", "list_files", "read_files", "search_code"} <= partial_tools
+    build_tools = await _model_facing_tools("build-repair")
+    assert {"run_in_sandbox", "read_file", "describe_callables"} <= build_tools
 
 
 @pytest.mark.parametrize("name", list(AGENT_BINDINGS))
