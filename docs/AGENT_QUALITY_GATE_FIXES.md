@@ -44,7 +44,7 @@ digests change. Accepted durable batches remain pinned to their accepted configu
 use a compatible worker or a newly accepted run, rather than silently resuming with revised
 behavior. Additive evaluator diagnostics need no migration; historical records remain intact.
 
-## Validation and next experiment
+## Validation and focused live experiment
 
 Focused policy, SDK-boundary, privacy, adapter, agent-contract and budget tests passed.
 The initial full suite found three stale generated-governance/version checks; their logs
@@ -54,13 +54,24 @@ real local Temporal integration/recovery tests. Lint, compilation, agent validat
 generated-artifact checks and development-skill drift checks passed. Playbook conformance
 passed with the existing AGENT029 retries-format waiver and its reported warnings; no
 new waiver was added. An independent review found no actionable defects in the scoped
-changes. Live efficacy and qualification of this candidate are not checked yet.
+changes.
 
-The next controlled experiment runs the complete public datasets for build-repair,
-partial-build and context once (38 cases), with unchanged limits, at most two concurrent
-suites, at most one readiness request and a 90-minute aggregate deadline. Missing or
-failed gates stay visible. This is a diagnostic candidate comparison, not the required
-three-pass, eleven-agent qualification. No holdouts run during this experiment.
+The focused live experiment on clean `7f766498765cdf9cce5b9d878706acfeb5fa0bfd` declared
+the complete public datasets for build-repair, partial-build and context once (38 cases),
+with unchanged limits, at most two concurrent suites, one readiness request and a
+90-minute aggregate deadline. It stopped after both active suites received HTTP 502
+responses. Each suite had already recorded one 600-second `AgentRunTimeout`; captured
+responses were partial, and final failed usage remained unknown. These were deadline
+failures, not a recognized request/token-limit exception. The provider's root cause is
+not established by the status code or partial observations.
+
+Three cases were scored (one pass, two deadline failures), and two subsequent attempts
+were unscored transport failures. Neither dataset completed, and context was unstarted.
+No automatic retry, holdout inference or promotion occurred. Runtime budgets and case
+expectations remained unchanged. Live efficacy and full qualification remain not checked;
+restore reliable endpoint inference before repeating the bounded measurement. The safe
+[focused-run summary](validation/agent-quality/focused-v7-summary.json) is retained
+separately from the historical evaluator-v6 evidence.
 
 Only an independently observed binding limit can justify a targeted budget trial. A larger
 allowance that still exceeds request-efficiency gates or extends unproductive exploration
