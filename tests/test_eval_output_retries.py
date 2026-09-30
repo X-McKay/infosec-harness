@@ -19,6 +19,7 @@ from pydantic_ai.usage import UsageLimits
 from sqlalchemy import select
 
 from infosec_harness.agents.deps import AgentDeps
+from infosec_harness.agents.intake_contracts import retained_intake_spec
 from infosec_harness.agents.registry import build_agent
 from infosec_harness.evals.output_retries import output_retry_summary
 
@@ -100,7 +101,8 @@ async def test_real_sdk_guard_retry_then_valid_or_four_response_exhaustion(exhau
         value = BAD if exhausted or len(calls) == 1 else VALID
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, value)])
 
-    agent = build_agent("intake", durable=False, production_transport=True)
+    agent = build_agent("intake", durable=False, production_transport=True,
+                        spec_override=retained_intake_spec(), atomic_output=False)
     with agent.override(model=FunctionModel(respond)), capture_run_messages() as messages:
         if exhausted:
             with pytest.raises(UnexpectedModelBehavior):
@@ -142,8 +144,10 @@ async def test_eval_persists_observations_for_accepted_and_protocol_failed_outpu
             raise UnexpectedModelBehavior("SECRET_PROVIDER", body="SECRET_PROVIDER_BODY")
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, BAD if len(calls) == 1 else VALID)])
 
-    agent = build_agent("intake", durable=False, production_transport=True)
+    agent = build_agent("intake", durable=False, production_transport=True,
+                        spec_override=retained_intake_spec(), atomic_output=False)
     monkeypatch.setattr(registry, "build_agent", lambda *_args, **_kwargs: agent)
+    monkeypatch.setattr(registry, "load_spec", lambda *_args, **_kwargs: retained_intake_spec())
     with agent.override(model=FunctionModel(respond)):
         exp_id = await run.run_experiment("intake")
     async with db.session() as session:
@@ -154,7 +158,7 @@ async def test_eval_persists_observations_for_accepted_and_protocol_failed_outpu
     assert summary == experiment.metrics["attempts"][0]["output_retry_summary"]
     assert summary["intake_guard_retry_parts"] == 1
     assert row.passed is (not protocol_failure)
-    assert run.EVALUATOR_VERSION == "deterministic-agent-output-v10"
+    assert run.EVALUATOR_VERSION == "deterministic-agent-output-v11"
     if protocol_failure:
         assert row.scores["error_category"] == "no_accepted_output"
         assert row.scores["usage_status"] == "unknown"

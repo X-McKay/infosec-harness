@@ -390,3 +390,15 @@ def stub_model(agent_name: str, tier: str) -> Model:
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args)])
 
     return FunctionModel(respond, model_name=f"stub-{agent_name}-{tier}")
+
+
+def atomic_intake_stub_model(agent_name: str, tier: str) -> Model:
+    """Deterministic no-claim output for the new typed intake wire in offline mode."""
+    from pydantic_ai.messages import ModelResponse, ToolCallPart
+
+    def respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if agent_name != "intake" or not info.output_tools:
+            raise RuntimeError(f"No atomic intake stub for agent {agent_name!r}")
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {})])
+
+    return FunctionModel(respond, model_name=f"stub-{agent_name}-{tier}-atomic")

@@ -10,6 +10,7 @@ from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 from sqlalchemy import select
 
+from infosec_harness.agents.intake_contracts import retained_intake_spec
 from infosec_harness.agents.intake_evidence import EXTRACTED_FIELDS, extraction_evidence_violations
 from infosec_harness.domain.models import ExtractedFinding
 from infosec_harness.evals.intake_fields import FIELDS, RULES, intake_field_summary
@@ -151,8 +152,10 @@ async def test_actual_sdk_and_eval_persist_field_observations_without_scoring_ch
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name,
             {"cwe": "CWE-78", "evidence": [evidence(quote=quote)]})])
 
-    agent = registry.build_agent("intake", durable=False, production_transport=True)
+    agent = registry.build_agent("intake", durable=False, production_transport=True,
+                        spec_override=retained_intake_spec(), atomic_output=False)
     monkeypatch.setattr(registry, "build_agent", lambda *_args, **_kwargs: agent)
+    monkeypatch.setattr(registry, "load_spec", lambda *_args, **_kwargs: retained_intake_spec())
     with agent.override(model=FunctionModel(respond)):
         exp_id = await run.run_experiment("intake")
     async with db.session() as session:
@@ -165,7 +168,7 @@ async def test_actual_sdk_and_eval_persist_field_observations_without_scoring_ch
     assert summary["field_rule_counts"]["cwe"]["quote_not_verbatim"] == 1
     assert summary["quote_not_verbatim_but_whitespace_normalized_match"]["cwe"] == 1
     assert row.passed is (not protocol_failure)
-    assert run.EVALUATOR_VERSION == "deterministic-agent-output-v10"
+    assert run.EVALUATOR_VERSION == "deterministic-agent-output-v11"
     if protocol_failure:
         assert row.scores["error_category"] == "no_accepted_output" and row.scores["usage_status"] == "unknown"
         assert "SECRET" not in json.dumps(row.scores)

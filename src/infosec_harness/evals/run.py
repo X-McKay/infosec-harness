@@ -21,6 +21,7 @@ import yaml
 from pydantic import BaseModel
 from pydantic_ai import capture_run_messages
 
+from infosec_harness.agents.intake_contracts import render_intake_prompt
 from infosec_harness.agents.planning_window import planning_window_diagnostic
 from infosec_harness.agents.render import render_prompt
 from infosec_harness.evals.adapters import (
@@ -37,7 +38,7 @@ from infosec_harness.evals.provenance import code_version
 from infosec_harness.evals.trajectory import summarize_calls
 from infosec_harness.settings import get_settings
 
-EVALUATOR_VERSION = "deterministic-agent-output-v10"
+EVALUATOR_VERSION = "deterministic-agent-output-v11"
 EVAL_EXECUTION_MODE = "local-eval-production-transport-v1"
 
 
@@ -429,7 +430,11 @@ async def run_experiment(
             case_name = case["name"]
             task_text, payload, deps, predict, expected = ADAPTERS[agent](case)
             for rep in range(repeat):
-                prompt = render_prompt(task_text, payload)
+                intake_protocol = ((spec.metadata or {}).get("intake_output") or {}).get("protocol")
+                prompt = (
+                    render_intake_prompt(task_text, payload, protocol=intake_protocol)
+                    if agent == "intake" else render_prompt(task_text, payload)
+                )
                 invocation_config = resolve_agent_config(
                     agent, spec, source_files=deps.source_files, durable=True
                 )
@@ -556,7 +561,7 @@ async def run_experiment(
                             "call_summary": summarize_calls(messages),
                             "output_retry_summary": output_retry_summary(messages, agent=agent),
                             "intake_field_summary": intake_field_summary(
-                                messages, report=deps.report_text, agent=agent),
+                                messages, report=deps.report_text, agent=agent, protocol=intake_protocol),
                             **failure_diagnostic(exc),
                             "latency_s": latency,
                             "usage": None,
@@ -581,7 +586,7 @@ async def run_experiment(
                 diagnostic["call_summary"] = summarize_calls(messages)
                 diagnostic["output_retry_summary"] = output_retry_summary(messages, agent=agent)
                 diagnostic["intake_field_summary"] = intake_field_summary(
-                    messages, report=deps.report_text, agent=agent)
+                    messages, report=deps.report_text, agent=agent, protocol=intake_protocol)
                 tool_calls.append(diagnostic["call_summary"]["tool_call_count"])
                 latency = time.monotonic() - started
                 latencies.append(latency)

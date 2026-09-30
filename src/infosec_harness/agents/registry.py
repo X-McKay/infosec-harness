@@ -37,6 +37,17 @@ from infosec_harness.agents.budgets import (
 from infosec_harness.agents.capabilities import CUSTOM_CAPABILITIES
 from infosec_harness.agents.deps import AgentDeps
 from infosec_harness.agents.governance import GovernanceError, assert_governed
+from infosec_harness.agents.intake_claims import (
+    WIRE_VERSION,
+    AtomicFinding,
+    ReferenceError,
+    reconstruct,
+)
+from infosec_harness.agents.intake_contracts import (
+    ATOMIC_EXECUTION_NAME,
+    QUOTED_EXECUTION_NAME,
+    retained_intake_spec,
+)
 from infosec_harness.agents.intake_evidence import INTAKE_EVIDENCE_POLICY_VERSION
 from infosec_harness.agents.outputs import (
     VERDICT_OUTPUTS,
@@ -46,6 +57,7 @@ from infosec_harness.agents.outputs import (
     verdict_contract_instructions,
 )
 from infosec_harness.agents.planning_window import PlanningWindow, PlanningWindowTelemetry
+from infosec_harness.agents.replay_only import ReplayOnlyModel
 from infosec_harness.agents.validators import (
     OUTPUT_VALIDATORS,
     bind_install_source_validator,
@@ -227,8 +239,15 @@ def deep_merge(base: Any, overlay: Any) -> Any:
     return copy.deepcopy(overlay)
 
 
-def load_spec(name: str, overlay: Mapping[str, Any] | None = None) -> AgentSpec:
-    spec = AgentSpec.from_file(spec_path(name))
+def load_spec(
+    name: str,
+    overlay: Mapping[str, Any] | None = None,
+    *,
+    spec_override: AgentSpec | None = None,
+) -> AgentSpec:
+    if spec_override is not None and overlay is not None:
+        raise ValueError("A complete spec override cannot be combined with an overlay")
+    spec = spec_override or AgentSpec.from_file(spec_path(name))
     if overlay:
         merged = deep_merge(spec.model_dump(by_alias=True, exclude_none=True, mode="json"), overlay)
         spec = AgentSpec.from_dict(merged)
@@ -295,8 +314,12 @@ def resolve_agent_config(
     )
     effective_spec = effective.model_dump(by_alias=True, exclude_none=True, mode="json")
     if name == "intake":
-        effective_spec.setdefault("metadata", {})["output_validation"] = {
-            "version": INTAKE_EVIDENCE_POLICY_VERSION
+        metadata = effective_spec.setdefault("metadata", {})
+        intake_output = metadata.get("intake_output") or {}
+        metadata["output_validation"] = {
+            "version": INTAKE_EVIDENCE_POLICY_VERSION,
+            **({"wire_version": intake_output["protocol"]}
+               if intake_output.get("protocol") == WIRE_VERSION else {}),
         }
     if name == "build-repair":
         # Operator configuration is resolved on the host, never from repository content.
@@ -433,6 +456,39 @@ def _assert_tools_are_declared(name: str, spec: AgentSpec) -> None:
             )
 
 
+def _resolve_agent_model(
+    name: str,
+    tier: str,
+    *,
+    durable: bool,
+    atomic_intake: bool,
+    replay_only: bool,
+):
+    model = (
+        model_factory.resolve_intake_atomic(name, tier, durable=durable)
+        if atomic_intake
+        else model_factory.resolve(name, tier, durable=durable)
+    )
+    if replay_only and durable:
+        return ReplayOnlyModel(model)
+    return model
+
+
+def _validate_atomic_intake(ctx: Any, output: AtomicFinding) -> ExtractedFinding:
+    try:
+        finding = reconstruct(ctx.deps.report_text, output)
+    except ReferenceError as error:
+        rule = error.rule if error.rule in {
+            "source_unavailable", "unknown_source_id", "reversed_source_range"
+        } else "invalid_reference"
+        from pydantic_ai import ModelRetry
+
+        raise ModelRetry(
+            f"Extraction violates its evidence contract:\n- Source reference violates its contract: {rule}"
+        ) from None
+    return validate_intake_evidence(ctx, finding)
+
+
 def build_agent(
     name: str,
     overlay: Mapping[str, Any] | None = None,
@@ -441,6 +497,9 @@ def build_agent(
     production_transport: bool | None = None,
     legacy_output_contract: bool = False,
     execution_name: str | None = None,
+    spec_override: AgentSpec | None = None,
+    atomic_output: bool | None = None,
+    replay_only_model: bool = False,
 ) -> Agent[AgentDeps, Any]:
     """Build an agent with independently selected execution and transport layers.
 
@@ -451,7 +510,15 @@ def build_agent(
     """
     if name not in AGENT_BINDINGS:
         raise KeyError(f"Unknown agent {name!r}")
-    spec = load_spec(name, overlay)
+    if name == "intake" and legacy_output_contract and spec_override is None:
+        spec_override = retained_intake_spec()
+    spec = load_spec(name, overlay, spec_override=spec_override)
+    metadata = spec.metadata or {}
+    intake_output = metadata.get("intake_output") or {}
+    declared_atomic = name == "intake" and intake_output.get("protocol") == WIRE_VERSION
+    use_atomic_output = declared_atomic if atomic_output is None else atomic_output
+    if name == "intake" and use_atomic_output != declared_atomic:
+        raise ValueError("Intake output mode must match the full spec's declared protocol")
     # A spec that cannot be governed must not become a running agent: owner, execution class,
     # risk tier, risk assessment, model policy, budget, skills, and toolsets are all required,
     # and the spec's risk tier must match its assessment's governance tier (§3).
@@ -462,9 +529,10 @@ def build_agent(
     transport = durable if production_transport is None else production_transport
     capabilities: list[Any] = [
         ResolveModelId(
-            lambda ctx, model_id, _n=name, _d=transport: model_factory.resolve(
-                _n, model_id, durable=_d
-            )
+            lambda ctx, model_id, _n=name, _d=transport, _a=use_atomic_output,
+                   _r=replay_only_model: _resolve_agent_model(
+                       _n, model_id, durable=_d, atomic_intake=_a, replay_only=_r
+                   )
         )
     ]
     # Cross-cutting robustness, attached in code (see ALLOWED_CAPABILITIES note).
@@ -488,7 +556,7 @@ def build_agent(
                 model_activity_config=MODEL_ACTIVITY, toolset_activity_config=TOOL_ACTIVITY
             )
         )
-    output_type = AGENT_BINDINGS[name]
+    output_type = AtomicFinding if use_atomic_output else AGENT_BINDINGS[name]
     if not legacy_output_contract:
         if name == "partial-build":
             output_type = PartialEnvironmentOutput
@@ -520,7 +588,10 @@ def build_agent(
         ]["output_validation"]
         agent.output_validator(bind_install_source_validator(tuple(policy["approved_hosts"])))
     if name == "intake" and not legacy_output_contract:
-        agent.output_validator(validate_intake_evidence)
+        if use_atomic_output:
+            agent.output_validator(_validate_atomic_intake)
+        else:
+            agent.output_validator(validate_intake_evidence)
     for validator in OUTPUT_VALIDATORS.get(name, ()):
         agent.output_validator(validator)
     return agent
@@ -533,17 +604,30 @@ def durable_agents() -> dict[str, Agent[AgentDeps, Any]]:
     return {
         name: build_agent(
             name,
-            execution_name=f"{name}-output-v2" if name in revised else None,
+            execution_name=(ATOMIC_EXECUTION_NAME if name == "intake" else
+                            f"{name}-output-v2" if name in revised else None),
         )
         for name in AGENT_BINDINGS
     }
+
+
+def quoted_intake_agent(*, durable: bool = True) -> Agent[AgentDeps, Any]:
+    """Build retained 1.0.2 quote output with the v2 Temporal identity."""
+    return build_agent(
+        "intake", durable=durable, spec_override=retained_intake_spec(),
+        atomic_output=False, replay_only_model=durable, execution_name=QUOTED_EXECUTION_NAME,
+    )
 
 
 @lru_cache
 def legacy_output_agents() -> dict[str, Agent[AgentDeps, Any]]:
     """Original Temporal identities and parsers retained solely for history replay."""
     return {
-        name: build_agent(name, legacy_output_contract=True)
+        name: build_agent(
+            name, legacy_output_contract=True,
+            spec_override=retained_intake_spec() if name == "intake" else None,
+            replay_only_model=(name == "intake"),
+        )
         for name in ("partial-build", "context", "verdict", "build-repair", "intake")
     }
 

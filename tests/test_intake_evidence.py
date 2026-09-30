@@ -117,6 +117,8 @@ async def test_production_local_intake_receives_the_same_exact_report(tmp_path, 
 async def test_actual_current_sdk_retries_invalid_extraction_but_retained_generation_accepts_it():
     bad = ExtractedFinding.model_validate({"cwe": None, "evidence": [evidence()]})
     valid = ExtractedFinding.model_validate({"cwe": "CWE-78", "evidence": [evidence()]})
+    from infosec_harness.agents.intake_contracts import retained_intake_spec
+
     for legacy, requests in ((False, 2), (True, 1)):
         calls = []
 
@@ -126,7 +128,11 @@ async def test_actual_current_sdk_retries_invalid_extraction_but_retained_genera
             return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name,
                 output.model_dump(mode="json"), tool_call_id=str(len(captured_calls)))])
 
-        agent = build_agent("intake", durable=False, legacy_output_contract=legacy)
+        agent = build_agent(
+            "intake", durable=False, legacy_output_contract=legacy,
+            spec_override=None if legacy else retained_intake_spec(),
+            atomic_output=False,
+        )
         with agent.override(model=FunctionModel(model)):
             result = await agent.run("synthetic", deps=AgentDeps(
                 repo_path="/nonexistent", report_text=REPORT),
@@ -136,8 +142,12 @@ async def test_actual_current_sdk_retries_invalid_extraction_but_retained_genera
 
 
 def test_validation_version_is_part_of_both_effective_and_full_config():
+    from infosec_harness.agents.intake_claims import WIRE_VERSION
+
     config = resolve_agent_config("intake", load_spec("intake"), durable=True)
-    assert config.effective_spec["metadata"]["output_validation"] == {"version": "intake-evidence/v1"}
+    assert config.effective_spec["metadata"]["output_validation"] == {
+        "version": "intake-evidence/v1", "wire_version": WIRE_VERSION
+    }
     metadata = {**config.effective_spec["metadata"], "output_validation": {"version": "older"}}
     altered = config.model_copy(update={"effective_spec": {**config.effective_spec, "metadata": metadata}})
     assert config.digest != altered.digest and config.effective_digest != altered.effective_digest

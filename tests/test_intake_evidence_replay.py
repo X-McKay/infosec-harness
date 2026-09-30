@@ -76,6 +76,8 @@ def _model_events(history):
 async def test_recorded_intake_with_old_deps_and_shared_marker_replays_without_new_guard(
     tmp_path, monkeypatch,
 ):
+    from dataclasses import replace
+
     from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
     from pydantic_ai.messages import ModelResponse, ToolCallPart
     from pydantic_ai.models.function import FunctionModel
@@ -85,8 +87,10 @@ async def test_recorded_intake_with_old_deps_and_shared_marker_replays_without_n
 
     from infosec_harness.agents import models
     from infosec_harness.agents.durable import AGENTS
+    from infosec_harness.agents.intake_contracts import retained_intake_spec
     from infosec_harness.agents.registry import build_agent
     from infosec_harness.settings import get_settings
+    from infosec_harness.workflows import temporal_ops
 
     assert get_settings().model_mode == "stub"
     temporal = shutil.which("temporal")  # Host only: workflow sandbox remains enabled.
@@ -107,8 +111,16 @@ async def test_recorded_intake_with_old_deps_and_shared_marker_replays_without_n
         return fixture_model
 
     monkeypatch.setattr(models, "resolve", resolve_fixture)
-    legacy = build_agent("intake", legacy_output_contract=True)
-    current_agent = build_agent("intake", execution_name="intake-output-v2")
+    legacy = build_agent("intake", legacy_output_contract=True, spec_override=retained_intake_spec(), atomic_output=False)
+    current_agent = build_agent("intake", execution_name="intake-output-v2",
+                                spec_override=retained_intake_spec(), atomic_output=False)
+    # This fixture records the pre-adoption v2 worker. Its replay selector uses the same
+    # immutable v2 bundle; canonical retained workers deny any newly executed provider call.
+    def pre_adoption_generation(self, **kwargs):
+        return (replace(temporal_ops.INTAKE_GENERATIONS["quoted"], agent=current_agent)
+                if workflow.patched("intake-evidence-v1")
+                else replace(temporal_ops.INTAKE_GENERATIONS["bare"], agent=legacy))
+    monkeypatch.setattr(TemporalOps, "_intake_for", pre_adoption_generation)
     monkeypatch.setitem(LEGACY_OUTPUT_AGENTS, "intake", legacy)
     monkeypatch.setitem(AGENTS, "intake", current_agent)
     for fixture in (_PreGuardWorkflow, _CurrentWorkflow):

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import timedelta
+from typing import Any
 
 from pydantic_ai.messages import UserContent
 from temporalio import workflow
@@ -29,7 +30,15 @@ from infosec_harness.graph.ops import AgentOutcome
 
 with workflow.unsafe.imports_passed_through():
     from infosec_harness.agents import models as model_factory
-    from infosec_harness.agents.durable import AGENTS, CONFIGS, LEGACY_OUTPUT_AGENTS, MODELS
+    from infosec_harness.agents.durable import (
+        AGENTS,
+        CONFIGS,
+        INTAKE_GENERATIONS,
+        LEGACY_OUTPUT_AGENTS,
+        MODELS,
+    )
+    from infosec_harness.agents.intake_generations import IntakeGeneration, IntakeGenerationName
+    from infosec_harness.agents.registry import ResolvedAgentConfig
     from infosec_harness.evals.trajectory import count_repeated_calls, inspect_messages
     from infosec_harness.workflows import activities
     from infosec_harness.workflows.accounting import RootAccounting
@@ -46,7 +55,9 @@ _RETRY = RetryPolicy(maximum_attempts=3, non_retryable_error_types=_NON_RETRYABL
 class TemporalOps:
     """Bound to one workflow execution; created inside the workflow's run method."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, intake_atomic_inline: bool = False) -> None:
+        self._intake_atomic_inline = intake_atomic_inline
+        self._intake_generations = INTAKE_GENERATIONS
         self._accounting = RootAccounting()
         self._agents = AGENTS
         self._legacy_output_agents = LEGACY_OUTPUT_AGENTS
@@ -62,9 +73,10 @@ class TemporalOps:
         # has reached a live frontier without a recorded model request, fail without mutating
         # budget state or issuing current behavior under historical provenance.
         self._agent_for(name)
-        config = self._configs[name].for_source_files(deps.source_files)
+        selected_config = self._config_for(name)
+        config = selected_config.for_source_files(deps.source_files)
         identity = await self._accounting.reserve(
-            config, configuration_digest=self._configs[name].digest
+            config, configuration_digest=selected_config.digest
         )
         try:
             outcome = await self._run_agent(name, prompt, deps)
@@ -82,12 +94,16 @@ class TemporalOps:
         # again is pure and returns the same workflow-patched generation.
         agent = self._agent_for(name)
         started = workflow.now()
-        effective_config = self._configs[name].for_source_files(deps.source_files)
+        effective_config = self._config_for(name).for_source_files(deps.source_files)
         result = await agent.run(
             list(prompt), deps=deps, usage_limits=effective_config.budget.to_usage_limits()
         )
         usage = result.usage
-        model_name = self._models[name]
+        model_name = (
+            self._intake_for(check_frontier=False).model_name
+            if name == "intake"
+            else self._models[name]
+        )
         cost, estimated = model_factory.estimate_cost(model_name, usage)
         tools_called, skills_loaded = inspect_messages(messages := result.all_messages())
         repeated = count_repeated_calls(messages)
@@ -111,11 +127,34 @@ class TemporalOps:
             repeated_tool_calls=repeated,
         )
 
+    def _intake_for(self, *, check_frontier: bool = True) -> IntakeGeneration:
+        if self._intake_atomic_inline:
+            return self._intake_generations["atomic"]
+        key: IntakeGenerationName = "quoted" if workflow.patched("intake-evidence-v1") else "bare"
+        if check_frontier and not workflow.unsafe.is_replaying():
+            raise RuntimeError(
+                "legacy intake execution has no recorded model activity; "
+                "retry the triage as a new workflow"
+            )
+        return self._intake_generations[key]
+
+    def intake_prompt(self, task: str, payload: dict[str, Any]) -> list[UserContent]:
+        return self._intake_for().render_prompt(task, payload)
+
+    def _config_for(self, name: str) -> ResolvedAgentConfig:
+        return (
+            self._intake_for(check_frontier=False).config
+            if name == "intake"
+            else self._configs[name]
+        )
+
     def _agent_for(self, name: str):
         """Select the output-contract generation as a replay-recorded workflow decision."""
         # Old histories contain `final_result` payloads parsed by the original contracts.
         # Record one workflow patch decision before scheduling the model activity, then keep
         # each history on the matching Temporal activity identity forever.
+        if name == "intake":
+            return self._intake_for().agent
         patch = {
             "build-repair": "build-repair-install-source-v1",
             "intake": "intake-evidence-v1",

@@ -19,7 +19,6 @@ from temporalio.exceptions import ApplicationError, is_cancelled_exception
 with workflow.unsafe.imports_passed_through():
     from infosec_harness.agents.deps import AgentDeps
     from infosec_harness.agents.durable import AGENT_LIST
-    from infosec_harness.agents.render import render_prompt
     from infosec_harness.domain.models import (
         Finding,
         FindingInput,
@@ -130,9 +129,11 @@ class ComponentPreparationWorkflow:
 class FindingTriageWorkflow:
     @workflow.run
     async def run(self, args: dict) -> TriageRunOutput:
+        # Memoize absence during old-history replay before its first activity/frontier.
+        atomic_intake = workflow.patched("intake-atomic-inline-v1")
         inp = FindingInput.model_validate(args["finding_input"])
         prepared = PreparedEnvironment.model_validate(args["prepared"])
-        ops = TemporalOps()
+        ops = TemporalOps(intake_atomic_inline=atomic_intake)
         invocations = []
         state = None
         preserve_partial_failure = workflow.patched("finding-partial-failure-v1")
@@ -143,7 +144,7 @@ class FindingTriageWorkflow:
             if adapters.needs_extraction(finding) and finding.description.strip():
                 deps = AgentDeps(repo_path=prepared.snapshot.path, report_text=finding.description)
                 outcome = await ops.run_agent(
-                    "intake", render_prompt("Extract the missing finding fields from the report text, "
+                    "intake", ops.intake_prompt("Extract the missing finding fields from the report text, "
                                             "with citations.", {"report": finding.description,
                                                                 "known": finding}), deps)
                 invocations.append(outcome)

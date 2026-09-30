@@ -5,7 +5,13 @@ from __future__ import annotations
 import pytest
 
 from infosec_harness.agents.deps import AgentDeps
-from infosec_harness.agents.durable import AGENT_LIST, AGENTS, LEGACY_OUTPUT_AGENTS
+from infosec_harness.agents.durable import (
+    AGENT_LIST,
+    AGENTS,
+    INTAKE_GENERATIONS,
+    LEGACY_OUTPUT_AGENTS,
+)
+from infosec_harness.agents.intake_claims import AtomicFinding
 from infosec_harness.agents.outputs import VERDICT_OUTPUTS, ContextOutput, PartialEnvironmentOutput
 from infosec_harness.domain.models import EnvironmentSpec, ExtractedFinding, FindingContext, Verdict
 from infosec_harness.workflows import temporal_ops
@@ -16,11 +22,11 @@ _REVISED = {"partial-build", "context", "verdict", "build-repair", "intake"}
 
 def test_both_output_contract_generations_are_registered_with_distinct_identities() -> None:
     assert set(LEGACY_OUTPUT_AGENTS) == _REVISED
-    assert len(AGENT_LIST) == len(AGENTS) + len(_REVISED)
+    assert len(AGENT_LIST) == len(AGENTS) + len(_REVISED) + 1
     assert len({agent.name for agent in AGENT_LIST}) == len(AGENT_LIST)
     for name in _REVISED:
         assert LEGACY_OUTPUT_AGENTS[name].name == name
-        assert AGENTS[name].name == f"{name}-output-v2"
+        assert AGENTS[name].name == ("intake-output-v3" if name == "intake" else f"{name}-output-v2")
 
 
 @pytest.mark.parametrize(
@@ -28,7 +34,7 @@ def test_both_output_contract_generations_are_registered_with_distinct_identitie
     [
         ("partial-build", EnvironmentSpec, PartialEnvironmentOutput),
         ("build-repair", EnvironmentSpec, EnvironmentSpec),
-        ("intake", ExtractedFinding, ExtractedFinding),
+        ("intake", ExtractedFinding, AtomicFinding),
         ("context", FindingContext, ContextOutput),
         ("verdict", Verdict, VERDICT_OUTPUTS),
     ],
@@ -49,7 +55,7 @@ def test_temporal_patch_selects_one_contract_generation(monkeypatch, patched: bo
     ops = TemporalOps()
     for name in _REVISED:
         selected = ops._agent_for(name)
-        expected = AGENTS[name] if patched else LEGACY_OUTPUT_AGENTS[name]
+        expected = (INTAKE_GENERATIONS["quoted"].agent if name == "intake" else AGENTS[name]) if patched else LEGACY_OUTPUT_AGENTS[name]
         assert selected is expected
     # Unchanged agents retain their existing identity on both sides of the patch.
     assert ops._agent_for("recon") is AGENTS["recon"]

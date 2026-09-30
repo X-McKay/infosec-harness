@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
-from typing import Literal, TypedDict, cast
+from typing import TYPE_CHECKING, Literal, TypedDict, cast
+
+if TYPE_CHECKING:
+    from infosec_harness.evals.intake_claim_observations import AtomicSummary
 
 from pydantic import ValidationError
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
@@ -45,6 +48,14 @@ class IntakeFieldSummary(TypedDict):
     truncated: bool
 
 
+class UnsupportedProtocolSummary(TypedDict):
+    version: Literal["intake-proposal-protocol/v1"]
+    capture_status: Literal["unknown"]
+    reason: Literal["unsupported_host_protocol"]
+    proposals_observed: int
+    truncated: bool
+
+
 def _shape(args: dict) -> Literal["unsupported_shape", "bounded_out"] | None:
     """Bound traversal without repr/JSON serialization of arbitrary argument objects."""
     stack, nodes, chars = [(args, 0)], 0, 0
@@ -74,7 +85,20 @@ def _shape(args: dict) -> Literal["unsupported_shape", "bounded_out"] | None:
 
 
 def intake_field_summary(messages: Sequence[ModelMessage], *, report: str | None,
-                         agent: str) -> IntakeFieldSummary:
+                         agent: str, protocol: str | None = None) -> IntakeFieldSummary | AtomicSummary | UnsupportedProtocolSummary:
+    """Use host-selected output protocol; never infer it from untrusted proposal shape."""
+    if protocol == "intake-atomic-claims/v2":
+        from infosec_harness.evals.intake_claim_observations import atomic_summary
+
+        return atomic_summary(messages, report=report, agent=agent)
+    if protocol is not None:
+        return {"version": "intake-proposal-protocol/v1", "capture_status": "unknown",
+                "reason": "unsupported_host_protocol", "proposals_observed": 0, "truncated": False}
+    return _flat_field_summary(messages, report=report, agent=agent)
+
+
+def _flat_field_summary(messages: Sequence[ModelMessage], *, report: str | None,
+                        agent: str) -> IntakeFieldSummary:
     """Check each field through the unchanged pure guard; retain only finite count keys."""
     summary: IntakeFieldSummary = {
         "version": "intake-proposal-fields/v1", "validation_policy": INTAKE_EVIDENCE_POLICY_VERSION,
@@ -87,7 +111,7 @@ def intake_field_summary(messages: Sequence[ModelMessage], *, report: str | None
         "quote_not_verbatim_but_whitespace_normalized_match": dict.fromkeys(FIELDS, 0), "truncated": False,
     }
     if agent != "intake":
-        return summary
+        return _capture_status(summary)
     normalized_report = " ".join(report.split()) if report is not None and len(report) <= MAX_TEXT_CHARS else None
     scanned_parts = 0
     for number, message in enumerate(messages):
@@ -99,13 +123,13 @@ def intake_field_summary(messages: Sequence[ModelMessage], *, report: str | None
         for part in message.parts:
             if scanned_parts >= MAX_PARTS:
                 summary["truncated"] = True
-                return summary
+                return _capture_status(summary)
             scanned_parts += 1
             if not isinstance(part, ToolCallPart) or part.tool_name != "final_result":
                 continue
             if summary["proposals_observed"] >= MAX_PROPOSALS:
                 summary["truncated"] = True
-                return summary
+                return _capture_status(summary)
             summary["proposals_observed"] += 1
             try:
                 if report is not None and len(report) > MAX_TEXT_CHARS:
@@ -168,4 +192,11 @@ def intake_field_summary(messages: Sequence[ModelMessage], *, report: str | None
                     summary["field_rule_counts"][field][category] += 1
             for field in whitespace_fields:
                 summary["quote_not_verbatim_but_whitespace_normalized_match"][field] += 1
+    return _capture_status(summary)
+
+
+def _capture_status(summary: IntakeFieldSummary) -> IntakeFieldSummary:
+    """Nonempty SDK history does not imply a captured output proposal."""
+    if summary["capture_status"] == "observed" and summary["proposals_observed"] == 0:
+        summary["capture_status"] = "unknown"
     return summary
