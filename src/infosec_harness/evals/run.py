@@ -21,6 +21,7 @@ import yaml
 from pydantic import BaseModel
 from pydantic_ai import capture_run_messages
 
+from infosec_harness.agents.planning_window import planning_window_diagnostic
 from infosec_harness.agents.render import render_prompt
 from infosec_harness.evals.adapters import (
     ADAPTERS,
@@ -34,7 +35,7 @@ from infosec_harness.evals.provenance import code_version
 from infosec_harness.evals.trajectory import summarize_calls
 from infosec_harness.settings import get_settings
 
-EVALUATOR_VERSION = "deterministic-agent-output-v7"
+EVALUATOR_VERSION = "deterministic-agent-output-v8"
 EVAL_EXECUTION_MODE = "local-eval-production-transport-v1"
 
 
@@ -555,6 +556,9 @@ async def run_experiment(
                             "latency_s": latency,
                             "usage": None,
                             "usage_status": "unknown",
+                            "planning_window": planning_window_diagnostic(
+                                spec.metadata or {}, invocation_config.budget.effective.max_requests, None
+                            ),
                             "cost_usd": None if failed_cost_unknown else 0.0,
                             "cost_status": "unknown" if failed_cost_unknown else "known_zero",
                             "effective_config_digest": invocation_config.digest,
@@ -565,6 +569,10 @@ async def run_experiment(
                 # Recorded on every path, including the two failure branches above: a run
                 # that was stopped by its budget still took time, and excluding it would make
                 # the latency distribution describe only the cases that behaved.
+                diagnostic["planning_window"] = planning_window_diagnostic(
+                    spec.metadata or {}, invocation_config.budget.effective.max_requests,
+                    usage_record["requests"] if usage_record is not None else None,
+                )
                 diagnostic["call_summary"] = summarize_calls(messages)
                 tool_calls.append(diagnostic["call_summary"]["tool_call_count"])
                 latency = time.monotonic() - started

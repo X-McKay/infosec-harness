@@ -11,7 +11,7 @@ from infosec_harness.domain.models import EnvironmentSpec, FindingContext, Verdi
 from infosec_harness.workflows import temporal_ops
 from infosec_harness.workflows.temporal_ops import TemporalOps
 
-_REVISED = {"partial-build", "context", "verdict"}
+_REVISED = {"partial-build", "context", "verdict", "build-repair"}
 
 
 def test_both_output_contract_generations_are_registered_with_distinct_identities() -> None:
@@ -27,6 +27,7 @@ def test_both_output_contract_generations_are_registered_with_distinct_identitie
     "name, legacy_type, current_type",
     [
         ("partial-build", EnvironmentSpec, PartialEnvironmentOutput),
+        ("build-repair", EnvironmentSpec, EnvironmentSpec),
         ("context", FindingContext, ContextOutput),
         ("verdict", Verdict, VERDICT_OUTPUTS),
     ],

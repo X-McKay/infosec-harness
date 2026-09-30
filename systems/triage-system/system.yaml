@@ -49,7 +49,7 @@ topology:
   conflict_policy: policies/termination.yaml#conflict
 members:
 - agent: intake
-  version: 1.0.0
+  version: 1.0.1
   role: normalizer
   required: false
   restrictions:
@@ -105,7 +105,7 @@ members:
     authorization_scopes_max: []
     data_classification_max: confidential
 - agent: build-repair
-  version: 1.0.4
+  version: 1.0.5
   role: environment-repairer
   required: false
   restrictions:
@@ -229,7 +229,7 @@ members:
     authorization_scopes_max: []
     data_classification_max: confidential
 - agent: probe-diagnosis
-  version: 1.0.0
+  version: 1.0.1
   role: execution-judge
   required: true
   restrictions:

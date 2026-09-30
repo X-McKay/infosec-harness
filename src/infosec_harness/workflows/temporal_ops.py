@@ -116,7 +116,9 @@ class TemporalOps:
         # Old histories contain `final_result` payloads parsed by the original contracts.
         # Record one workflow patch decision before scheduling the model activity, then keep
         # each history on the matching Temporal activity identity forever.
-        if name in self._legacy_output_agents and not workflow.patched("agent-output-contracts-v2"):
+        patch = ("build-repair-install-source-v1" if name == "build-repair"
+                 else "agent-output-contracts-v2")
+        if name in self._legacy_output_agents and not workflow.patched(patch):
             # Only the parser and activity identity are retained here; the historical prompt
             # and resolved model config are not. A fresh request would therefore create new
             # behavior with false old provenance. Recorded or pending activities replay, but

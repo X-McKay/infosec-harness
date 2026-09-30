@@ -583,7 +583,7 @@ open_questions:
 - What false-negative rate is acceptable once measured with the sandbox enabled?
 member_assessments:
 - agent: intake
-  agent_version: 1.0.0
+  agent_version: 1.0.1
   governance_tier: medium
   assessment: docs/risk-assessments/intake.yaml
 - agent: recon
@@ -595,7 +595,7 @@ member_assessments:
   governance_tier: critical
   assessment: docs/risk-assessments/env-planner.yaml
 - agent: build-repair
-  agent_version: 1.0.4
+  agent_version: 1.0.5
   governance_tier: critical
   assessment: docs/risk-assessments/build-repair.yaml
 - agent: partial-build
@@ -619,7 +619,7 @@ member_assessments:
   governance_tier: critical
   assessment: docs/risk-assessments/probe-repair.yaml
 - agent: probe-diagnosis
-  agent_version: 1.0.0
+  agent_version: 1.0.1
   governance_tier: high
   assessment: docs/risk-assessments/probe-diagnosis.yaml
 - agent: verdict

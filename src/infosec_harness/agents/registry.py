@@ -44,7 +44,8 @@ from infosec_harness.agents.outputs import (
     prepare_verdict_tools,
     verdict_contract_instructions,
 )
-from infosec_harness.agents.validators import OUTPUT_VALIDATORS
+from infosec_harness.agents.planning_window import PlanningWindow, PlanningWindowTelemetry
+from infosec_harness.agents.validators import OUTPUT_VALIDATORS, bind_install_source_validator
 from infosec_harness.domain.models import (
     EnvironmentSpec,
     ExtractedFinding,
@@ -57,6 +58,7 @@ from infosec_harness.domain.models import (
     canonical_json,
 )
 from infosec_harness.resources import package_root
+from infosec_harness.sandbox.install_sources import install_source_policy
 from infosec_harness.settings import get_settings
 
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
@@ -286,9 +288,15 @@ def resolve_agent_config(
         source_files=source_files,
         provider_output_floor=model.provider_output_floor,
     )
+    effective_spec = effective.model_dump(by_alias=True, exclude_none=True, mode="json")
+    if name == "build-repair":
+        # Operator configuration is resolved on the host, never from repository content.
+        effective_spec.setdefault("metadata", {})["output_validation"] = install_source_policy(
+            get_settings().default_registry_allowlist
+        )
     return ResolvedAgentConfig(
         agent_name=name,
-        effective_spec=effective.model_dump(by_alias=True, exclude_none=True, mode="json"),
+        effective_spec=effective_spec,
         skills_digest=_skills_hash(effective),
         model=model,
         budget=budget,
@@ -454,6 +462,11 @@ def build_agent(
     if any(cap.name in {"RepoReadOnly", "SandboxShell"} for cap in spec.capabilities):
         capabilities.append(RepairToolArguments())
     metadata = spec.metadata or {}
+    if name == "build-repair" and not legacy_output_contract:
+        planning = PlanningWindow.from_metadata(metadata)
+        if planning is None:
+            raise ValueError("Current build repair requires its frozen planning window")
+        capabilities.extend([planning.capability(), PlanningWindowTelemetry(planning)])
     if metadata.get("clear_tool_results"):
         capabilities.append(
             ClearToolResults(
@@ -492,6 +505,11 @@ def build_agent(
     agent.instrument = private_instrumentation()
     if name == "verdict" and not legacy_output_contract:
         agent.instructions(verdict_contract_instructions)
+    if name == "build-repair" and not legacy_output_contract:
+        policy = resolve_agent_config(name, spec, durable=transport).effective_spec[
+            "metadata"
+        ]["output_validation"]
+        agent.output_validator(bind_install_source_validator(tuple(policy["approved_hosts"])))
     for validator in OUTPUT_VALIDATORS.get(name, ()):
         agent.output_validator(validator)
     return agent
@@ -500,7 +518,7 @@ def build_agent(
 @lru_cache
 def durable_agents() -> dict[str, Agent[AgentDeps, Any]]:
     """Current agents, with distinct Temporal identities for revised output contracts."""
-    revised = {"partial-build", "context", "verdict"}
+    revised = {"partial-build", "context", "verdict", "build-repair"}
     return {
         name: build_agent(
             name,
@@ -515,7 +533,7 @@ def legacy_output_agents() -> dict[str, Agent[AgentDeps, Any]]:
     """Original Temporal identities and parsers retained solely for history replay."""
     return {
         name: build_agent(name, legacy_output_contract=True)
-        for name in ("partial-build", "context", "verdict")
+        for name in ("partial-build", "context", "verdict", "build-repair")
     }
 
 
