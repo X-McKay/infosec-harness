@@ -254,3 +254,81 @@ moving discovery to the host test fixed the fixture without relaxing isolation.
 These failed setup attempts remain separate from passing evidence. Live
 qualification and live Bedrock testing remain not checked at this freeze;
 Bedrock inference is excluded by the owner for this iteration.
+
+## Stopped v8 qualification candidate
+
+The fresh v8 qualification for `e9e4508cc9f26572fcf9060a90db79015286c2e9`
+closed with a failed public prerequisite and incomplete full qualification. Its
+source digest remained
+`edf9b7f461175fca81dafdec269d4ce717dde12ee8b73c41c03b12579fed9653`
+through closure. One readiness request completed; at most two suites ran at once.
+Intake completed 7/9 cases and passed its numeric success floor, schema, budget,
+cost and request gates, but failed the unchanged zero-adversarial-failure
+requirement with two adversarial failures.
+
+The root agent stopped this known failed candidate before the first eleven-agent
+cohort completed. The generic `user_cancel_SIGINT` signal label does not imply a
+human cancellation request. Recon retained four scored cases (three successes)
+and one unscored interrupted attempt; env-planner retained one successful scored
+case and one unscored interrupted attempt. Both experiments are truncated and
+have no release reports. Thirty suites were unstarted. Total public evidence is
+fourteen scored cases and two unscored attempts; both missing final usages remain
+unknown. Build-repair and probe-diagnosis were never admitted, so this run supplies
+no live evidence for the new build allocation or source validator, or the revised
+diagnosis prompt. All owned children closed. No sealed claim or inference occurred.
+
+The [sanitized v8 summary](validation/agent-quality/full-v8-summary.json) records
+all planned suite gate statuses, frozen identities, closed artifact hashes and
+cancellation accounting without model/tool bodies or sealed semantics. The
+interim candidate was pushed to develop at the owner's request; qualification
+remains pending. A fresh 36-case intake/build-repair/probe-diagnosis diagnostic is
+the next tuning check. Its scores cannot be reused in the later three complete
+fresh public passes (354 cases) and conditional ten sealed cases. Runtime limits,
+expected outcomes, safety gates and the approved 75% success floor remain unchanged.
+
+## Intake evidence consistency
+
+The stopped v8 failures differ from the earlier CWE-label injection. Intake
+left supported fields null while attaching confidence-one evidence to them;
+one impact quote was not verbatim. Host validation can detect these contradictions
+without classifying the weakness or treating a report directive as authority.
+Intake 1.0.2 now validates exact report grounding and field/evidence consistency
+in the same SDK output path used by production and evaluation. Nonempty fields
+need positive-confidence evidence with an exact, nonempty report span. Unknown
+evidence fields, fabricated quotes and positive evidence for an empty value are
+rejected. Literal paths, symbols and line numbers must occur in their quotes,
+including supported line anchors such as `#L42-L45`. Grounded class and impact
+values may normalize wording; the host never guesses or rewrites CWE labels.
+
+The host supplies the original description as serialized `AgentDeps.report_text`;
+local triage, durable triage and eval adapters pass the same source. Diagnostics
+contain closed explanations rather than report/model strings. Missing source
+fails closed. Truthful all-null abstention and zero-confidence uncertainty remain
+permitted: lexical grounding cannot prove semantic correctness, and a grounded
+but incorrect answer still fails the unchanged independent oracle. The prompt
+also makes role claims and requests to omit extraction within reports explicitly
+untrusted. No directive keyword filter or dataset-specific shortcut is added.
+
+Policy `intake-evidence/v1` is pinned in effective configuration. The current
+durable identity is `intake-output-v2`, selected by the independent
+`intake-evidence-v1` patch. Bare intake retains historical acceptance. The new
+deps field defaults to null when decoding old payloads; old live frontiers stop
+before accounting or model activity and must restart with fresh acceptance.
+Output schemas, database models, retry bounds, budgets and execution permissions
+are unchanged. Deploy on quiesced compatible workers and preserve retained
+generations for replay. The focused live trial is diagnostic evidence and cannot
+substitute for fresh full qualification.
+
+The candidate passed all 1,716 deterministic tests with zero failures, errors or
+skips under Python 3.12.14, including real sandboxed Temporal replay of old deps
+payloads and both intake generations. Focused evidence/SDK/generation tests,
+lint, compilation, agent validation, generated-artifact and development-skill
+checks passed. A 25-test order-sensitive group verifies the replay fixture after
+other agents and workflows have run. Its recorded responses must equal the
+contradictory evidence fixture. The initial full run exposed an incomplete source
+report in an existing typed-contract test and cached model state in the new replay
+fixture; supplying the required host input and isolating fresh fixture agents
+fixed those tests without relaxing rejection assertions or changing runtime
+validation. An earlier local-input fixture lacked prepared status and was also
+corrected. Failed test logs remain separate from the final passing run. The stub
+intake adapter completed, but its accuracy is not evidence of live model quality.

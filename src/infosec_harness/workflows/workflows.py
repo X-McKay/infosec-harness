@@ -141,7 +141,7 @@ class FindingTriageWorkflow:
         finding = await workflow.execute_activity(activities.normalize_finding_activity, inp, **_ACT)
         try:
             if adapters.needs_extraction(finding) and finding.description.strip():
-                deps = AgentDeps(repo_path=prepared.snapshot.path)
+                deps = AgentDeps(repo_path=prepared.snapshot.path, report_text=finding.description)
                 outcome = await ops.run_agent(
                     "intake", render_prompt("Extract the missing finding fields from the report text, "
                                             "with citations.", {"report": finding.description,

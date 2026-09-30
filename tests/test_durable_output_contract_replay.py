@@ -7,11 +7,11 @@ import pytest
 from infosec_harness.agents.deps import AgentDeps
 from infosec_harness.agents.durable import AGENT_LIST, AGENTS, LEGACY_OUTPUT_AGENTS
 from infosec_harness.agents.outputs import VERDICT_OUTPUTS, ContextOutput, PartialEnvironmentOutput
-from infosec_harness.domain.models import EnvironmentSpec, FindingContext, Verdict
+from infosec_harness.domain.models import EnvironmentSpec, ExtractedFinding, FindingContext, Verdict
 from infosec_harness.workflows import temporal_ops
 from infosec_harness.workflows.temporal_ops import TemporalOps
 
-_REVISED = {"partial-build", "context", "verdict", "build-repair"}
+_REVISED = {"partial-build", "context", "verdict", "build-repair", "intake"}
 
 
 def test_both_output_contract_generations_are_registered_with_distinct_identities() -> None:
@@ -28,6 +28,7 @@ def test_both_output_contract_generations_are_registered_with_distinct_identitie
     [
         ("partial-build", EnvironmentSpec, PartialEnvironmentOutput),
         ("build-repair", EnvironmentSpec, EnvironmentSpec),
+        ("intake", ExtractedFinding, ExtractedFinding),
         ("context", FindingContext, ContextOutput),
         ("verdict", Verdict, VERDICT_OUTPUTS),
     ],

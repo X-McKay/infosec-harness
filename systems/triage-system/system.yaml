@@ -49,7 +49,7 @@ topology:
   conflict_policy: policies/termination.yaml#conflict
 members:
 - agent: intake
-  version: 1.0.1
+  version: 1.0.2
   role: normalizer
   required: false
   restrictions:

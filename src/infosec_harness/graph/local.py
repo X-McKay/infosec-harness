@@ -54,7 +54,7 @@ async def triage_one(ops: LocalOps, inp: FindingInput, prepared) -> TriageRunOut
         outcome = await ops.run_agent(
             "intake", render_prompt("Extract the missing finding fields from the report text, "
                                     "with citations.", {"report": finding.description, "known": finding}),
-            AgentDeps(repo_path=prepared.snapshot.path))
+            AgentDeps(repo_path=prepared.snapshot.path, report_text=finding.description))
         invocations.append(outcome)
         finding = adapters.merge_extraction(finding, outcome.output)
     if adapters.resolve_location(finding, prepared.snapshot.path) is None:

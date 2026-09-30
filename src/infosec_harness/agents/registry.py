@@ -37,6 +37,7 @@ from infosec_harness.agents.budgets import (
 from infosec_harness.agents.capabilities import CUSTOM_CAPABILITIES
 from infosec_harness.agents.deps import AgentDeps
 from infosec_harness.agents.governance import GovernanceError, assert_governed
+from infosec_harness.agents.intake_evidence import INTAKE_EVIDENCE_POLICY_VERSION
 from infosec_harness.agents.outputs import (
     VERDICT_OUTPUTS,
     ContextOutput,
@@ -45,7 +46,11 @@ from infosec_harness.agents.outputs import (
     verdict_contract_instructions,
 )
 from infosec_harness.agents.planning_window import PlanningWindow, PlanningWindowTelemetry
-from infosec_harness.agents.validators import OUTPUT_VALIDATORS, bind_install_source_validator
+from infosec_harness.agents.validators import (
+    OUTPUT_VALIDATORS,
+    bind_install_source_validator,
+    validate_intake_evidence,
+)
 from infosec_harness.domain.models import (
     EnvironmentSpec,
     ExtractedFinding,
@@ -289,6 +294,10 @@ def resolve_agent_config(
         provider_output_floor=model.provider_output_floor,
     )
     effective_spec = effective.model_dump(by_alias=True, exclude_none=True, mode="json")
+    if name == "intake":
+        effective_spec.setdefault("metadata", {})["output_validation"] = {
+            "version": INTAKE_EVIDENCE_POLICY_VERSION
+        }
     if name == "build-repair":
         # Operator configuration is resolved on the host, never from repository content.
         effective_spec.setdefault("metadata", {})["output_validation"] = install_source_policy(
@@ -510,6 +519,8 @@ def build_agent(
             "metadata"
         ]["output_validation"]
         agent.output_validator(bind_install_source_validator(tuple(policy["approved_hosts"])))
+    if name == "intake" and not legacy_output_contract:
+        agent.output_validator(validate_intake_evidence)
     for validator in OUTPUT_VALIDATORS.get(name, ()):
         agent.output_validator(validator)
     return agent
@@ -518,7 +529,7 @@ def build_agent(
 @lru_cache
 def durable_agents() -> dict[str, Agent[AgentDeps, Any]]:
     """Current agents, with distinct Temporal identities for revised output contracts."""
-    revised = {"partial-build", "context", "verdict", "build-repair"}
+    revised = {"partial-build", "context", "verdict", "build-repair", "intake"}
     return {
         name: build_agent(
             name,
@@ -533,7 +544,7 @@ def legacy_output_agents() -> dict[str, Agent[AgentDeps, Any]]:
     """Original Temporal identities and parsers retained solely for history replay."""
     return {
         name: build_agent(name, legacy_output_contract=True)
-        for name in ("partial-build", "context", "verdict", "build-repair")
+        for name in ("partial-build", "context", "verdict", "build-repair", "intake")
     }
 
 

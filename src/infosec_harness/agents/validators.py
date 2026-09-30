@@ -42,9 +42,11 @@ from infosec_harness.agents.ecosystem_contract import (  # noqa: F401
     repo_jvm_test_framework,
     warmup_framework,
 )
+from infosec_harness.agents.intake_evidence import extraction_evidence_violations
 from infosec_harness.domain.models import (
     DiagnosisKind,
     EnvironmentSpec,
+    ExtractedFinding,
     InconclusiveReason,
     ProbeSource,
     Verdict,
@@ -52,6 +54,15 @@ from infosec_harness.domain.models import (
     VerdictLabel,
 )
 from infosec_harness.sandbox.install_sources import unapproved_install_sources
+
+
+def validate_intake_evidence(
+    ctx: RunContext[AgentDeps], output: ExtractedFinding
+) -> ExtractedFinding:
+    problems = extraction_evidence_violations(ctx.deps.report_text, output.model_dump(mode="json"))
+    if problems:
+        raise ModelRetry("Extraction violates its evidence contract:\n- " + "\n- ".join(problems))
+    return output
 
 
 def verdict_violations(verdict: Verdict, facts: VerdictFacts) -> list[str]:

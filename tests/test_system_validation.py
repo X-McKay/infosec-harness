@@ -147,6 +147,8 @@ async def test_agent_emits_typed_contract(name):
         languages={"python": 3}, test_frameworks=["pytest"], manifests=["requirements.txt"]
     )
     payload = {"oracle_nonce": "testnonce"}
+    if name == "intake":
+        payload = {"report": "The report provides no finding details."}
     if name == "probe-diagnosis":
         payload = {
             "probe_execution": ProbeExecution(
@@ -165,7 +167,10 @@ async def test_agent_emits_typed_contract(name):
     agent = build_agent(name, durable=False)
     result = await agent.run(
         render_prompt("do the task", payload, stack=stack),
-        deps=AgentDeps(repo_path="/tmp", sandbox_image="img", facts=facts),
+        deps=AgentDeps(
+            repo_path="/tmp", sandbox_image="img", facts=facts,
+            report_text=payload.get("report"),
+        ),
     )
     assert isinstance(result.output, AGENT_BINDINGS[name])
 

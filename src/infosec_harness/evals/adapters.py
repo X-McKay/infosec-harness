@@ -96,7 +96,7 @@ def diagnosis_adapter(case: dict):
 def intake_adapter(case: dict):
     """Scored on the weakness class it extracts: that is what routes the CWE skill."""
     return ("Extract the missing finding fields from the report text, with citations.",
-            case["payload"], AgentDeps(repo_path="/nonexistent"),
+            case["payload"], AgentDeps(repo_path="/nonexistent", report_text=case["payload"]["report"]),
             lambda o: (o.cwe or "none"), case["expected"])
 
 
