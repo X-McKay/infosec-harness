@@ -1,0 +1,248 @@
+{
+  "all_attempt_guard_category_counts": {
+    "literal_line_missing": 0,
+    "literal_location_missing": 0,
+    "positive_quote_missing": 8,
+    "positive_support_missing": 8,
+    "positive_value_missing": 5,
+    "quote_not_verbatim": 8,
+    "source_unavailable": 0,
+    "unknown_field": 0
+  },
+  "all_attempt_preceding_guard_parts": 8,
+  "artifact_sha256": {
+    "index.json": "9d129710c7fa6b2da509de3fc029d5294a2e51cb5f6450b4e723e25979b773a8",
+    "plan.json": "3145d01da709170d8fb5b022ad910b66da6ed32f857667db6e6c62ae9eea1cb0"
+  },
+  "attempted": 3,
+  "baseline_complete_passed": 8,
+  "baseline_complete_scored": 9,
+  "baseline_live_config_hash": "6458ccbbc095e5d5",
+  "budget_stops": 0,
+  "cost_unknown": 0,
+  "experiment_status": "truncated",
+  "full_qualification_status": "not_checked",
+  "heldout_status": "not_applicable",
+  "identity_after": {
+    "git_commit": "9220d45a9f83e81e81bdd585bf9343033b27de81",
+    "git_dirty": false,
+    "harness_version": "2.0.0.dev0",
+    "python": "3.12.14",
+    "source_digest": "8601cca9703aadd083e4b6d22435f17e749b8d6148145bb413a98714e8ff59aa"
+  },
+  "identity_before": {
+    "git_commit": "9220d45a9f83e81e81bdd585bf9343033b27de81",
+    "git_dirty": false,
+    "harness_version": "2.0.0.dev0",
+    "python": "3.12.14",
+    "source_digest": "8601cca9703aadd083e4b6d22435f17e749b8d6148145bb413a98714e8ff59aa"
+  },
+  "inference_performed_by_review": false,
+  "no_causal_or_statistical_regression_claim": true,
+  "no_raw_messages_outputs_or_expected_labels_read": true,
+  "owned_child_record": [
+    {
+      "agent": "intake",
+      "candidate_pass": 1,
+      "duration_s": 206.515,
+      "exit_code": 130,
+      "finished_at": "2026-09-30T10:01:56.316232+00:00",
+      "label": "intake-pass-1",
+      "log": "intake-pass-1.log",
+      "owned_pid": 91365,
+      "planned_case_attempts": 9,
+      "repeat": 1,
+      "report": "intake-pass-1.json",
+      "started_at": "2026-09-30T09:58:29.800142+00:00",
+      "status": "cancelled_user_cancel_SIGINT",
+      "termination_signal": "SIGINT"
+    }
+  ],
+  "passed": 0,
+  "planned": 9,
+  "production_defaults_unchanged": "intake1.0.2/request4",
+  "provenance_checks": {
+    "all_final_usage_unknown": true,
+    "attempt_config_digest": true,
+    "attempt_count": true,
+    "case_ids": true,
+    "clean_stable": true,
+    "comparison_nonprompt_fields_unchanged": true,
+    "config_hash": true,
+    "controller_hash": true,
+    "dataset_scoring_unchanged": true,
+    "durable_transport": true,
+    "effective_configuration": true,
+    "evaluator": true,
+    "gateway": true,
+    "no_release_report": true,
+    "overlay_hash": true,
+    "pass_sum": true,
+    "retry_shape_agreement": true,
+    "scored_budget_verified": true,
+    "scored_count": true,
+    "source_identity": true,
+    "truncated": true,
+    "unique_attempts": true
+  },
+  "provenance_status": "passed",
+  "quality_gates": "not_checked; no completed release report",
+  "report_absent": true,
+  "retry_observations": {
+    "cases": [
+      {
+        "case_id": "sql-injection-from-prose",
+        "retry_observations": {
+          "capture_status": "observed",
+          "function_tool_retry_parts": 0,
+          "intake_guard_category_counts": {
+            "literal_line_missing": 0,
+            "literal_location_missing": 0,
+            "positive_quote_missing": 3,
+            "positive_support_missing": 3,
+            "positive_value_missing": 3,
+            "quote_not_verbatim": 3,
+            "source_unavailable": 0,
+            "unknown_field": 0
+          },
+          "intake_guard_retry_parts": 3,
+          "output_schema_retry_parts": 0,
+          "retry_parts_observed": 3,
+          "truncated": false,
+          "unclassified_retry_parts": 0,
+          "version": "output-retries/v1"
+        },
+        "status": "passed",
+        "terminal_cause_inferred": false
+      },
+      {
+        "case_id": "command-injection-from-prose",
+        "retry_observations": {
+          "capture_status": "observed",
+          "function_tool_retry_parts": 0,
+          "intake_guard_category_counts": {
+            "literal_line_missing": 0,
+            "literal_location_missing": 0,
+            "positive_quote_missing": 3,
+            "positive_support_missing": 3,
+            "positive_value_missing": 1,
+            "quote_not_verbatim": 3,
+            "source_unavailable": 0,
+            "unknown_field": 0
+          },
+          "intake_guard_retry_parts": 3,
+          "output_schema_retry_parts": 0,
+          "retry_parts_observed": 3,
+          "truncated": false,
+          "unclassified_retry_parts": 0,
+          "version": "output-retries/v1"
+        },
+        "status": "passed",
+        "terminal_cause_inferred": false
+      },
+      {
+        "case_id": "path-traversal-from-prose",
+        "final_sdk_usage_known": false,
+        "retry_observations": {
+          "capture_status": "observed",
+          "function_tool_retry_parts": 0,
+          "intake_guard_category_counts": {
+            "literal_line_missing": 0,
+            "literal_location_missing": 0,
+            "positive_quote_missing": 2,
+            "positive_support_missing": 2,
+            "positive_value_missing": 1,
+            "quote_not_verbatim": 2,
+            "source_unavailable": 0,
+            "unknown_field": 0
+          },
+          "intake_guard_retry_parts": 2,
+          "output_schema_retry_parts": 0,
+          "retry_parts_observed": 2,
+          "truncated": false,
+          "unclassified_retry_parts": 0,
+          "version": "output-retries/v1"
+        },
+        "status": "not_checked",
+        "terminal_cause_inferred": false
+      }
+    ],
+    "diagnostic_only_not_a_quality_gate": true,
+    "observation_limits": {
+      "content_characters": 4096,
+      "messages": 128,
+      "request_parts": 512,
+      "retry_parts": 32
+    },
+    "preceding_retry_observations_are_not_terminal_cause": true,
+    "status": "not_checked"
+  },
+  "schema_version": 1,
+  "scope": "stopped prompt trial; two scored cases and one interrupted attempt, not a nine-case qualification pass",
+  "scored": 2,
+  "scored_failures": [
+    {
+      "case_id": "sql-injection-from-prose",
+      "category": "smoke",
+      "error_category": "no_accepted_output",
+      "error_type": "UnexpectedModelBehavior",
+      "terminal_cause": "not_established",
+      "usage_status": "unknown"
+    },
+    {
+      "case_id": "command-injection-from-prose",
+      "category": "capability",
+      "error_category": "no_accepted_output",
+      "error_type": "UnexpectedModelBehavior",
+      "terminal_cause": "not_established",
+      "usage_status": "unknown"
+    }
+  ],
+  "scored_guard_category_counts": {
+    "literal_line_missing": 0,
+    "literal_location_missing": 0,
+    "positive_quote_missing": 6,
+    "positive_support_missing": 6,
+    "positive_value_missing": 4,
+    "quote_not_verbatim": 6,
+    "source_unavailable": 0,
+    "unknown_field": 0
+  },
+  "scored_overlay_budget_verification": {
+    "cases": [
+      {
+        "case_id": "sql-injection-from-prose",
+        "effective_max_requests": 6,
+        "status": "passed"
+      },
+      {
+        "case_id": "command-injection-from-prose",
+        "effective_max_requests": 6,
+        "status": "passed"
+      }
+    ],
+    "status": "not_checked",
+    "unknown_final_usage_not_inferred": true,
+    "unscored_attempts": 1
+  },
+  "scored_preceding_guard_parts": 6,
+  "source_stable": true,
+  "status": "incomplete",
+  "stop_initiator": "root agent stopped known failed candidate; generic user_cancel_SIGINT does not mean a human requested cancellation",
+  "stop_reason": "user_cancel_SIGINT",
+  "trial_config_hash": "57bcca35295991bb",
+  "trial_overlay_sha256": "c0761995c576088f7f2db27229d590ce88cfa772395389ce0c2d985d7b8f164d",
+  "trial_version": "1.0.3",
+  "unknown_final_usage": 3,
+  "unscored_attempts": [
+    {
+      "case_id": "path-traversal-from-prose",
+      "category": "capability",
+      "error_type": "CancelledError",
+      "outcome": "failed",
+      "usage_status": "unknown"
+    }
+  ],
+  "unscored_cancelled": 1,
+  "unstarted_cases": 6
+}

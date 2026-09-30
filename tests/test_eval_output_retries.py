@@ -154,7 +154,7 @@ async def test_eval_persists_observations_for_accepted_and_protocol_failed_outpu
     assert summary == experiment.metrics["attempts"][0]["output_retry_summary"]
     assert summary["intake_guard_retry_parts"] == 1
     assert row.passed is (not protocol_failure)
-    assert run.EVALUATOR_VERSION == "deterministic-agent-output-v9"
+    assert run.EVALUATOR_VERSION == "deterministic-agent-output-v10"
     if protocol_failure:
         assert row.scores["error_category"] == "no_accepted_output"
         assert row.scores["usage_status"] == "unknown"

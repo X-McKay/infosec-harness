@@ -45,7 +45,7 @@ MAX_REQUEST_PARTS = 512
 MAX_RETRY_PARTS = 32
 MAX_CONTENT_CHARS = 4096
 _INTAKE_PREFIX = "Extraction violates its evidence contract:\n- "
-_INTAKE_CATEGORIES: dict[str, RetryCategory] = {
+INTAKE_RULE_CATEGORIES: dict[str, RetryCategory] = {
     "Exact source report is unavailable; extraction cannot be validated.": "source_unavailable",
     "Evidence names an unknown extraction field.": "unknown_field",
     "An evidence quote is not a nonempty verbatim report span.": "quote_not_verbatim",
@@ -101,9 +101,9 @@ def output_retry_summary(messages: Sequence[ModelMessage], *, agent: str) -> Out
                 content = part.content
                 if len(content) <= MAX_CONTENT_CHARS and content.startswith(_INTAKE_PREFIX):
                     messages_in_retry = content[len(_INTAKE_PREFIX):].split("\n- ")
-                    if messages_in_retry and all(item in _INTAKE_CATEGORIES for item in messages_in_retry):
+                    if messages_in_retry and all(item in INTAKE_RULE_CATEGORIES for item in messages_in_retry):
                         summary["intake_guard_retry_parts"] += 1
-                        for category in {_INTAKE_CATEGORIES[item] for item in messages_in_retry}:
+                        for category in {INTAKE_RULE_CATEGORIES[item] for item in messages_in_retry}:
                             counts[category] += 1
                         continue
                 summary["unclassified_retry_parts"] += 1

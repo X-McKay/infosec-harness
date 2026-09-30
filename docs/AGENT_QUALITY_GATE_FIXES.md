@@ -394,3 +394,62 @@ protocol failure after a guard retry, persisted scored/attempt equality, malform
 and oversized data, unknown capture and privacy. Lint, compilation, agent validation,
 generated-artifact and development-skill checks passed. These synthetic checks are
 not live-model quality evidence; the diagnostic candidate requires a fresh run.
+
+### Closed v9 diagnostic and prompt trials
+
+The [v9 diagnostic summary](validation/agent-quality/intake-diagnostics-v9-summary.json)
+records the clean `9220d45` request-six trial: nine cases, eight successes, zero
+budget stops, one unknown final usage and p95 five requests. Provenance and all
+agent gates except schema validity passed; all adversarial cases passed. The
+ordinary SQL report produced no accepted output. Fifteen preceding guard retry
+parts each reported non-verbatim quotes, missing positive literal quotes and
+missing grounded support. No schema, function-tool or unclassified retry parts
+were observed. These observations do not establish the terminal failure cause.
+
+The [prompt-only trial summary](validation/agent-quality/intake-prompt-v9-summary.json)
+preserves an unsuccessful, truncated experiment. The ignored version-1.0.3
+overlay taught short exact-span copying; only instructions and version differed
+from the request-six baseline. The root agent stopped it after two scored cases
+both produced no accepted output. An in-flight third case was interrupted;
+six cases were unstarted. Three final usages remain unknown. The controller's
+generic `user_cancel_SIGINT` label denotes a root-initiated failed-candidate stop,
+not a human cancellation request. Six scored preceding guard parts retained the
+three grounding categories; four also reported positive evidence for unset values.
+The interrupted attempt adds two guard parts and one unset-value observation.
+No completed quality report or statistical regression claim is justified.
+Source, model, budgets, scoring, overlay hashes and cancellation accounting were
+independently verified. Neither candidate is promoted; held-out data was unused.
+
+### Field diagnostic evaluator v10
+
+Evaluator v10 adds an intake-only, bounded proposal/field count matrix. It parses
+captured structured proposals, invokes the unchanged whole evidence guard, and
+attributes existing closed rules through the same guard on known field subsets.
+Missing source, unknown evidence fields and unsupported shapes remain global
+categories. It records whether a rejected quote matches only after whitespace
+collapse; that observation never rewrites a quote or permits acceptance.
+Only eight known field names and six known rule names are exported. Source/model
+values, quotes, arbitrary names, tool identifiers, provider bodies and private
+content hashes are discarded. Missing last proposals and terminal causes remain
+unknown. JSON-string and dictionary proposals share depth, node and character
+bounds before model validation; oversized observations are explicitly truncated.
+
+This diagnostic changes evaluator provenance only. Runtime evidence policy v1,
+production instructions 1.0.2, four-request production limits, activity identities,
+accounting, scoring and recovery behavior remain unchanged. No Temporal generation
+change is needed because production execution does not import these diagnostics.
+The next trial retains the existing six-request overlay, nine public cases plus
+one readiness call, one suite, a 30-minute deadline and no automatic promotion.
+The approved iteration order is field diagnostics, precise corrective feedback,
+compact instructions, independent worked examples, supported generation settings,
+source-span references, alternate local models, then measured budget tuning.
+Each behavioral intervention requires its own frozen identity and repeated checks;
+deploying changed feedback or contracts requires retained historical behavior and
+explicit replay/recovery validation. No sealed data is used for tuning.
+
+All 99 selected evaluator, SDK, privacy, budget and truncation tests passed with
+zero failures, errors or skips under Python 3.12.14. Lint, compilation, agent
+validation, generated-artifact and development-skill checks passed. Independent
+review identified the JSON-string bounds gap before any live v10 execution;
+matching string/dictionary regressions now cover it. These are synthetic checks,
+not live quality, Temporal replay or sandbox execution evidence.
