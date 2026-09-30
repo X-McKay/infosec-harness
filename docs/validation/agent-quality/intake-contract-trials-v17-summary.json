@@ -71,7 +71,8 @@
   "first_helper_sha256": "b6f79651ea7a7f890f9efa9c27cb70736ec8c88ea92d40546b7ac3ab8e55f996",
   "first_monitor_sha256": "922815f85e7c72f94d29705552356d2c6d148cbe07937e1b13bd8fa183e76354",
   "first_run_id": "intake-schema-inline-temp-zero-v17-20260930T144815Z-cs676fyx",
-  "full_all_agent_qualification": "not_checked",
+  "full_all_agent_qualification": "failed",
+  "full_all_agent_qualification_report": "canonical-qualification-20260930.json",
   "helper_sha256": "61de069a8387d59ba843ccc9e63bf970081da1697795e7f7620d6bbc856ed141",
   "limitations": [
     "Two separately scored public intake cohorts passed; this is not all-agent full qualification or production deployment.",

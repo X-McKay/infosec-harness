@@ -963,3 +963,10 @@ Retain the known historical full intake specification and model contract. Bare i
 No request/token/tool/cost ceiling, evidence predicate, golden label, or gate changes as part of this treatment. Bounded evaluation observations distinguish wire/schema errors, source-reference failures, and materialized evidence-guard failures without persisting raw proposals. Canonical evaluator version advances with this observation and prompt contract.
 
 Two separately scored prototype public cohorts passed all intake gates (9/9 each). These support canonical integration, not release qualification. Required completion evidence includes actual Temporal replay and frontier tests, retry/cancellation/accounting assessment, deterministic checks, and a fresh full all-agent public qualification followed by unused sealed cases only after public gates pass. See [the v17 experiment report](validation/agent-quality/intake-contract-trials-v17-summary.md).
+
+
+## Qualification checkpoint: 2026-09-30
+
+The canonical intake implementation is on develop at `880a7bf`, with 1,846 deterministic tests passing. A fresh all-agent live run completed all three intake cohorts at 9/9 with all intake gates passed, but overall qualification **failed**. Probe-author exhausted its 16-request cap in one case; a third-cohort build-repair attempt received HTTP 502, stopping public evaluation before completion. Held-out qualification is **not_checked**, and no main merge has occurred.
+
+An independent audit found that context/probe-planner diagnostic closure falsely failed because the external controller rehashes Unicode differently from canonical configuration serialization. All 50 affected cases match typed configuration and budget derivation. Correct and independently regression-test the controller in a new frozen packet, then test a small probe-author loop-mitigation change under unchanged limits before another full qualification. Preserve the original failed run; correcting diagnostics cannot qualify an incomplete cohort. See [the qualification checkpoint](validation/agent-quality/canonical-qualification-20260930.md) and [continuation handoff](../handoff.md).
