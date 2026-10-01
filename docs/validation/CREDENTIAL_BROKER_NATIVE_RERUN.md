@@ -1,6 +1,6 @@
 # Native qualification after startup-readiness correction
 
-Status: rerun in progress; rollout disabled.
+Status: rerun stopped after repeated Temporal transport failures; full native qualification failed; rollout disabled.
 
 This rerun retains the [earlier qualification](CREDENTIAL_BROKER_LIVE_PROVIDER.md), including
 ten uncertain requests, three saved responses and the passing eleven-agent direct baseline
@@ -72,3 +72,40 @@ generation and quarantine source regressions passed (48 test executions). Correc
 and all eleven actual native readiness checks passed; inference qualification is pending.
 The public recipe passed syntax checking; its equivalent private build produced the verified
 artifact, but the public recipe was not separately rebuilt. UI source is unchanged.
+
+## Live rerun outcome
+
+Candidate source `1cd0cb9` froze pilot SHA256
+`257a857393dc9467bcb0bf15542e922bd6829036b2739f8800c454ed333e8755`
+and the separate graph SHA256
+`fd3f9a72e6b7fec8c0af8a25f8769dbeaafd54d6a65bd6e427c14a76d733e2f2`
+before inference. Independent correction/linkage review passed. All six PR CI jobs passed.
+
+All eleven LocalOps agents passed execution, expected semantic scoring and cleanup.
+Temporal completed seven started cases before a scoped SIGINT stop: four execution passes,
+three semantic passes, two transport failures and one interrupted case. All seven captured
+histories replayed with external I/O forbidden, all seven run scopes closed, and the owned
+worker was reaped. Independent visibility found four completed and three failed workflows,
+with none running. Intake execution passed but semantic scoring failed: the model identified
+SQL injection without the required CWE-89. The frozen expectation was not changed.
+
+Recon and partial-build shared an initial worker-to-controller `unavailable` transport error,
+then two `pending` retries and retry exhaustion. Their durations are consistent with the
+90-second client timeout; the suppressed underlying HTTPX exception does not establish its
+exact cause. Retained snapshots show no redispatch of either uncertain request. A third
+uncertain request arose during probe-planner cancellation. Original request identities remain
+disjoint from fresh trials and all old uncertain allocations remain held. No failing trial
+was repeated. The separately frozen production graph remains unsubmitted (`not_checked`).
+
+The outer report records failure, while the interrupted nested Temporal report retains
+`running`; it is incomplete evidence, not a successful acceptance report. Follow-up controlled
+regressions should exercise delayed controller responses across client timeout, exact-request
+retries without redispatch, bounded exhaustion and retained unknown holds, plus terminal
+interruption reporting. Full native Temporal/graph qualification remains unresolved.
+
+Live model calls do not replace deterministic fault injection, credential canaries, policy
+allow/deny fixtures, process confinement checks or zero-I/O recovery/replay tests. This small
+frozen case set does not establish held-out model quality or deployed tokenizer/weight
+attestation. The local endpoint accepts unauthenticated requests, so upstream credential
+enforcement is not established by its successful responses. Future Credential Drivers and
+Content Inspection are not implemented or qualified by this rerun.
