@@ -111,7 +111,9 @@ def main() -> int:
     options = parser.parse_args()
 
     if options.agentctl:
-        base = ["uv", "run", "--locked", "--project", options.agentctl, "agentctl", "--no-color"]
+        # Resolve operator-relative paths before agentctl runs in the temporary mirror.
+        checkout = str(Path(options.agentctl).resolve())
+        base = ["uv", "run", "--locked", "--project", checkout, "agentctl", "--no-color"]
     elif shutil.which("agentctl"):
         base = ["agentctl", "--no-color"]
     else:
