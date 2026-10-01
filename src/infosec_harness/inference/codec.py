@@ -58,6 +58,13 @@ def validate_settings(settings: dict[str, Any]) -> None:
         raise BrokerError("policy", "Invalid output token ceiling")
 
 
+def _cache_point(value: Any) -> bool:
+    """Only the pinned SDK's bounded, non-network cache marker is supported."""
+    return (type(value) is dict and set(value) == {"kind", "ttl"}
+            and value["kind"] == "cache-point" and type(value["ttl"]) is str
+            and value["ttl"] in {"5m", "1h"})
+
+
 def _messages(messages: list[dict]) -> None:
     for message in messages:
         kind = message.get("kind")
@@ -72,7 +79,9 @@ def _messages(messages: list[dict]) -> None:
             if part_kind == "user-prompt":
                 content = part.get("content")
                 if not isinstance(content, str) and not (
-                    isinstance(content, list) and all(isinstance(item, str) for item in content)
+                    isinstance(content, list) and all(
+                        isinstance(item, str) or _cache_point(item) for item in content
+                    )
                 ):
                     raise BrokerError("policy", "Remote and binary content are unsupported")
             if part_kind == "tool-return" and not isinstance(part.get("content"), (str, dict, list, int, float, bool, type(None))):
@@ -114,7 +123,10 @@ def encode_payload(messages, settings, params) -> InferencePayload:
             if isinstance(part, m.ToolReturnPart) and part.files:
                 raise BrokerError("policy", "Multimodal tool returns are unsupported")
             if isinstance(part, m.UserPromptPart) and not isinstance(part.content, str) and not (
-                isinstance(part.content, (list, tuple)) and all(isinstance(item, str) for item in part.content)
+                isinstance(part.content, (list, tuple)) and all(
+                    isinstance(item, str) or (type(item) is m.CachePoint and _cache_point(vars(item)))
+                    for item in part.content
+                )
             ):
                 raise BrokerError("policy", "Remote and binary content are unsupported")
     parameters = _PARAMS.dump_python(params, mode="json")

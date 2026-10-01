@@ -108,3 +108,45 @@ def test_set_valued_tool_visibility_is_canonical_without_losing_membership():
     changed = payload.model_copy(update={"parameters": {**payload.parameters,
                                   "deferred_capability_ids": ["a-owner", "other-owner"]}})
     assert digest(changed.model_dump(mode="json")) != digest(payload.model_dump(mode="json"))
+
+
+def test_actual_rendered_graph_prompt_preserves_cache_boundary():
+    from pydantic_ai.messages import CachePoint
+
+    from infosec_harness.agents.render import render_prompt
+    from infosec_harness.domain.models import StackFingerprint
+    content = render_prompt("Inspect the fixture", {"finding": "controlled input"},
+                            stack=StackFingerprint(languages={"python": 1}))
+    assert any(type(item) is CachePoint for item in content)
+    messages = [ModelRequest(parts=[UserPromptPart(content)])]
+    payload = encode_payload(messages, {}, ModelRequestParameters())
+    decoded, _, _ = decode_payload(payload)
+    assert decoded == messages
+    assert decoded[0].parts[0].content == content
+
+
+@pytest.mark.parametrize("ttl", ["5m", "1h"])
+def test_authored_cache_marker_order_and_ttl_are_request_identity(ttl):
+    from pydantic_ai.messages import CachePoint
+
+    from infosec_harness.inference.protocol import digest
+    messages = [ModelRequest(parts=[UserPromptPart(["prefix", CachePoint(ttl=ttl), "suffix"])])]
+    payload = encode_payload(messages, {}, ModelRequestParameters())
+    decoded, _, _ = decode_payload(payload)
+    assert decoded == messages
+    other = encode_payload([ModelRequest(parts=[UserPromptPart(["prefix", "suffix", CachePoint(ttl=ttl)])])], {}, ModelRequestParameters())
+    assert digest(payload.model_dump(mode="json")) != digest(other.model_dump(mode="json"))
+
+
+@pytest.mark.parametrize("marker", [
+    {"kind": "cache-point", "ttl": "5m", "url": "https://metadata.invalid/x"},
+    {"kind": "cache-point", "ttl": "forever"},
+    {"kind": "cache-point", "ttl": True},
+    {"kind": "image-url", "url": "https://metadata.invalid/x"},
+])
+def test_wire_marker_cannot_carry_remote_authority_or_invalid_fields(marker):
+    payload = encode_payload([ModelRequest(parts=[UserPromptPart("x")])], {}, ModelRequestParameters())
+    data = payload.model_dump()
+    data["messages"][0]["parts"][0]["content"] = ["prefix", marker]
+    with pytest.raises(BrokerError):
+        decode_payload(type(payload).model_validate(data))
