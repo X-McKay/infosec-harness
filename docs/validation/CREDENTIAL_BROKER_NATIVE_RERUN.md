@@ -237,3 +237,33 @@ independent privacy/disposition review found no blocker. The fresh standard imag
 its minimal context and checkout modules matched, and isolated import checks passed.
 Image proof SHA256 is `05af3025ce14e9343d262b3650a808d34ecd3c87f239a201a2683c1cdd18b637`.
 These gates do not establish fresh native inference acceptance.
+
+The relay image subsequently passed eleven native readiness/verification/deletion checks
+without inference. The ledger stayed at 87 requests (15 uncertain and 72 completed), all
+117 leases were deleted, and native sandbox inventory was empty. Verified controller TLS,
+unsigned inference rejection (401), and unchanged primary container identities passed.
+Readiness proof SHA256 is
+`fd07157c5ea984f122f89ea8ffa763e56d640540399e270163748cd3d3dc6a72`.
+All six CI jobs passed for runtime commit 1fa6132. Actual runsc/build-egress and primary
+API/web/storage/persistence/stub-Temporal smoke passed. Read-only endpoint metadata routes
+`/version` and `/tokenizer_info` returned 404; no deployed tokenizer evidence was obtained.
+
+The separate `scripts/broker_native_diagnostic_check.py` runner permits exactly two fresh
+LocalOps invocations, recon then partial-build, to investigate failure categories. It reuses
+the original frozen case bodies and scorers, requires the original direct baseline and exact
+retained report union, and checks source/image/readiness provenance plus the complete native
+contract before dispatch. It installs candidate configuration before runtime caches initialize,
+rejects direct transport, uses exclusive one-shot claims, preserves cancellation checkpoints
+and reaps child processes. Each case has a 600-second wall limit plus bounded cleanup
+acknowledgement. Policy or interruption stops subsequent dispatch. Its report always states
+`qualification_status: not_checked`; completion is diagnostic evidence, never eleven-agent
+or Temporal/graph acceptance. Existing qualification runners retain their full strict scope.
+
+Final deterministic acceptance of the diagnostic runner passed: 2,409 tests, 39 skips and
+861 warnings, plus canonical lint/compile/agent validation, generated-artifact and skill-drift
+checks. All 29 new diagnostic regressions passed; independent combined review passed 115
+cases with one reviewer-lane Temporal CLI skip. A transient test-isolation defect was caught
+in the full suite and corrected by moving environment bootstrap verification into a fresh
+subprocess with network calls blocked; no expected outcome or runtime limit was relaxed.
+Canonical log SHA256 is
+`2b6cbab6624cea497db23d3a949369b6ce86edfe646461e936b1ce1458d400f4`.

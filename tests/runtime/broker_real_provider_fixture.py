@@ -12,6 +12,7 @@ import sys
 import time
 import uuid
 from collections import Counter
+from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 from typing import Literal
@@ -420,50 +421,68 @@ async def ledger_snapshot(root_id: str) -> dict:
             "request_states": dict(Counter(row.state for row in records))}
 
 
-async def run_local(manifest: RealProviderManifest, phase: str, report_path: Path) -> dict:
-    from infosec_harness.agents.registry import AGENT_BINDINGS, load_spec, resolve_agent_config
+async def run_local_case(manifest: RealProviderManifest, phase: str, agent: str,
+                         checkpoint: Callable[[dict], None] | None = None,
+                         validate_config: Callable[[object], None] | None = None) -> dict:
+    """One unchanged production case; callers own their explicit finite scope."""
+    from infosec_harness.agents.registry import load_spec, resolve_agent_config
     from infosec_harness.graph.ops import LocalOps
     from infosec_harness.inference.protocol import digest
+
+    inputs, predict, expected, case_digest = prepare_case(agent, manifest)
+    ops = LocalOps(sandbox=True, recipe_cache=False)
+    row = {"agent": agent, "case": manifest.cases[agent], "case_digest": case_digest,
+           "execution": "failed", "cleanup": "not_checked"}
+    started = time.monotonic()
+    try:
+        config = resolve_agent_config(agent, load_spec(agent), source_files=inputs["deps"].source_files, durable=False)
+        if validate_config is not None:
+            validate_config(config)
+        row["config"] = config.model_dump(mode="json")
+        if config.model.endpoint != manifest.endpoint:
+            raise ValueError("Resolved model endpoint differs from the frozen manifest")
+        if phase != "direct":
+            row["baseline_comparison"] = compare_baseline(agent, row["config"], case_digest)
+        outcome = await ops.run_agent(agent, inputs["prompt"], inputs["deps"])
+        row.update(score_output(agent, outcome.output, predict, expected))
+        row.update(execution="passed", requests=outcome.requests, input_tokens=outcome.input_tokens,
+            output_tokens=outcome.output_tokens, tools_called=outcome.tools_called,
+            effective_config=outcome.effective_config)
+    except asyncio.CancelledError:
+        row["failure_type"] = "CancelledError"
+        raise
+    except Exception as error:
+        from infosec_harness.evals.errors import failure_diagnostic
+        row["failure_diagnostic"] = failure_diagnostic(error)
+        row["failure_type"] = type(error).__name__
+        row["broker_error_code"] = getattr(error, "code", None)
+    finally:
+        try:
+            await ops.close()
+            row["cleanup"] = "passed"
+        except Exception as error:
+            row["cleanup"] = "failed"
+            row["cleanup_failure_type"] = type(error).__name__
+        if phase != "direct":
+            row["ledger"] = await ledger_snapshot(digest({"local_run": ops._broker_run_id}))
+        row["elapsed_seconds"] = round(time.monotonic() - started, 3)
+        if checkpoint is not None:
+            checkpoint(row)
+    return row
+
+
+async def run_local(manifest: RealProviderManifest, phase: str, report_path: Path) -> dict:
+    from infosec_harness.agents.registry import AGENT_BINDINGS
     if set(CASES) != set(AGENT_BINDINGS):
         raise ValueError("Every registered agent must have a frozen case")
     report = {"phase": phase, "status": "running", "provider": manifest.endpoint,
               "model": manifest.model, "cases": [], "accuracy_scope": "eleven frozen cases; not a release-quality accuracy gate"}
     private_write(report_path, report)
+    def checkpoint(row):
+        report["cases"].append(row)
+        private_write(report_path, report)
     for agent in CASES:
-        inputs, predict, expected, case_digest = prepare_case(agent, manifest)
-        ops = LocalOps(sandbox=True, recipe_cache=False)
-        row = {"agent": agent, "case": manifest.cases[agent], "case_digest": case_digest,
-               "execution": "failed", "cleanup": "not_checked"}
-        started = time.monotonic()
-        try:
-            config = resolve_agent_config(agent, load_spec(agent), source_files=inputs["deps"].source_files, durable=False)
-            row["config"] = config.model_dump(mode="json")
-            if config.model.endpoint != manifest.endpoint:
-                raise ValueError("Resolved model endpoint differs from the frozen manifest")
-            if phase != "direct":
-                row["baseline_comparison"] = compare_baseline(agent, row["config"], case_digest)
-            outcome = await ops.run_agent(agent, inputs["prompt"], inputs["deps"])
-            row.update(score_output(agent, outcome.output, predict, expected))
-            row.update(execution="passed", requests=outcome.requests, input_tokens=outcome.input_tokens,
-                output_tokens=outcome.output_tokens, tools_called=outcome.tools_called,
-                effective_config=outcome.effective_config)
-        except Exception as error:
-            from infosec_harness.evals.errors import failure_diagnostic
-            row["failure_diagnostic"] = failure_diagnostic(error)
-            row["failure_type"] = type(error).__name__
-            row["broker_error_code"] = getattr(error, "code", None)
-        finally:
-            try:
-                await ops.close()
-                row["cleanup"] = "passed"
-            except Exception as error:
-                row["cleanup"] = "failed"
-                row["cleanup_failure_type"] = type(error).__name__
-            if phase != "direct":
-                row["ledger"] = await ledger_snapshot(digest({"local_run": ops._broker_run_id}))
-            row["elapsed_seconds"] = round(time.monotonic() - started, 3)
-            report["cases"].append(row)
-            private_write(report_path, report)
+        await run_local_case(manifest, phase, agent, checkpoint=checkpoint)
     report["execution_status"] = "passed" if len(report["cases"]) == 11 and all(row["execution"] == row["cleanup"] == "passed" for row in report["cases"]) else "failed"
     report["semantic_status"] = "passed" if len(report["cases"]) == 11 and all(row.get("semantic_score") == "passed" for row in report["cases"]) else "failed"
     report["status"] = "passed" if report["execution_status"] == report["semantic_status"] == "passed" else "failed"
