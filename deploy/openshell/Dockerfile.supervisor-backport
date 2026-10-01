@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: Apache-2.0
+# Supervisor source/patch: NVIDIA CORPORATION & AFFILIATES, Apache-2.0.
+# This is a local backport of b8932d4 onto v0.1.2, not an official release.
+# Qualification scope: linux/arm64. Source files and Cargo.lock are unchanged
+# except for the exact single-file upstream patch. No version metadata edits.
+# Prepared build context contains pinned-source.tar.gz (GitHub API tarball of
+# 6648bd0c290efbc41ba131ee9831ee45cd431f94) and the patch checked in beside this file.
+# Also supply the exact Zig and cargo-zigbuild archives recorded in the manifest.
+# Build with --platform linux/arm64 --target supervisor. Network-enabled dependency
+# compilation belongs to a separate trusted operator builder, never a workload sandbox.
+FROM rust@sha256:7a5c6db0baa0e43a98d399abde801eab592df26b7fa6314897c9c8c451ee82f8 AS build
+ENV CARGO_BUILD_JOBS=4
+WORKDIR /src
+COPY pinned-source.tar.gz /tmp/pinned-source.tar.gz
+COPY 0001-seed-startup-provider-readiness.patch /tmp/upstream.patch
+RUN echo "e39c365dbb05bd6c9a862b090e9704c767275be44fb405189c4786e10f1c15f2  /tmp/pinned-source.tar.gz" | sha256sum -c - && \
+    echo "f62b1a304969ed47eddbc808c964ee6b69259118d30c61a7b63524a6d9321c54  /tmp/upstream.patch" | sha256sum -c - && \
+    tar -xzf /tmp/pinned-source.tar.gz --strip-components=1 -C /src && \
+    echo "60f82edd8cecc81bea365e35ce20bf66112d5ead004a7d5d8ed107240872a308  crates/openshell-supervisor/src/lib.rs" | sha256sum -c - && \
+    patch --fuzz=0 -p1 < /tmp/upstream.patch && \
+    echo "ca0f491e1774687ca7d632c1e860e234f90796068401186767ed62c4022ba1bc  crates/openshell-supervisor/src/lib.rs" | sha256sum -c - && \
+    echo "ea10e2922eece4077a2c1be17cac83214aa5f79f39fd6c5cc830e1a2cf9d459a  Cargo.lock" | sha256sum -c -
+RUN rustc --version && cargo --version && \
+    cargo test --locked -p openshell-supervisor --lib provider_readiness -- --nocapture && \
+    cargo test --locked -p openshell-supervisor --lib startup_environment_seeds_provider_readiness -- --nocapture && \
+    cargo test --locked -p openshell-supervisor --lib provider_poll -- --nocapture && \
+    cargo test --locked -p openshell-supervisor --lib fail_closed_validation_failure_deactivates_previous_generation -- --nocapture && \
+    cargo test --locked -p openshell-supervisor-network --lib generation -- --nocapture && \
+    cargo test --locked -p openshell-supervisor-network --lib fail_closed_quarantine -- --nocapture && \
+    echo "ea10e2922eece4077a2c1be17cac83214aa5f79f39fd6c5cc830e1a2cf9d459a  Cargo.lock" | sha256sum -c -
+# Exact upstream mise.toml GNU build pins and unmodified staging helpers.
+COPY zig-aarch64-linux-0.14.1.tar.xz cargo-zigbuild-aarch64-unknown-linux-gnu.tar.xz /tmp/
+RUN echo "f7a654acc967864f7a050ddacfaa778c7504a0eca8d2b678839c21eea47c992b  /tmp/zig-aarch64-linux-0.14.1.tar.xz" | sha256sum -c - && \
+    echo "6f86a78cf8be222ac08a68a944ffd8a1ef9d455c504097f0ffbd8bcfbe434a55  /tmp/cargo-zigbuild-aarch64-unknown-linux-gnu.tar.xz" | sha256sum -c - && \
+    mkdir -p /opt/zig /opt/cargo-zigbuild && \
+    tar -xf /tmp/zig-aarch64-linux-0.14.1.tar.xz --strip-components=1 -C /opt/zig && \
+    tar -xf /tmp/cargo-zigbuild-aarch64-unknown-linux-gnu.tar.xz --strip-components=1 -C /opt/cargo-zigbuild
+ENV PATH="/opt/zig:/opt/cargo-zigbuild:${PATH}"
+ENV ZIG=/opt/zig/zig
+RUN /bin/bash -euo pipefail -c 'zig version; cargo zigbuild --help >/dev/null; eval "$(tasks/scripts/setup-zig-cc-wrapper.sh aarch64-unknown-linux-gnu.2.28 aarch64-unknown-linux-gnu.2.28 /src/target/zig-gnu-wrapper/arm64)"; CARGO_INCREMENTAL=0 cargo zigbuild --locked --release --target aarch64-unknown-linux-gnu.2.28 -p openshell-supervisor --bin openshell-supervisor; tasks/scripts/verify-glibc-symbols.sh 2.28 target/aarch64-unknown-linux-gnu/release/openshell-supervisor; readelf -d target/aarch64-unknown-linux-gnu/release/openshell-supervisor | grep NEEDED; ! readelf -d target/aarch64-unknown-linux-gnu/release/openshell-supervisor | grep -q libgcc_s'
+RUN echo "ea10e2922eece4077a2c1be17cac83214aa5f79f39fd6c5cc830e1a2cf9d459a  Cargo.lock" | sha256sum -c -
+RUN mkdir -p /out && cp target/aarch64-unknown-linux-gnu/release/openshell-supervisor /out/ && \
+    sha256sum /out/openshell-supervisor > /out/binary.sha256 && \
+    file /out/openshell-supervisor > /out/binary.file
+FROM ghcr.io/nvidia/openshell/supervisor@sha256:d7b5264bb6bc56f4796e6fa3617b8e4a8d785be0b7293542efd8cc250b0fb67a AS supervisor
+COPY --from=build --chmod=0555 /out/openshell-supervisor /openshell-supervisor
+RUN ["/openshell-supervisor", "--version"]
+ENTRYPOINT ["/openshell-supervisor"]
+# An operator may derive a separate immutable trust-overlay image from this target.
+# Never check custom trust roots into this recipe; record the overlay/image identity.
+FROM scratch AS artifacts
+COPY --from=build /out/ /

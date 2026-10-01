@@ -28,14 +28,26 @@ def write_private(path: Path, value: dict) -> None:
         json.dump(value, stream, sort_keys=True, indent=2)
 
 
-def freeze(pilot: Path, destination: Path, phase: str, *, infrastructure_correction: str | None = None) -> dict:
+def freeze(pilot: Path, destination: Path, phase: str, *, infrastructure_correction: str | None = None, baseline_report: Path | None = None) -> dict:
     if phase not in {"direct", "native"} or destination.exists():
         raise ValueError("Choose an unused graph manifest and a declared phase")
     parent = (ROOT / ".harness/openshell-spike/live-qualification").resolve()
     destination = destination.resolve()
     if not destination.is_relative_to(parent):
         raise ValueError("Graph artifacts must remain checkout-owned")
-    registry = parent / f"graph-{phase}-manifest.frozen"
+    values = json.loads(pilot.read_text()) if pilot.exists() else {}
+    rerun = None
+    if values.get("rerun"):
+        from broker_real_provider_fixture import RealProviderManifest, verify_native_rerun
+        reviewed = RealProviderManifest.model_validate_json(pilot.read_bytes())
+        rerun = reviewed.rerun
+        if phase != "native" or baseline_report is None:
+            raise ValueError("Native rerun graph requires the original direct baseline")
+        verify_native_rerun(rerun)
+        if (sha(baseline_report) != rerun.baseline_report_sha256
+                or sha(baseline_report.parent / "manifest.json") != rerun.original_manifest_sha256):
+            raise ValueError("Native rerun graph baseline changed")
+    registry = parent / (f"graph-native-rerun-{sha(pilot)}.frozen" if rerun else f"graph-{phase}-manifest.frozen")
     supersedes = None
     prior = None
     if registry.exists():
@@ -53,7 +65,6 @@ def freeze(pilot: Path, destination: Path, phase: str, *, infrastructure_correct
         registry = parent / "graph-direct-guest-visible-tmpdir.frozen"
         if registry.exists():
             raise ValueError("This infrastructure correction already has a frozen trial")
-    values = json.loads(pilot.read_text())
     model = Path(values["direct_models_config"] if phase == "direct" else values["broker_models_config"])
     source_digests = {}
     for name in ("app.py", "requirements.txt"):
@@ -101,6 +112,9 @@ def freeze(pilot: Path, destination: Path, phase: str, *, infrastructure_correct
         "duration_seconds": 7200, "concurrency": 1, "maximum_trials": 1,
         "finding": {**fixed_finding, "repo_url": str(repo)},
     }
+    if rerun:
+        manifest["native_rerun"] = {"pilot_sha256": sha(pilot), "baseline_report": str(baseline_report.resolve()),
+                                    "baseline_report_sha256": rerun.baseline_report_sha256}
     if supersedes is not None:
         manifest["supersedes_infrastructure_failure"] = supersedes
     write_private(destination, manifest)
@@ -120,6 +134,21 @@ def preflight(path: Path) -> dict:
         raise ValueError("Model configuration changed")
     if value["phase"] == "native" and sha(Path(value["broker_config"])) != value["broker_sha256"]:
         raise ValueError("Broker catalog changed")
+    pilot_values = json.loads(Path(value["pilot_manifest"]).read_text())
+    if pilot_values.get("rerun"):
+        from broker_real_provider_fixture import RealProviderManifest, verify_native_rerun
+        reviewed = RealProviderManifest.model_validate_json(Path(value["pilot_manifest"]).read_bytes())
+        rerun = reviewed.rerun
+        verify_native_rerun(rerun)
+        link = value.get("native_rerun", {})
+        baseline = Path(link.get("baseline_report", ""))
+        if (value["phase"] != "native" or link.get("pilot_sha256") != value["pilot_sha256"]
+                or link.get("baseline_report_sha256") != rerun.baseline_report_sha256
+                or sha(baseline) != rerun.baseline_report_sha256
+                or sha(baseline.parent / "manifest.json") != rerun.original_manifest_sha256):
+            raise ValueError("Native graph rerun provenance changed")
+    elif "native_rerun" in value:
+        raise ValueError("Unexpected native rerun link")
     repo = Path(value["repo"])
     if repo.is_symlink() or set(p.name for p in repo.iterdir()) != {"app.py", "requirements.txt", "tests"}:
         raise ValueError("Graph repository contains unexpected files")

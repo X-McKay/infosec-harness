@@ -70,6 +70,85 @@ class CorrectedPilotAmendment(BaseModel):
         return self
 
 
+class NativeRerunAmendment(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    original_manifest_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    baseline_report_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    prior_reports: dict[str, str]
+    candidate_files: dict[str, str]
+    native_config_file: str = Field(min_length=1)
+    ledger_proof_file: str
+    ledger_proof_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    cause_resolution_file: str
+    cause_resolution_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    retained_unknown_request_ids: list[str]
+    retained_completed_request_ids: list[str]
+    additional_trials: int = 22
+    additional_graph_trials: int = 1
+    reason: str
+
+    @model_validator(mode="after")
+    def finite_rerun(self):
+        identities = self.retained_unknown_request_ids + self.retained_completed_request_ids
+        if (self.original_manifest_sha256 != "b41fb7a2bd695825bd2eff8b613f052e8c1319ad35bd053997c1a58cc1a20745"
+                or self.additional_trials != 22 or self.additional_graph_trials != 1
+                or len(self.retained_unknown_request_ids) != 10 or len(self.retained_completed_request_ids) != 3
+                or len(set(identities)) != 13 or not self.prior_reports or len(self.candidate_files) != 3
+                or any(len(x) != 64 or any(c not in "0123456789abcdef" for c in x) for x in identities + list(self.prior_reports.values()) + list(self.candidate_files.values()))
+                or self.reason != "reviewed native generation correction; retain all outcomes; no unknown resend"):
+            raise ValueError("Native rerun must retain10 unknown/3 saved and authorize22 agents/1 graph")
+        return self
+
+
+def verify_native_rerun(amendment: NativeRerunAmendment) -> None:
+    def read(path, expected):
+        data = Path(path).read_bytes()
+        if hashlib.sha256(data).hexdigest() != expected:
+            raise ValueError("Rerun retained evidence differs")
+        return json.loads(data)
+
+    for path, expected in amendment.candidate_files.items():
+        if hashlib.sha256(Path(path).read_bytes()).hexdigest() != expected:
+            raise ValueError("Native rerun candidate file changed")
+    observed = {"completion_unknown": set(), "completed": set()}
+    for path, expected in amendment.prior_reports.items():
+        report = read(path, expected)
+        rows = report.get("cases", [report])
+        for row in rows:
+            for request in row.get("ledger", {}).get("requests", []):
+                if request.get("state") in observed:
+                    observed[request["state"]].add(request["request_id"])
+    wanted = {"completion_unknown": set(amendment.retained_unknown_request_ids),
+              "completed": set(amendment.retained_completed_request_ids)}
+    if observed != wanted:
+        raise ValueError("Rerun must retain the exact prior request union")
+    proof = read(amendment.ledger_proof_file, amendment.ledger_proof_sha256)
+    if (set(proof) != {"status", "unknown_request_ids", "completed_request_ids", "unknown_holds_retained"}
+            or proof["status"] != "passed" or proof["unknown_holds_retained"] is not True
+            or set(proof["unknown_request_ids"]) != wanted["completion_unknown"]
+            or set(proof["completed_request_ids"]) != wanted["completed"]):
+        raise ValueError("Authoritative retained ledger proof differs")
+    cause = read(amendment.cause_resolution_file, amendment.cause_resolution_sha256)
+    if (set(cause) != {"status", "reviewed", "boundary", "evidence_sha256"}
+            or cause["status"] != "passed" or cause["reviewed"] is not True
+            or cause["boundary"] != "native-policy-generation"
+            or not isinstance(cause["evidence_sha256"], str) or len(cause["evidence_sha256"]) != 64
+            or any(c not in "0123456789abcdef" for c in cause["evidence_sha256"])):
+        raise ValueError("Reviewed native cause resolution is required")
+
+
+def claim_phase(report_directory: Path, manifest_sha256: str, phase: str) -> None:
+    if phase not in {"direct", "local", "temporal"}:
+        raise ValueError("Unknown qualification phase")
+    directory = report_directory / "execution-claims"
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    descriptor = os.open(directory / f"{manifest_sha256}-{phase}.started", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 class RealProviderManifest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     version: int = 1
@@ -100,6 +179,7 @@ class RealProviderManifest(BaseModel):
     root_duration_seconds: int = 7200
     graph_repo: str = "eval-corpus/python/sqli/vulnerable"
     amendment: CorrectedPilotAmendment | None = None
+    rerun: NativeRerunAmendment | None = None
 
     @model_validator(mode="after")
     def frozen_scope(self):
@@ -107,12 +187,17 @@ class RealProviderManifest(BaseModel):
                 or self.model != "Qwen3.6-35B-A3B-NVFP4" or self.cases != CASES
                 or self.max_concurrency != 1 or self.root_duration_seconds != 7200):
             raise ValueError("Real-provider pilot differs from the frozen scope")
-        expected_trials = 22 if self.amendment else 33
-        expected_phases = ["native-local", "native-temporal"] if self.amendment else ["direct", "native-local", "native-temporal"]
+        if self.amendment and self.rerun:
+            raise ValueError("Historical correction and fresh rerun cannot be combined")
+        expected_trials = 22 if self.amendment or self.rerun else 33
+        expected_phases = ["native-local", "native-temporal"] if self.amendment or self.rerun else ["direct", "native-local", "native-temporal"]
         if (set(self.datasets) != set(CASES) or self.maximum_pilot_agent_trials != expected_trials
                 or self.phases != expected_phases
                 or self.pricing.input_per_mtok != 0 or self.pricing.output_per_mtok != 0):
             raise ValueError("Frozen provenance or zero-price policy differs")
+        if self.rerun and set(self.rerun.candidate_files) != {
+                self.broker_models_config, self.broker_config, self.rerun.native_config_file}:
+            raise ValueError("Rerun must freeze exactly the declared model, broker and native config files")
         if self.case_digests and set(self.case_digests) != set(CASES):
             raise ValueError("Case digests must cover every frozen agent")
         return self

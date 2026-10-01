@@ -182,3 +182,94 @@ def test_infrastructure_correction_requires_each_terminal_evidence_gate(frozen_g
     report.write_text(json.dumps(values))
     with pytest.raises(ValueError, match="terminal, replayed, and cleaned"):
         fixture.freeze(pilot, parent / "corrected.json", "direct", infrastructure_correction="guest-visible-tmpdir")
+
+
+def test_native_rerun_link_rejects_unreviewed_evidence_before_freezing(tmp_path, monkeypatch):
+    import json
+
+    import broker_real_graph_fixture as fixture
+    from test_broker_real_provider_check import manifest, native_rerun
+
+    parent = tmp_path / '.harness/openshell-spike/live-qualification'
+    parent.mkdir(parents=True)
+    monkeypatch.setattr(fixture, 'ROOT', tmp_path)
+    rerun = native_rerun(tmp_path)
+    cause = Path(rerun.cause_resolution_file)
+    cause.write_text(cause.read_text() + ' ')
+    pilot = parent / 'pilot.json'
+    values = manifest(tmp_path).model_dump()
+    values.update(rerun=rerun.model_dump(), broker_models_config=str(tmp_path / 'broker.yaml'),
+                  broker_config=str(tmp_path / 'catalog.yaml'), maximum_pilot_agent_trials=22,
+                  phases=['native-local', 'native-temporal'])
+    pilot.write_text(json.dumps(values))
+    with pytest.raises(ValueError, match='retained evidence differs'):
+        fixture.freeze(pilot, parent / 'graph.json', 'native', baseline_report=tmp_path / 'baseline.json')
+    assert not (parent / 'graph.json').exists()
+
+
+def test_native_rerun_graph_requires_original_baseline_and_denies_direct(tmp_path, monkeypatch):
+    import json
+
+    import broker_real_graph_fixture as fixture
+    from test_broker_real_provider_check import manifest, native_rerun
+
+    parent = tmp_path / '.harness/openshell-spike/live-qualification'
+    parent.mkdir(parents=True)
+    monkeypatch.setattr(fixture, 'ROOT', tmp_path)
+    values = manifest(tmp_path).model_dump()
+    values.update(rerun=native_rerun(tmp_path).model_dump(), broker_models_config=str(tmp_path / 'broker.yaml'),
+                  broker_config=str(tmp_path / 'catalog.yaml'), maximum_pilot_agent_trials=22,
+                  phases=['native-local', 'native-temporal'])
+    pilot = parent / 'pilot.json'
+    pilot.write_text(json.dumps(values))
+    for phase in ('direct', 'native'):
+        with pytest.raises(ValueError, match='original direct baseline'):
+            fixture.freeze(pilot, parent / 'graph.json', phase)
+    assert not (parent / 'graph.json').exists()
+
+
+def test_native_graph_rerun_link_is_frozen_and_execution_remains_single_use(frozen_graph, tmp_path, monkeypatch):
+    import hashlib
+    import json
+
+    from test_broker_real_provider_check import manifest, native_rerun
+
+    fixture, parent, pilot, _previous, _report, models, _source = frozen_graph
+    baseline_dir = tmp_path / 'baseline'
+    baseline_dir.mkdir()
+    baseline = baseline_dir / 'direct.json'
+    baseline.write_text('{"status":"passed"}')
+    original = baseline_dir / 'manifest.json'
+    original.write_text('test artifact representing the historical frozen manifest')
+    rerun = native_rerun(tmp_path).model_copy(update={
+        'baseline_report_sha256': hashlib.sha256(baseline.read_bytes()).hexdigest()})
+    values = manifest(tmp_path).model_dump()
+    broker = parent / 'broker.json'
+    broker.write_text('{}')
+    def actual_digest(path):
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    rerun = rerun.model_copy(update={'candidate_files': {str(models): actual_digest(models),
+        str(broker): actual_digest(broker), str(tmp_path / 'native.yaml'): actual_digest(tmp_path / 'native.yaml')}})
+    values.update(rerun=rerun.model_dump(), maximum_pilot_agent_trials=22,
+        phases=['native-local', 'native-temporal'], broker_models_config=str(models), broker_config=str(broker))
+    pilot.write_text(json.dumps(values))
+    actual_sha = fixture.sha
+    # Only the known historical anchor is substituted; all newly frozen evidence,
+    # candidate files and baseline report hashes use the real digest implementation.
+    monkeypatch.setattr(fixture, 'sha', lambda path: rerun.original_manifest_sha256
+                        if Path(path) == original else actual_sha(path))
+    path = parent / 'native-rerun.json'
+    result = fixture.freeze(pilot, path, 'native', baseline_report=baseline)
+    assert result['maximum_trials'] == 1
+    assert result['native_rerun']['baseline_report_sha256'] == actual_sha(baseline)
+    assert fixture.preflight(path)['native_rerun'] == result['native_rerun']
+    with pytest.raises(ValueError, match='already has a frozen trial'):
+        fixture.freeze(pilot, parent / 'duplicate.json', 'native', baseline_report=baseline)
+    directory = Path(result['directory'])
+    claim_execution(directory)
+    with pytest.raises(FileExistsError):
+        claim_execution(directory)
+    result.pop('native_rerun')
+    path.write_text(json.dumps(result))
+    with pytest.raises((ValueError, OSError)):
+        fixture.preflight(path)

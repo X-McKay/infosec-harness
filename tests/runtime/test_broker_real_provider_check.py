@@ -253,3 +253,151 @@ def test_corrected_pilot_retains_failure_bytes_and_exact_unknown_set(tmp_path):
     failed.write_text(failed.read_text() + " ")
     with pytest.raises(ValueError, match="report differs"):
         verify_retained_failure(amendment)
+
+
+def native_rerun(tmp_path):
+    from broker_real_provider_fixture import NativeRerunAmendment
+    unknown = [str(i) * 64 for i in range(10)]
+    completed = [letter * 64 for letter in 'abc']
+    def evidence(name, value):
+        path = tmp_path / name
+        path.write_text(json.dumps(value))
+        return str(path), hashlib.sha256(path.read_bytes()).hexdigest()
+    prior, prior_sha = evidence('prior.json', {'ledger': {'requests': [
+        {'request_id': identity, 'state': state}
+        for state, identities in [('completion_unknown', unknown), ('completed', completed)]
+        for identity in identities]}})
+    proof, proof_sha = evidence('ledger.json', {'status': 'passed', 'unknown_request_ids': unknown,
+        'completed_request_ids': completed, 'unknown_holds_retained': True})
+    cause, cause_sha = evidence('cause.json', {'status': 'passed', 'reviewed': True,
+        'boundary': 'native-policy-generation', 'evidence_sha256': 'f' * 64})
+    candidates = {}
+    for name in ('broker.yaml', 'catalog.yaml', 'native.yaml'):
+        path, checksum = evidence(name, {'qualification_fixture': name})
+        candidates[path] = checksum
+    return NativeRerunAmendment.model_validate({
+        'original_manifest_sha256': 'b41fb7a2bd695825bd2eff8b613f052e8c1319ad35bd053997c1a58cc1a20745',
+        'baseline_report_sha256': 'e' * 64, 'prior_reports': {prior: prior_sha}, 'candidate_files': candidates,
+        'native_config_file': str(tmp_path / 'native.yaml'),
+        'ledger_proof_file': proof, 'ledger_proof_sha256': proof_sha,
+        'cause_resolution_file': cause, 'cause_resolution_sha256': cause_sha,
+        'retained_unknown_request_ids': unknown, 'retained_completed_request_ids': completed,
+        'reason': 'reviewed native generation correction; retain all outcomes; no unknown resend'})
+
+
+def test_native_rerun_preserves_evidence_and_native_only_scope(tmp_path):
+    from broker_real_provider_fixture import verify_native_rerun
+    rerun = native_rerun(tmp_path)
+    verify_native_rerun(rerun)
+    data = manifest(tmp_path).model_dump()
+    data.update(rerun=rerun.model_dump(), broker_models_config=str(tmp_path / 'broker.yaml'),
+                broker_config=str(tmp_path / 'catalog.yaml'), maximum_pilot_agent_trials=22,
+                phases=['native-local', 'native-temporal'])
+    assert RealProviderManifest.model_validate(data).rerun.additional_graph_trials == 1
+    with pytest.raises(ValidationError):
+        RealProviderManifest.model_validate({**data, 'amendment': corrected_amendment(tmp_path).model_dump()})
+
+
+@pytest.mark.parametrize('changed', [{'additional_trials': 23}, {'additional_graph_trials': 2},
+    {'retained_unknown_request_ids': ['a' * 64] * 10}, {'retained_completed_request_ids': ['b' * 64]}])
+def test_native_rerun_denies_extra_trials_or_lost_outcomes(tmp_path, changed):
+    from broker_real_provider_fixture import NativeRerunAmendment
+    with pytest.raises(ValidationError):
+        NativeRerunAmendment.model_validate({**native_rerun(tmp_path).model_dump(), **changed})
+
+
+@pytest.mark.parametrize('which', ['prior', 'ledger', 'cause'])
+def test_native_rerun_pins_every_evidence_file(tmp_path, which):
+    from broker_real_provider_fixture import verify_native_rerun
+    rerun = native_rerun(tmp_path)
+    path = {'prior': next(iter(rerun.prior_reports)), 'ledger': rerun.ledger_proof_file,
+            'cause': rerun.cause_resolution_file}[which]
+    Path(path).write_text(Path(path).read_text() + ' ')
+    with pytest.raises(ValueError, match='evidence differs'):
+        verify_native_rerun(rerun)
+
+
+@pytest.mark.parametrize('change', ['foreign_request', 'unreviewed', 'holds_released'])
+def test_native_rerun_denies_consistently_rehashed_bad_proofs(tmp_path, change):
+    from broker_real_provider_fixture import verify_native_rerun
+    rerun = native_rerun(tmp_path)
+    if change == 'foreign_request':
+        path = next(iter(rerun.prior_reports))
+        value = json.loads(Path(path).read_text())
+        value['ledger']['requests'][0]['request_id'] = 'f' * 64
+        Path(path).write_text(json.dumps(value))
+        rerun = rerun.model_copy(update={'prior_reports': {path: hashlib.sha256(Path(path).read_bytes()).hexdigest()}})
+    else:
+        prefix = 'cause_resolution' if change == 'unreviewed' else 'ledger_proof'
+        path = getattr(rerun, prefix + '_file')
+        value = json.loads(Path(path).read_text())
+        value['reviewed' if change == 'unreviewed' else 'unknown_holds_retained'] = False
+        Path(path).write_text(json.dumps(value))
+        rerun = rerun.model_copy(update={prefix + '_sha256': hashlib.sha256(Path(path).read_bytes()).hexdigest()})
+    with pytest.raises(ValueError):
+        verify_native_rerun(rerun)
+
+
+def test_phase_claim_is_single_use_and_keeps_other_phase_available(tmp_path):
+    from broker_real_provider_fixture import claim_phase
+    claim_phase(tmp_path, 'a' * 64, 'local')
+    with pytest.raises(FileExistsError):
+        claim_phase(tmp_path, 'a' * 64, 'local')
+    claim_phase(tmp_path, 'a' * 64, 'temporal')
+    with pytest.raises(ValueError):
+        claim_phase(tmp_path, 'a' * 64, 'graph')
+
+
+def test_phase_claim_has_one_concurrent_winner(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from broker_real_provider_fixture import claim_phase
+
+    barrier = Barrier(4)
+    def attempt():
+        barrier.wait()
+        try:
+            claim_phase(tmp_path, 'c' * 64, 'local')
+        except FileExistsError:
+            return False
+        return True
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        assert list(pool.map(lambda _: attempt(), range(4))).count(True) == 1
+
+
+def test_untrusted_output_cannot_replace_retained_ledger_rows(tmp_path):
+    from broker_real_provider_fixture import verify_native_rerun
+
+    rerun = native_rerun(tmp_path)
+    path = next(iter(rerun.prior_reports))
+    value = json.loads(Path(path).read_text())
+    value['typed_output'] = value.pop('ledger')
+    Path(path).write_text(json.dumps(value))
+    rerun = rerun.model_copy(update={'prior_reports': {path: hashlib.sha256(Path(path).read_bytes()).hexdigest()}})
+    with pytest.raises(ValueError, match='exact prior request union'):
+        verify_native_rerun(rerun)
+
+
+def test_native_rerun_rejects_candidate_catalog_drift(tmp_path):
+    from broker_real_provider_fixture import verify_native_rerun
+
+    rerun = native_rerun(tmp_path)
+    catalog = tmp_path / 'catalog.yaml'
+    catalog.write_text(catalog.read_text() + ' ')
+    with pytest.raises(ValueError, match='candidate file changed'):
+        verify_native_rerun(rerun)
+
+
+def test_native_rerun_denies_unrelated_third_candidate_file(tmp_path):
+    rerun = native_rerun(tmp_path)
+    unrelated = tmp_path / 'unrelated.yaml'
+    unrelated.write_text('irrelevant artifact')
+    candidates = dict(rerun.candidate_files)
+    candidates[str(unrelated)] = candidates.pop(rerun.native_config_file)
+    data = manifest(tmp_path).model_dump()
+    data.update(rerun=rerun.model_copy(update={'candidate_files': candidates}).model_dump(),
+                broker_models_config=str(tmp_path / 'broker.yaml'), broker_config=str(tmp_path / 'catalog.yaml'),
+                maximum_pilot_agent_trials=22, phases=['native-local', 'native-temporal'])
+    with pytest.raises(ValidationError, match='exactly the declared'):
+        RealProviderManifest.model_validate(data)

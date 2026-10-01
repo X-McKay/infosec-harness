@@ -1,0 +1,77 @@
+{
+  "base_commit": "6648bd0c290efbc41ba131ee9831ee45cd431f94",
+  "upstream_fix_commit": "b8932d43be0c9a4b669fa27b6abc57a389cd2222",
+  "changed_files": [
+    {
+      "path": "crates/openshell-supervisor/src/lib.rs",
+      "original_sha256": "60f82edd8cecc81bea365e35ce20bf66112d5ead004a7d5d8ed107240872a308",
+      "patched_sha256": "ca0f491e1774687ca7d632c1e860e234f90796068401186767ed62c4022ba1bc"
+    }
+  ],
+  "archive_sha256": "e39c365dbb05bd6c9a862b090e9704c767275be44fb405189c4786e10f1c15f2",
+  "patch_sha256": "f62b1a304969ed47eddbc808c964ee6b69259118d30c61a7b63524a6d9321c54",
+  "cargo_lock_sha256": "ea10e2922eece4077a2c1be17cac83214aa5f79f39fd6c5cc830e1a2cf9d459a",
+  "rust_builder": "rust@sha256:7a5c6db0baa0e43a98d399abde801eab592df26b7fa6314897c9c8c451ee82f8",
+  "runtime_base": "ghcr.io/nvidia/openshell/supervisor@sha256:d7b5264bb6bc56f4796e6fa3617b8e4a8d785be0b7293542efd8cc250b0fb67a",
+  "schema_version": 1,
+  "qualification_scope": "linux/arm64",
+  "official_release": false,
+  "rust_toolchain": "1.95.0",
+  "binary_sha256": "8e3bfd1ebf2b3c5e81695be362b527d5bed593694fe1b7d2707f5663a13bf303",
+  "binary_format": "ELF64 aarch64 GNU dynamically linked",
+  "qualification_image": "sha256:097ba24af5bfdf94a040aed9a620d7613711c663fa6a7974726c8f37a301ab46",
+  "qualification_image_manifest": "sha256:33000a330df9ad2271aa6abd896bd7491bf5926a31718e8f733491da25282d7d",
+  "qualification_image_config": "sha256:a7ff4c43023c638303a823db601610f762ecff2b58ff5203e2f4bacb807754de",
+  "qualification_image_has_private_operator_ca_overlay": true,
+  "operator_ca_overlay_sha256": "8d868174f207e7aabff8bea5d46ca7e80e3c93f0843281f6f847cc5a98e7e4e0",
+  "patch_path": "deploy/openshell/patches/0001-seed-startup-provider-readiness.patch",
+  "build_recipe": "deploy/openshell/Dockerfile.supervisor-backport",
+  "source_attribution": "NVIDIA CORPORATION & AFFILIATES; Apache-2.0",
+  "upstream_fix_url": "https://github.com/NVIDIA/OpenShell/commit/b8932d43be0c9a4b669fa27b6abc57a389cd2222",
+  "tests": {
+    "provider_readiness": 12,
+    "startup_environment_seeds_provider_readiness": 1,
+    "provider_poll": 2,
+    "fail_closed_validation_failure_deactivates_previous_generation": 1,
+    "network_generation": 29,
+    "network_fail_closed_quarantine": 3
+  },
+  "source_changes": "Only exact upstream lib.rs patch; original network OPA/relay guards and Cargo.lock preserved.",
+  "build_lane": "Separate trusted operator Docker daemon with host network for pinned public source and locked dependencies; no credentials or host mounts, no workload execution.",
+  "first_native_start_failure": {
+    "image": "sha256:e40fd4a53e621ecba70d8bda8e2c82f57b115074a6b8c1413c123b038bd618f6",
+    "image_manifest": "sha256:765857c58f374966897fb74ca33a506f8b161184781fa24cb4b57a416401febb",
+    "image_config": "sha256:8aeb0684f796bd052a597e343a78646ca6c91914d987d0168037cf7ae3bf69ef",
+    "binary_sha256": "3a0b7d489c608e9f355cfe49f02105cf47a4d46b9d1b4b07585e6429831c2921",
+    "category": "missing_runtime_library",
+    "missing_soname": "libgcc_s.so.1",
+    "provider_calls": 0,
+    "disposition": "Retained failed evidence; superseded by exact upstream GNU ABI build, no runtime libraries added."
+  },
+  "gnu_target": "aarch64-unknown-linux-gnu.2.28",
+  "highest_glibc_symbol": "GLIBC_2.28",
+  "runtime_dependencies": [
+    "libm.so.6",
+    "libpthread.so.0",
+    "libc.so.6",
+    "libdl.so.2",
+    "ld-linux-aarch64.so.1"
+  ],
+  "libgcc_s_dynamic_dependency": false,
+  "loader_version_check": "passed: network none, read-only, all capabilities dropped, no new privileges; snapshot version 0.0.0",
+  "native_readiness_check": "not_checked_at_build",
+  "zig": {
+    "version": "0.14.1",
+    "url": "https://ziglang.org/download/0.14.1/zig-aarch64-linux-0.14.1.tar.xz",
+    "sha256": "f7a654acc967864f7a050ddacfaa778c7504a0eca8d2b678839c21eea47c992b"
+  },
+  "cargo_zigbuild": {
+    "version": "0.22.3",
+    "url": "https://github.com/rust-cross/cargo-zigbuild/releases/download/v0.22.3/cargo-zigbuild-aarch64-unknown-linux-gnu.tar.xz",
+    "sha256": "6f86a78cf8be222ac08a68a944ffd8a1ef9d455c504097f0ffbd8bcfbe434a55"
+  },
+  "unchanged_upstream_build_helpers": {
+    "tasks/scripts/setup-zig-cc-wrapper.sh": "1754482ff311e4f81e65630d87f656269da96508039f8011abf2d34f8b9d2f2d",
+    "tasks/scripts/verify-glibc-symbols.sh": "6e634a3af29e903fd1bbe3f7026e690c6074b48509e2f640a4c064a8c7a0ab53"
+  }
+}

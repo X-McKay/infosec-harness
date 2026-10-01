@@ -18,13 +18,14 @@ def main() -> int:
     parser.add_argument("mode", choices=("freeze", "execute"))
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--pilot-manifest", type=Path)
+    parser.add_argument("--baseline-report", type=Path)
     parser.add_argument("--phase", choices=("direct", "native"))
     parser.add_argument("--infrastructure-correction", choices=("guest-visible-tmpdir",))
     args = parser.parse_args()
     if args.mode == "freeze":
         if args.pilot_manifest is None or args.phase is None:
             parser.error("Freeze requires pilot manifest and phase")
-        freeze(args.pilot_manifest, args.manifest, args.phase, infrastructure_correction=args.infrastructure_correction)
+        freeze(args.pilot_manifest, args.manifest, args.phase, infrastructure_correction=args.infrastructure_correction, baseline_report=args.baseline_report)
         print("FROZEN_PRODUCTION_GRAPH_MANIFEST_READY")
         return 0
     result = asyncio.run(execute(args.manifest))
