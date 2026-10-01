@@ -1,11 +1,11 @@
 # Credential broker implementation and testing plan
 
-Status: Implementation in progress; G0 feasibility passed, P1 contracts pending
+Status: Implementation in progress; G0/G1 passed; P2–P5 implemented; P6 qualification running
 Date: 2026-10-01
-Plan version: 0.1.2
-Design baseline: [Credential brokering specification version 0.2.2](../CREDENTIAL_BROKER_SPEC.md)
+Plan version: 0.1.3
+Design baseline: [Credential brokering specification version 0.2.3](../CREDENTIAL_BROKER_SPEC.md)
 
-Implement one OpenAI-compatible backend through a minimal isolated inference executor, preserve existing tool and probe boundaries, and prove fail-closed behavior before using real provider credentials. Work proceeds through small reviewable changes with bounded parallel delegation. The original planning review did not run infrastructure, inference, or recovery tests. P0 has now run: the actual OpenShell Landlock qualification failed under the unchanged runsc daemon. See [feasibility evidence](../validation/OPENSHELL_FEASIBILITY.md) and [the proposed deployment revision](OPENSHELL_DEPLOYMENT_REVISION.md). The corrected dedicated-daemon G0 passed independent review for the bounded test prototype after actual confinement, substitution, admission, ledger-channel, egress, rotation, native gateway discovery, and cleanup observations. P1 contracts and P2–P8 implementation remain pending. Native gateway rediscovery does not establish future harness-controller or ledger recovery. The retained intermittent primary Docker OOM notification failure remains a qualification risk.
+Implement one OpenAI-compatible backend through a minimal isolated inference executor, preserve existing tool and probe boundaries, and prove fail-closed behavior before using real provider credentials. Work proceeds through small reviewable changes with bounded parallel delegation. The original planning review did not run infrastructure, inference, or recovery tests. P0 has now run: the actual OpenShell Landlock qualification failed under the unchanged runsc daemon. See [feasibility evidence](../validation/OPENSHELL_FEASIBILITY.md) and [the proposed deployment revision](OPENSHELL_DEPLOYMENT_REVISION.md). The corrected dedicated-daemon G0 passed independent review for the bounded test prototype after actual confinement, substitution, admission, ledger-channel, egress, rotation, native gateway discovery, and cleanup observations. P1 is frozen in [protocol v1](CREDENTIAL_BROKER_PROTOCOL.md). P2–P5 source integration and deterministic tests are implemented; real P6 service/native/recovery qualification is running. P7 remains blocked on a separately recorded provider experiment budget, and P8 rollout remains disabled. Current evidence is tracked in [the implementation record](../validation/CREDENTIAL_BROKER_IMPLEMENTATION.md). Native gateway rediscovery does not establish future harness-controller or ledger recovery. The retained intermittent primary Docker OOM notification failure remains a qualification risk.
 
 ## Scope and completion criteria
 
@@ -220,11 +220,14 @@ Each change reports affected contracts, risk, behavior/provenance versions, repl
 
 The runbook must cover broker readiness, rotation, expired credentials, unknown completion, revocation failure, controller/worker restart, ledger retention, cancellation, orphan cleanup, and explicit rollback. Rollback drains/reconciles brokered operations and revokes their leases; direct mode is an explicit choice for new runs, not recovery fallback. Preserve existing VM/data and completed evidence.
 
-## Deferred packages and current planning evidence
+## Deferred packages and original planning evidence
 
 Credential-driver migration and content inspection are independent follow-up packages after the first release. Driver work rechecks secret storage, attachment, rotation, revocation, and recovery. Inspection work adds native middleware, explicit coverage/failure policy, false-positive fixtures using real vulnerability payloads, behavioral provenance, and paired evals. Private checkout, registries, and Bedrock each retain their separate live acceptance requirements from the design spec.
 
-| Planning gate | Status | Basis |
+The following table is the retained pre-implementation planning checkpoint. Current source
+and qualification outcomes are in the implementation record linked above.
+
+| Original planning gate | Status | Basis |
 | --- | --- | --- |
 | Spec and repository interface review | passed | Reviewed version 0.2.0, registered agents, current baseline tests, migration and generator conventions |
 | Parallel planning review | passed | Separate implementation and test planning reviews; bounded inventory delegated to a lower-cost agent |

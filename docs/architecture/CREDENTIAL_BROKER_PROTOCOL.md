@@ -17,6 +17,7 @@ outside workflow inputs. Existing root reservations are the sole spending author
 The controller verifies agent, accepted configuration, root deadline, operation ownership,
 run/invocation and complete contract against its operator catalog. The worker cannot mint
 limits. Local/eval invocations first obtain an explicitly bounded persisted root reservation;
+eval mode uses the durable production configuration identity and closes each case scope;
 Temporal invocations reference the existing RootAccounting operation through a patched
 workflow path. Old histories stay direct and unchanged. Only nonsecret binding references
 are serialized in AgentDeps. Retry attempts never participate in logical request identity.
@@ -86,3 +87,19 @@ are sorted by canonical bytes. The native adapter separately verifies exact atta
 profile export digest, provider resource revision, and lease ownership before comparison.
 Extra/broader rules, altered process/filesystem/TLS permissions, or inconsistent generated
 names fail readiness. Credential resource labels do not change the permission identity.
+
+
+The two pinned SDK set-valued parameter fields, `deferred_capability_ids` and
+`revealed_tool_names`, are serialized in sorted order. Membership, tool definitions and
+visibility semantics are retained exactly; this removes hash-seed ordering differences
+across worker restarts without accepting any changed permission or payload data. Controller
+binding issuance marks its operation broker-owned atomically before any admission, so
+worker settlement cannot release authority for a delayed request.
+
+
+Worker activity retries distinguish `TransientBrokerError` (`unavailable` or `pending`)
+from permanent `BrokerError` dispositions. They retry the exact retained logical request
+and payload at most three times; controller claim fencing remains the sole dispatch
+authority. Issuance activities similarly retry transient infrastructure failure, while auth,
+policy, budget, identity, conflict, expiry, invalid response and unknown completion remain
+non-retryable. This does not add executor/provider retries or authorize a replacement ID.

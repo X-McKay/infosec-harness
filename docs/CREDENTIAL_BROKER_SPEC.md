@@ -1,8 +1,8 @@
 # Harness credential brokering specification
 
-Status: Proposed production contracts; corrected-topology G0 feasibility passed
+Status: Implemented opt-in contracts; corrected-topology G0 passed; production qualification in progress
 Date: 2026-10-01
-Specification version: 0.2.2
+Specification version: 0.2.3
 
 Execution sequencing and delegated work are defined in the [implementation and testing plan](architecture/CREDENTIAL_BROKER_IMPLEMENTATION_PLAN.md).
 
@@ -78,11 +78,11 @@ The inbound service transport and instance lifecycle APIs are feasibility gates.
 
 ## Model transport contract
 
-The proposed internal protocol is `inference-request/v1`. It MUST round-trip the supported PydanticAI message and response types without lossy text conversion. The initial milestone supports non-streaming requests; unsupported streaming MUST be rejected explicitly.
+The implemented internal protocol is `ih-inference-v1`; [the frozen protocol](architecture/CREDENTIAL_BROKER_PROTOCOL.md) and `inference/protocol.py` define its wire contract. It MUST round-trip the supported PydanticAI message and response types without lossy text conversion. The initial milestone supports non-streaming requests; unsupported streaming MUST be rejected explicitly.
 
 | Direction | Required fields |
 | --- | --- |
-| Worker request | Protocol version; logical request ID; registered agent name; access profile identity; activity attempt; payload digest; immutable model contract digest; trusted reservation reference; remaining deadline; typed messages; tool and output schemas; effective model settings |
+| Worker request | Protocol version; logical request ID; registered agent name; access profile identity; stable scheduling identity (attempt excluded); payload digest; immutable model contract digest; trusted reservation reference; remaining deadline; typed messages; tool and output schemas; effective model settings |
 | Executor response | Logical request ID; payload digest; contract digest; structured model response; observed usage; provider request ID when available; attempt disposition; actual policy and image identity |
 | Failure | Stable error class; request ID; phase; whether dispatch occurred; whether upstream completion is unknown; sanitized reason |
 
@@ -213,7 +213,7 @@ Ship brokered transport as opt-in. Accept it first for one development backend, 
 
 Rollback stops admission to brokered executors, reconciles active requests, revokes leases, and preserves completed evidence. New runs may use an explicitly selected direct configuration. Existing runs keep their recorded contract or stop for explicit migration; rollback MUST not retry a brokered request using ambient credentials. OpenShell adoption cannot alter global tools or Docker contexts, erase checkout VM data, or weaken the existing fail-closed boundary.
 
-## Current review evidence
+## Original specification review evidence
 
 | Gate | Status | Basis |
 | --- | --- | --- |
@@ -225,7 +225,7 @@ Rollback stops admission to brokered executors, reconciles active requests, revo
 
 The first implementation decision is whether the pinned OpenShell deployment can satisfy authenticated executor ingress, isolation, and a restricted ledger channel without granting the executor orchestration authority. That experiment must precede any claim that this architecture is supported.
 
-## Implementation feasibility finding
+## Historical implementation feasibility finding
 
 The 2026-10-01 P0 spike failed OpenShell v0.1.2 Landlock qualification under the
 managed Docker daemon default `runsc`. No production routing was enabled.
@@ -235,3 +235,20 @@ failed boundary from successful gateway mTLS and fixture checks. The
 requires separate qualification before it may replace the deployment assumption.
 This addendum records a blocked gate; it does not approve native runc as a
 substitute for the harness build/probe sandbox or change the ledger contract.
+
+
+## Implementation qualification
+
+The approved dedicated-daemon deployment passed G0 without changing build/probe runsc
+isolation. [The implementation record](validation/CREDENTIAL_BROKER_IMPLEMENTATION.md)
+tracks the production controller, executor, database, Temporal and provider gates separately.
+The packaged broker catalog remains disabled. A deterministic or G0 prototype pass does
+not establish production-native recovery, real-provider compatibility or held-out quality.
+
+The implemented v1 defers replacement requests and accounting release: unknown completions
+retain possible spend and cannot resend automatically. Completed requests retain their
+allocation until a future trusted reconciliation capability. Explicit reviewed custom price
+ceilings are required; model-name price lookup alone is insufficient for broker admission.
+The input reserve applies only to independently qualified byte-tokenizer/context contracts.
+Credential revision and generated native resource labels remain separate from behavioral
+policy identity. No custom credential driver or inspection service is enabled.
