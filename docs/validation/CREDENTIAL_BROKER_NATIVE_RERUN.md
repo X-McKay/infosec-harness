@@ -109,3 +109,17 @@ frozen case set does not establish held-out model quality or deployed tokenizer/
 attestation. The local endpoint accepts unauthenticated requests, so upstream credential
 enforcement is not established by its successful responses. Future Credential Drivers and
 Content Inspection are not implemented or qualified by this rerun.
+
+## Preserved state and cleanup
+
+Fresh ownership-gated cleanup passed. All 73 lease records are deleted and native sandbox
+inventory is empty. Four quarantined preparation intents required exact historical spec
+snapshots in a cleanup-only adapter; ordinary revocation checks passed without modifying
+running configuration or rebinding identities. The owned global provider, controller,
+PostgreSQL containers, gateway and dedicated helper stopped; the original volume remains.
+The authoritative ledger retains 54 completed responses and 13 uncertain requests, with
+all 13 broker-owned uncertain holds retained. The fresh private database dump SHA256 is
+`5509849363d83a32978dfbc0db97fcdf3758da8f61390281e8d233920b0a52c7`.
+All ten primary container identities stayed unchanged. Actual runsc/build-egress fixtures
+and primary API/web/storage/persistence/Temporal smoke passed after the stopped trials.
+The previous intermittent OOM-notification reliability failure remains retained.
