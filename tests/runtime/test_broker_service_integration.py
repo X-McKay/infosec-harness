@@ -83,8 +83,10 @@ async def services():
 
 async def test_actual_mutual_tls_and_hmac_denials_have_zero_provider_sends(services):
     before = len(services.events())
-    with pytest.raises(httpx.HTTPError):
+    with pytest.raises((httpx.HTTPError, ssl.SSLError)) as denied:
         await services.post("/v1/invocations", {}, cert=False)
+    if isinstance(denied.value, ssl.SSLError):
+        assert denied.value.reason == "TLSV13_ALERT_CERTIFICATE_REQUIRED"
     response = await services.post("/v1/invocations", {}, sign=False)
     assert response.status_code == 401
     assert response.json() == {"error": "auth"}
@@ -208,3 +210,144 @@ async def test_actual_eval_issuance_registered_agent_closes_its_owned_root(servi
         assert operation["status"] == "uncertain"
     services.record("actual_eval_issuance_tool_structured_cleanup", before,
                     configuration_digest=config.digest, root_closed=True)
+
+
+@pytest.mark.parametrize("agent_name", (
+    "intake", "recon", "env-planner", "build-repair", "partial-build", "context",
+    "probe-planner", "probe-author", "probe-diagnosis", "probe-repair", "verdict",
+))
+async def test_every_registered_agent_executes_actual_broker_transport(services, agent_name):
+    from sqlalchemy import select
+
+    from infosec_harness.agents.deps import AgentDeps
+    from infosec_harness.agents.outputs import (
+        ContextOutput,
+        InconclusiveOutput,
+        PartialEnvironmentOutput,
+    )
+    from infosec_harness.agents.registry import AGENT_BINDINGS
+    from infosec_harness.domain.models import (
+        EnvironmentSpec,
+        ExtractedFinding,
+        ProbeDiagnosis,
+        ProbePlan,
+        ProbeSource,
+        RepoProfile,
+    )
+    from infosec_harness.graph.ops import LocalOps
+    from infosec_harness.inference.protocol import digest
+
+    expected_types = {
+        "intake": ExtractedFinding, "recon": RepoProfile, "env-planner": EnvironmentSpec,
+        "build-repair": EnvironmentSpec, "partial-build": PartialEnvironmentOutput,
+        "context": ContextOutput, "probe-planner": ProbePlan, "probe-author": ProbeSource,
+        "probe-diagnosis": ProbeDiagnosis, "probe-repair": ProbeSource, "verdict": InconclusiveOutput,
+    }
+    assert set(expected_types) == set(AGENT_BINDINGS)
+    before = len(services.events())
+    ops = LocalOps(sandbox=False, recipe_cache=False)
+    try:
+        outcome = await ops.run_agent(agent_name, [
+            f"<broker-qualification-agent>{agent_name}</broker-qualification-agent>\n"
+            "Qualification contains no concrete weakness evidence."
+        ], AgentDeps(repo_path=services.values["repo"], report_text="No concrete weakness evidence."))
+        assert type(outcome.output) is expected_types[agent_name]
+        assert outcome.agent == agent_name
+        assert outcome.requests == 1
+        assert outcome.input_tokens == 100 and outcome.output_tokens == 20
+        assert outcome.tools_called == []
+        value = outcome.output
+        if agent_name == "intake":
+            assert value.file_path is None and value.evidence == []
+        elif agent_name == "recon":
+            assert value.primary_language == "unknown" and value.summary == "stub profile"
+        elif agent_name in {"env-planner", "build-repair", "partial-build"}:
+            assert value.base_image == "debian:bookworm-slim"
+            assert value.test_command == "sh {test_file}" and value.install_commands == []
+            assert value.scope == ("partial" if agent_name == "partial-build" else "full")
+        elif agent_name == "context":
+            assert value.reachability == "unknown" and value.source is None and value.sink is None
+        elif agent_name == "probe-planner":
+            assert value.oracle == "marker_output" and value.test_file_path == "harness_probe.sh"
+        elif agent_name in {"probe-author", "probe-repair"}:
+            assert value.test_file_path == "harness_probe.sh"
+            assert "HARNESS_PRECONDITION::none" in value.content
+            assert "HARNESS_SINK_RETURNED::none" in value.content
+        elif agent_name == "probe-diagnosis":
+            assert value.kind == "environment_issue"
+        else:
+            assert value.label == "inconclusive" and value.confidence == 0
+            assert value.inconclusive_reason == "conflicting_evidence"
+    finally:
+        await ops.close()
+    events = services.events()[before:]
+    assert len(events) == 1 and events[0]["qualification_agent"] == agent_name
+    assert events[0]["authorized"] and not events[0]["canary_in_body"]
+    async with db.session() as session:
+        root = await session.get(db.BudgetLedger, digest({"local_run": ops._broker_run_id}))
+        operation = next(iter(root.state["operations"].values()))
+        assert operation["broker_owned"] and operation["broker_revoked"]
+        rows = (await session.execute(select(db.InferenceRequestRecord).where(
+            db.InferenceRequestRecord.root_id == root.root_id))).scalars().all()
+        assert len(rows) == 1 and rows[0].state == "completed"
+        assert rows[0].request["binding"]["agent"] == agent_name
+    services.record("registered_agent:" + agent_name, before, output_type=type(value).__name__,
+                    requests=1, persisted_completed=1, root_closed=True)
+
+
+async def test_local_prepare_and_triage_graph_uses_actual_broker_for_each_agent(services, tmp_path):
+    from sqlalchemy import select
+
+    from infosec_harness.domain.models import FindingInput, ProbeExecution, RepoSnapshot
+    from infosec_harness.graph.ops import LocalOps
+    from infosec_harness.graph.prepare import run_prepare
+    from infosec_harness.graph.triage import TRIAGE_GRAPH, PreFilter, TriageDeps, TriageState
+    from infosec_harness.intake.adapters import to_finding
+    from infosec_harness.repo.detect import detect_stack
+
+    class QualificationOps(LocalOps):
+        """Actual agent/broker execution; explicitly simulated sandbox execution."""
+        async def run_agent(self, name, prompt, deps):
+            marker = f"<broker-qualification-agent>{name}</broker-qualification-agent>"
+            return await super().run_agent(name, [marker, *prompt], deps)
+
+        async def execute_probe(self, image, probe, spec, nonce, attempt):
+            return ProbeExecution(attempt=attempt, exit_code=0, oracle_fired=False,
+                precondition_reached=True, sink_returned=True,
+                stdout_tail=f"HARNESS_PRECONDITION::{nonce}\nHARNESS_SINK_RETURNED::{nonce}")
+
+    (tmp_path / "requirements.txt").write_text("")
+    (tmp_path / "app.py").write_text("def lookup(db, n):\n    return db.execute('SELECT '+n)\n")
+    (tmp_path / "tests").mkdir()
+    repo = str(tmp_path)
+    ops = QualificationOps(sandbox=False, recipe_cache=False)
+    before = len(services.events())
+    expected = ["recon", "env-planner", "context", "probe-planner", "probe-author", "probe-diagnosis", "verdict"]
+    try:
+        prepared = await run_prepare(ops, RepoSnapshot(repo_url=repo, revision="HEAD", path=repo,
+            content_hash="a" * 64), detect_stack(repo))
+        assert prepared.prepared.status == "ready"
+        finding = to_finding(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
+            start_line=2, cwe="CWE-89", severity="high"))
+        state = TriageState(finding=finding, prepared=prepared.prepared)
+        result = await TRIAGE_GRAPH.run(state=state, deps=TriageDeps(ops=ops), inputs=PreFilter())
+        outcomes = [*prepared.invocations, *state.invocations]
+        assert [outcome.agent for outcome in outcomes] == expected
+        assert all(outcome.requests == 1 for outcome in outcomes)
+        assert result.verdict.label == "inconclusive" and result.verdict.confidence == 0
+        assert result.early_exit is None
+    finally:
+        await ops.close()
+    events = services.events()[before:]
+    assert [event["qualification_agent"] for event in events] == expected
+    assert all(event["authorized"] and not event["canary_in_body"] for event in events)
+    async with db.session() as session:
+        records = (await session.execute(select(db.InferenceRequestRecord))).scalars().all()
+        records = [record for record in records if record.request["binding"]["run_id"] == ops._broker_run_id]
+        assert len(records) == 7 and all(record.state == "completed" for record in records)
+        root = await session.get(db.BudgetLedger, records[0].root_id)
+        assert len(root.state["operations"]) == 7
+        assert all(operation["broker_revoked"] for operation in root.state["operations"].values())
+    services.record("local_prepare_triage_broker_graph", before, agents=expected,
+                    persisted_completed=7, root_closed=True, sandbox_execution="simulated",
+                    accuracy="not_checked", native_confinement="not_checked")

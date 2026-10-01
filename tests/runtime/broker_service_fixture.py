@@ -281,13 +281,36 @@ def run_provider(manifest: dict) -> None:
             value = json.loads(raw)
             authorized = self.headers.get("Authorization") == "Bearer " + manifest["canary"]
             has_tool = any(message.get("role") == "tool" for message in value.get("messages", []))
+            # Test-only opt-in routing. Normal context tool/fault fixtures retain their path.
+            import re
+            user_parts = []
+            for message in value.get("messages", []):
+                if message.get("role") != "user":
+                    continue
+                content = message.get("content", "")
+                if isinstance(content, str):
+                    user_parts.append(content)
+                else:
+                    user_parts.extend(part["text"] for part in content if part.get("type") == "text")
+            user_text = "\n".join(user_parts)
+            markers = re.findall(r"<broker-qualification-agent>([^<]+)</broker-qualification-agent>", user_text)
+            qualification_agent = markers[0] if len(markers) == 1 and markers[0] in AGENTS else None
             with lock, event_path.open("a") as output:
                 output.write(json.dumps({"path": self.path, "authorized": authorized,
-                        "canary_in_body": manifest["canary"].encode() in raw, "tool_return": has_tool}) + "\n")
+                        "canary_in_body": manifest["canary"].encode() in raw, "tool_return": has_tool,
+                        "qualification_agent": qualification_agent}) + "\n")
             tools = [tool["function"] for tool in value.get("tools", [])]
             read = next((tool for tool in tools if tool["name"].endswith("read_file")), None)
             final = next((tool for tool in tools if "summary" in tool.get("parameters", {}).get("properties", {})), None)
-            if read is not None and not has_tool:
+            if qualification_agent is not None:
+                from infosec_harness.agents.stubs import _STUBS
+                arguments = {} if qualification_agent == "intake" else _STUBS[qualification_agent](user_text)
+                expected = "final_result_inconclusive" if qualification_agent == "verdict" else "final_result"
+                output = next((tool for tool in tools if tool["name"] == expected), None)
+                if output is None:
+                    raise AssertionError("Qualification requires the actual registered output tool")
+                name = output["name"]
+            elif read is not None and not has_tool:
                 name, arguments = read["name"], {"path": "sample.py"}
             elif final is not None:
                 name, arguments = final["name"], {"summary": "qualification context", "source": None,

@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tests" / "runtime"))
 from broker_ledger_check import read_environment  # noqa: E402
 from broker_service_fixture import (  # noqa: E402
+    AGENTS,
     baseline_recorder,
     environment,
     free_port,
@@ -92,7 +93,7 @@ async def run(env_file: Path, *, temporal: bool, baseline_ref: str) -> int:
         text = output.decode(errors="replace")
         for secret in sensitive:
             text = text.replace(secret, "[REDACTED]")
-        print(text[-10000:], end="")
+        print(text[-40000:], end="")
         report["pytest_exit_code"] = pytest_process.returncode
         cases = directory / "cases.jsonl"
         report["cases"] = [json.loads(line) for line in cases.read_text().splitlines()] if cases.exists() else []
@@ -102,12 +103,13 @@ async def run(env_file: Path, *, temporal: bool, baseline_ref: str) -> int:
         required_b = {"tls_hmac_denials", "registered_local_tool_structured_output",
             "executor_lost_ack_saved_result", "executor_before_commit_unknown",
             "concurrent_http_duplicate", "close_and_retained_result",
-            "canary_scanner_positive_control", "actual_eval_issuance_tool_structured_cleanup"}
+            "canary_scanner_positive_control", "actual_eval_issuance_tool_structured_cleanup", "local_prepare_triage_broker_graph"}
+        required_b.update("registered_agent:" + agent for agent in AGENTS)
         complete = pytest_process.returncode == 0 and "skipped" not in text
         report["layer_b"] = "passed" if complete and required_b.issubset(names) else "failed"
         if temporal:
             qualified = complete and required_b.issubset(names) and {
-                "temporal_worker_kill_saved_result_retry_replay",
+                "temporal_worker_kill_saved_result_retry_replay", "temporal_all_registered_agents_replay",
                 "direct_stub_history_broker_config_replay",
                 "prechange_baseline_history_broker_config_replay"}.issubset(names)
             report["layer_d_services"] = "passed" if qualified else "failed"

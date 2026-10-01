@@ -17,7 +17,7 @@ from temporalio import workflow
 with workflow.unsafe.imports_passed_through():
     from datetime import timedelta
 
-    from broker_service_fixture import ROOT, environment
+    from broker_service_fixture import AGENTS, ROOT, environment
     from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
     from temporalio.client import Client
     from temporalio.worker import Replayer, Worker
@@ -43,8 +43,19 @@ class BrokerQualificationWorkflow:
 
     @workflow.run
     async def run(self, args: dict) -> dict:
-        ops = TemporalOps()
+        ops = TemporalOps(intake_atomic_inline=bool(args.get("all_agents")))
         try:
+            if args.get("all_agents"):
+                outputs = {}
+                for name in AGENTS:
+                    result = await ops.run_agent(name, [
+                        f"<broker-qualification-agent>{name}</broker-qualification-agent>\n"
+                        "Qualification contains no concrete weakness evidence."
+                    ], AgentDeps(repo_path=args["repo"], report_text="No concrete weakness evidence."))
+                    outputs[name] = {"output": result.output.model_dump(mode="json"),
+                        "output_type": type(result.output).__name__, "requests": result.requests,
+                        "input_tokens": result.input_tokens, "output_tokens": result.output_tokens}
+                return outputs
             result = await ops.run_agent("context", ["Inspect sample.py; return unknown reachability."],
                 AgentDeps(repo_path=args["repo"]))
             return {"summary": result.output.summary, "requests": result.requests,
@@ -249,6 +260,80 @@ async def test_prechange_baseline_runtime_history_replays_with_broker_without_io
         services.record("prechange_baseline_history_broker_config_replay", before,
             source_revision=values["baseline_revision"], pinned_sdk=values["baseline_sdk"],
             runtime_from_archive=True, history_events=len(history.events), replay_provider_dispatches=0)
+    finally:
+        if handle is not None:
+            with suppress(Exception):
+                await handle.cancel()
+        await stop_worker(process)
+
+
+async def test_real_temporal_all_registered_agents_execute_and_replay_without_io(services, monkeypatch):
+    from sqlalchemy import select
+
+    assert set(AGENTS) == set(registry.AGENT_BINDINGS) == set(CONFIGS)
+    root_id = "brokerqualification-all-" + uuid.uuid4().hex
+    await seed_root(root_id)
+    before = len(services.events())
+    process = start_worker(services.values)
+    handle = None
+    expected_types = {
+        "intake": "ExtractedFinding", "recon": "RepoProfile", "env-planner": "EnvironmentSpec",
+        "build-repair": "EnvironmentSpec", "partial-build": "PartialEnvironmentOutput",
+        "context": "ContextOutput", "probe-planner": "ProbePlan", "probe-author": "ProbeSource",
+        "probe-diagnosis": "ProbeDiagnosis", "probe-repair": "ProbeSource", "verdict": "InconclusiveOutput",
+    }
+    try:
+        client = await Client.connect(services.values["temporal_address"], plugins=[PydanticAIPlugin()])
+        handle = await client.start_workflow(BrokerQualificationWorkflow.run,
+            {"repo": services.values["repo"], "all_agents": True}, id="batch:" + root_id,
+            task_queue=services.values["task_queue"])
+        result = await asyncio.wait_for(handle.result(), 150)
+        assert set(result) == set(expected_types)
+        for name, value in result.items():
+            assert value["output_type"] == expected_types[name]
+            assert value["requests"] == 1
+            assert value["input_tokens"] == 100 and value["output_tokens"] == 20
+        assert result["intake"]["output"]["file_path"] is None
+        assert result["recon"]["output"]["primary_language"] == "unknown"
+        for name in ("env-planner", "build-repair", "partial-build"):
+            assert result[name]["output"]["base_image"] == "debian:bookworm-slim"
+        assert result["partial-build"]["output"]["scope"] == "partial"
+        assert result["context"]["output"]["reachability"] == "unknown"
+        assert result["probe-planner"]["output"]["oracle"] == "marker_output"
+        for name in ("probe-author", "probe-repair"):
+            assert result[name]["output"]["test_file_path"] == "harness_probe.sh"
+        assert result["probe-diagnosis"]["output"]["kind"] == "environment_issue"
+        assert result["verdict"]["output"]["label"] == "inconclusive"
+        assert result["verdict"]["output"]["inconclusive_reason"] == "conflicting_evidence"
+        events = services.events()[before:]
+        assert [event["qualification_agent"] for event in events] == list(AGENTS)
+        assert all(event["authorized"] and not event["canary_in_body"] for event in events)
+        async with db.session() as session:
+            root = await session.get(db.BudgetLedger, root_id)
+            assert len(root.state["operations"]) == 11
+            assert all(operation["broker_revoked"] and operation["broker_allocated"]["requests"] == 1
+                       for operation in root.state["operations"].values())
+            records = (await session.execute(select(db.InferenceRequestRecord).where(
+                db.InferenceRequestRecord.root_id == root_id))).scalars().all()
+            assert len(records) == 11 and all(record.state == "completed" for record in records)
+            assert {record.request["binding"]["agent"] for record in records} == set(AGENTS)
+        history = await handle.fetch_history()
+        await stop_worker(process)
+        from infosec_harness.inference import invocations
+        from infosec_harness.inference.transport import BrokerModel
+
+        async def forbidden(*_args, **_kwargs):
+            pytest.fail("All-agent history replay invoked runtime broker I/O")
+
+        monkeypatch.setattr(invocations, "request_invocation", forbidden)
+        monkeypatch.setattr(BrokerModel, "request", forbidden)
+        count = len(services.events())
+        await Replayer(workflows=[BrokerQualificationWorkflow], plugins=[PydanticAIPlugin()]).replay_workflow(history)
+        assert len(services.events()) == count
+        services.record("temporal_all_registered_agents_replay", before, agents=list(AGENTS),
+            persisted_completed=11, root_operations=11, root_closed=True,
+            history_events=len(history.events), replay_provider_dispatches=0,
+            accuracy="not_checked", native_confinement="not_checked")
     finally:
         if handle is not None:
             with suppress(Exception):
