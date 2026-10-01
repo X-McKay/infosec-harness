@@ -103,3 +103,14 @@ and payload at most three times; controller claim fencing remains the sole dispa
 authority. Issuance activities similarly retry transient infrastructure failure, while auth,
 policy, budget, identity, conflict, expiry, invalid response and unknown completion remain
 non-retryable. This does not add executor/provider retries or authorize a replacement ID.
+
+## Authored graph cache markers
+
+The supported SDK message subset includes `CachePoint` between text items in a user prompt,
+as emitted by the production `render_prompt`. Preserve exactly `kind: cache-point` and
+`ttl: 5m | 1h`, their ordering and all surrounding text. Extra fields, invalid TTLs,
+subclasses and remote/binary content are rejected. This corrects the initial v1 codec's
+rejection of normal graph prompts; the request-ID algorithm and previously accepted plain
+payload bytes remain unchanged. The rebuilt executor image changes its full contract/config
+identity, so deployments must select the matching image rather than silently replacing an
+executor behind an existing binding. Historical replay retains its no-I/O behavior.

@@ -70,7 +70,7 @@ missing retained history require explicit operator recovery; v1 replacement is u
 | Final shared runsc/build-egress preservation | passed | Actual post-cleanup runsc positive/negative, bounded execution, PID/memory exhaustion, internal proxy allow/deny, isolated builder and forced-removal cleanup fixtures |
 | Preserved development stack smoke | passed | API/UI/storage readiness, S3 put/get/delete and retained sentinel, fresh complete stub workflow/result and Temporal visibility; no provider calls |
 | P7 provider compatibility, tokenizer bound, held-out evaluation | not_checked | Numeric backend/model request/token/spend budget not recorded; no paid calls authorized |
-| UI checks | not_applicable | No frontend changes |
+| UI checks | passed | Requested follow-up: formatting, two frontend tests, TypeScript and production Vite build; no frontend source changes |
 | Rollout | not_checked | Packaged catalog disabled; production acceptance requires all applicable gates |
 
 ## Retained failures and limits
@@ -164,3 +164,84 @@ and persisted result remained intact. A fresh controlled stub demo completed wit
 execution and was queryable in the new visibility index; the unchanged full stack smoke then
 passed. Initial and successful logs are retained separately. No historical workflow or
 volume was deleted, and no visibility migration/backfill is claimed.
+
+## Follow-up: all agents and end-to-end execution
+
+The user's all-agent validation request expanded the earlier context-only transport check.
+All eleven registered agents ran through production `LocalOps` with deterministic stub models
+and returned typed outputs with one SDK model request each. The sanitized matrix is retained
+as `all-agents-887947b65f96416e9f1d63334ad11445.json` under the private report directory.
+
+The expanded real HTTPS/PostgreSQL/Temporal qualification passed **24 cases in 63.42s**, with
+exactly **39 counted local mock-provider sends**: 10 existing service/recovery requests,
+11 registered local agent requests, seven prepare/triage graph requests, and 11 registered
+durable agent requests. Every sweep agent produced its expected typed output, committed
+its request row and closed its owned root. The graph retained original rendered prompts,
+prepared successfully and exercised recon, env-planner, context, probe-planner, probe-author,
+probe-diagnosis and verdict in order. Repair and intake agents were exercised by the explicit
+matrix because normal successful triage does not necessarily select those branches.
+The all-agent durable workflow's **355-event history replayed with zero broker/provider I/O**.
+Prior killed-worker recovery, current direct and exact pre-change history replay still passed.
+Database, processes and private fixtures were cleaned up. Report:
+`service-f52c6b52b3bd47e0bf78ba00443bd20b.json`. This lane uses a native adapter shim and
+simulates graph sandbox execution; it measures transport and orchestration, not judgment
+accuracy or full native graph acceptance.
+
+A separate fresh controlled workflow on the actual checkout stack, `batch-63836e23cfbe116d`,
+completed, persisted its result, and was queryable through Temporal visibility. Its ready
+sandbox recorded one successful probe with precondition and sink-returned markers. The
+successful path used six agents; cached preparation bypassed env-planner on this run.
+No branch coverage is inferred from that cache hit. The direct/broker matrices and separate
+uncached broker graph cover the remaining agent execution paths. Sanitized report:
+`end-to-end-batch-63836e23cfbe116d.json`.
+
+The expanded graph check found an actual runtime defect: the initial broker codec rejected
+production `render_prompt` cache boundaries as non-text content. The corrected codec
+preserves only the pinned SDK's exact `CachePoint` kind/TTL representation and ordering;
+unknown fields and remote/binary content remain prohibited. Regressions first reproduced the
+failure, then passed. Independent review passed 61 focused tests and separately confirmed
+TTL-dependent digest identity, denied invalid/multimodal/subclass markers, and unchanged
+canonical bytes for previously accepted plain payloads. `ih-inference-v1` and the request-ID
+algorithm are unchanged; the expanded supported subset and new immutable image are explicit
+contract/provenance changes. Old bindings cannot silently acquire the new image.
+
+The final native image for this corrected source is
+`sha256:ae16ecf1020072b8afac9f3fc9c3989933586f7ece82a3d8525aef10540cb0cb`, with qualified
+full-contract digest `95fe90e9b1b184ddf4a4bd8a5a746f17da012d502b820ef7388fc9901a5d95f2`.
+Actual rendered CachePoint input reached the production native executor and remained exactly
+`{"kind":"cache-point","ttl":"5m"}` in its committed request. One independent local mock
+send returned usage 3/2. Worker authentication rejection, denied worker ledger access,
+retained result and repeat real closure passed without another send. This native follow-up
+used a private SQLite ledger; PostgreSQL transaction/service behavior is qualified separately.
+Six final source hashes match the image. Owned native workloads/lease credentials and
+containers were removed; gateway/mock/controller and dedicated Docker/containerd were stopped;
+shared firewall/forwarding/routes/bridges matched. Seven retained logs/proofs/stats passed
+secret scans with positive controls. Private evidence:
+`p4-cachepoint-proof.json`, `p4-cachepoint-source-sha256.json` and
+`p4-cachepoint-cleanup.json` beneath `.harness/openshell-spike/`. The earlier image/proofs above
+remain historical evidence for their exact source; this is the current qualified image.
+
+The PR's backend and web CI jobs passed, but its conformance job exposed a relative tool-path
+bug: `agentctl` was looked up after changing into the temporary mirror. The runner now resolves
+the operator checkout path before that change. Three subprocess regressions and actual local
+conformance passed with the existing AGENT029 waivers unchanged; no thresholds were relaxed.
+A service test also needed to recognize the exact native OpenSSL certificate-required alert
+alongside the existing HTTP transport exception. Other raw SSL failures are not accepted;
+missing-certificate provider sends remain zero. Failed qualification attempts are retained.
+
+Final deterministic suite: **2,179 passed, 40 skipped, 861 warnings in 78.71s**. Twenty-four
+explicit service cases and the native gate ran separately, not through implicit skip success.
+Canonical lint/compile/agent checks, generated artifacts and development skills passed.
+UI formatting, two frontend tests, type checking and production build passed. Real-provider
+compatibility/tokenizer bounds/held-out evaluation and the complete native production graph
+remain `not_checked`; no paid calls or production accuracy claims were made.
+
+The post-follow-up primary sandbox gate first **failed** its unchanged memory-exhaustion
+expectation: exit 137 at a configured 64 MiB bound, but Docker reported `OOMKilled=false`.
+This reproduces the previously retained OOM-notification reliability issue. An unchanged
+rerun **passed** all actual runsc positive/negative, bounded execution, PID/memory exhaustion,
+proxy allow/deny, isolated builder and cleanup fixtures. Both logs are retained as
+`all-agents-final-sandbox.log` and `all-agents-final-sandbox-rerun.log`. The successful rerun
+does not resolve the intermittent failure; sandbox gate reliability remains **failed**,
+and no expected state or threshold was weakened. Agent execution and the actual completed
+sandbox probe are separate observations from this infrastructure reliability limitation.
