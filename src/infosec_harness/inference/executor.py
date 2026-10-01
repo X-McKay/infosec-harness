@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import re
+import ssl
 import time
 from pathlib import Path
 from typing import Any
@@ -24,6 +26,49 @@ from .protocol import (
     canonical_bytes,
     required_input_reserve,
 )
+
+_LOG = logging.getLogger(__name__)
+_DIAGNOSTIC_STAGES = frozenset({"provider_request", "response_codec", "inference", "ledger_complete"})
+_DIAGNOSTIC_CATEGORIES = frozenset({"tls", "network", "provider_status", "provider_schema", "codec", "ledger", "internal"})
+
+
+def _failure_category(error: BaseException, stage: str) -> str:
+    """Only fixed categories; exception messages, names and request data never cross this boundary."""
+    import httpx
+    import httpx2
+    from openai import APIConnectionError, APIResponseValidationError, APIStatusError
+    from pydantic import ValidationError
+    from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
+
+    causes = []
+    current: BaseException | None = error
+    for _ in range(8):
+        if current is None or any(current is cause for cause in causes):
+            break
+        causes.append(current)
+        current = current.__cause__ or current.__context__
+    if any(isinstance(cause, ssl.SSLError) for cause in causes):
+        return "tls"
+    if any(isinstance(cause, (APIConnectionError, httpx.TransportError, httpx2.TransportError,
+                             ConnectionError, TimeoutError)) for cause in causes):
+        return "network"
+    if stage == "ledger_complete":
+        return "ledger"
+    if stage == "response_codec" or isinstance(error, BrokerError) and error.code == "invalid_response":
+        return "codec"
+    if any(isinstance(cause, (APIStatusError, ModelHTTPError)) for cause in causes):
+        return "provider_status"
+    if any(isinstance(cause, (APIResponseValidationError, ValidationError, UnexpectedModelBehavior)) for cause in causes):
+        return "provider_schema"
+    return "internal"
+
+
+def _report_failure(stage: str, error: BaseException) -> None:
+    category = _failure_category(error, stage)
+    if stage not in _DIAGNOSTIC_STAGES or category not in _DIAGNOSTIC_CATEGORIES:
+        raise ValueError("Invalid fixed diagnostic category")
+    _LOG.warning("IH_INFERENCE_FAILURE stage=%s category=%s", stage, category)
+
 
 PLACEHOLDER = re.compile(r"^openshell:resolve:env:[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -89,8 +134,6 @@ class OpenAIInference:
         if timeout <= 0:
             raise BrokerError("expired")
         # SSL_CERT_FILE names OpenShell's injected trust bundle; verification remains on.
-        import ssl
-
         context = ssl.create_default_context()
         async with (
             httpx2.AsyncClient(
@@ -122,18 +165,26 @@ class OpenAIInference:
                 min_max_tokens=self.contract.min_max_tokens,
                 **extra,
             )
-            response = await model.request(messages, settings, params)
+            try:
+                response = await model.request(messages, settings, params)
+            except BaseException as error:
+                _report_failure("provider_request", error)
+                raise
         usage = {
             key: value
             for key, value in vars(response.usage).items()
             if isinstance(value, int) and not isinstance(value, bool)
         }
-        return InferenceResult(
-            request_id=request.request_id,
-            response=encode_response(response),
-            usage=usage,
-            provenance={"contract_digest": self.contract.digest, "provider_retries": 0},
-        )
+        try:
+            return InferenceResult(
+                request_id=request.request_id,
+                response=encode_response(response),
+                usage=usage,
+                provenance={"contract_digest": self.contract.digest, "provider_retries": 0},
+            )
+        except BaseException as error:
+            _report_failure("response_codec", error)
+            raise
 
 
 class Executor:
@@ -185,13 +236,17 @@ class Executor:
         permit = await self.ledger.claim(request, self.settings.lease_id)
         if permit.request_id != request.request_id or permit.lease_id != self.settings.lease_id:
             raise BrokerError("identity")
+        stage = "inference"
         try:
             result = await self.infer(request)
             if result.request_id != request.request_id:
+                stage = "response_codec"
                 raise BrokerError("invalid_response")
             # A lost completion acknowledgement must never cause another provider request.
+            stage = "ledger_complete"
             return (await self.ledger.complete(result, permit)).model_dump(mode="json")
-        except BaseException:
+        except BaseException as error:
+            _report_failure(stage, error)
             raise BrokerError("completion_unknown") from None
 
 
