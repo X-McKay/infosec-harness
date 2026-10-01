@@ -43,7 +43,7 @@ come from actual operator inventory. This is not a production issuance policy.
 
 Start the trusted fixture controller with a migrated private test database and real
 TLS certificate, using `--factory broker_native_fixture:controller_factory` and
-`PYTHONPATH=src:tests/runtime/runtime`. The controller alone receives gateway mTLS/admin access and
+`PYTHONPATH=src:tests/runtime`. The controller alone receives gateway mTLS/admin access and
 the dedicated Docker socket. The executor receives neither host mounts nor database
 access. After reviewed infrastructure and the mock HTTPS provider are ready:
 
@@ -70,3 +70,27 @@ Docker containers and containerd tasks are gone. The helper refuses closure if s
 firewall, forwarding, route, or bridge invariants differ. A native create acknowledged
 before its ID is persisted requires manual ownership reconciliation; the broker
 refuses to acknowledge cleanup or delete an uncorroborated resource by name.
+
+
+## Authorized local-provider qualification
+
+The live runners are separate from mock qualification. Prepare an immutable reviewed manifest for the endpoint, model, cases, settings
+and budgets. Use `scripts/broker_real_provider_check.py` to validate its digest and
+execute direct, native LocalOps and native Temporal phases. Inference requires `--allow-inference`; native phases require the retained
+`--baseline-report`. Comparison checks exact effective settings, endpoint,
+authored budgets and semantic pricing inputs, retaining separate transport catalog
+hashes. Use `--help` for current commands. The user must authorize the provider
+and data scope before execution.
+
+`scripts/broker_real_graph_check.py` freezes and executes one complete production
+Temporal graph with real sandbox build/probe execution, persisted API checks and
+root/child replay with external I/O forbidden. Each manifest has an exclusive
+execution marker. Generated temporary build inputs stay in a private trial
+`TMPDIR` visible to the checkout-owned Lima guest. A separately frozen correction
+for the verified host temporary-directory defect requires retained terminal
+failure, replay and cleanup; it does not rerun a prior manifest.
+
+Live results, retained failures and remaining rollout gates are in
+[`CREDENTIAL_BROKER_LIVE_PROVIDER.md`](../../docs/validation/CREDENTIAL_BROKER_LIVE_PROVIDER.md).
+No endpoint discovery response attests deployed tokenizer identity or upstream
+authentication. Never resend `completion_unknown` requests when changing images.

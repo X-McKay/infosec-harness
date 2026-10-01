@@ -2,7 +2,9 @@
 
 Status: Implemented opt-in contracts; corrected-topology G0 passed; bounded native/service qualification passed; rollout disabled
 Date: 2026-10-01
-Specification version: 0.2.3
+Specification version: 0.2.4
+
+The October local-provider qualification and retained failures are recorded in [live-provider evidence](validation/CREDENTIAL_BROKER_LIVE_PROVIDER.md). Admission behavior changed without changing wire protocol v1; deploy the new immutable executor contract and drain prior allocations before adoption.
 
 Execution sequencing and delegated work are defined in the [implementation and testing plan](architecture/CREDENTIAL_BROKER_IMPLEMENTATION_PLAN.md).
 

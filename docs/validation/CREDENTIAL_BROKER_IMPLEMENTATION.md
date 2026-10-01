@@ -64,12 +64,14 @@ missing retained history require explicit operator recovery; v1 replacement is u
 | Layer D native single-agent recovery | passed | Real production native path: SIGKILL after commit, activity attempt 2 recovered same persisted ID, exactly one provider send, 11-event replay zero I/O; explicit `Agent[str]` scope |
 | Layer D full registered native graph | not_checked | Single-agent native recovery and registered local/eval service-shim checks do not qualify the complete production workflow graph |
 | Registered local/eval parity | passed | Real registered context agent, local tools and typed output; eval uses durable production configuration identity; mock native adapter |
-| Full deterministic suite | passed | Integrated source run: 2169 passed, 27 skipped, 861 warnings in 71.50s after develop integration; skips include 11 service cases and one native case executed separately |
+| Full deterministic suite | passed | Current source: 2268 passed, 40 skipped, 861 warnings in 71.89s; skipped service/native cases are separately accounted for in live-provider evidence |
 | Installed-wheel packaging | passed | Installed no-deps wheel outside checkout: disabled 11-agent catalog, migration 0005/0004 and controller/executor module entrypoints |
 | Generated artifacts and development skills | passed | OpenAPI, shared instructions and canonical development-skill drift checks |
 | Final shared runsc/build-egress preservation | passed | Actual post-cleanup runsc positive/negative, bounded execution, PID/memory exhaustion, internal proxy allow/deny, isolated builder and forced-removal cleanup fixtures |
 | Preserved development stack smoke | passed | API/UI/storage readiness, S3 put/get/delete and retained sentinel, fresh complete stub workflow/result and Temporal visibility; no provider calls |
-| P7 provider compatibility, tokenizer bound, held-out evaluation | not_checked | Numeric backend/model request/token/spend budget not recorded; no paid calls authorized |
+| P7 direct local-provider compatibility | passed | Authorized frozen `llm.almckay.io` pilot: all eleven agents passed; see [current live-provider evidence](CREDENTIAL_BROKER_LIVE_PROVIDER.md) |
+| P7 native local-provider compatibility | failed | First live pilot stopped after shared post-claim failures; four uncertain requests remain fenced; no redispatch |
+| P7 deployed tokenizer and held-out evaluation | not_checked | Published-tokenizer bounds do not attest the deployed runtime; eleven compatibility cases do not establish held-out quality acceptance |
 | UI checks | passed | Requested follow-up: formatting, two frontend tests, TypeScript and production Vite build; no frontend source changes |
 | Rollout | not_checked | Packaged catalog disabled; production acceptance requires all applicable gates |
 
