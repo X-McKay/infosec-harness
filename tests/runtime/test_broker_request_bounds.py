@@ -35,7 +35,7 @@ def test_request_cap_requires_an_explicit_positive_integer(value):
 ])
 def test_trusted_request_policy_is_independent_of_cumulative_invocation(monkeypatch,
         operator_cap, authored_cap, cumulative, expected):
-    contract = SimpleNamespace(profile="context", digest="contract")
+    contract = SimpleNamespace(profile="context", digest="contract", model_settings={"max_tokens": 18000})
     config = SimpleNamespace(digest="config", model=SimpleNamespace(
         broker_contract=contract, resolved_model="qwen"), budget=SimpleNamespace(
         effective=SimpleNamespace(max_input_tokens_per_request=authored_cap)))
@@ -52,7 +52,8 @@ def test_trusted_request_policy_is_independent_of_cumulative_invocation(monkeypa
     policy = invocations.build_reservation_policy(request)
     assert policy.max_input_tokens == expected
     assert catalog.bounds_for_agent("context").max_input_tokens == cumulative
-    assert policy.max_output_tokens == 180000
+    assert policy.max_output_tokens == (180000 if operator_cap is None else 18000)
+    assert catalog.bounds_for_agent("context").max_output_tokens == 180000
 
 
 async def test_healthy_loop_can_hold_multiple_requests_above_one_request_cap():
