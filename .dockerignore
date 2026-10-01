@@ -1,7 +1,7 @@
 .git
 .harness
-web/node_modules
-web/dist
+ui/node_modules
+ui/dist
 **/__pycache__
 .venv
 .ruff_cache

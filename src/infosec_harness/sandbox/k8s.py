@@ -1,9 +1,7 @@
-"""Kubernetes probe-execution runner (phase 5): each probe is a short-lived Job/Pod under
-gVisor, in an isolated namespace, with default-deny egress and no service-account token.
+"""Render hardened Kubernetes probe Pod specifications; no submission runner is implemented.
 
-This module renders the Pod/Job spec deterministically (unit-tested) and, when the
-``kubernetes`` client is available, submits it. The Docker runner (sandbox/docker.py) stays
-the default locally; both sit behind the same Ops interface, so the graph is unchanged.
+The Docker runner remains the execution path. These specifications support deployment design
+and deterministic policy tests, and do not establish actual cluster isolation.
 """
 
 from __future__ import annotations

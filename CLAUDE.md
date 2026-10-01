@@ -26,7 +26,7 @@ just check                    # lint, compile, and agent validation
 just test                     # deterministic test suite
 just generated-check          # generated artifacts without rewriting the checkout
 just dev-skills-check         # canonical development-skill drift check
-just web-check                # format check and production web build
+just ui-check                # format check and production UI build
 ```
 
 The default profile provisions a checkout-owned Lima Linux VM with Docker and runsc. macOS

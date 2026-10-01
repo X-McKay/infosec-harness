@@ -5,7 +5,7 @@ A release policy is the pass/fail contract `agentctl release` applies to an eval
 the ones on the false-negative path or determining executed code carry the strictest gates.
 
 Gate names match what `harness eval run --report` writes, so the policy is executable rather
-than aspirational. tests/test_release_policies.py asserts the two stay in step.
+than aspirational. tests/development/test_release_policies.py asserts the two stay in step.
 """
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ def policy_for(agent: str) -> dict:
         "hard_gates": gates,
         "thresholds": {
             "task_success_rate": {"min": SUCCESS_FLOOR[tier]},
-            # Ceilings sit above the maxima measured in docs/LIVE_VALIDATION.md so a
+            # Ceilings sit above the maxima measured in docs/validation/LIVE_VALIDATION.md so a
             # regression in cost or chattiness fails rather than merely showing up later.
             "average_cost_usd": {"max": 0.50},
             "p95_model_requests": {"max": 12},

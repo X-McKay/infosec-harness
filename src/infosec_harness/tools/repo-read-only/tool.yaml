@@ -13,7 +13,7 @@ data_classification: confidential
 # Bounded so a large file or a chatty command cannot flood the context. The binding cap for
 # each tool, all in agents/capabilities.py: MAX_READ_LINES=400, MAX_LIST=300, MAX_MATCHES=60,
 # MAX_SYMBOLS=80, MAX_BATCH_BYTES=80000, MAX_TREE_BYTES=40000, MAX_DIGEST_BYTES=110000. The
-# largest of those is what this number has to cover, and tests/test_tool_policies.py asserts it.
+# largest of those is what this number has to cover, and tests/agents/test_tool_policies.py asserts it.
 max_output_bytes: 120000
 authorization_scopes: []
 tools:

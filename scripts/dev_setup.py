@@ -428,7 +428,7 @@ def setup(profile: str, check_only: bool = False) -> int:
         cwd=ROOT,
     )
     if profile == "full":
-        run_tool("npm", ["ci", "--no-audit", "--no-fund"], cwd=ROOT / "web")
+        run_tool("npm", ["ci", "--no-audit", "--no-fund"], cwd=ROOT / "ui")
     return 0
 
 

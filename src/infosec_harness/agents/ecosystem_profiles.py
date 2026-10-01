@@ -74,8 +74,8 @@ ECOSYSTEM_PROFILES: Mapping[str, EcosystemProfile] = {
         observation_parsing=_OBSERVATIONS, failure_repair=_REPAIR,
         compatibility_evidence=_COMPATIBILITY,
         fixture_refs=(
-            "tests/test_validators.py::test_a_pytest_command_that_captures_output_is_rejected",
-            "tests/test_sandbox.py::test_smoke_test_passes_when_the_runner_answers",
+            "tests/agents/test_validators.py::test_a_pytest_command_that_captures_output_is_rejected",
+            "tests/runtime/test_sandbox.py::test_smoke_test_passes_when_the_runner_answers",
         ),
         limitations=("pytest unit probes only", "real isolation acceptance remains separate"),
     ),
@@ -91,8 +91,8 @@ ECOSYSTEM_PROFILES: Mapping[str, EcosystemProfile] = {
         observation_parsing=_OBSERVATIONS, failure_repair=_REPAIR,
         compatibility_evidence=_COMPATIBILITY,
         fixture_refs=(
-            "tests/test_detect_polyglot.py::test_components_keep_distinct_declared_java_releases",
-            "tests/test_validators.py::test_the_stub_java_plan_is_read_from_the_fingerprint_and_survives_its_own_validators",
+            "tests/runtime/test_detect_polyglot.py::test_components_keep_distinct_declared_java_releases",
+            "tests/agents/test_validators.py::test_the_stub_java_plan_is_read_from_the_fingerprint_and_survives_its_own_validators",
         ),
         limitations=("Maven/Gradle unit probes only", "compatibility matrix is experimental"),
     ),
@@ -108,8 +108,8 @@ ECOSYSTEM_PROFILES: Mapping[str, EcosystemProfile] = {
         observation_parsing=_OBSERVATIONS, failure_repair=_REPAIR,
         compatibility_evidence=_COMPATIBILITY,
         fixture_refs=(
-            "tests/test_detect_polyglot.py::test_a_lockfile_makes_the_install_reproducible",
-            "tests/test_validators.py::test_an_honest_probe_in_either_language_is_accepted",
+            "tests/runtime/test_detect_polyglot.py::test_a_lockfile_makes_the_install_reproducible",
+            "tests/agents/test_validators.py::test_an_honest_probe_in_either_language_is_accepted",
         ),
         limitations=("supported runner shapes are bounded", "workspace coverage is incomplete"),
     ),
@@ -125,8 +125,8 @@ ECOSYSTEM_PROFILES: Mapping[str, EcosystemProfile] = {
         observation_parsing=_OBSERVATIONS, failure_repair=_REPAIR,
         compatibility_evidence=_COMPATIBILITY,
         fixture_refs=(
-            "tests/test_detect_polyglot.py::test_the_perl_plan_names_the_module_root",
-            "tests/test_validators.py::test_a_test_more_probe_with_no_plan_is_rejected",
+            "tests/runtime/test_detect_polyglot.py::test_the_perl_plan_names_the_module_root",
+            "tests/agents/test_validators.py::test_a_test_more_probe_with_no_plan_is_rejected",
         ),
         limitations=("prove-based unit probes only", "distribution coverage is incomplete"),
     ),

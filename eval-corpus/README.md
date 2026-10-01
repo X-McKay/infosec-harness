@@ -54,5 +54,5 @@ needs a dependency beyond `pytest`.
   vulnerable variant and not the fixed one).
 
 Adding a case: create `python/<case>/<variant>/` (app + `requirements.txt` + `tests/`) and
-add an entry to `manifest.json`. `tests/test_corpus.py` checks the manifest stays consistent
+add an entry to `manifest.json`. `tests/evals/test_corpus.py` checks the manifest stays consistent
 with the code.

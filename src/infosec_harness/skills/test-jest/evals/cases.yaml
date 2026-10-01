@@ -1,7 +1,7 @@
 # Behavioural cases for test-jest.
 #
 # KNOWN DEFECT, not fixed here: this skill's own worked example omits HARNESS_SINK_RETURNED and
-# is therefore rejected by validate_probe. See tests/test_skill_evals.py::KNOWN_DEFECTS. The
+# is therefore rejected by validate_probe. See tests/agents/test_skill_evals.py::KNOWN_DEFECTS. The
 # positive case below is the probe the skill *should* show; it carries no `shown_in_skill`,
 # because pinning text the skill does not yet contain would assert a fix that has not happened.
 #

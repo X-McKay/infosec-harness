@@ -26,6 +26,9 @@ _recipes = os.path.join(_tmp, f"harness_test_recipes_{os.getpid()}")
 shutil.rmtree(_recipes, ignore_errors=True)
 os.environ.setdefault("HARNESS_RECIPE_CACHE_DIR", _recipes)
 
+_reports = os.path.join(_tmp, f"harness_test_reports_{os.getpid()}")
+os.environ.setdefault("HARNESS_REPORTS_DIR", _reports)
+
 
 def pytest_sessionfinish(session, exitstatus):
     """Remove this process's scratch state. Without it, one file per run accumulates in /tmp."""
@@ -33,3 +36,4 @@ def pytest_sessionfinish(session, exitstatus):
         if os.path.exists(path):
             os.remove(path)
     shutil.rmtree(_recipes, ignore_errors=True)
+    shutil.rmtree(_reports, ignore_errors=True)

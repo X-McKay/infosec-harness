@@ -58,8 +58,8 @@ agents-schema:
     HARNESS_MODEL_MODE=stub uv run harness agents schema
 
 openapi:
-    HARNESS_MODEL_MODE=stub uv run python -c "import json,infosec_harness.api.app as a; open('web/openapi.json','w').write(json.dumps(a.app.openapi(),indent=2))"
-    cd web && npm run gen:api
+    HARNESS_MODEL_MODE=stub uv run python -c "import json,infosec_harness.api.app as a; open('ui/openapi.json','w').write(json.dumps(a.app.openapi(),indent=2))"
+    cd ui && npm run gen:api
 
 # --- Offline demo (no Temporal, no Docker): full pipeline with stub models ---
 demo findings="examples/findings.sample.json":
@@ -118,10 +118,15 @@ worker:
 api:
     uv run harness api
 
-web-build:
-    cd web && npm ci && npm run build
+ui-build:
+    cd ui && npm ci && npm run build
 
 # Handwritten frontend formatting and type/production checks; generated API stays untouched.
-web-check:
-    cd web && npm run format:check
-    cd web && npm run build
+ui-check:
+    cd ui && npm run format:check
+    cd ui && npm run build
+
+# Compatibility aliases for existing developer scripts.
+web-build: ui-build
+
+web-check: ui-check

@@ -6,8 +6,8 @@ These are committed. That is the whole point of them.
 
 Every run lands in the experiment store, and that is the right place for *all* of them —
 queryable, incremental, cheap to write. It is the wrong place for the few that matter later.
-That database is a local scratch file in practice; it is not reviewed, it does not travel with
-a clone or a release, and the number you want six weeks from now — *what did `verdict` score on
+The database is configured by `HARNESS_DATABASE_URL`; the offline demo uses `.harness/demo.db`.
+It is not reviewed and does not travel with a clone or a release, and the number you want six weeks from now — *what did `verdict` score on
 sonnet before we changed the prompt* — is exactly the one that is gone.
 
 So the two roles are split, the way
@@ -16,7 +16,7 @@ lays the directories out:
 
 | | holds | lifetime |
 | --- | --- | --- |
-| experiment store (`HARNESS_DATABASE_URL`) | every run, every case result | local, disposable |
+| experiment store (`HARNESS_DATABASE_URL`) | every run, every case result | configured database; retained per deployment policy |
 | `evals/baselines/` | the accepted result per agent per model | committed, reviewed |
 
 ## Recording one
@@ -45,3 +45,8 @@ Each file carries the commit, the distribution version, the resolved model id, t
 the dataset version, and the cost basis (`priced` / `zero_priced` / `stub` / `unknown_model`).
 The cost basis is not decoration: a self-hosted model with a declared zero rate always "wins"
 on cost against a billed one, for a reason that has nothing to do with either model.
+
+Completed agent evals also export release reports under
+`.harness/reports/evals/<experiment-id>.json` by default. These ignored local reports retain
+individual runs; saving an accepted baseline remains an explicit, reviewed action. A truncated
+experiment remains in the database and does not produce a release report.

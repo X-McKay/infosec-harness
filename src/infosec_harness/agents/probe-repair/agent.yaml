@@ -65,7 +65,7 @@ metadata:
   # (UsageLimits.per_request_input_tokens_limit). A ceiling below its own arithmetic worst
   # case is not a brake but a coin flip that fires whenever the model is verbose or
   # explores. Enforced via UsageLimits; both derivations are asserted in
-  # tests/test_budgets.py.
+  # tests/agents/test_budgets.py.
   budgets:
     max_requests: 16
     max_tool_calls: 64

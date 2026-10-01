@@ -10,7 +10,7 @@ Two rules shape the labels below:
   early-exit a finding; `probe_planner`'s oracle choice determines whether the probe can
   observe anything at all. Scoring prose would measure nothing.
 - Ground the expectation in the seeded corpus, whose vulnerable/fixed pairs are verified by
-  tests/test_corpus_oracle.py. An expectation is then traceable to code that demonstrably
+  tests/evals/test_corpus_oracle.py. An expectation is then traceable to code that demonstrably
   is or is not exploitable, rather than to an opinion recorded in a fixture.
 """
 
@@ -157,7 +157,7 @@ def context_adapter(case: dict):
     """Scored on reachability — the call that can early-exit a finding entirely.
 
     The paired corpus makes this a real question rather than a guess: the fixed variants are
-    neutralized by constructs the cwe-* skills name verbatim, and tests/test_corpus_oracle.py
+    neutralized by constructs the cwe-* skills name verbatim, and tests/evals/test_corpus_oracle.py
     proves the vulnerable ones are exploitable and the fixed ones are not.
     """
     return ("Collect the code evidence for this finding.", case["payload"], _deps(case),

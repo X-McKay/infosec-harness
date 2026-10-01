@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -107,7 +108,16 @@ def write_release_report(path: Path, *, agent: str, metrics: dict, cfg_hash: str
         },
     }
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(report, indent=2) + "\n")
+    # Publish only a complete JSON document; a cancelled export must not look like evidence.
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as output:
+            temporary = Path(output.name)
+            output.write(json.dumps(report, indent=2) + "\n")
+        temporary.replace(path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def comparability_issues(found: list[object]) -> list[str]:

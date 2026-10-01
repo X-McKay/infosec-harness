@@ -30,7 +30,7 @@ vulnerable revision, and refuses to emit such entries as ordinary cases — they
 
 That check protects the `-vulnerable` side only. On the `-fixed` side the PoV is present
 by construction, so **every** consumer of this file must mask `truth.pov.mask_paths` out
-of the checkout the agent reads. See `docs/CORPUS_SOURCES.md`.
+of the checkout the agent reads. See `docs/evaluation/CORPUS_SOURCES.md`.
 
 ## Licence
 

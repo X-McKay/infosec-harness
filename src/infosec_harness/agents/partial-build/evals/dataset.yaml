@@ -167,7 +167,7 @@ cases:
                         target_callable: run}
     expected: partial
 
-  # --- Regression: a defect measured in a live run (docs/LIVE_VALIDATION.md) ----------------
+  # --- Regression: a defect measured in a live run (docs/validation/LIVE_VALIDATION.md) ----------------
   - name: a-narrowed-maven-spec-must-keep-the-two-path-flags
     category: regression
     # The measured defect was a Maven spec that omitted `-Dmaven.repo.local`, and it is a

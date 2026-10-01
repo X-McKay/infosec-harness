@@ -26,7 +26,7 @@ metadata:
 ## When another skill also applies
 
 - `cwe-78-os-command-injection` also fires when the query goes out through a command-line client (`psql -c`, `mysql -e`): one value, concatenated into SQL and handed to a shell, and each skill redirects to the other. **That skill wins** — classify by the first interpreter the value reaches. A payload that does not survive the shell's quoting never reaches the query at all.
-- `probe-oracle-protocol` states the rule this skill's structure oracle is likeliest to break: drive the real callable, do not mock the sink. **That skill wins** wherever the two disagree, which is why the fallback below hooks the real connection instead of replacing it — a run that wrapped the cursor in a stand-in the target never used reported a clean negative on an exploitable finding (docs/LIVE_VALIDATION.md).
+- `probe-oracle-protocol` states the rule this skill's structure oracle is likeliest to break: drive the real callable, do not mock the sink. **That skill wins** wherever the two disagree, which is why the fallback below hooks the real connection instead of replacing it — a run that wrapped the cursor in a stand-in the target never used reported a clean negative on an exploitable finding (docs/validation/LIVE_VALIDATION.md).
 
 <!-- /generated: activation criteria -->
 

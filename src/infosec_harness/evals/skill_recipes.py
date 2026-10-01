@@ -255,7 +255,7 @@ def probe_exemplar_violations(test_file_path: str, content: str) -> list[str]:
     that could drift. ``validate_probe`` reads the checkout through the context when it has one,
     to know the repository's test framework and language level, and tolerates its absence: the
     framework-dependent rules simply stay silent here, so a case can only pin the ones that hold
-    for any repository. The repo-aware pairings are covered in tests/test_validators.py, which can
+    for any repository. The repo-aware pairings are covered in tests/agents/test_validators.py, which can
     build a checkout.
     """
     try:

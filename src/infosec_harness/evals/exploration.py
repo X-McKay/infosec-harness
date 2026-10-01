@@ -153,10 +153,6 @@ class Measurement:
     unmet: tuple[str, ...] = ()
 
     @property
-    def calls_per_request(self) -> float:
-        return self.tool_calls / self.requests if self.requests else 0.0
-
-    @property
     def file_coverage(self) -> float:
         """Fraction of the repository's main sources the run learned the *name* of.
 

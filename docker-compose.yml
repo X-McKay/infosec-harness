@@ -105,7 +105,7 @@ services:
     ports: ["${HARNESS_API_PORT:-8000}:8000"]
 
   web:
-    build: ./web
+    build: ./ui
     depends_on: [api]
     ports: ["${HARNESS_WEB_PORT:-8080}:${HARNESS_WEB_TARGET_PORT:-80}"]
 

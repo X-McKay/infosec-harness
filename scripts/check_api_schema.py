@@ -8,7 +8,7 @@ from infosec_harness.api.app import app
 
 
 def main() -> int:
-    path = Path(__file__).resolve().parents[1] / "web/openapi.json"
+    path = Path(__file__).resolve().parents[1] / "ui/openapi.json"
     if json.loads(path.read_text()) != app.openapi():
         print("OpenAPI schema drift: run just openapi and review the generated changes.")
         return 1

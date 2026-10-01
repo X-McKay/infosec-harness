@@ -254,6 +254,9 @@ async def run_experiment(
     exp_id = "exp-" + hashlib.sha256(
         f"{agent}:{version}:{cfg_hash}:{overlay_label}:{uuid.uuid4()}".encode()).hexdigest()[:16]
 
+    if report is None:
+        report = get_settings().reports_dir / "evals" / f"{exp_id}.json"
+
     total = passed = invalid_output = budget_exhausted = unevidenced_safe = 0
     completed_cases = 0
     cost = cache_read = tokens = 0.0

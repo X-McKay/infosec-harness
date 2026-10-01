@@ -1,21 +1,31 @@
 # Editable development overlay used by ./dev. Backend and web source are mounted from this
 # checkout; the base compose file remains suitable for the packaged nginx image.
+x-local-logging: &local-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   postgres:
     runtime: runc
+    logging: *local-logging
     environment:
       POSTGRES_PASSWORD: ${HARNESS_POSTGRES_PASSWORD}
 
   temporal:
     runtime: runc
+    logging: *local-logging
     environment:
       POSTGRES_PWD: ${HARNESS_POSTGRES_PASSWORD}
 
   temporal-ui:
     runtime: runc
+    logging: *local-logging
 
   minio:
     runtime: runc
+    logging: *local-logging
     # Pinned S3-compatible development service with the API and console ports used here.
     image: ghcr.io/rustfs/rustfs:1.0.0-glibc@sha256:bffcab0c9d647aab0055d1c69d340b202d0909966b385932d4ead1aeb7602858
     command: ["rustfs"]
@@ -25,12 +35,15 @@ services:
 
   otel-collector:
     runtime: runc
+    logging: *local-logging
 
   jaeger:
     runtime: runc
+    logging: *local-logging
 
   api:
     runtime: runc
+    logging: *local-logging
     command: ["sh", "-c", "uv pip install --system --no-deps -e . && harness migrate && harness api --host 0.0.0.0 --port 8000"]
     volumes:
       - .:/app:ro
@@ -44,6 +57,7 @@ services:
       HARNESS_BUILDX_BUILDER: ${HARNESS_BUILDX_BUILDER}
   worker:
     runtime: runc
+    logging: *local-logging
     command: ["sh", "-c", "uv pip install --system --no-deps -e . && harness worker"]
     volumes: !override
       - /var/run/docker.sock:/var/run/docker.sock
@@ -62,12 +76,13 @@ services:
       HARNESS_BUILDX_BUILDER: ${HARNESS_BUILDX_BUILDER}
   web:
     runtime: runc
+    logging: *local-logging
     build: !reset null
     image: node:22.23.3-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c
     working_dir: /app
     command: ["sh", "-c", "npm ci --no-audit --no-fund && npm run dev -- --host 0.0.0.0 --port 5173"]
     volumes:
-      - ./web:/app:ro
+      - ./ui:/app:ro
       - web_node_modules:/app/node_modules
     environment:
       VITE_API_URL: http://api:8000
@@ -76,6 +91,7 @@ services:
 
   egress-proxy:
     runtime: runc
+    logging: *local-logging
     networks:
       default: {}
       build-egress:

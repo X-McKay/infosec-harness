@@ -2,7 +2,7 @@
 
 The agent playbook (§9) requires every production agent to carry per-request and per-run
 limits, in the order "prevent runaway execution" first. That ordering is the point: the
-repair storm measured in docs/LIVE_VALIDATION.md grew one agent's context from 8.8k to 24k
+repair storm measured in docs/validation/LIVE_VALIDATION.md grew one agent's context from 8.8k to 24k
 tokens over three turns before anyone noticed by eye. A budget turns that into a bounded,
 named failure.
 
@@ -38,13 +38,13 @@ class RunBudget(BaseModel):
     So:
 
     * `max_input_tokens_per_request` is the brake — it catches an oversized context, which
-      is the failure the 8.8k -> 24k repair storm in docs/LIVE_VALIDATION.md actually was;
+      is the failure the 8.8k -> 24k repair storm in docs/validation/LIVE_VALIDATION.md actually was;
     * `max_input_tokens` is the run's arithmetic worst case derived from it
       (`max_requests x max_input_tokens_per_request`), exactly as `max_output_tokens` is
       derived from `max_requests x` the per-call output cap. It is a backstop, not the
       operative limit; `max_requests` is.
 
-    Both relationships are asserted in tests/test_budgets.py so neither can drift.
+    Both relationships are asserted in tests/agents/test_budgets.py so neither can drift.
     """
 
     max_requests: int = Field(gt=0)
@@ -72,7 +72,7 @@ class RunBudget(BaseModel):
         and doubling the repository does not double either.
 
         **Every** ceiling scales by the same factor, deliberately. Each invariant in
-        tests/test_budgets.py is linear in `max_requests` -- the output ceiling is
+        tests/agents/test_budgets.py is linear in `max_requests` -- the output ceiling is
         `max_requests x` the per-call cap, the cumulative input ceiling is `max_requests x` the
         per-request one -- so scaling uniformly preserves all of them by construction rather
         than by a second set of numbers that could drift. `max_input_tokens_per_request` is the

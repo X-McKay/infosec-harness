@@ -24,7 +24,7 @@ For component work on a host without the required isolated runtime, use:
 
 Offline mode runs the locked stub/component checks and explicitly leaves the API, Temporal, web,
 and real sandbox gates as `not_checked`; it is not a full-stack acceptance result. See
-[`docs/LOCAL_SETUP.md`](docs/LOCAL_SETUP.md) for host requirements, recovery, and troubleshooting.
+[`docs/development/LOCAL_SETUP.md`](docs/development/LOCAL_SETUP.md) for host requirements, recovery, and troubleshooting.
 
 A durable graph of [PydanticAI](https://pydantic.dev/docs/ai/) agents that **filters,
 prioritizes, and triages pre-identified vulnerability findings** for exploitability. For
@@ -34,8 +34,23 @@ a targeted unit-test probe, runs the probe in an isolated sandbox, and returns o
 priority.
 
 It does not scan for new vulnerabilities, write fixes, or touch production. Probes run only
-against code in a sandbox. See [`docs/redesign/SPEC.md`](docs/redesign/SPEC.md) for the full
+against code in a sandbox. See [`docs/architecture/SPEC.md`](docs/architecture/SPEC.md) for the full
 design and decision log.
+
+## Find your way around
+
+- [Documentation index](docs/README.md): setup, architecture, safety, evaluation and evidence.
+- [Repository guide](docs/development/REPOSITORY_GUIDE.md): module map, local output locations, generated
+  sources, cleanup rules and proposed directory changes.
+- [Developer scripts](scripts/README.md): setup tools, generators and measurements.
+- [UI](ui/README.md), [deployment](deploy/README.md),
+  [eval inputs](evals/README.md) and [fixture corpus](eval-corpus/README.md).
+
+Completed agent evals automatically export a report to
+`.harness/reports/evals/<experiment-id>.json`; set `HARNESS_REPORTS_DIR` to relocate exports.
+`./dev logs [service]` saves a bounded snapshot in `.harness/logs/`, and successful full startup
+also saves a snapshot. Local databases, workspaces and exports are ignored by Git. Accepted
+baselines and reviewed validation evidence remain committed deliberately.
 
 ## How it works
 
@@ -59,10 +74,10 @@ design and decision log.
   pipeline deterministically with no credentials.
 - **Prompt caching.** A stable→volatile prompt layout, pinned model/thinking per agent, and
   repo-grouped warm-then-fan-out scheduling keep the shared prefix served from cache; cache
-  tokens are recorded per call. Both halves are checked offline by `tests/test_cache_prefix.py`,
+  tokens are recorded per call. Both halves are checked offline by `tests/agents/test_cache_prefix.py`,
   which also records the one thing that breaks the prefix: history compaction rewrites it, so a
   run long enough to need compaction pays full prefill afterwards. That is why the read tools
-  answer in few, large calls (`tests/test_exploration_cost.py`) — a short run needs neither.
+  answer in few, large calls (`tests/agents/test_exploration_cost.py`) — a short run needs neither.
 - **Evidence-based tuning.** Every agent has an eval dataset and an executable release
   policy. `harness eval run <agent> -m sonnet -m opus` runs the same dataset against each model
   in turn and prints accuracy, latency and cost side by side; every run is stored with the
@@ -73,7 +88,7 @@ design and decision log.
   effect on external state; each agent has a risk assessment whose tier its spec must match.
   Construction fails if any of that is missing. `just conformance` checks the whole thing
   against the Agent and Multi-Agent Playbooks — see
-  [`docs/PLAYBOOK_CONFORMANCE.md`](docs/PLAYBOOK_CONFORMANCE.md).
+  [`docs/architecture/PLAYBOOK_CONFORMANCE.md`](docs/architecture/PLAYBOOK_CONFORMANCE.md).
 
 ## Quick start (offline, no credentials)
 
@@ -88,7 +103,7 @@ just demo               # run the full pipeline in-process on examples/findings.
 deliberately `inconclusive` (the stub is not a real judge) — it exercises the plumbing, not
 accuracy. Historical live-model observations — per-class accuracy, tool/skill evocation, and
 endpoint-compatibility problems stubs cannot show — are recorded in
-[`docs/LIVE_VALIDATION.md`](docs/LIVE_VALIDATION.md).
+[`docs/validation/LIVE_VALIDATION.md`](docs/validation/LIVE_VALIDATION.md).
 
 ## Managed full stack
 
@@ -96,16 +111,16 @@ endpoint-compatibility problems stubs cannot show — are recorded in
 ./dev
 ```
 
-The managed launcher provisions the checkout-owned VM and starts Postgres, Temporal (+ UI at
-:8233), the RustFS S3-compatible service (the `minio` compose DNS name, console at :9001), an
-OpenTelemetry collector with Jaeger (:16686), the worker, the API (:8000, docs at `/docs`), and
+The managed launcher provisions the checkout-owned VM and starts Postgres, Temporal and its UI, the RustFS S3-compatible service (`minio` in compose), an
+OpenTelemetry collector with Jaeger, the worker, the API (docs at `/docs`), and
 the Vite web app. It generates per-checkout PostgreSQL and S3 credentials in `.harness/dev.env`.
 
 - **Stub models** are the default, so the stack runs with no credentials.
-- **Bedrock:** `aws sso login --profile infosec-harness-sso` on the host, then
-  `HARNESS_MODEL_MODE=live docker compose up` (mounts `~/.aws`).
-- **OpenAI-spec:** `HARNESS_MODEL_MODE=live HARNESS_MODEL_BACKEND=gateway
-  HARNESS_OPENAI_API_KEY=sk-… docker compose up` (edit the endpoint in `config/models.yaml`).
+- **Live models:** use the explicit operator setup in
+  [LOCAL_SETUP.md](docs/development/LOCAL_SETUP.md#2-historical-live-model-validation). The managed launcher
+  is a stub onboarding environment; a separate manual compose invocation does not reuse its
+  verified VM, generated environment, or ports automatically.
+
 The managed compose overlay runs trusted infrastructure containers under Docker's `runc` and
 keeps untrusted BuildKit build steps and probes under `runsc`. Secure build egress requires the
 static numeric proxy address generated by `./dev` (`HARNESS_BUILD_EGRESS_HOST_IP` and its matching
@@ -127,7 +142,7 @@ disagree about which database they mean.
 - Changing a model in `persistence/db.py` means adding a revision:
   `uv run alembic revision --autogenerate -m "…"`, then review it — a `NOT NULL` column needs
   a server default so the `ALTER` succeeds on populated tables (see `0002` for the pattern).
-  `tests/test_migrations.py` fails if the revisions and the models ever disagree.
+  `tests/persistence/test_migrations.py` fails if the revisions and the models ever disagree.
 
 ## CLI
 
@@ -167,21 +182,25 @@ src/infosec_harness/
   sandbox/        # gVisor-capable Docker runner
   telemetry.py    # OTel resource attributes and agent-run spans
   persistence/    # SQLAlchemy models, store, artifact store (MinIO/filesystem), alembic migrations/
+  repo/           # checkout, access checks, component and stack detection
   intake/ integrations/ado  # generic JSON + Azure DevOps intake and comment-only write-back
-  evals/          # per-agent eval runner and compare
+  evals/          # adapters, corpus runner, reports, provenance and calibration
   api/ cli.py     # FastAPI service and Typer CLI
 
 systems/triage-system/     # System Spec + delegation / data-flow / termination policies
 docs/risk-assessments/     # one per agent + the system; generated from scripts/risk_scenarios.py
 eval-corpus/               # paired vulnerable/fixed fixture repositories
+evals/                     # accepted baselines, calibration plans and agent overlays
+dev-skills/                # canonical development skills; client copies are generated
+.harness/                  # ignored local state, workspace, reports and log snapshots
 scripts/                   # generators for the governance artifacts, and the conformance check
-tests/
-web/                       # React + shadcn triage UI (client generated from the API's OpenAPI)
+tests/                     # agents, runtime, persistence, evals and development checks
+ui/                        # React + shadcn triage UI (client generated from the API's OpenAPI)
 deploy/                    # compose support (postgres init, otel collector)
 ```
 
 A spec addresses its resources by their path *inside the distribution* — `directories: skills`,
 `evaluation_policy: agents/<name>/evals/release-policy.yaml` — and
 `infosec_harness.resources` resolves them through `importlib.resources`. Nothing reads them
-relative to the process working directory; `tests/test_packaging.py` builds the real wheel,
+relative to the process working directory; `tests/development/test_packaging.py` builds the real wheel,
 installs it, and asserts all 11 agents construct from an unrelated directory.

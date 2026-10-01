@@ -177,7 +177,7 @@ def coverage_summary(
                 Status.ELSEWHERE,
                 "this skill shows no probe body for the probe rules to judge; the safety "
                 "constraint its family actually turns on — never substitute a fake or stub for "
-                "the sink — is enforced by tests/test_skills_consistency.py, which this suite "
+                "the sink — is enforced by tests/agents/test_skills_consistency.py, which this suite "
                 "does not duplicate and does not claim credit for",
             )
         summary[skill.name] = entries

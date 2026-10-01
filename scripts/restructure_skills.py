@@ -6,7 +6,7 @@ Our skills had the procedure and nothing else.
 
 The activation criteria matter beyond conformance: a skill's `description` is what a model
 reads when deciding whether to load it, and the measured jump in context's skill evocation
-(19% -> 100%, docs/LIVE_VALIDATION.md) came from making that choice explicit.
+(19% -> 100%, docs/validation/LIVE_VALIDATION.md) came from making that choice explicit.
 
 The same argument extends to the precedence section this script renders from `relations`
 ("When another skill also applies"). Two skills whose negative criteria point at each other

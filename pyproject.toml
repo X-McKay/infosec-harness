@@ -15,7 +15,9 @@ dependencies = [
   "pydantic-ai-harness[skills]>=0.34,<0.35",
   "pydantic-graph>=2.49,<3",
   "pydantic-evals>=2.49,<3",
-  "temporalio>=1.33,<2",
+  # Temporal 1.34 ActivityConfig adds EventGroup, unsupported by the current PydanticAI schema.
+  # Isolated wheel tests verify agent construction against the supported dependency range.
+  "temporalio>=1.33,<1.34",
   "sqlalchemy[asyncio]>=2.0.36,<3",
   "asyncpg>=0.30,<1",
   "alembic>=1.14,<2",
@@ -52,7 +54,7 @@ exclude = ["**/__pycache__", "**/*.pyc"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-extend-exclude = ["web"]
+extend-exclude = ["ui"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
