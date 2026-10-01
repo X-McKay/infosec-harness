@@ -208,7 +208,7 @@ def score_output(agent: str, output, predict, expected) -> dict:
 
 
 COMPARISON_MODEL_FIELDS = ("effective_settings", "provider_output_floor", "transport_retries",
-    "resolved_model", "backend_kind", "pricing_status", "pricing_table")
+    "resolved_model", "backend_kind", "pricing_status", "pricing_table", "endpoint")
 
 
 def compare_baseline(agent: str, config: dict, case_digest: str) -> dict:
@@ -224,13 +224,27 @@ def compare_baseline(agent: str, config: dict, case_digest: str) -> dict:
     if previous.get("case") != CASES[agent] or previous.get("case_digest") != case_digest:
         raise ValueError("Baseline case content differs")
     old = previous["config"]
+    pricing_provenance = None
     for name in COMPARISON_MODEL_FIELDS:
-        if old["model"].get(name) != config["model"].get(name):
+        previous_value, current_value = old["model"].get(name), config["model"].get(name)
+        if previous_value != current_value:
+            if name == "pricing_table" and isinstance(previous_value, str) and isinstance(current_value, str):
+                # Catalog bytes differ when native profiles are added; price inputs must match.
+                previous_parts, current_parts = previous_value.split(";"), current_value.split(";")
+                if (len(previous_parts) == len(current_parts) == 4
+                        and previous_parts[1].startswith("models:")
+                        and current_parts[1].startswith("models:")
+                        and previous_parts[0::2] == current_parts[0::2]
+                        and previous_parts[3] == current_parts[3]):
+                    pricing_provenance = {"direct": previous_value, "native": current_value,
+                        "difference": "models catalog bytes; exact provider and custom price inputs matched"}
+                    continue
             raise ValueError("Baseline model settings or pricing differ")
     if old["budget"]["requested"] != config["budget"]["requested"]:
         raise ValueError("Authored agent safety budget differs from baseline")
     return {"status": "passed", "baseline_sha256": hashlib.sha256(Path(path).read_bytes()).hexdigest(),
             "matched_model_fields": list(COMPARISON_MODEL_FIELDS), "authored_budget": "matched",
+            "pricing_catalog_provenance": pricing_provenance,
             "intentional_transport_fields": {name: config["model"].get(name)
                 for name in ("durable", "broker_contract", "capability_profile", "credential_reference")}}
 
@@ -283,6 +297,8 @@ async def run_local(manifest: RealProviderManifest, phase: str, report_path: Pat
         try:
             config = resolve_agent_config(agent, load_spec(agent), source_files=inputs["deps"].source_files, durable=False)
             row["config"] = config.model_dump(mode="json")
+            if config.model.endpoint != manifest.endpoint:
+                raise ValueError("Resolved model endpoint differs from the frozen manifest")
             if phase != "direct":
                 row["baseline_comparison"] = compare_baseline(agent, row["config"], case_digest)
             outcome = await ops.run_agent(agent, inputs["prompt"], inputs["deps"])
@@ -349,6 +365,8 @@ async def run_temporal(manifest: RealProviderManifest, report_path: Path) -> dic
     from infosec_harness.inference import invocations
     from infosec_harness.inference.transport import BrokerModel
     for agent in CASES:
+        if CONFIGS[agent].model.endpoint != manifest.endpoint:
+            raise ValueError("Resolved model endpoint differs from the frozen manifest")
         compare_baseline(agent, CONFIGS[agent].model_dump(mode="json"), prepare_case(agent, manifest)[3])
     suffix = uuid.uuid4().hex
     queue = "broker-real-provider-" + suffix

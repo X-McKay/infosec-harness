@@ -116,12 +116,15 @@ async def test_temporal_connect_failure_reaps_its_real_owned_worker(tmp_path, mo
     async def disconnected(*_args, **_kwargs):
         raise ConnectionError("offline startup failure")
 
-    from infosec_harness.agents.durable import CONFIGS
+    from infosec_harness.agents import durable
     configuration = manifest(tmp_path)
+    configs = {name: value.model_copy(update={"model": value.model.model_copy(
+        update={"endpoint": configuration.endpoint})}) for name, value in durable.CONFIGS.items()}
+    monkeypatch.setattr(durable, "CONFIGS", configs)
     baseline = tmp_path / "baseline.json"
     baseline.write_text(json.dumps({"phase": "direct", "status": "passed", "cases": [
         {"agent": name, "case": CASES[name], "case_digest": prepare_case(name, configuration)[3],
-         "config": value.model_dump(mode="json")} for name, value in CONFIGS.items()]}))
+         "config": value.model_dump(mode="json")} for name, value in configs.items()]}))
     monkeypatch.setenv("HARNESS_REAL_PROVIDER_BASELINE", str(baseline))
     monkeypatch.setenv("HARNESS_REAL_PROVIDER_MANIFEST", "offline-manifest")
     monkeypatch.setattr(fixture.subprocess, "Popen", start_owned_child)
@@ -165,6 +168,36 @@ def test_native_comparison_rejects_changed_settings_and_authored_budget(tmp_path
     with pytest.raises(ValueError, match="settings or pricing"):
         compare_baseline("intake", changed, case_digest)
     changed = deepcopy(configuration)
+    changed["model"]["endpoint"] = "https://other.invalid/v1"
+    with pytest.raises(ValueError, match="settings or pricing"):
+        compare_baseline("intake", changed, case_digest)
+    changed = deepcopy(configuration)
     changed["budget"]["requested"]["max_requests"] = 17
     with pytest.raises(ValueError, match="safety budget"):
         compare_baseline("intake", changed, case_digest)
+
+
+def test_native_comparison_preserves_catalog_provenance_and_rejects_price_drift(tmp_path, monkeypatch):
+    from copy import deepcopy
+
+    from broker_real_provider_fixture import COMPARISON_MODEL_FIELDS, compare_baseline
+    configuration = {"model": dict.fromkeys(COMPARISON_MODEL_FIELDS, "frozen"),
+                     "budget": {"requested": {"max_requests": 16}}}
+    configuration["model"]["pricing_table"] = "genai-prices:1:abc;models:direct;backend:gateway;custom:zero"
+    config = manifest(tmp_path)
+    rows = [{"agent": agent, "case": name, "case_digest": prepare_case(agent, config)[3],
+             "config": configuration} for agent, name in CASES.items()]
+    baseline = tmp_path / "direct.json"
+    baseline.write_text(json.dumps({"phase": "direct", "status": "passed", "cases": rows}))
+    monkeypatch.setenv("HARNESS_REAL_PROVIDER_BASELINE", str(baseline))
+    changed = deepcopy(configuration)
+    changed["model"]["pricing_table"] = "genai-prices:1:abc;models:native;backend:gateway;custom:zero"
+    result = compare_baseline("intake", changed, rows[0]["case_digest"])
+    assert result["pricing_catalog_provenance"]["direct"] == configuration["model"]["pricing_table"]
+    assert result["pricing_catalog_provenance"]["native"] == changed["model"]["pricing_table"]
+    for identity in ("genai-prices:1:abc;models:native;backend:gateway;custom:paid",
+                     "genai-prices:2:abc;models:native;backend:gateway;custom:zero",
+                     "genai-prices:1:abc;models:native;backend:other;custom:zero"):
+        changed["model"]["pricing_table"] = identity
+        with pytest.raises(ValueError, match="settings or pricing"):
+            compare_baseline("intake", changed, rows[0]["case_digest"])

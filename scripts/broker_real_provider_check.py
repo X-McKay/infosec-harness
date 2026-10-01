@@ -63,6 +63,12 @@ def main() -> int:
     deadline = time.monotonic() + manifest.root_duration_seconds
     for phase in ("direct", "local", "temporal") if args.phase == "all" else (args.phase,):
         values = phase_environment(manifest, phase)
+        temporary_directory = directory / (phase + "-tmp")
+        if not temporary_directory.resolve().is_relative_to(ROOT.resolve()):
+            parser.error("Sandbox temporary files must be visible through the checkout mount")
+        temporary_directory.mkdir(mode=0o700)
+        values["TMPDIR"] = str(temporary_directory)
+        report.setdefault("sandbox_temporary_directories", {})[phase] = str(temporary_directory)
         values["HARNESS_REAL_PROVIDER_MANIFEST"] = str(frozen_path)
         if phase != "direct":
             baseline_path = args.baseline_report if args.baseline_report else directory / "direct.json"
