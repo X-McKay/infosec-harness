@@ -85,3 +85,28 @@ The next finite network-detail sample stopped after its first failed case (22.16
 Only fixed allowlisted flags were extracted from the exact owned supervisor container before normal revocation. Both container corroboration and log reading passed. The model-specific stale-policy-generation flag was true, alongside `remote_protocol`; framing rejection, response-read failure and upstream-closure flags were false. Negative flags do not prove those other faults absent. The pinned [OpenShell v0.1.2 relay guard](https://github.com/NVIDIA/OpenShell/blob/v0.1.2/crates/openshell-supervisor-network/src/proxy/relay.rs) explicitly closes streams when their policy generation becomes stale. The captured event establishes a native policy-generation closure consistent with this disconnect; the triggering reload or quarantine is not yet established. Policy enforcement is not bypassed or weakened to obtain a passing trial.
 
 Ten uncertain requests and three saved native responses are retained across the finite investigations. Every started scope closed and its owned worker was reaped. No uncertain request was resent or its allocation released. Qualification-only file sinks and diagnostic controller wrappers are excluded from production acceptance. Native live all-agent compatibility remains failed; native live Temporal/full-graph acceptance, deployed-tokenizer attestation and held-out quality remain `not_checked`. All eleven direct live compatibility cases and the corrected direct production graph remain passed. Rollout remains disabled.
+
+
+## Dedicated qualification cleanup
+
+The final ledger observation retains ten `completion_unknown` requests and three completed
+responses. All 38 owned leases are deleted and native sandbox inventory is empty. The exact
+owned provider, controller and PostgreSQL containers were removed without deleting volumes;
+the production controller factory was restored. An authoritative mode-0600 PostgreSQL dump
+is retained privately (SHA256 `9e2701cf7f986058ae71e3cc2edc12a13db9d383c5fb5d9cbe7a1f152f175ca8`).
+The original database volume and all frozen manifests/reports remain preserved. The owned
+gateway and dedicated guest Docker/containerd helper stopped, with shared firewall state
+preserved. All ten primary Compose container identities were unchanged. Cleanup evidence is
+retained privately as `live-qualification/cleanup-evidence.json`; this cleanup does not release
+uncertain allocations or convert failed native inference into acceptance.
+
+
+Post-cleanup actual runsc positive/negative execution, PID/memory/resource limits and
+build-egress allow/deny/isolation/forced-removal fixtures passed. The primary API, web, S3,
+persistence and Temporal visibility smoke passed in verified stub mode, with no real-provider
+calls. This does not replace the direct live production graph proof above. Independent dump
+inspection joined all ten unknown requests to broker-owned operations in `uncertain` state,
+confirming retained budget holds. A preparatory dump attempt against the default socket failed
+before shutdown; the explicit dedicated-port dump succeeded and both outcomes are retained.
+The previously observed intermittent Docker OOM-notification failure remains a reliability risk;
+the current passing fixture does not erase it.
