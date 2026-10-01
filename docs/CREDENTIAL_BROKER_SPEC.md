@@ -1,8 +1,8 @@
 # Harness credential brokering specification
 
-Status: Proposed; implementation blocked at G0
+Status: Proposed production contracts; corrected-topology G0 feasibility passed
 Date: 2026-10-01
-Specification version: 0.2.1
+Specification version: 0.2.2
 
 Execution sequencing and delegated work are defined in the [implementation and testing plan](architecture/CREDENTIAL_BROKER_IMPLEMENTATION_PLAN.md).
 
@@ -34,7 +34,7 @@ Inference uses native provider APIs inside managed sandboxes; client code select
 
 OpenShell documents network confinement, credential substitution, and request inspection. Request rules default to audit mode, so this integration MUST set enforce explicitly. TLS inspection requires trusted CA configuration. Its binary identity policy is useful defense in depth, but allowing Python does not distinguish trusted application code from hostile code running in that interpreter. [Security controls](https://docs.nvidia.com/openshell/latest/security/best-practices)
 
-OpenShell supports several compute drivers. Compatibility between its supervisor and our exact gVisor configuration has not been demonstrated. Use the checkout-owned Linux environment for experiments; do not change global Docker contexts or weaken our sandbox checks to make it run. [Sandbox runtimes](https://docs.nvidia.com/openshell/latest/how-it-works/sandboxes/runtimes)
+OpenShell supports several compute drivers. The pinned supervisor failed actual Landlock qualification under the original runsc daemon. A separate checkout-owned daemon with a native OpenShell boundary passed the bounded feasibility proof; see [the deployment revision](architecture/OPENSHELL_DEPLOYMENT_REVISION.md) and [qualification evidence](validation/OPENSHELL_FEASIBILITY.md). This establishes feasibility, not production acceptance. Use the checkout-owned Linux environment for experiments; do not change global Docker contexts or weaken our sandbox checks to make it run. [Sandbox runtimes](https://docs.nvidia.com/openshell/latest/how-it-works/sandboxes/runtimes)
 
 ## Security boundary and authority
 

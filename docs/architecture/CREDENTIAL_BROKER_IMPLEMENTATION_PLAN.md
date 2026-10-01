@@ -1,11 +1,11 @@
 # Credential broker implementation and testing plan
 
-Status: Implementation blocked at G0
+Status: Implementation in progress; G0 feasibility passed, P1 contracts pending
 Date: 2026-10-01
-Plan version: 0.1.1
-Design baseline: [Credential brokering specification version 0.2.1](../CREDENTIAL_BROKER_SPEC.md)
+Plan version: 0.1.2
+Design baseline: [Credential brokering specification version 0.2.2](../CREDENTIAL_BROKER_SPEC.md)
 
-Implement one OpenAI-compatible backend through a minimal isolated inference executor, preserve existing tool and probe boundaries, and prove fail-closed behavior before using real provider credentials. Work proceeds through small reviewable changes with bounded parallel delegation. The original planning review did not run infrastructure, inference, or recovery tests. P0 has now run: the actual OpenShell Landlock qualification failed under the unchanged runsc daemon. See [feasibility evidence](../validation/OPENSHELL_FEASIBILITY.md) and [the proposed deployment revision](OPENSHELL_DEPLOYMENT_REVISION.md). P1 and later packages remain pending the revised G0.
+Implement one OpenAI-compatible backend through a minimal isolated inference executor, preserve existing tool and probe boundaries, and prove fail-closed behavior before using real provider credentials. Work proceeds through small reviewable changes with bounded parallel delegation. The original planning review did not run infrastructure, inference, or recovery tests. P0 has now run: the actual OpenShell Landlock qualification failed under the unchanged runsc daemon. See [feasibility evidence](../validation/OPENSHELL_FEASIBILITY.md) and [the proposed deployment revision](OPENSHELL_DEPLOYMENT_REVISION.md). The corrected dedicated-daemon G0 passed independent review for the bounded test prototype after actual confinement, substitution, admission, ledger-channel, egress, rotation, native gateway discovery, and cleanup observations. P1 contracts and P2–P8 implementation remain pending. Native gateway rediscovery does not establish future harness-controller or ledger recovery. The retained intermittent primary Docker OOM notification failure remains a qualification risk.
 
 ## Scope and completion criteria
 
