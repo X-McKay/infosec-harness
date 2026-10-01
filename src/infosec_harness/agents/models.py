@@ -17,10 +17,17 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from pydantic_ai.models import Model
-from pydantic_ai.models.openai import OpenAIChatModel as OpenAIChatModelBase
 
+from infosec_harness.inference.compat import (
+    _apply_max_tokens_floor,
+    _CompatOpenAIChatModel,
+)
+from infosec_harness.inference.compat import (
+    _merge_leading_system_messages as _merge_leading_system_messages,
+)
+from infosec_harness.inference.protocol import BrokerError, ExecutorContract, ReservationBinding
 from infosec_harness.settings import get_settings
 
 
@@ -32,6 +39,7 @@ class Prices(BaseModel):
 
 
 class BackendConfig(BaseModel):
+    transport: Literal["direct", "brokered"] = "direct"
     kind: Literal["bedrock", "openai_compatible"]
     region: str | None = None
     aws_profile: str | None = None
@@ -60,6 +68,13 @@ class BackendConfig(BaseModel):
     # specs — set it to 0 to disable.
     min_max_tokens: int = 0
 
+    @model_validator(mode="after")
+    def broker_has_no_direct_credentials(self):
+        if self.transport == "brokered" and (self.kind != "openai_compatible" or self.api_key_env
+                                              or self.aws_profile or self.region):
+            raise ValueError("Brokered inference requires OpenAI compatibility and no direct credentials")
+        return self
+
 
 class CapabilityProfile(BaseModel):
     """Provider behavior which changes how an otherwise identical agent is invoked."""
@@ -87,6 +102,7 @@ class ResolvedModelConfig(BaseModel):
 
     model_config = {"frozen": True}
 
+    broker_contract: ExecutorContract | None = Field(default=None, exclude_if=lambda v: v is None)
     mode: Literal["stub", "live"]
     backend_name: str
     backend_kind: Literal["stub", "bedrock", "openai_compatible"]
@@ -149,30 +165,6 @@ def load_models_config(path: Path | None = None) -> ModelsConfig:
     return ModelsConfig.model_validate(yaml.safe_load(Path(path).read_text()))
 
 
-def _merge_leading_system_messages(messages: list[Any]) -> list[Any]:
-    """Collapse the leading run of system messages into a single one.
-
-    Order is preserved and the blocks are joined with a blank line, so the resulting prefix
-    is byte-stable across runs — prompt caching still sees the same stable head.
-    """
-    lead = 0
-    while lead < len(messages) and messages[lead].get("role") == "system":
-        lead += 1
-    if lead < 2:
-        return messages
-    merged = "\n\n".join(str(m.get("content") or "") for m in messages[:lead])
-    return [{"role": "system", "content": merged}, *messages[lead:]]
-
-
-def _apply_max_tokens_floor(settings: Any, floor: int) -> Any:
-    """Raise ``max_tokens`` to ``floor``, never lower it. A zero floor is a no-op."""
-    if not floor or settings is None:
-        return settings
-    if settings.get("max_tokens", 0) >= floor:
-        return settings
-    return {**settings, "max_tokens": floor}
-
-
 def max_tokens_floor(agent_name: str | None = None) -> int:
     """The per-call output floor required by the backend that will serve ``agent_name``.
 
@@ -202,6 +194,8 @@ def resolve_config(
     *,
     model_settings: dict[str, Any] | None = None,
     durable: bool = False,
+    atomic_intake: bool = False,
+    replay_only: bool = False,
 ) -> ResolvedModelConfig:
     """Resolve the secret-free effective model contract without constructing a client."""
     requested = dict(model_settings or {})
@@ -237,7 +231,19 @@ def resolve_config(
     else:
         capabilities = CapabilityProfile(reasoning_accounting="separate")
         credential_reference = "aws-default-chain"
+    broker_contract = None
+    if backend.transport == "brokered" and not replay_only:
+        if source not in {"custom", "custom-zero"}:
+            raise BrokerError("budget", "Broker v1 requires explicit reviewed backend price ceilings")
+        broker_contract = broker_catalog().resolve_contract(
+            agent_name, backend_name, model_id, effective, backend_endpoint=backend.base_url,
+            atomic_intake=atomic_intake, merge_system_messages=backend.merge_system_messages,
+            min_max_tokens=backend.min_max_tokens,
+        )
+        retries = 0
+        credential_reference = broker_contract.provider_binding
     return ResolvedModelConfig(
+        broker_contract=broker_contract,
         mode="live",
         backend_name=backend_name,
         backend_kind=backend.kind,
@@ -261,42 +267,14 @@ def resolve_config(
     )
 
 
-class _CompatOpenAIChatModel(OpenAIChatModelBase):  # type: ignore[misc,valid-type]
-    """An OpenAI-spec model that works around two common self-hosted-endpoint quirks.
-
-    1. *One system message.* Endpoints whose chat template allows a single leading system
-       message (common for self-hosted vLLM builds) answer 400 "System message must be at
-       the beginning." to the multi-block layout pydantic-ai produces for instructions +
-       deferred capabilities.
-    2. *Thinking inside ``max_tokens``.* Reasoning models on this API spend their thinking
-       against the same budget as the answer, so the specs' Anthropic-shaped budgets can be
-       exhausted before a single output token is produced.
-
-    Both are properties of the endpoint, not of an agent, so they are configured per
-    backend and applied here rather than by editing the agent specs.
-    """
-
-    def __init__(self, *args: Any, merge_system: bool = True, min_max_tokens: int = 0,
-                 **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self._merge_system = merge_system
-        self._min_max_tokens = min_max_tokens
-
-    def prepare_request(self, model_settings: Any, model_request_parameters: Any) -> Any:
-        settings, params = super().prepare_request(model_settings, model_request_parameters)
-        return _apply_max_tokens_floor(settings, self._min_max_tokens), params
-
-    async def _map_messages(self, *args: Any, **kwargs: Any) -> list[Any]:
-        mapped = await super()._map_messages(*args, **kwargs)
-        return _merge_leading_system_messages(mapped) if self._merge_system else mapped
-
-
 @lru_cache(maxsize=64)
 def _build_live(
     backend_name: str, model_id: str, durable: bool = False, intake_atomic: bool = False
 ) -> Model:
     cfg = load_models_config()
     backend = cfg.backends[backend_name]
+    if backend.transport != "direct":
+        raise BrokerError("policy", "Direct model construction is prohibited for brokered backends")
     if backend.kind == "bedrock":
         from pydantic_ai.models.bedrock import BedrockConverseModel
         from pydantic_ai.providers.bedrock import BedrockProvider
@@ -329,7 +307,9 @@ def _build_live(
     )
 
 
-def resolve_intake_atomic(agent_name: str, tier: str, *, durable: bool = False) -> Model:
+def resolve_intake_atomic(agent_name: str, tier: str, *, durable: bool = False,
+                          broker_binding: ReservationBinding | None = None,
+                          broker_contract: ExecutorContract | None = None) -> Model:
     """Resolve only the current atomic-claims intake generation."""
     if get_settings().model_mode == "stub":
         from infosec_harness.agents.stubs import atomic_intake_stub_model
@@ -337,10 +317,14 @@ def resolve_intake_atomic(agent_name: str, tier: str, *, durable: bool = False) 
         return atomic_intake_stub_model(agent_name, tier)
     cfg = load_models_config()
     backend = cfg.backend_for(agent_name)
+    if cfg.backends[backend].transport == "brokered":
+        return _broker_model(agent_name, tier, broker_binding, broker_contract, atomic_intake=True)
     return _build_live(backend, cfg.model_id(tier, backend), durable, intake_atomic=True)
 
 
-def resolve(agent_name: str, tier: str, *, durable: bool = False) -> Model:
+def resolve(agent_name: str, tier: str, *, durable: bool = False,
+            broker_binding: ReservationBinding | None = None,
+            broker_contract: ExecutorContract | None = None) -> Model:
     """Resolve an agent's model tier to a concrete model on the worker.
 
     ``durable`` says the agent runs inside a Temporal workflow, where the activity layer
@@ -353,6 +337,8 @@ def resolve(agent_name: str, tier: str, *, durable: bool = False) -> Model:
         return stub_model(agent_name, tier)
     cfg = load_models_config()
     backend = cfg.backend_for(agent_name)
+    if cfg.backends[backend].transport == "brokered":
+        return _broker_model(agent_name, tier, broker_binding, broker_contract)
     return _build_live(backend, cfg.model_id(tier, backend), durable)
 
 
@@ -494,3 +480,41 @@ def estimate_cost(model_name: str, usage: Any) -> tuple[float | None, bool]:
     except Exception:
         pass
     return None, True
+
+
+@lru_cache
+def broker_catalog():
+    from infosec_harness.inference.profiles import load_broker_config
+    path = get_settings().broker_config
+    if path is None:
+        raise BrokerError("policy", "Brokered backend requires HARNESS_BROKER_CONFIG")
+    return load_broker_config(path)
+
+
+def _broker_model(agent_name, tier, binding, contract, *, atomic_intake=False):
+    from infosec_harness.inference.transport import BrokerModel
+    cfg = load_models_config()
+    if binding is None or contract is None:
+        from temporalio import workflow
+        if workflow.in_workflow():
+            from infosec_harness.inference.unbound import UnboundBrokerModel
+            backend_name = cfg.backend_for(agent_name)
+            return UnboundBrokerModel(cfg.model_id(tier, backend_name), atomic_intake=atomic_intake)
+        raise BrokerError("identity", "Brokered inference requires controller-issued invocation binding")
+    if binding.agent != agent_name:
+        raise BrokerError("identity")
+    backend_name = cfg.backend_for(agent_name)
+    backend = cfg.backends[backend_name]
+    catalog = broker_catalog()
+    expected = catalog.resolve_contract(
+        agent_name, backend_name, cfg.model_id(tier, backend_name), contract.model_settings,
+        backend_endpoint=backend.base_url, atomic_intake=atomic_intake,
+        merge_system_messages=backend.merge_system_messages, min_max_tokens=backend.min_max_tokens,
+    )
+    if expected.digest != contract.digest or binding.contract_digest != contract.digest:
+        raise BrokerError("identity", "Invocation contract differs from worker deployment")
+    from infosec_harness.inference.identity import current_request_identity
+    return BrokerModel(contract=contract, binding=binding, request_identity=current_request_identity,
+                       controller_url=catalog.controller.url,
+                       secret_env=catalog.controller.hmac_env, ca_file=catalog.controller.ca_file,
+                       client_cert=catalog.controller.client_cert, client_key=catalog.controller.client_key)

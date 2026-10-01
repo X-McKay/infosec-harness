@@ -59,6 +59,7 @@ class TemporalOps:
         self._intake_atomic_inline = intake_atomic_inline
         self._intake_generations = INTAKE_GENERATIONS
         self._accounting = RootAccounting()
+        self._broker_identity: tuple[str, str] | None = None
         self._agents = AGENTS
         self._legacy_output_agents = LEGACY_OUTPUT_AGENTS
         self._configs = CONFIGS
@@ -78,6 +79,25 @@ class TemporalOps:
         identity = await self._accounting.reserve(
             config, configuration_digest=selected_config.digest
         )
+        if (getattr(config.model, "broker_contract", None) is not None
+                and workflow.patched("credential-broker-invocation-v1")):
+            if identity is None:
+                raise RuntimeError("Brokered durable execution requires a persisted root reservation")
+            self._broker_identity = (workflow.info().run_id, identity[0])
+            from infosec_harness.inference.protocol import ExecutorContract, ReservationBinding
+            # Host-resolved contract and a side-effecting activity; replay only reads its result.
+            request = {
+                "mode": "temporal", "root_id": identity[0], "run_id": workflow.info().run_id,
+                "invocation_id": identity[1], "operation_id": identity[1], "agent": name,
+                "configuration_digest": selected_config.digest,
+                "contract": config.model.broker_contract.model_dump(mode="json"),
+            }
+            binding = await workflow.execute_activity(activities.issue_broker_invocation_activity,
+                request, start_to_close_timeout=timedelta(seconds=45), retry_policy=_RETRY)
+            deps = deps.model_copy(update={
+                "broker_binding": ReservationBinding.model_validate(binding),
+                "broker_contract": ExecutorContract.model_validate(request["contract"]),
+            })
         try:
             outcome = await self._run_agent(name, prompt, deps)
         except (Exception, asyncio.CancelledError) as exc:
@@ -107,12 +127,16 @@ class TemporalOps:
         cost, estimated = model_factory.estimate_cost(model_name, usage)
         tools_called, skills_loaded = inspect_messages(messages := result.all_messages())
         repeated = count_repeated_calls(messages)
+        recorded_config = effective_config.model_dump(mode="json")
+        if effective_config.model.broker_contract is not None:
+            from infosec_harness.inference.provenance import runtime_evidence
+            recorded_config["inference_runtime"] = runtime_evidence(messages)
         return AgentOutcome(
             output=result.output,
             agent=name,
             model_name=model_name,
             config_hash=effective_config.digest,
-            effective_config=effective_config.model_dump(mode="json"),
+            effective_config=recorded_config,
             input_tokens=usage.input_tokens,
             output_tokens=usage.output_tokens,
             cache_read_tokens=usage.cache_read_tokens or 0,
@@ -126,6 +150,16 @@ class TemporalOps:
             tool_calls=usage.tool_calls,
             repeated_tool_calls=repeated,
         )
+
+    async def close(self) -> None:
+        if self._broker_identity is None:
+            return  # No owned reservation or lease exists merely because config names a broker.
+        if not workflow.patched("credential-broker-invocation-v1"):
+            return  # Historical replay cannot issue a new cleanup activity.
+        run_id, root_id = self._broker_identity
+        await asyncio.shield(workflow.execute_activity(activities.close_broker_run_activity,
+            {"run_id": run_id, "root_id": root_id},
+            start_to_close_timeout=timedelta(seconds=120), retry_policy=_RETRY))
 
     def _intake_for(self, *, check_frontier: bool = True) -> IntakeGeneration:
         if self._intake_atomic_inline:

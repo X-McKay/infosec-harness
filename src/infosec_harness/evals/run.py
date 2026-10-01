@@ -444,15 +444,18 @@ async def run_experiment(
                 diagnostic: dict[str, object] = {}
                 messages = []
                 try:
-                    with capture_run_messages() as messages:
-                        result = await run_with_timeout(
-                            built.run(
-                                prompt,
-                                deps=deps,
-                                usage_limits=invocation_config.budget.to_usage_limits(),
-                            ),
-                            seconds=get_settings().agent_run_timeout_s,
-                        )
+                    from infosec_harness.inference.invocations import eval_invocation
+                    async with eval_invocation(agent, deps, invocation_config,
+                            configuration_digest=base_effective_config.digest) as invocation_deps:
+                        with capture_run_messages() as messages:
+                            result = await run_with_timeout(
+                                built.run(
+                                    prompt,
+                                    deps=invocation_deps,
+                                    usage_limits=invocation_config.budget.to_usage_limits(),
+                                ),
+                                seconds=get_settings().agent_run_timeout_s,
+                            )
                     predicted = predict(result.output)
                     diagnostic["typed_output"] = _bounded_typed_output(result.output)
                     from infosec_harness.evals.execution_checks import run_execution_check
@@ -583,6 +586,9 @@ async def run_experiment(
                     spec.metadata or {}, invocation_config.budget.effective.max_requests,
                     usage_record["requests"] if usage_record is not None else None,
                 )
+                if invocation_config.model.broker_contract is not None:
+                    from infosec_harness.inference.provenance import runtime_evidence
+                    diagnostic["inference_runtime"] = runtime_evidence(messages)
                 diagnostic["call_summary"] = summarize_calls(messages)
                 diagnostic["output_retry_summary"] = output_retry_summary(messages, agent=agent)
                 diagnostic["intake_field_summary"] = intake_field_summary(

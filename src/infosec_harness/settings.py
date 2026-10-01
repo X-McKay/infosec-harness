@@ -56,6 +56,8 @@ class Settings(BaseSettings):
     # ``live`` resolves model tiers through config/models.yaml; ``stub`` uses
     # deterministic in-process models (tests, offline demos, CI).
     model_mode: Literal["live", "stub"] = "live"
+    # Opt-in operator-owned catalog. Direct mode never loads or contacts it.
+    broker_config: Path | None = None
 
     # Sandbox
     sandbox_runtime: str = "runsc"  # gVisor; set to "runc" only for local development without gVisor

@@ -51,7 +51,7 @@ def intake_generations() -> Mapping[IntakeGenerationName, IntakeGeneration]:
         ("quoted", retained, "intake-output-v2", False, False),
         ("atomic", current, "intake-output-v3", False, True),
     ):
-        config = resolve_agent_config("intake", spec, durable=True)
+        config = resolve_agent_config("intake", spec, durable=True, replay_only=not atomic)
         agent = build_agent(
             "intake",
             spec_override=spec,

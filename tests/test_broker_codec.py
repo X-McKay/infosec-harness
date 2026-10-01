@@ -43,7 +43,9 @@ def test_typed_history_tools_schema_and_usage_survive_roundtrip():
 
 @pytest.mark.parametrize('settings', [{'extra_headers': {'Authorization': 'x'}}, {'extra_body': {}},
                                       {'unknown_setting': True}, {'max_tokens': True},
-                                      {'temperature': float('nan')}])
+                                      {'temperature': float('nan')},
+                                      {'bedrock_cache_messages': []},
+                                      {'bedrock_cache_messages': 0}])
 def test_unsupported_settings_fail_before_wire(settings):
     with pytest.raises((BrokerError, ValueError)):
         encode_payload([ModelRequest(parts=[UserPromptPart('x')])], settings, ModelRequestParameters())
@@ -82,3 +84,27 @@ def test_contradictory_usage_is_rejected():
         usage={"input_tokens": 0})
     with pytest.raises(BrokerError, match="Contradictory"):
         validate_result_usage(result)
+
+
+@pytest.mark.parametrize("counter", [True, "3", 3.5])
+def test_wire_usage_does_not_coerce_counters(counter):
+    from pydantic import ValidationError
+
+    from infosec_harness.inference.protocol import InferenceResult
+    with pytest.raises(ValidationError):
+        InferenceResult(request_id="a" * 64, response={}, usage={"input_tokens": counter})
+
+
+def test_set_valued_tool_visibility_is_canonical_without_losing_membership():
+    params = ModelRequestParameters(deferred_capability_ids={"z-owner", "a-owner"},
+                                    revealed_tool_names={"z-tool", "a-tool"})
+    payload = encode_payload([ModelRequest(parts=[UserPromptPart("x")])], {}, params)
+    assert payload.parameters["deferred_capability_ids"] == ["a-owner", "z-owner"]
+    assert payload.parameters["revealed_tool_names"] == ["a-tool", "z-tool"]
+    _, _, decoded = decode_payload(payload)
+    assert decoded.deferred_capability_ids == params.deferred_capability_ids
+    assert decoded.revealed_tool_names == params.revealed_tool_names
+    from infosec_harness.inference.protocol import digest
+    changed = payload.model_copy(update={"parameters": {**payload.parameters,
+                                  "deferred_capability_ids": ["a-owner", "other-owner"]}})
+    assert digest(changed.model_dump(mode="json")) != digest(payload.model_dump(mode="json"))

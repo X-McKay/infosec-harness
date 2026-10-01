@@ -133,6 +133,7 @@ NON_RETRYABLE_ERRORS = [
     "ValueError",
     "KeyError",
     "AttributeError",
+    "BrokerError",
 ]
 ACTIVITY_RETRY = RetryPolicy(
     maximum_attempts=ACTIVITY_MAX_ATTEMPTS, non_retryable_error_types=NON_RETRYABLE_ERRORS
@@ -296,6 +297,7 @@ def resolve_agent_config(
     *,
     source_files: int | None = None,
     durable: bool = False,
+    replay_only: bool = False,
 ) -> ResolvedAgentConfig:
     """Resolve the same effective settings and limits an invocation will receive."""
     effective = _apply_backend_token_floor(name, spec)
@@ -305,6 +307,8 @@ def resolve_agent_config(
         tier,
         model_settings=dict(spec.model_settings or {}),
         durable=durable,
+        replay_only=replay_only,
+        atomic_intake=name == "intake" and ((spec.metadata or {}).get("intake_output") or {}).get("protocol") == WIRE_VERSION,
     )
     budget = resolve_budget(
         name,
@@ -463,11 +467,25 @@ def _resolve_agent_model(
     durable: bool,
     atomic_intake: bool,
     replay_only: bool,
+    deps: AgentDeps | None = None,
 ):
+    if replay_only and durable and model_factory.get_settings().model_mode == "live":
+        cfg = model_factory.load_models_config()
+        backend = cfg.backends[cfg.backend_for(name)]
+        if backend.transport == "brokered":
+            # Retained generations have no current broker contract or dispatch authority.
+            # Build only their static SDK profile so recorded history can decode.
+            from infosec_harness.inference.unbound import UnboundBrokerModel
+            return ReplayOnlyModel(UnboundBrokerModel(
+                cfg.model_id(tier, cfg.backend_for(name)), atomic_intake=atomic_intake))
     model = (
-        model_factory.resolve_intake_atomic(name, tier, durable=durable)
+        model_factory.resolve_intake_atomic(name, tier, durable=durable,
+            **({"broker_binding": deps.broker_binding, "broker_contract": deps.broker_contract}
+               if deps and deps.broker_binding else {}))
         if atomic_intake
-        else model_factory.resolve(name, tier, durable=durable)
+        else model_factory.resolve(name, tier, durable=durable,
+            **({"broker_binding": deps.broker_binding, "broker_contract": deps.broker_contract}
+               if deps and deps.broker_binding else {}))
     )
     if replay_only and durable:
         return ReplayOnlyModel(model)
@@ -531,10 +549,15 @@ def build_agent(
         ResolveModelId(
             lambda ctx, model_id, _n=name, _d=transport, _a=use_atomic_output,
                    _r=replay_only_model: _resolve_agent_model(
-                       _n, model_id, durable=_d, atomic_intake=_a, replay_only=_r
+                       _n, model_id, durable=_d, atomic_intake=_a, replay_only=_r, deps=ctx.deps
                    )
         )
     ]
+    if model_factory.get_settings().model_mode == "live":
+        cfg = model_factory.load_models_config()
+        if cfg.backends[cfg.backend_for(name)].transport == "brokered":
+            from infosec_harness.inference.identity import BrokerRequestIdentity
+            capabilities.append(BrokerRequestIdentity())
     # Cross-cutting robustness, attached in code (see ALLOWED_CAPABILITIES note).
     if any(cap.name in {"RepoReadOnly", "SandboxShell"} for cap in spec.capabilities):
         capabilities.append(RepairToolArguments())

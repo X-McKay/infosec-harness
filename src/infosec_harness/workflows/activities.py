@@ -309,3 +309,35 @@ ALL_ACTIVITIES = [
 
 
 ALL_ACTIVITIES += PROGRESS_ACTIVITIES
+
+
+@activity.defn
+async def issue_broker_invocation_activity(args: dict) -> dict:
+    from temporalio.exceptions import ApplicationError
+
+    from infosec_harness.inference.invocations import request_invocation
+    from infosec_harness.inference.protocol import BrokerError, InvocationRequest
+    try:
+        return (await request_invocation(InvocationRequest.model_validate(args))).model_dump(mode="json")
+    except BrokerError as exc:
+        raise ApplicationError(str(exc), type="BrokerError",
+            non_retryable=exc.code not in {"unavailable", "pending"}) from None
+
+
+ALL_ACTIVITIES.append(issue_broker_invocation_activity)
+
+
+@activity.defn
+async def close_broker_run_activity(args: dict) -> None:
+    from temporalio.exceptions import ApplicationError
+
+    from infosec_harness.inference.invocations import close_run
+    from infosec_harness.inference.protocol import BrokerError
+    try:
+        await close_run(args["run_id"], args["root_id"])
+    except BrokerError as exc:
+        raise ApplicationError(str(exc), type="BrokerError",
+            non_retryable=exc.code not in {"unavailable", "pending"}) from None
+
+
+ALL_ACTIVITIES.append(close_broker_run_activity)

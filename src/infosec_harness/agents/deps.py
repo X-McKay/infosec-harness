@@ -6,12 +6,15 @@ are a Pydantic model. They never enter instructions, so they don't affect cachin
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from infosec_harness.domain.models import VerdictFacts
+from infosec_harness.inference.protocol import ExecutorContract, ReservationBinding
 
 
 class AgentDeps(BaseModel):
+    broker_binding: ReservationBinding | None = Field(default=None, exclude_if=lambda v: v is None)
+    broker_contract: ExecutorContract | None = Field(default=None, exclude_if=lambda v: v is None)
     repo_path: str
     """Snapshot root the read-only file tools are confined to."""
     report_text: str | None = None

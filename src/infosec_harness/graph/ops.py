@@ -47,8 +47,9 @@ def is_infrastructure_failure(e: BaseException) -> bool:
     that cannot tell an endpoint being down from a pipeline regression.
     """
     serialized_types = {"ModelAPIError", "ModelHTTPError", "APIConnectionError", "APITimeoutError",
-                        "ConnectError", "ReadTimeout", "TimeoutError"}
-    return any(isinstance(cause, ModelAPIError | httpx.TransportError | TimeoutError)
+                        "ConnectError", "ReadTimeout", "TimeoutError", "BrokerError"}
+    from infosec_harness.inference.protocol import BrokerError
+    return any(isinstance(cause, ModelAPIError | httpx.TransportError | TimeoutError | BrokerError)
         or (isinstance(cause, ApplicationError) and cause.type in serialized_types)
         for cause in _failure_chain(e))
 
@@ -114,6 +115,11 @@ class LocalOps:
     """Direct, in-process implementation for standalone runs, tests, and evals."""
 
     def __init__(self, *, sandbox: bool = True, recipe_cache: bool = True):
+        import uuid
+        self._broker_run_id = str(uuid.uuid4())
+        self._broker_sequence = 0
+        self._broker_used = False
+        self._broker_closed = False
         self._sandbox = sandbox
         # Off during corpus scoring. The cache is a latency win, not an accuracy one, and with
         # it on the first repository of a stack records a recipe that every later repository of
@@ -137,11 +143,27 @@ class LocalOps:
         from infosec_harness.evals.trajectory import count_repeated_calls, inspect_messages
         from infosec_harness.settings import get_settings
 
+        if self._broker_closed:
+            raise RuntimeError("Local operations have been closed")
         agent = build_agent(name, durable=False)
         spec = load_spec(name)
         effective_config = resolve_agent_config(
             name, spec, source_files=deps.source_files, durable=False
         )
+        if effective_config.model.broker_contract is not None:
+            from infosec_harness.inference.invocations import request_invocation
+            from infosec_harness.inference.protocol import InvocationRequest, digest
+            self._broker_used = True
+            contract = effective_config.model.broker_contract
+            ordinal = self._broker_sequence
+            self._broker_sequence += 1
+            invocation = f"{self._broker_run_id}:{ordinal}:{name}"
+            selected = resolve_agent_config(name, spec, durable=False)
+            binding = await request_invocation(InvocationRequest(
+                mode="local", root_id=digest({"local_run": self._broker_run_id}),
+                run_id=self._broker_run_id, invocation_id=invocation, operation_id=invocation,
+                agent=name, configuration_digest=selected.digest, contract=contract))
+            deps = deps.model_copy(update={"broker_binding": binding, "broker_contract": contract})
         model_name = model_factory.resolved_model_name(name, spec.model or "sonnet")
         attrs = telemetry.agent_run_attributes(name, model_name, effective_config.digest)
         start = time.monotonic()
@@ -168,10 +190,14 @@ class LocalOps:
         cost, estimated = model_factory.estimate_cost(model_name, usage)
         tools_called, skills_loaded = inspect_messages(messages := result.all_messages())
         repeated = count_repeated_calls(messages)
+        recorded_config = effective_config.model_dump(mode="json")
+        if effective_config.model.broker_contract is not None:
+            from infosec_harness.inference.provenance import runtime_evidence
+            recorded_config["inference_runtime"] = runtime_evidence(messages)
         outcome = AgentOutcome(
             output=result.output, agent=name, model_name=model_name,
             config_hash=effective_config.digest,
-            effective_config=effective_config.model_dump(mode="json"),
+            effective_config=recorded_config,
             input_tokens=usage.input_tokens, output_tokens=usage.output_tokens,
             cache_read_tokens=usage.cache_read_tokens or 0, cache_write_tokens=usage.cache_write_tokens or 0,
             cost_usd=cost, cost_estimated=estimated, latency_s=time.monotonic() - start,
@@ -180,6 +206,15 @@ class LocalOps:
         )
         span.set_attributes(telemetry.outcome_attributes(outcome))
         return outcome
+
+    async def close(self) -> None:
+        if self._broker_closed:
+            return
+        if self._broker_used:
+            from infosec_harness.inference.invocations import close_run
+            from infosec_harness.inference.protocol import digest
+            await close_run(self._broker_run_id, digest({"local_run": self._broker_run_id}))
+        self._broker_closed = True
 
     async def new_nonce(self) -> str:
         import secrets

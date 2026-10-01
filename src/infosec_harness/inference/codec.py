@@ -49,7 +49,8 @@ def validate_settings(settings: dict[str, Any]) -> None:
     if set(settings) - _SETTINGS:
         raise BrokerError("policy", "Unsupported model settings")
     for name in ("bedrock_cache_tool_definitions", "bedrock_cache_instructions", "bedrock_cache_messages"):
-        if name in settings and settings[name] not in {False, "5m", "1h"}:
+        if name in settings and not (settings[name] is False or
+                (type(settings[name]) is str and settings[name] in {"5m", "1h"})):
             raise BrokerError("policy", "Invalid cross-backend cache setting")
     canonical_bytes(settings)  # Reject nonfinite/non-JSON values, including hidden headers.
     maximum = settings.get("max_tokens")
@@ -116,9 +117,15 @@ def encode_payload(messages, settings, params) -> InferencePayload:
                 isinstance(part.content, (list, tuple)) and all(isinstance(item, str) for item in part.content)
             ):
                 raise BrokerError("policy", "Remote and binary content are unsupported")
+    parameters = _PARAMS.dump_python(params, mode="json")
+    # Pinned SDK declares these as set[str]; order depends on each worker's hash seed.
+    # Preserve membership (which controls deferred tool visibility), canonicalize order only.
+    for name in ("deferred_capability_ids", "revealed_tool_names"):
+        if name in parameters:
+            parameters[name] = sorted(parameters[name])
     payload = InferencePayload(
         messages=m.ModelMessagesTypeAdapter.dump_python(messages, mode="json"),
-        parameters=_PARAMS.dump_python(params, mode="json"),
+        parameters=parameters,
         model_settings=dict(settings or {}),
     )
     decode_payload(payload)

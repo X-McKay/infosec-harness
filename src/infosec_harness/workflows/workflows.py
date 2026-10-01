@@ -99,8 +99,9 @@ class RepoPreparationWorkflow:
 
 async def _prepare_result(snapshot: RepoSnapshot, stack: StackFingerprint,
                           component_root: str = ".") -> RepoPreparation:
+    ops = TemporalOps()
     try:
-        outcome = await run_prepare(TemporalOps(), snapshot, stack, component_root=component_root)
+        outcome = await run_prepare(ops, snapshot, stack, component_root=component_root)
     except PrepareFailed as exc:
         if is_cancelled_exception(exc.cause):
             raise exc.cause from exc
@@ -110,6 +111,8 @@ async def _prepare_result(snapshot: RepoSnapshot, stack: StackFingerprint,
             invocations=exc.invocations,
             failure_reason=classify_pipeline_failure(exc.cause),
             failure_detail=f"{type(exc.cause).__name__}: {exc.cause}")
+    finally:
+        await ops.close()
     return RepoPreparation(prepared=outcome.prepared, invocations=outcome.invocations)
 
 
@@ -190,6 +193,8 @@ class FindingTriageWorkflow:
                 execution_manifest(prepared), context=state.context if state else None,
                 executions=state.executions if state else None)
 
+        finally:
+            await ops.close()
 
 @workflow.defn
 class TriageBatchWorkflow:

@@ -11,7 +11,15 @@ import re
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    field_validator,
+    model_validator,
+)
 
 PROTOCOL_VERSION = "ih-inference-v1"
 MAX_BODY_BYTES = 4 * 1024 * 1024
@@ -34,7 +42,7 @@ class StrictModel(BaseModel):
 class ExtensionBinding(StrictModel):
     implementation: str
     version: str
-    required: bool = True
+    required: StrictBool = True
 
 
 class ExecutorContract(StrictModel):
@@ -51,9 +59,9 @@ class ExecutorContract(StrictModel):
     sdk_version: Literal["pydantic-ai-2.49.0"] = "pydantic-ai-2.49.0"
     policy_digest: str = Field(pattern=DIGEST_PATTERN)
     model_settings: dict[str, Any]
-    merge_system_messages: bool = True
-    min_max_tokens: int = Field(default=0, ge=0)
-    atomic_intake: bool = False
+    merge_system_messages: StrictBool = True
+    min_max_tokens: int = Field(default=0, ge=0, strict=True)
+    atomic_intake: StrictBool = False
     provider_retries: Literal[0] = 0
     credential_driver: Literal["native"] = "native"
     inspection: tuple[ExtensionBinding, ...] = ()
@@ -87,7 +95,7 @@ class ReservationBinding(StrictModel):
     operation_id: str = Field(min_length=1, max_length=512)
     agent: str = Field(min_length=1, max_length=48)
     contract_digest: str = Field(pattern=DIGEST_PATTERN)
-    expires_at: float = Field(gt=0)
+    expires_at: float = Field(gt=0, strict=True)
 
 
 class InferencePayload(StrictModel):
@@ -135,6 +143,14 @@ class BrokerError(RuntimeError):
         super().__init__(f"Inference broker: {code}" + (f"; {message}" if message else ""))
 
 
+class TransientBrokerError(BrokerError):
+    """Bounded activity retry of the identical request; never a fresh dispatch identity."""
+    def __init__(self, code: Literal["unavailable", "pending"]):
+        if code not in {"unavailable", "pending"}:
+            raise ValueError("Only infrastructure/pending dispositions may retry")
+        super().__init__(code)
+
+
 class DispatchPermit(StrictModel):
     request_id: str = Field(pattern=DIGEST_PATTERN)
     fence: str = Field(min_length=1, max_length=128)
@@ -145,7 +161,7 @@ class InferenceResult(StrictModel):
     protocol: Literal["ih-inference-v1"] = PROTOCOL_VERSION
     request_id: str = Field(pattern=DIGEST_PATTERN)
     response: dict[str, Any]
-    usage: dict[str, int] = Field(default_factory=dict)
+    usage: dict[str, StrictInt] = Field(default_factory=dict)
     provenance: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -170,7 +186,7 @@ def required_input_reserve(payload: InferencePayload) -> int:
 
 
 class InvocationRequest(StrictModel):
-    mode: Literal["local", "temporal"]
+    mode: Literal["local", "temporal", "eval"]
     root_id: str = Field(min_length=1, max_length=64)
     run_id: str = Field(min_length=1, max_length=128)
     invocation_id: str = Field(min_length=1, max_length=255)
