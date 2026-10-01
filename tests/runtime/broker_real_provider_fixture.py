@@ -43,6 +43,33 @@ class FrozenPricing(BaseModel):
     output_per_mtok: float
 
 
+class CorrectedPilotAmendment(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    original_manifest_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    baseline_report_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    failed_report_file: str
+    failed_report_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    retained_unknown_request_ids: list[str]
+    original_trials: int
+    original_started_trials: int
+    additional_trials: int
+    cumulative_authorized_trials: int
+    reason: str
+
+    @model_validator(mode="after")
+    def finite_correction(self):
+        if (self.original_manifest_sha256 != "b41fb7a2bd695825bd2eff8b613f052e8c1319ad35bd053997c1a58cc1a20745"
+                or (self.original_trials, self.original_started_trials, self.additional_trials,
+                    self.cumulative_authorized_trials) != (33, 15, 22, 37)
+                or len(self.retained_unknown_request_ids) != 4
+                or len(set(self.retained_unknown_request_ids)) != 4
+                or any(len(identity) != 64 or any(c not in "0123456789abcdef" for c in identity)
+                       for identity in self.retained_unknown_request_ids)
+                or self.reason != "known SDK reasoning usage counter codec correction; no unknown resend"):
+            raise ValueError("Corrected pilot must explicitly retain unknowns and authorize only22 fresh trials")
+        return self
+
+
 class RealProviderManifest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     version: int = 1
@@ -72,6 +99,7 @@ class RealProviderManifest(BaseModel):
     max_concurrency: int = 1
     root_duration_seconds: int = 7200
     graph_repo: str = "eval-corpus/python/sqli/vulnerable"
+    amendment: CorrectedPilotAmendment | None = None
 
     @model_validator(mode="after")
     def frozen_scope(self):
@@ -79,8 +107,10 @@ class RealProviderManifest(BaseModel):
                 or self.model != "Qwen3.6-35B-A3B-NVFP4" or self.cases != CASES
                 or self.max_concurrency != 1 or self.root_duration_seconds != 7200):
             raise ValueError("Real-provider pilot differs from the frozen scope")
-        if (set(self.datasets) != set(CASES) or self.maximum_pilot_agent_trials != 33
-                or self.phases != ["direct", "native-local", "native-temporal"]
+        expected_trials = 22 if self.amendment else 33
+        expected_phases = ["native-local", "native-temporal"] if self.amendment else ["direct", "native-local", "native-temporal"]
+        if (set(self.datasets) != set(CASES) or self.maximum_pilot_agent_trials != expected_trials
+                or self.phases != expected_phases
                 or self.pricing.input_per_mtok != 0 or self.pricing.output_per_mtok != 0):
             raise ValueError("Frozen provenance or zero-price policy differs")
         if self.case_digests and set(self.case_digests) != set(CASES):
@@ -111,6 +141,19 @@ def read_private_environment(path: str) -> dict[str, str]:
             if len(parts) == 1:
                 result[name.strip()] = parts[0]
     return result
+
+
+def verify_retained_failure(amendment: CorrectedPilotAmendment) -> None:
+    failed_bytes = Path(amendment.failed_report_file).read_bytes()
+    if hashlib.sha256(failed_bytes).hexdigest() != amendment.failed_report_sha256:
+        raise ValueError("Retained failed report differs")
+    failed = json.loads(failed_bytes)
+    requests = [request for row in failed.get("cases", [])
+        for request in row.get("ledger", {}).get("requests", [])]
+    unknowns = {request["request_id"] for request in requests if request["state"] == "completion_unknown"}
+    if (failed.get("status") != "failed" or len(failed.get("cases", [])) != 4
+            or len(requests) != 4 or unknowns != set(amendment.retained_unknown_request_ids)):
+        raise ValueError("Retained failure must preserve the exact four unknown requests")
 
 
 def phase_environment(manifest: RealProviderManifest, phase: str) -> dict[str, str]:

@@ -25,6 +25,7 @@ from broker_real_provider_fixture import (  # noqa: E402
     phase_environment,
     prepare_case,
     private_write,
+    verify_retained_failure,
 )
 
 
@@ -45,6 +46,29 @@ def main() -> int:
         parser.error("Inference requires the explicit frozen-manifest handoff and --allow-inference")
     if args.phase in {"local", "temporal"} and args.baseline_report is None:
         parser.error("Native phases require --baseline-report from the completed direct pilot")
+    if manifest.amendment:
+        if args.phase == "direct" or args.baseline_report is None:
+            parser.error("Corrected pilot permits only native phases and requires the original direct baseline")
+        amendment = manifest.amendment
+        baseline_manifest = args.baseline_report.parent / "manifest.json"
+        if (hashlib.sha256(args.baseline_report.read_bytes()).hexdigest() != amendment.baseline_report_sha256
+                or hashlib.sha256(baseline_manifest.read_bytes()).hexdigest() != amendment.original_manifest_sha256):
+            parser.error("Corrected pilot baseline evidence differs")
+        original = RealProviderManifest.model_validate_json(baseline_manifest.read_bytes())
+        if (manifest.datasets != original.datasets or manifest.cases != original.cases
+                or manifest.pricing != original.pricing):
+            parser.error("Corrected pilot changed frozen cases, datasets or prices")
+        baseline = json.loads(args.baseline_report.read_bytes())
+        rows = baseline.get("cases", [])
+        if (baseline.get("phase") != "direct" or baseline.get("status") != "passed"
+                or len(rows) != 11 or {row["agent"] for row in rows} != set(CASES)
+                or any(row["case"] != CASES[row["agent"]] or row["case_digest"] != prepare_case(row["agent"], original)[3]
+                       for row in rows)):
+            parser.error("Original direct baseline must cover every unchanged frozen case")
+        try:
+            verify_retained_failure(amendment)
+        except ValueError as error:
+            parser.error(str(error))
     cases = {agent: prepare_case(agent, manifest)[3] for agent in CASES}
     if args.phase == "validate":
         print(json.dumps({"status": "passed", "scope": "manifest and frozen cases only", "case_digests": cases,
@@ -57,11 +81,12 @@ def main() -> int:
     frozen_path.chmod(0o400)
     report = {"manifest_sha256": manifest_sha, "status": "running", "scope": "11 frozen cases per selected phase", "case_digests": cases,
               "provider": manifest.endpoint, "model": manifest.model, "phases": [],
-              "database_lifecycle_owner": "operator; evidence retained", "native_lifecycle_owner": "P4"}
+              "database_lifecycle_owner": "operator; evidence retained", "native_lifecycle_owner": "operator", "amendment": manifest.amendment.model_dump() if manifest.amendment else None}
     report_path = directory / "report.json"
     private_write(report_path, report)
     deadline = time.monotonic() + manifest.root_duration_seconds
-    for phase in ("direct", "local", "temporal") if args.phase == "all" else (args.phase,):
+    selected_phases = (("local", "temporal") if manifest.amendment else ("direct", "local", "temporal")) if args.phase == "all" else (args.phase,)
+    for phase in selected_phases:
         values = phase_environment(manifest, phase)
         temporary_directory = directory / (phase + "-tmp")
         if not temporary_directory.resolve().is_relative_to(ROOT.resolve()):
@@ -76,7 +101,8 @@ def main() -> int:
             if not baseline_copy.exists():
                 baseline_manifest = baseline_path.parent / "manifest.json"
                 if (not baseline_manifest.is_file()
-                        or hashlib.sha256(baseline_manifest.read_bytes()).hexdigest() != manifest_sha):
+                        or hashlib.sha256(baseline_manifest.read_bytes()).hexdigest() != (
+                            manifest.amendment.original_manifest_sha256 if manifest.amendment else manifest_sha)):
                     parser.error("Baseline manifest/dataset provenance differs from the frozen pilot")
                 baseline_copy.write_bytes(baseline_path.read_bytes())
                 baseline_copy.chmod(0o400)
@@ -103,7 +129,7 @@ def main() -> int:
                 report["phases"].append({"phase": phase, "status": "failed", "failure_type": "RootDeadlineExceeded"})
                 break
         private_write(report_path, report)
-    expected_phases = 3 if args.phase == "all" else 1
+    expected_phases = len(selected_phases)
     report["status"] = "passed" if len(report["phases"]) == expected_phases and all(item["status"] == "passed" for item in report["phases"]) else "failed"
     private_write(report_path, report)
     print(json.dumps({"status": report["status"], "report": str(report_path)}, sort_keys=True))

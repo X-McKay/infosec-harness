@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from pathlib import Path
 
 import pytest
 import yaml
@@ -201,3 +202,54 @@ def test_native_comparison_preserves_catalog_provenance_and_rejects_price_drift(
         changed["model"]["pricing_table"] = identity
         with pytest.raises(ValueError, match="settings or pricing"):
             compare_baseline("intake", changed, rows[0]["case_digest"])
+
+
+def corrected_amendment(tmp_path):
+    from broker_real_provider_fixture import CorrectedPilotAmendment
+    identities = [str(i) * 64 for i in range(4)]
+    failed = tmp_path / "failed.json"
+    failed.write_text(json.dumps({"status": "failed", "cases": [
+        {"ledger": {"requests": [{"request_id": identity, "state": "completion_unknown"}]}}
+        for identity in identities]}))
+    return CorrectedPilotAmendment.model_validate({
+        "original_manifest_sha256": "b41fb7a2bd695825bd2eff8b613f052e8c1319ad35bd053997c1a58cc1a20745",
+        "baseline_report_sha256": "a" * 64, "failed_report_file": str(failed),
+        "failed_report_sha256": hashlib.sha256(failed.read_bytes()).hexdigest(),
+        "retained_unknown_request_ids": identities, "original_trials": 33,
+        "original_started_trials": 15, "additional_trials": 22, "cumulative_authorized_trials": 37,
+        "reason": "known SDK reasoning usage counter codec correction; no unknown resend"})
+
+
+def test_corrected_pilot_is_explicitly_native_only_and_finite(tmp_path):
+    from broker_real_provider_fixture import verify_retained_failure
+    amendment = corrected_amendment(tmp_path)
+    verify_retained_failure(amendment)
+    data = manifest(tmp_path).model_dump()
+    data.update(amendment=amendment.model_dump(), maximum_pilot_agent_trials=22,
+                phases=["native-local", "native-temporal"])
+    assert RealProviderManifest.model_validate(data).amendment.additional_trials == 22
+    for changed in ({"maximum_pilot_agent_trials": 33},
+                    {"phases": ["direct", "native-local", "native-temporal"]}):
+        with pytest.raises(ValidationError):
+            RealProviderManifest.model_validate({**data, **changed})
+
+
+@pytest.mark.parametrize("changed", [{"additional_trials": 23}, {"cumulative_authorized_trials": 38},
+                                     {"original_started_trials": 14},
+                                     {"retained_unknown_request_ids": ["a" * 64] * 4}])
+def test_corrected_pilot_rejects_implicit_trial_extensions_or_unknown_reuse(tmp_path, changed):
+    from broker_real_provider_fixture import CorrectedPilotAmendment
+    with pytest.raises(ValidationError):
+        CorrectedPilotAmendment.model_validate({**corrected_amendment(tmp_path).model_dump(), **changed})
+
+
+def test_corrected_pilot_retains_failure_bytes_and_exact_unknown_set(tmp_path):
+    from broker_real_provider_fixture import verify_retained_failure
+    amendment = corrected_amendment(tmp_path)
+    foreign = amendment.model_copy(update={"retained_unknown_request_ids": ["b" * 64] + amendment.retained_unknown_request_ids[1:]})
+    with pytest.raises(ValueError, match="exact four unknown"):
+        verify_retained_failure(foreign)
+    failed = Path(amendment.failed_report_file)
+    failed.write_text(failed.read_text() + " ")
+    with pytest.raises(ValueError, match="report differs"):
+        verify_retained_failure(amendment)
