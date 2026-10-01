@@ -37,6 +37,7 @@ def freeze(pilot: Path, destination: Path, phase: str, *, infrastructure_correct
         raise ValueError("Graph artifacts must remain checkout-owned")
     registry = parent / f"graph-{phase}-manifest.frozen"
     supersedes = None
+    prior = None
     if registry.exists():
         if infrastructure_correction != "guest-visible-tmpdir" or phase != "direct":
             raise ValueError("This graph phase already has a frozen trial")
@@ -53,6 +54,26 @@ def freeze(pilot: Path, destination: Path, phase: str, *, infrastructure_correct
         if registry.exists():
             raise ValueError("This infrastructure correction already has a frozen trial")
     values = json.loads(pilot.read_text())
+    model = Path(values["direct_models_config"] if phase == "direct" else values["broker_models_config"])
+    source_digests = {}
+    for name in ("app.py", "requirements.txt"):
+        source = SOURCE / name
+        if source.is_symlink():
+            raise ValueError("Source fixture cannot be a symlink")
+        source_digests[name] = sha(source)
+    frozen = {
+        "pilot_sha256": sha(pilot), "models_config": str(model), "models_sha256": sha(model),
+        "source_sha256": source_digests, "phase": phase, "duration_seconds": 7200,
+        "concurrency": 1, "maximum_trials": 1, "database_env_file": values["database_env_file"],
+        "temporal_address": values["temporal_address"], "worker_hmac_file": values["worker_hmac_file"],
+        "worker_hmac_env": values["worker_hmac_env"],
+    }
+    fixed_finding = {"title": "SQL injection in get_user", "description": "Untrusted name is concatenated into the SQL query in get_user.",
+        "revision": "HEAD", "source_mode": "working_snapshot", "file_path": "app.py",
+        "start_line": 16, "end_line": 16, "symbol": "get_user", "cwe": "CWE-89", "severity": "high"}
+    if prior is not None and (any(prior.get(key) != value for key, value in frozen.items())
+            or {key: value for key, value in prior.get("finding", {}).items() if key != "repo_url"} != fixed_finding):
+        raise ValueError("Infrastructure correction changed the frozen candidate or runtime scope")
     directory = destination.parent / ("graph-" + phase + "-" + uuid.uuid4().hex)
     directory.mkdir(mode=0o700)
     repo = directory / "repo"
@@ -68,7 +89,6 @@ def freeze(pilot: Path, destination: Path, phase: str, *, infrastructure_correct
         digests[name] = sha(target)
     (repo / "tests").mkdir(mode=0o555)
     repo.chmod(0o555)
-    model = Path(values["direct_models_config"] if phase == "direct" else values["broker_models_config"])
     manifest = {
         "version": 1, "phase": phase, "pilot_manifest": str(pilot.resolve()),
         "pilot_sha256": sha(pilot), "directory": str(directory), "repo": str(repo),
@@ -79,10 +99,7 @@ def freeze(pilot: Path, destination: Path, phase: str, *, infrastructure_correct
         "worker_hmac_file": values["worker_hmac_file"], "worker_hmac_env": values["worker_hmac_env"],
         "temporal_address": values["temporal_address"], "task_queue": "broker-real-graph-" + uuid.uuid4().hex,
         "duration_seconds": 7200, "concurrency": 1, "maximum_trials": 1,
-        "finding": {"title": "SQL injection in get_user", "description": "Untrusted name is concatenated into the SQL query in get_user.",
-            "repo_url": str(repo), "revision": "HEAD", "source_mode": "working_snapshot",
-            "file_path": "app.py", "start_line": 16, "end_line": 16, "symbol": "get_user",
-            "cwe": "CWE-89", "severity": "high"},
+        "finding": {**fixed_finding, "repo_url": str(repo)},
     }
     if supersedes is not None:
         manifest["supersedes_infrastructure_failure"] = supersedes

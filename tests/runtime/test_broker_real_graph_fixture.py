@@ -98,3 +98,87 @@ def test_corrected_trial_requires_failed_terminal_replayed_and_cleaned_previous(
         fixture.freeze(parent / "pilot.json", parent / "retry.json", "direct",
             infrastructure_correction="guest-visible-tmpdir")
     assert not (parent / "retry.json").exists()
+
+
+@pytest.fixture
+def frozen_graph(tmp_path, monkeypatch):
+    import json
+
+    import broker_real_graph_fixture as fixture
+
+    root = tmp_path / "checkout"
+    parent = root / ".harness/openshell-spike/live-qualification"
+    parent.mkdir(parents=True)
+    source = root / "source"
+    source.mkdir()
+    (source / "app.py").write_text("fixture source")
+    (source / "requirements.txt").write_text("pytest")
+    models = root / "models.json"
+    models.write_text('{"temperature":0}')
+    pilot = parent / "pilot.json"
+    pilot.write_text(json.dumps({"direct_models_config": str(models), "broker_models_config": str(models),
+        "broker_config": str(root / "broker.json"), "database_env_file": str(root / "db.env"),
+        "worker_hmac_file": str(root / "key"), "worker_hmac_env": "TEST_KEY",
+        "temporal_address": "127.0.0.1:7365"}))
+    monkeypatch.setattr(fixture, "ROOT", root)
+    monkeypatch.setattr(fixture, "SOURCE", source)
+    previous = fixture.freeze(pilot, parent / "previous.json", "direct")
+    report = Path(previous["directory"]) / "report.json"
+    report.write_text(json.dumps({"graph": "failed", "replay": "passed", "workflow_cleanup": "passed",
+                                 "worker_cleanup": "passed"}))
+    return fixture, parent, pilot, previous, report, models, source
+
+
+def test_unchanged_infrastructure_correction_retains_prior_trial(frozen_graph):
+    fixture, parent, pilot, previous, report, _models, _source = frozen_graph
+    result = fixture.freeze(pilot, parent / "corrected.json", "direct",
+                           infrastructure_correction="guest-visible-tmpdir")
+    assert result["pilot_sha256"] == previous["pilot_sha256"]
+    assert result["models_sha256"] == previous["models_sha256"]
+    assert result["directory"] != previous["directory"]
+    assert result["supersedes_infrastructure_failure"]["sha256"] == fixture.sha(parent / "previous.json")
+    assert report.exists()
+    with pytest.raises(ValueError, match="already has a frozen trial"):
+        fixture.freeze(pilot, parent / "third.json", "direct", infrastructure_correction="guest-visible-tmpdir")
+
+
+@pytest.mark.parametrize("change", ["model_settings", "pilot", "source", "finding", "runtime_scope"])
+def test_infrastructure_correction_rejects_changed_candidate_before_creating_artifacts(frozen_graph, change):
+    import json
+
+    fixture, parent, pilot, previous, _report, models, source = frozen_graph
+    if change == "model_settings":
+        models.write_text('{"temperature":1}')
+    elif change == "pilot":
+        values = json.loads(pilot.read_text())
+        values["temporal_address"] = "127.0.0.1:9999"
+        pilot.write_text(json.dumps(values))
+    elif change == "source":
+        (source / "app.py").write_text("different source")
+    else:
+        # Keep registry provenance internally consistent while changing the old scope;
+        # correction equivalence must independently check it, not trust the digest alone.
+        if change == "finding":
+            previous["finding"]["severity"] = "critical"
+        else:
+            previous["maximum_trials"] = 2
+        previous_file = parent / "previous.json"
+        previous_file.write_text(json.dumps(previous))
+        (parent / "graph-direct-manifest.frozen").write_text(json.dumps({
+            "manifest": str(previous_file), "sha256": fixture.sha(previous_file)}))
+    before = set(parent.iterdir())
+    with pytest.raises(ValueError, match="frozen candidate or runtime scope"):
+        fixture.freeze(pilot, parent / "corrected.json", "direct", infrastructure_correction="guest-visible-tmpdir")
+    assert set(parent.iterdir()) == before
+
+
+@pytest.mark.parametrize("field", ["replay", "workflow_cleanup", "worker_cleanup"])
+def test_infrastructure_correction_requires_each_terminal_evidence_gate(frozen_graph, field):
+    import json
+
+    fixture, parent, pilot, _previous, report, _models, _source = frozen_graph
+    values = json.loads(report.read_text())
+    values[field] = "not_checked"
+    report.write_text(json.dumps(values))
+    with pytest.raises(ValueError, match="terminal, replayed, and cleaned"):
+        fixture.freeze(pilot, parent / "corrected.json", "direct", infrastructure_correction="guest-visible-tmpdir")
