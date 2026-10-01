@@ -1,7 +1,7 @@
 # Credential broker implementation evidence
 
 Date: 2026-10-01
-Status: implementation ready for review; bounded qualification passed; rollout disabled
+Status: implementation ready for review; bounded mock/native checks and direct live workflow passed; native live compatibility failed; rollout disabled
 
 This record covers the isolated `feature/openshell` worktree based on remote `develop`
 `51fe66eb7459ce8f75a0d73931cf85867b78cefc`, now integrated with remote `develop`
@@ -70,7 +70,7 @@ missing retained history require explicit operator recovery; v1 replacement is u
 | Final shared runsc/build-egress preservation | passed | Actual post-cleanup runsc positive/negative, bounded execution, PID/memory exhaustion, internal proxy allow/deny, isolated builder and forced-removal cleanup fixtures |
 | Preserved development stack smoke | passed | API/UI/storage readiness, S3 put/get/delete and retained sentinel, fresh complete stub workflow/result and Temporal visibility; no provider calls |
 | P7 direct local-provider compatibility | passed | Authorized frozen `llm.almckay.io` pilot: all eleven agents passed; see [current live-provider evidence](CREDENTIAL_BROKER_LIVE_PROVIDER.md) |
-| P7 native local-provider compatibility | failed | First live pilot stopped after shared post-claim failures; four uncertain requests remain fenced; no redispatch |
+| P7 native local-provider compatibility | failed | Finite live trials stopped after failures; final supervisor capture records stale policy generation; ten uncertain requests remain fenced; no redispatch |
 | P7 deployed tokenizer and held-out evaluation | not_checked | Published-tokenizer bounds do not attest the deployed runtime; eleven compatibility cases do not establish held-out quality acceptance |
 | UI checks | passed | Requested follow-up: formatting, two frontend tests, TypeScript and production Vite build; no frontend source changes |
 | Rollout | not_checked | Packaged catalog disabled; production acceptance requires all applicable gates |

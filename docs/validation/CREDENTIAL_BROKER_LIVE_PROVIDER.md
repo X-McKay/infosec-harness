@@ -1,6 +1,6 @@
 # Local-provider credential broker qualification
 
-Status: direct live pilot passed; first native pilot failed and is fenced; corrected direct full workflow passed; native correction pending. Rollout remains disabled.
+Status: direct live pilot passed; native live qualification failed and is fenced; corrected direct full workflow passed; native policy-generation trigger unresolved. Rollout remains disabled.
 
 ## Frozen scope and authorization
 
@@ -76,3 +76,12 @@ The first stderr-only diagnostic trial retained another uncertain request, bring
 
 
 The bounded reproduction sample stopped after its first failed intake case (22.141 seconds); the other two frozen cases were never started. Safe markers identify `provider_request/network` and `inference/network`, before codec or ledger completion. Eight uncertain requests and three saved responses are now retained. Every started scope closed successfully and its worker was reaped. All four approved addresses separately returned HTTP 200 model discovery from the actual guest with verified TLS. These discovery checks do not establish inference reliability.
+
+
+## Final native diagnostic boundary
+
+The next finite network-detail sample stopped after its first failed case (22.168 seconds); its other two frozen cases never started. Fixed categories identify `remote_protocol`, consistent with the SDK losing the upstream HTTP response. A separate final three-case supervisor sample was frozen at SHA256 `494e9b703991fee701265074450c24269308dc9405c0ae9aafde14285bd4e040`. It also stopped after its first case failed (22.075 seconds), with the other two cases never started. A preparatory launcher failure occurred before imports, dispatch or ledger changes and is retained separately.
+
+Only fixed allowlisted flags were extracted from the exact owned supervisor container before normal revocation. Both container corroboration and log reading passed. The model-specific stale-policy-generation flag was true, alongside `remote_protocol`; framing rejection, response-read failure and upstream-closure flags were false. Negative flags do not prove those other faults absent. The pinned [OpenShell v0.1.2 relay guard](https://github.com/NVIDIA/OpenShell/blob/v0.1.2/crates/openshell-supervisor-network/src/proxy/relay.rs) explicitly closes streams when their policy generation becomes stale. The captured event establishes a native policy-generation closure consistent with this disconnect; the triggering reload or quarantine is not yet established. Policy enforcement is not bypassed or weakened to obtain a passing trial.
+
+Ten uncertain requests and three saved native responses are retained across the finite investigations. Every started scope closed and its owned worker was reaped. No uncertain request was resent or its allocation released. Qualification-only file sinks and diagnostic controller wrappers are excluded from production acceptance. Native live all-agent compatibility remains failed; native live Temporal/full-graph acceptance, deployed-tokenizer attestation and held-out quality remain `not_checked`. All eleven direct live compatibility cases and the corrected direct production graph remain passed. Rollout remains disabled.

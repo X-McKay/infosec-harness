@@ -216,11 +216,20 @@ just check
 just test
 ```
 
-Each command's pass applies only to the cases it executed; inspect skips and reports. Current
-lead-reported PostgreSQL ledger and deterministic mock/unit gates are `passed`. Production
-native integration, production Temporal replay/recovery, and P7 bounded provider/held-out
-evaluation are `not_checked` unless a separate reviewed evidence record establishes them. G0
-feasibility evidence concerns a bounded test prototype only. It does not approve production
-model routing, real-provider spend, or an opt-in rollout. There is no manual provider request
-command in this runbook; P7 requires its own approved model, explicit spend limit, frozen test
-set, and independent evidence review.
+Each command's pass applies only to the cases it executed; inspect skips and reports. The
+[current implementation evidence](../validation/CREDENTIAL_BROKER_IMPLEMENTATION.md) distinguishes
+actual PostgreSQL, native mock-provider recovery and Temporal replay checks from the
+[local-provider qualification](../validation/CREDENTIAL_BROKER_LIVE_PROVIDER.md). All eleven
+direct agent cases and the direct production graph passed on the authorized local endpoint.
+Native live compatibility failed; native live full-graph and held-out quality are not checked.
+These records do not approve opt-in rollout; the packaged catalog remains disabled.
+
+For native inference failures, fixed executor markers distinguish provider, codec and ledger
+stages without exposing payloads or exceptions. The final local-provider investigation also
+captured a stale policy generation from an exact owned supervisor. The generation guard closes
+active streams when policy changes or quarantine is published. Preserve this boundary. Establish
+the actual activation/quarantine trigger before proposing remediation; do not infer it from
+elapsed time, disable the guard, retry ambiguous requests or treat model discovery as inference
+reliability. Any new qualification requires fresh bounded frozen trial identities and unchanged
+expected outcomes. Preserve existing uncertain reservations and reports. Qualification-only
+file sinks and capture wrappers are excluded from production acceptance.
