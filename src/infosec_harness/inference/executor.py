@@ -16,7 +16,7 @@ from pydantic import Field
 
 from .auth import AUTH_HEADER, verify_request
 from .codec import decode_payload, encode_response
-from .diagnostics import report_transport_failure
+from .diagnostics import report_transport_failure, sanitize_diagnostic, transport_failure_category
 from .http_service import JsonChannel, https_origin, parse_body, serve
 from .protocol import (
     BrokerError,
@@ -71,6 +71,19 @@ def _report_failure(stage: str, error: BaseException) -> None:
     if stage not in _DIAGNOSTIC_STAGES or category not in _DIAGNOSTIC_CATEGORIES:
         raise ValueError("Invalid fixed diagnostic category")
     _LOG.warning("IH_INFERENCE_FAILURE stage=%s category=%s", stage, category)
+
+
+def _failure_diagnostic(stage: str, error: BaseException) -> dict[str, str]:
+    existing = sanitize_diagnostic(error.diagnostic) if isinstance(error, BrokerError) else None
+    if existing is not None:
+        return existing
+    category = "cancelled" if isinstance(error, asyncio.CancelledError) else _failure_category(error, stage)
+    if category in {"tls", "network"}:
+        category = transport_failure_category(error)
+    diagnostic = sanitize_diagnostic({"boundary": stage, "category": category})
+    if diagnostic is None:
+        raise ValueError("Invalid fixed diagnostic category")
+    return diagnostic
 
 
 PLACEHOLDER = re.compile(r"^openshell:resolve:env:[A-Za-z_][A-Za-z0-9_]*$")
@@ -172,7 +185,7 @@ class OpenAIInference:
             except BaseException as error:
                 report_transport_failure("provider_request", error)
                 _report_failure("provider_request", error)
-                raise
+                raise BrokerError("completion_unknown", diagnostic=_failure_diagnostic("provider_request", error)) from None
         usage = {
             key: value
             for key, value in vars(response.usage).items()
@@ -187,7 +200,7 @@ class OpenAIInference:
             )
         except BaseException as error:
             _report_failure("response_codec", error)
-            raise
+            raise BrokerError("completion_unknown", diagnostic=_failure_diagnostic("response_codec", error)) from None
 
 
 class Executor:
@@ -250,7 +263,7 @@ class Executor:
             return (await self.ledger.complete(result, permit)).model_dump(mode="json")
         except BaseException as error:
             _report_failure(stage, error)
-            raise BrokerError("completion_unknown") from None
+            raise BrokerError("completion_unknown", diagnostic=_failure_diagnostic(stage, error)) from None
 
 
 def main() -> None:

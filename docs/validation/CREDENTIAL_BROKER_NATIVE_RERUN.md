@@ -187,3 +187,53 @@ gates passed. Independent controller/ledger/timing/acknowledgement/cleanup revie
 101 affected cases. The executor image remains `dd78036...` because this correction changes
 only the trusted native lifecycle adapter. All six CI jobs passed for the earlier timing
 commit; the new cleanup source requires its own CI and final native readiness/qualification.
+
+
+## Stopped acknowledgement-correction pilot
+
+The fresh c5830d3 pilot failed and was stopped after two new uncertain completions.
+Eight LocalOps cases started: env-planner, build-repair, context and probe-planner passed
+execution and existing semantic checks; intake, recon and partial-build failed; probe-author
+was interrupted before dispatch. Cleanup passed for all eight. The runner reaped its child
+and wrote terminal failure reports. Temporal and the production graph were unsubmitted
+(`not_checked`). No failed case or uncertain request was redispatched.
+
+Intake's first response was a valid skill-tool call, not a schema validation retry. Its skill
+result and retained reasoning increased the conservative next-request input reserve from
+11,885 to 21,902, exceeding the unchanged authored 20,000 cap. The broker rejected that next
+request before dispatch. Actual provider usage for the first completed request was 2,564
+input and 1,142 output tokens; it did not overrun. Offline inspection found no proven redundant
+content to remove. A tighter safe bound requires verified deployed tokenizer and chat-template
+evidence; a model name or published template alone does not qualify the deployed service.
+
+Recon and partial-build each retained one uncertain completion. Recon's durable admission
+to unknown interval was 90.973 seconds, consistent with the provider's total wall bound, but
+not proof of its underlying failure category. Executor stdout was unavailable after cleanup.
+The direct client uses the pinned OpenAI SDK default 600-second inactivity timeout, whereas
+the broker additionally enforces a 90-second total wall deadline. These are different
+operational limits; increasing a limit without qualified evidence is not an acceptance fix.
+
+The authoritative ledger contains 72 completed and 15 uncertain requests, with zero accepted
+or dispatch-intent rows. All original saved contents, uncertain allocations and holds remained
+unchanged. All 106 leases are deleted and native sandbox inventory is empty. A second provider
+without corroborated ownership was left untouched. Retention proof SHA256 is
+`d9781818e7e175802a04a90e671041d4b242276d4b0635169fd7f06090f385fd`;
+ledger-authority proof SHA256 is
+`e2bc6743aac7907e2f4190922c238c9b254985652b99285cc2cfe4dafb57920a`.
+
+Behavior 0.2.6 adds an optional strictly validated fixed-category HTTP error relay so the trusted
+controller can retain diagnostic categories before sandbox destruction. It changes no deadline,
+quality expectation, input cap, request digest, retry count or ledger authority. Existing completed
+results remain recoverable and uncertain holds remain retained; no durable payload migration is
+required. Regression checks cover SDK read and total wall timeouts, cancellation, malformed
+and extra diagnostic fields, sensitive-value exclusion and unchanged saved responses. Native
+qualification remains `failed` for the stopped pilot and pending for this diagnostic correction.
+
+Offline acceptance of the error-relay source passed: 2,379 tests, 40 skips and 861 warnings
+in 81.39 seconds, plus canonical lint/compile/agent validation, generated-artifact and
+development-skill drift checks. The focused diagnostic/ledger gate passed 172 cases and
+independent privacy/disposition review found no blocker. The fresh standard image is
+`sha256:1199a499b11b76f6dbfb8661ca8f9693ec175f0114308b7a21656c9719f7dc56`;
+its minimal context and checkout modules matched, and isolated import checks passed.
+Image proof SHA256 is `05af3025ce14e9343d262b3650a808d34ecd3c87f239a201a2683c1cdd18b637`.
+These gates do not establish fresh native inference acceptance.

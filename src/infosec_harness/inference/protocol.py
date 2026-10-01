@@ -139,8 +139,11 @@ ErrorCode = Literal["auth", "policy", "identity", "budget", "expired", "conflict
 
 class BrokerError(RuntimeError):
     """Sanitized typed disposition: unknown completion is never retried as a fresh request."""
-    def __init__(self, code: ErrorCode, message: str | None = None):
+    def __init__(self, code: ErrorCode, message: str | None = None, *, diagnostic: object = None):
+        from .diagnostics import sanitize_diagnostic
+
         self.code = code
+        self.diagnostic = sanitize_diagnostic(diagnostic)
         super().__init__(f"Inference broker: {code}" + (f"; {message}" if message else ""))
 
 

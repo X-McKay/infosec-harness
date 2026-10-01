@@ -2,7 +2,7 @@
 
 Status: Implemented opt-in contracts; corrected-topology G0 passed; bounded native/service qualification passed; rollout disabled
 Date: 2026-10-01
-Specification version: 0.2.5
+Specification version: 0.2.6
 
 The October local-provider qualification and retained failures are recorded in [live-provider evidence](validation/CREDENTIAL_BROKER_LIVE_PROVIDER.md). Admission behavior changed without changing wire protocol v1; deploy the new immutable executor contract and drain prior allocations before adoption.
 
@@ -121,7 +121,11 @@ prevents corroborating the fence, the controller MUST report unavailability and 
 allocations for explicit recovery; response expiry is not proof of upstream cancellation.
 Transport diagnostics MUST
 contain only fixed boundary and failure categories, with no exception text, endpoints,
-headers, credentials or model payloads. These timing changes require fresh executor images and
+headers, credentials or model payloads. Error responses may relay an optional exact two-field
+`boundary`/`category` object from closed enumerations. Both serializer and receiver independently
+validate it; malformed or extra fields are discarded. The trusted controller records the fixed
+marker before sandbox cleanup. Diagnostics are untrusted observability and MUST NOT influence
+admission, retries, ledger disposition or response identity. These changes require fresh executor images and
 full-contract identities; the wire protocol and durable workflow payloads remain unchanged.
 
 ## Failure and durable recovery contract

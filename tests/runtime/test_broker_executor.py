@@ -228,7 +228,6 @@ async def test_locked_sdk_uses_compatible_transport_and_one_request_only(status)
     import time
 
     import httpx2
-    from pydantic_ai.exceptions import ModelHTTPError
 
     request, _ = request_fixture()
     request = request.model_copy(
@@ -266,8 +265,9 @@ async def test_locked_sdk_uses_compatible_transport_and_one_request_only(status)
         assert result.usage["input_tokens"] == 3
         assert result.usage["output_tokens"] == 2
     else:
-        with pytest.raises(ModelHTTPError):
+        with pytest.raises(BrokerError, match="completion_unknown") as error:
             await infer(request)
+        assert error.value.diagnostic == {"boundary": "provider_request", "category": "provider_status"}
     assert len(sends) == 1
     assert sends[0].url == "https://provider.test/v1/chat/completions"
     assert sends[0].headers["authorization"] == "Bearer openshell:resolve:env:MOCK_TOKEN"
@@ -298,8 +298,9 @@ async def test_provider_timeout_override_cannot_extend_wall_deadline(monkeypatch
     monkeypatch.setattr(module, "PROVIDER_TIMEOUT_S", 0.02)
     infer = OpenAIInference(contract, "openshell:resolve:env:MOCK_TOKEN",
                            http_transport=httpx2.MockTransport(slow))
-    with pytest.raises(TimeoutError):
+    with pytest.raises(BrokerError, match="completion_unknown") as error:
         await infer(request)
+    assert error.value.diagnostic == {"boundary": "provider_request", "category": "wall_timeout"}
     assert len(sends) == 1
 
 
@@ -325,6 +326,7 @@ async def test_provider_trickle_bytes_cannot_renew_wall_deadline(monkeypatch):
     monkeypatch.setattr(module, "PROVIDER_TIMEOUT_S", 0.02)
     infer = OpenAIInference(request.contract, "openshell:resolve:env:MOCK_TOKEN",
                            http_transport=httpx2.MockTransport(respond))
-    with pytest.raises(TimeoutError):
+    with pytest.raises(BrokerError, match="completion_unknown") as error:
         await infer(request)
+    assert error.value.diagnostic == {"boundary": "provider_request", "category": "wall_timeout"}
     assert len(sends) == 1

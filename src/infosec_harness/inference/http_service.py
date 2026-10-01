@@ -13,9 +13,18 @@ from urllib.parse import urlsplit
 import httpcore
 import httpx
 
-from .diagnostics import report_transport_failure
+from .diagnostics import report_remote_diagnostic, report_transport_failure, sanitize_diagnostic
 from .protocol import MAX_BODY_BYTES, BrokerError, canonical_bytes
 from .timing import SERVER_TIMEOUT_S
+
+
+def broker_error_body(error: BrokerError) -> dict:
+    """Error code owns disposition; optional closed diagnostic is observability only."""
+    body = {"error": error.code}
+    diagnostic = sanitize_diagnostic(error.diagnostic)
+    if diagnostic is not None:
+        body["diagnostic"] = diagnostic
+    return body
 
 
 def https_origin(value: str) -> str:
@@ -182,7 +191,7 @@ class JsonChannel:
                 value = parse_body(bytes(result))
                 if response.status_code != 200:
                     code = value.get("error")
-                    if code not in {
+                    if not isinstance(code, str) or code not in {
                         "auth",
                         "policy",
                         "identity",
@@ -195,7 +204,8 @@ class JsonChannel:
                         "invalid_response",
                     }:
                         code = "unavailable"
-                    raise BrokerError(code)
+                    diagnostic = report_remote_diagnostic(value.get("diagnostic"))
+                    raise BrokerError(code, diagnostic=diagnostic)
                 return value
         except (
             httpx.HTTPError,
@@ -250,7 +260,7 @@ def serve(
                 response = future.result(timeout=SERVER_TIMEOUT_S)
                 status = 200
             except BrokerError as exc:
-                response = {"error": exc.code}
+                response = broker_error_body(exc)
                 status = {
                     "auth": 401,
                     "policy": 403,
