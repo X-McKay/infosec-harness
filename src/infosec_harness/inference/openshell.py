@@ -6,6 +6,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import logging
 import os
 import secrets
 import shutil
@@ -23,6 +24,10 @@ from .executor import ExecutorSettings
 from .http_service import https_origin
 from .policy import canonical_policy, policy_digest
 from .protocol import BrokerError, ExecutorContract, StrictModel, canonical_bytes, digest
+
+_LOG = logging.getLogger(__name__)
+# Acknowledgement wait leaves cleanup authority/time for exact-owned destruction.
+_DETACH_ACK_TIMEOUT_S = 30.0
 
 
 @dataclass(frozen=True)
@@ -714,17 +719,34 @@ class OpenShellAdapter:
                 item.get("name") == lease.contract.provider_binding
                 for item in attached.get("providers", [])
             ):
-                await self.cli.run(
-                    [
-                        "sandbox",
-                        "provider",
-                        "detach",
-                        lease.name,
-                        lease.contract.provider_binding,
-                        "--wait",
-                    ]
-                )
-            await self.cli.run(["sandbox", "delete", lease.name])
+                try:
+                    await self.cli.run(
+                        [
+                            "sandbox", "provider", "detach", lease.name,
+                            lease.contract.provider_binding, "--wait",
+                        ],
+                        timeout=_DETACH_ACK_TIMEOUT_S,
+                    )
+                except BrokerError as error:
+                    if error.code != "unavailable":
+                        raise
+                    _LOG.warning("IH_NATIVE_CLEANUP_FAILURE stage=provider_detach category=unavailable action=destroy_owned_sandbox")
+                    # An unacknowledged detach can outlast the original ownership
+                    # observation. Recheck before deleting anything by name.
+                    current = json.loads(await self.cli.run(
+                        ["sandbox", "list", "--selector", f"ih.lease={lease.lease_id}", "-o", "json"]
+                    ))
+                    if current.get("next_page_token") or len(current.get("sandboxes", [])) > 1:
+                        raise BrokerError("identity") from None
+                    matches = current.get("sandboxes", [])
+                    if matches and (
+                        matches[0].get("id") != lease.native_id
+                        or matches[0].get("name") != lease.name
+                        or matches[0].get("labels") != lease.labels()
+                    ):
+                        raise BrokerError("identity") from None
+            if matches:
+                await self.cli.run(["sandbox", "delete", lease.name])
         until = time.monotonic() + 30
         while True:
             listing = json.loads(

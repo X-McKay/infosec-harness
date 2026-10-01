@@ -543,9 +543,7 @@ async def test_persistent_closed_run_cannot_reprovision_after_controller_restart
     assert calls == []
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("failure", ["detach", "delete", "provider"])
-async def test_partial_owned_cleanup_is_retryable_without_early_deleted_ack(tmp_path, failure):
+def owned_cleanup_fixture(tmp_path, failure):
     adapter, lease, _, _, _, _ = native_fixture(tmp_path)
     lease.ledger_native_id = "scoped-provider-id"
     state = {"sandbox": True, "attached": True, "provider": True, "failed": False}
@@ -599,6 +597,8 @@ async def test_partial_owned_cleanup_is_retryable_without_early_deleted_ack(tmp_
             else "provider"
         )
         actions.append(action)
+        if action == "detach":
+            assert kwargs["timeout"] == 30.0
         if action == failure and not state["failed"]:
             state["failed"] = True
             raise BrokerError("unavailable")
@@ -611,15 +611,32 @@ async def test_partial_owned_cleanup_is_retryable_without_early_deleted_ack(tmp_
 
     adapter.cli.run, adapter.cli.containers = run, containers
     lease.status = "quarantined"
+    return adapter, lease, state, actions
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["delete", "provider"])
+async def test_partial_owned_cleanup_is_retryable_without_early_deleted_ack(tmp_path, failure):
+    adapter, lease, state, actions = owned_cleanup_fixture(tmp_path, failure)
     with pytest.raises(BrokerError, match="unavailable"):
         await adapter.revoke(lease)
     assert lease.status != "deleted"
     assert adapter.store.load()[0].status != "deleted"
     await adapter.revoke(lease)
+    assert actions.count(failure) == 2
     assert lease.status == "deleted"
     assert not state["sandbox"] and not state["provider"]
-    assert actions.count(failure) == 2
     assert adapter.store.load()[0].status == "deleted"
+
+
+async def test_detach_timeout_destroys_owned_sandbox_and_verifies_final_absence(tmp_path, caplog):
+    adapter, lease, state, actions = owned_cleanup_fixture(tmp_path, "detach")
+    await adapter.revoke(lease)
+    assert actions == ["detach", "delete", "provider"]
+    assert "IH_NATIVE_CLEANUP_FAILURE stage=provider_detach category=unavailable action=destroy_owned_sandbox" in caplog.text
+    assert lease.status == adapter.store.load()[0].status == "deleted"
+    assert not state["sandbox"] and not state["provider"]
+
 
 
 @pytest.mark.asyncio
@@ -899,3 +916,84 @@ async def test_outer_wall_during_mapped_channel_cleanup_does_not_leak_child_canc
     assert rows[request.request_id].state == "completion_unknown"
     assert events.count("recover") == 1
     assert not core._reconciliation_tasks
+
+
+@pytest.mark.parametrize("detach_code", ["identity", "policy"])
+async def test_detach_corroboration_failure_never_falls_back_to_delete(tmp_path, detach_code):
+    adapter, lease, _, _, _, _ = native_fixture(tmp_path)
+    actions = []
+    async def run(args, **kwargs):
+        actions.append(args[:3])
+        if args[:2] == ["sandbox", "list"]:
+            return json.dumps({"sandboxes": [{"id": lease.native_id, "name": lease.name, "labels": lease.labels()}]})
+        if args[:3] == ["sandbox", "provider", "list"]:
+            return json.dumps({"providers": [{"name": lease.contract.provider_binding}]})
+        if args[:3] == ["sandbox", "provider", "detach"]:
+            raise BrokerError(detach_code)
+        raise AssertionError("Corroboration failure cannot delete any resource")
+    adapter.cli.run = run
+    with pytest.raises(BrokerError, match=detach_code):
+        await adapter.revoke(lease)
+    assert lease.status == adapter.store.load()[0].status == "revoked"
+    assert ["sandbox", "delete", lease.name] not in actions
+
+
+@pytest.mark.parametrize("foreign_after_detach", [False, True])
+async def test_unavailable_detach_failed_delete_or_changed_ownership_remains_revoked(tmp_path, foreign_after_detach, caplog):
+    adapter, lease, _, _, _, _ = native_fixture(tmp_path)
+    actions = []
+    detached = False
+    async def run(args, **kwargs):
+        nonlocal detached
+        actions.append(args[:3])
+        if args[:2] == ["sandbox", "list"]:
+            identity = "foreign-native-id" if detached and foreign_after_detach else lease.native_id
+            return json.dumps({"sandboxes": [{"id": identity, "name": lease.name, "labels": lease.labels()}]})
+        if args[:3] == ["sandbox", "provider", "list"]:
+            return json.dumps({"providers": [{"name": lease.contract.provider_binding}]})
+        if args[:3] == ["sandbox", "provider", "detach"]:
+            detached = True
+            raise BrokerError("unavailable", "synthetic-private-credential")
+        if args[:2] == ["sandbox", "delete"]:
+            raise BrokerError("unavailable")
+        raise AssertionError("Failed deletion cannot proceed to credential deletion")
+    adapter.cli.run = run
+    with pytest.raises(BrokerError, match="identity" if foreign_after_detach else "unavailable"):
+        await adapter.revoke(lease)
+    assert lease.status == adapter.store.load()[0].status == "revoked"
+    assert (["sandbox", "delete", lease.name] in actions) is (not foreign_after_detach)
+    assert not any(args[:2] == ["provider", "delete"] for args in actions)
+    assert "synthetic-private" not in caplog.text
+
+
+@pytest.mark.parametrize("fault", ["id", "name", "labels"])
+async def test_foreign_native_ownership_never_detaches_or_deletes(tmp_path, fault):
+    adapter, lease, _, _, _, _ = native_fixture(tmp_path)
+    actions = []
+    detail = {"id": lease.native_id, "name": lease.name, "labels": lease.labels()}
+    detail[fault] = {} if fault == "labels" else "foreign"
+    async def run(args, **kwargs):
+        actions.append(args[:2])
+        assert args[:2] == ["sandbox", "list"]
+        return json.dumps({"sandboxes": [detail]})
+    adapter.cli.run = run
+    with pytest.raises(BrokerError, match="identity"):
+        await adapter.revoke(lease)
+    assert actions == [["sandbox", "list"]]
+
+
+async def test_detach_timeout_delete_ack_with_remaining_container_cannot_ack_deleted(tmp_path, monkeypatch):
+    from infosec_harness.inference import openshell as module
+
+    adapter, lease, state, actions = owned_cleanup_fixture(tmp_path, "detach")
+    async def containers(identity):
+        assert identity == lease.native_id
+        return ["still-running"]
+    times = iter([0.0, 31.0])
+    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: next(times)))
+    adapter.cli.containers = containers
+    with pytest.raises(BrokerError, match="unavailable"):
+        await adapter.revoke(lease)
+    assert actions == ["detach", "delete"]
+    assert lease.status == adapter.store.load()[0].status == "revoked"
+    assert state["provider"] is True

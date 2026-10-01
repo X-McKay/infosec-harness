@@ -160,3 +160,30 @@ native daemon, and matched the generated minimal context and checkout source. It
 network-none, read-only, capabilities-dropped import check passed. No diagnostic sink is
 included. This evidence establishes the controlled correction and packaging; fresh native
 agent/graph acceptance remains `not_checked` until the frozen live trial completes.
+
+A final zero-inference readiness attempt exposed a separate cleanup defect: a verified Ready
+sandbox's provider detach acknowledgement failed, and the old revoke path returned before
+sandbox deletion. The failed log SHA256 is
+`07815303d241f5c8492d62b84dfd134dc4c12099c1531de141100d1cf23d09d9`.
+Exact owned reconciliation subsequently deleted that lease, with native inventory empty and
+all 67 request rows unchanged; its retained proof SHA256 is
+`e453ff4efa08e3cee010611202a9dfcbc206c3488977697d41301e732249d1d3`.
+No model call or unknown release occurred. The first eleven-contract readiness pass remains
+passed, while this preparatory failure remains recorded separately.
+
+The correction implements the specification's existing destroy-on-unacknowledged-detach
+requirement: acknowledgement is bounded at 30 seconds, and an `unavailable` response triggers
+fresh exact native ID/name/label corroboration before ordinary owned sandbox deletion.
+Identity/policy errors, changed ownership or pagination stop the fallback. Failed deletion or
+remaining containers keep persistent nondeleted state. Gateway and container absence and
+exact scoped ledger-provider cleanup remain mandatory before the lease becomes deleted.
+Only fixed cleanup categories are logged. The standard executor image and provider/agent
+settings are unchanged; this trusted controller-adapter correction needs a fresh controller
+process, reviewed source/cause provenance and readiness proof before live qualification.
+
+Final acceptance of the combined timing/recovery/cleanup source passed: 2,367 tests,
+40 skips and 861 warnings in 73.57 seconds. Canonical check, generated-artifact and skill-drift
+gates passed. Independent controller/ledger/timing/acknowledgement/cleanup review passed
+101 affected cases. The executor image remains `dd78036...` because this correction changes
+only the trusted native lifecycle adapter. All six CI jobs passed for the earlier timing
+commit; the new cleanup source requires its own CI and final native readiness/qualification.
