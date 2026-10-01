@@ -247,3 +247,19 @@ proxy allow/deny, isolated builder and cleanup fixtures. Both logs are retained 
 does not resolve the intermittent failure; sandbox gate reliability remains **failed**,
 and no expected state or threshold was weakened. Agent execution and the actual completed
 sandbox probe are separate observations from this infrastructure reliability limitation.
+
+
+## Later real-provider qualification status
+
+Later timing, cancellation and ownership-gated cleanup corrections and the fixed-category
+error relay are recorded in [native rerun evidence](CREDENTIAL_BROKER_NATIVE_RERUN.md).
+Behavior 0.2.6 passed 2,409 deterministic tests plus canonical and CI gates. Its fresh
+`1199a499...` executor image passed eleven native readiness/cleanup checks, and separately
+frozen recon and partial-build diagnostics passed execution, semantic scoring and cleanup.
+These are limited passes: the full native pilot remains failed, with intake's expanded
+skill context exceeding the unchanged conservative input cap, and native Temporal/graph
+acceptance remains not_checked. The final retained ledger contains 15 uncertain and 80
+completed requests; all 119 leases are deleted and native sandbox inventory is empty.
+Dedicated infrastructure remains running for follow-up, with the uncorroborated provider
+untouched. No held request was released or resent. Hosted deployment and tokenizer/weight
+attestation gates remain separate and not_checked; rollout stays disabled.

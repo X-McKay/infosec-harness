@@ -267,3 +267,43 @@ in the full suite and corrected by moving environment bootstrap verification int
 subprocess with network calls blocked; no expected outcome or runtime limit was relaxed.
 Canonical log SHA256 is
 `2b6cbab6624cea497db23d3a949369b6ce86edfe646461e936b1ce1458d400f4`.
+
+
+## Terminal two-case diagnostic result
+
+The frozen 13f5170 diagnostic completed once. Recon passed execution, semantic scoring and
+cleanup in 22.284 seconds with three completed requests; partial-build passed the same gates
+in 32.014 seconds with five completed requests. Both children were reaped. No new uncertain
+completion occurred and neither case was repeated. The controller's fixed-category capture
+was empty; successful calls cannot establish the earlier intermittent failure category.
+This is two-case diagnostic evidence. Full native qualification remains failed for the
+stopped full pilot; native Temporal and production graph remain unsubmitted/not_checked.
+
+Final read-only authority confirms 95 rows: 15 uncertain and 80 completed, with zero accepted
+or dispatch-intent rows. All prior request IDs, states and uncertain holds remain retained;
+all prior 87 row update timestamps precede the pretrial checkpoint. Independently retained
+dump contents still match the older 13 uncertain/54 completed baseline. The timestamp and
+identity checks are not a separately hashed content baseline for every newer saved row.
+All 119 leases are deleted and native sandbox inventory is empty. Exact provider metadata
+and all ten primary container identities stayed unchanged. The uncorroborated extra provider
+was preserved. Dedicated infrastructure remains available for the tokenizer investigation;
+no global-provider cleanup or infrastructure shutdown is claimed.
+
+Terminal report SHA256 is
+`ddd9bd50daf04862093f59b544a50b60168cb514cc416e8219e938d203e6abac`;
+terminal evidence seal is
+`7c679b98213c5197fa5cda68fc3b9cc0c00612b2ca382887a06f72768c9bbf19`.
+Fresh ledger-authority proof SHA256 is
+`be2e0667f42c6bcd78b1d34e409fa7b511651ae48793ac124df21f2210deefd0`.
+The fresh owner-only PostgreSQL dump contains all 95 requests and has SHA256
+`9a7aa705e5ff370d2a30180c8e754b284633e0a3f2aee50eac2c048867aab85d`.
+An initial dump attempt used the wrong default port and failed; that attempt was retained,
+and the corrected configured-port dump passed. All six CI jobs passed for 13f5170.
+
+The remaining intake work requires the deployed serving version, tokenizer revision and
+artifact hashes, effective chat template and any rendering overrides. Qualify a tighter bound
+offline against those exact artifacts before changing admission accounting; preserve the
+20,000 input cap, original cases/scorers, full-contract identity and historical holds. Do not
+remove skill results or reasoning, trust a provider-supplied token count as admission authority,
+or infer deployed configuration from the advertised model name. A new full native rerun
+requires new finite reviewed evidence; these consumed diagnostics cannot authorize it.
