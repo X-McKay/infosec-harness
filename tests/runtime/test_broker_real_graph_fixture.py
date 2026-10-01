@@ -47,3 +47,54 @@ def test_persisted_evidence_cannot_invent_workflow_preparation_status():
     assert "prepared_status" not in positive()["evidence"]
     assert not oracle_passed(positive())
     assert not oracle_passed(positive(), "failed")
+
+
+def test_host_worker_temporary_files_stay_in_the_guest_visible_trial(tmp_path, monkeypatch):
+    import broker_real_graph_fixture as fixture
+
+    root = tmp_path / "checkout"
+    (root / ".harness").mkdir(parents=True)
+    managed = root / ".harness/dev.env"
+    managed.write_text("HARNESS_SANDBOX_RUNTIME=runsc\n")
+    managed.chmod(0o600)
+    database = tmp_path / "database.env"
+    database.write_text("HARNESS_DATABASE_URL=sqlite+aiosqlite:///owned-test.db\n")
+    database.chmod(0o600)
+    directory = root / ".harness/trial"
+    directory.mkdir()
+    monkeypatch.setattr(fixture, "ROOT", root)
+    monkeypatch.setenv("TMPDIR", "/unshared/host-only")
+    value = {"directory": str(directory), "phase": "direct", "database_env_file": str(database),
+             "models_config": str(root / "models.yaml"), "task_queue": "broker-real-graph-test",
+             "temporal_address": "127.0.0.1:7365"}
+    env = fixture.environment(value)
+    temporary = Path(env["TMPDIR"])
+    assert temporary.is_dir()
+    assert temporary.is_relative_to(directory)
+    assert temporary.stat().st_mode & 0o077 == 0
+    assert env["HARNESS_ALLOW_INSECURE_RUNTIME"] == "false"
+    assert env["HARNESS_SANDBOX_RUNTIME"] == "runsc"
+
+
+@pytest.mark.parametrize("status", ["running", "passed", "failed"])
+def test_corrected_trial_requires_failed_terminal_replayed_and_cleaned_previous(tmp_path, monkeypatch, status):
+    import json
+
+    import broker_real_graph_fixture as fixture
+
+    root = tmp_path / "checkout"
+    parent = root / ".harness/openshell-spike/live-qualification"
+    parent.mkdir(parents=True)
+    directory = parent / "prior"
+    directory.mkdir()
+    previous = parent / "previous.json"
+    previous.write_text(json.dumps({"directory": str(directory)}))
+    (directory / "report.json").write_text(json.dumps({"graph": status,
+        "replay": "passed", "workflow_cleanup": "passed", "worker_cleanup": "failed"}))
+    (parent / "graph-direct-manifest.frozen").write_text(json.dumps({
+        "manifest": str(previous), "sha256": fixture.sha(previous)}))
+    monkeypatch.setattr(fixture, "ROOT", root)
+    with pytest.raises(ValueError, match="terminal, replayed, and cleaned"):
+        fixture.freeze(parent / "pilot.json", parent / "retry.json", "direct",
+            infrastructure_correction="guest-visible-tmpdir")
+    assert not (parent / "retry.json").exists()

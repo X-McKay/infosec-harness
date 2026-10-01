@@ -28,7 +28,7 @@ def write_private(path: Path, value: dict) -> None:
         json.dump(value, stream, sort_keys=True, indent=2)
 
 
-def freeze(pilot: Path, destination: Path, phase: str) -> dict:
+def freeze(pilot: Path, destination: Path, phase: str, *, infrastructure_correction: str | None = None) -> dict:
     if phase not in {"direct", "native"} or destination.exists():
         raise ValueError("Choose an unused graph manifest and a declared phase")
     parent = (ROOT / ".harness/openshell-spike/live-qualification").resolve()
@@ -36,8 +36,22 @@ def freeze(pilot: Path, destination: Path, phase: str) -> dict:
     if not destination.is_relative_to(parent):
         raise ValueError("Graph artifacts must remain checkout-owned")
     registry = parent / f"graph-{phase}-manifest.frozen"
+    supersedes = None
     if registry.exists():
-        raise ValueError("This graph phase already has a frozen trial")
+        if infrastructure_correction != "guest-visible-tmpdir" or phase != "direct":
+            raise ValueError("This graph phase already has a frozen trial")
+        previous = json.loads(registry.read_text())
+        previous_manifest = Path(previous["manifest"])
+        if sha(previous_manifest) != previous["sha256"]:
+            raise ValueError("Previous trial manifest changed")
+        prior = json.loads(previous_manifest.read_text())
+        outcome = json.loads((Path(prior["directory"]) / "report.json").read_text())
+        if outcome.get("graph") != "failed" or any(outcome.get(key) != "passed" for key in ("replay", "workflow_cleanup", "worker_cleanup")):
+            raise ValueError("Previous trial must be terminal, replayed, and cleaned up")
+        supersedes = {"manifest": str(previous_manifest), "sha256": previous["sha256"], "correction": infrastructure_correction}
+        registry = parent / "graph-direct-guest-visible-tmpdir.frozen"
+        if registry.exists():
+            raise ValueError("This infrastructure correction already has a frozen trial")
     values = json.loads(pilot.read_text())
     directory = destination.parent / ("graph-" + phase + "-" + uuid.uuid4().hex)
     directory.mkdir(mode=0o700)
@@ -70,6 +84,8 @@ def freeze(pilot: Path, destination: Path, phase: str) -> dict:
             "file_path": "app.py", "start_line": 16, "end_line": 16, "symbol": "get_user",
             "cwe": "CWE-89", "severity": "high"},
     }
+    if supersedes is not None:
+        manifest["supersedes_infrastructure_failure"] = supersedes
     write_private(destination, manifest)
     write_private(registry, {"manifest": str(destination), "sha256": sha(destination)})
     return manifest
@@ -106,6 +122,11 @@ def preflight(path: Path) -> dict:
 def environment(value: dict) -> dict[str, str]:
     from broker_real_provider_fixture import read_private_environment
     env = dict(os.environ)
+    temporary = Path(value["directory"]) / "tmp"
+    temporary.mkdir(mode=0o700, exist_ok=True)
+    # The managed Docker CLI executes inside Lima; host /tmp is not shared.
+    # All generated Dockerfiles and copied contexts must be guest-visible.
+    env["TMPDIR"] = str(temporary)
     for name in list(env):
         if name.startswith(("AWS_", "HARNESS_BROKER_")) or name in {"OPENAI_API_KEY", "HARNESS_OPENAI_API_KEY", "HARNESS_MODEL_BACKEND", "HARNESS_S3_ENDPOINT"}:
             env.pop(name, None)
