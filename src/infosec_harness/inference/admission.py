@@ -48,7 +48,7 @@ class ReservationPolicy:
             raise BrokerError("budget", "Paid model admission requires both reviewed price ceilings")
 
 
-def authorize(request: InferenceRequest, policy: ReservationPolicy) -> dict[str, float]:
+async def authorize(request: InferenceRequest, policy: ReservationPolicy) -> dict[str, float]:
     """Validate immutable catalog identity and return worst-case suballocation.
 
     The codec/executor must enforce these input/output caps before dispatch. Pricing
@@ -61,7 +61,7 @@ def authorize(request: InferenceRequest, policy: ReservationPolicy) -> dict[str,
     output = request.contract.model_settings.get("max_tokens")
     if isinstance(output, bool) or not isinstance(output, int) or not 0 < output <= policy.max_output_tokens:
         raise BrokerError("budget", "Provider output cap is missing or exceeds trusted bounds")
-    input_reserve = required_input_reserve(request.payload)
+    input_reserve = await required_input_reserve(request.payload, request.contract)
     if input_reserve > policy.max_input_tokens:
         raise BrokerError("budget", "Serialized input exceeds the trusted tokenizer/context bound")
     cost = 0.0

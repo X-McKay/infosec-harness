@@ -193,7 +193,7 @@ async def test_invalid_execution_requests_have_zero_claim_and_provider(fault):
         )
     if fault == "input_cap":
         settings = settings.model_copy(
-            update={"max_input_tokens": required_input_reserve(request.payload) - 1}
+            update={"max_input_tokens": await required_input_reserve(request.payload, request.contract) - 1}
         )
     if fault == "output_cap":
         settings = settings.model_copy(update={"max_output_tokens": 15})

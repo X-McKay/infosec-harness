@@ -158,6 +158,10 @@ class ExecutorProfile(_StrictModel):
     approved_policy: dict[str, Any] | None = None
     merge_system_messages: bool = True
     min_max_tokens: int = Field(default=0, ge=0)
+    # Request context admission is separate from cumulative invocation allocation.
+    # Omission preserves the identity and behavior of existing operator profiles.
+    max_input_tokens_per_request: int | None = Field(
+        default=None, gt=0, exclude_if=lambda value: value is None)
     credential_driver: Literal["native"] = "native"
     inspection: tuple[ExtensionBinding, ...] = ()
     provider_retries: Literal[0] = 0

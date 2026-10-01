@@ -38,6 +38,11 @@ def build_reservation_policy(request) -> ReservationPolicy:
     if config.model.broker_contract != contract:
         raise BrokerError("identity", "Model contract is not in the controller catalog")
     bounds = catalog.bounds_for_agent(agent)
+    _, profile = catalog.profile_for_agent(agent)
+    input_cap = bounds.max_input_tokens
+    if profile.max_input_tokens_per_request is not None:
+        input_cap = min(input_cap, profile.max_input_tokens_per_request,
+                        config.budget.effective.max_input_tokens_per_request)
     price = models.custom_prices(config.model.resolved_model)
     if price is None:
         raise BrokerError("budget", "Broker v1 requires explicit reviewed backend price ceilings")
@@ -49,7 +54,7 @@ def build_reservation_policy(request) -> ReservationPolicy:
                      price.cache_write_per_mtok if price.cache_write_per_mtok is not None
                      else price.input_per_mtok * 1.25)
     return ReservationPolicy(agent=agent, profile=contract.profile, contract_digest=contract.digest,
-        configuration_digest=config.digest, max_input_tokens=bounds.max_input_tokens,
+        configuration_digest=config.digest, max_input_tokens=input_cap,
         max_output_tokens=bounds.max_output_tokens, max_cost_usd=bounds.max_cost_usd,
         input_per_mtok=input_rate, output_per_mtok=price.output_per_mtok)
 

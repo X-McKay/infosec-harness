@@ -41,7 +41,8 @@ async def issuance(monkeypatch):
         max_output_tokens=200, max_cost_usd=2, max_duration_seconds=600)
     bounds = SimpleNamespace(max_requests=1, max_input_tokens=5000,
         max_output_tokens=100, max_cost_usd=1, max_duration_seconds=300)
-    catalog = SimpleNamespace(root_limits=root_limits, bounds_for_agent=lambda name: bounds)
+    catalog = SimpleNamespace(root_limits=root_limits, bounds_for_agent=lambda name: bounds,
+        profile_for_agent=lambda name: ("inference-only", SimpleNamespace(max_input_tokens_per_request=None)))
     monkeypatch.setattr(models, "broker_catalog", lambda: catalog)
     monkeypatch.setattr(models, "custom_prices", lambda name: models.Prices(
         input_per_mtok=2, output_per_mtok=4, cache_read_per_mtok=0.2, cache_write_per_mtok=5))

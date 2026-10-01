@@ -17,9 +17,9 @@ def policy_for(broker_request):
         input_per_mtok=2, output_per_mtok=4)
 
 
-def test_catalog_produces_allocation_without_worker_amounts(broker_request):
-    allocated = admission.authorize(broker_request, policy_for(broker_request))
-    input_reserve = admission.required_input_reserve(broker_request.payload)
+async def test_catalog_produces_allocation_without_worker_amounts(broker_request):
+    allocated = await admission.authorize(broker_request, policy_for(broker_request))
+    input_reserve = await admission.required_input_reserve(broker_request.payload, broker_request.contract)
     assert allocated["requests"] == 1
     assert allocated["tokens"] == input_reserve + 50
     assert allocated["cost_usd"] >= (input_reserve * 2 + 50 * 4) / 1_000_000
@@ -28,9 +28,9 @@ def test_catalog_produces_allocation_without_worker_amounts(broker_request):
 
 @pytest.mark.parametrize("field,value", [("agent", "verdict"), ("profile", "other"),
                                          ("contract_digest", "0" * 64)])
-def test_forged_identity_fails_catalog_before_dispatch(broker_request, field, value):
+async def test_forged_identity_fails_catalog_before_dispatch(broker_request, field, value):
     with pytest.raises(BrokerError) as exc:
-        admission.authorize(broker_request, replace(policy_for(broker_request), **{field: value}))
+        await admission.authorize(broker_request, replace(policy_for(broker_request), **{field: value}))
     assert exc.value.code == "identity"
 
 
@@ -93,13 +93,13 @@ async def test_broker_owned_operation_cannot_release_on_worker_observed_settle(b
     assert "cannot reserve" in str(exc.value)
 
 
-def test_input_size_and_framing_cannot_exceed_trusted_reserve(broker_request):
-    required = admission.required_input_reserve(broker_request.payload)
+async def test_input_size_and_framing_cannot_exceed_trusted_reserve(broker_request):
+    required = await admission.required_input_reserve(broker_request.payload, broker_request.contract)
     assert required > len(str(broker_request.payload))
     with pytest.raises(BrokerError) as exc:
-        admission.authorize(broker_request, replace(policy_for(broker_request), max_input_tokens=required - 1))
+        await admission.authorize(broker_request, replace(policy_for(broker_request), max_input_tokens=required - 1))
     assert exc.value.code == "budget"
-    assert admission.authorize(broker_request, replace(policy_for(broker_request), max_input_tokens=required))["tokens"] == required + 50
+    assert (await admission.authorize(broker_request, replace(policy_for(broker_request), max_input_tokens=required)))["tokens"] == required + 50
 
 
 @pytest.mark.parametrize("change", [{"expires_at": 1}, {"expires_at": 10**12}])
@@ -133,22 +133,22 @@ async def test_persisted_run_owner_prevents_first_same_agent_cross_run_binding(b
     assert exc.value.code == "identity"
 
 
-def test_paid_models_require_reviewed_prices_and_ceiling_cannot_be_truncated(broker_request):
+async def test_paid_models_require_reviewed_prices_and_ceiling_cannot_be_truncated(broker_request):
     with pytest.raises(BrokerError):
         replace(policy_for(broker_request), input_per_mtok=None, output_per_mtok=None)
     with pytest.raises(BrokerError):
         replace(policy_for(broker_request), output_per_mtok=None)
     with pytest.raises(BrokerError) as exc:
-        admission.authorize(broker_request, replace(policy_for(broker_request), max_cost_usd=0.000001))
+        await admission.authorize(broker_request, replace(policy_for(broker_request), max_cost_usd=0.000001))
     assert exc.value.code == "budget"
 
 
-def test_known_zero_is_explicit_and_uses_the_same_token_bounds(broker_request):
+async def test_known_zero_is_explicit_and_uses_the_same_token_bounds(broker_request):
     policy = replace(policy_for(broker_request), max_cost_usd=0,
                      input_per_mtok=None, output_per_mtok=None)
-    allocated = admission.authorize(broker_request, policy)
+    allocated = await admission.authorize(broker_request, policy)
     assert allocated["cost_usd"] == 0
-    assert allocated["tokens"] == admission.required_input_reserve(broker_request.payload) + 50
+    assert allocated["tokens"] == await admission.required_input_reserve(broker_request.payload, broker_request.contract) + 50
 
 
 async def test_issued_binding_owns_full_hold_before_any_request_admission(broker_request):

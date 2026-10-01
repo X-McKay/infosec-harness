@@ -57,6 +57,8 @@ def controller_factory() -> Controller:
                 or spec.ledger_profile != profile.ledger_profile
                 or spec.provider_env != profile.provider_env
                 or spec.max_input_tokens < policy.max_input_tokens
+                or (profile.max_input_tokens_per_request is not None
+                    and spec.max_input_tokens != policy.max_input_tokens)
                 or spec.max_output_tokens < policy.max_output_tokens):
             raise BrokerError("policy", "Native deployment differs from approved access catalog")
         policies[(name, contract.digest)] = policy

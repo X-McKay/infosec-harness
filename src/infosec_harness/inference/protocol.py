@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import unicodedata
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
@@ -173,16 +174,74 @@ def logical_request_id(binding: ReservationBinding, request_identity: str) -> st
                    "request": request_identity, "protocol": PROTOCOL_VERSION})
 
 
-def required_input_reserve(payload: InferencePayload) -> int:
-    """Conservative byte/framing bound for operator-qualified byte tokenizers only.
+def _ascii_normalized_size(value: Any, _depth: int = 0) -> int:
+    """Sum without normalizing mapping keys into collisions.
 
-    Qualification of a provider's tokenizer/context cap is required independently.
-    Unknown tokenizers cannot use this bound as evidence of admission safety.
+    NFD decomposes every canonical equivalent before ASCII escaping. Taking the
+    larger original/NFD size covers original Jinja JSON and NFC UTF-8 bytes. JSON
+    punctuation/spacing and HTML-safe escaping are included, not guessed.
     """
-    parts = sum(len(message.get("parts", [])) for message in payload.messages)
-    tools = sum(len(payload.parameters.get(key, []) or []) for key in
-                ("function_tools", "output_tools", "builtin_tools"))
-    return len(canonical_bytes(payload.model_dump(mode="json"))) + 1024 * (parts + tools + 1)
+    if _depth > 64:
+        raise BrokerError("policy", "Admission rendering exceeds nesting bound")
+    if isinstance(value, str):
+        sizes = []
+        # Some supplementary CJK compatibility characters decompose to one BMP
+        # character: NFD alone would shrink Jinja's original surrogate-pair JSON.
+        for text in (value, unicodedata.normalize("NFD", value)):
+            encoded = json.dumps(text, ensure_ascii=True)
+            for character, escape in (("<", "\\u003c"), (">", "\\u003e"),
+                                      ("&", "\\u0026"), ("'", "\\u0027")):
+                encoded = encoded.replace(character, escape)
+            sizes.append(len(encoded))
+        return max(sizes)
+    if isinstance(value, dict):
+        return 2 + sum(_ascii_normalized_size(key, _depth + 1) + 2 + _ascii_normalized_size(item, _depth + 1)
+                       for key, item in value.items()) + 2 * max(0, len(value) - 1)
+    if isinstance(value, (list, tuple)):
+        return 2 + sum(_ascii_normalized_size(item, _depth + 1) for item in value) + 2 * max(0, len(value) - 1)
+    try:
+        return len(json.dumps(value, ensure_ascii=True, allow_nan=False))
+    except (ValueError, TypeError, RecursionError) as exc:
+        raise BrokerError("policy", "Admission value cannot be rendered") from exc
+
+
+async def required_input_reserve(payload: InferencePayload, contract: ExecutorContract) -> int:
+    """Byte-BPE bound over actual SDK shaping, without provider I/O.
+
+    Requires operator qualification of the tokenizer AND chat template. This covers
+    the published Qwen3.6 tokenizer/template at revision
+    6c7f09d4036e97393f82e9f9ecd1a5c35ca5ee92: NFC + byte-level BPE gives at most
+    one token per normalized byte; all 26 special-token literals consume fewer tokens
+    than their byte lengths. The template's fixed tools/system/generation literals
+    total <2048 bytes, each role/thinking/tool-response envelope <128 bytes, each
+    function-call envelope <128 bytes, and each parameter envelope <64 bytes.
+    Content is emitted once; stripping/thinking extraction cannot increase it.
+
+    SDK schema expansion, return-schema descriptions, and retry formatting are
+    measured AFTER transformation. Jinja HTML-safe ASCII JSON is bounded by the larger original/NFD
+    escaped size. Parsed call arguments are additionally counted because vLLM
+    decodes their JSON before XML rendering. Unknown templates/tokenizers need
+    separate qualification; a model name is never runtime execution evidence.
+    Wire digests/identities remain unchanged. Existing held allocations must not be
+    released or dispatched under a different executor image/contract.
+    """
+    from .compat import input_wire
+
+    wire = await input_wire(payload, contract)
+    messages = wire["messages"]
+    reserve = _ascii_normalized_size(wire) + 2048 + 128 * len(messages)
+    for message in messages:
+        for call in message.get("tool_calls", []) or []:
+            function = call.get("function", {})
+            arguments = function.get("arguments", {})
+            try:
+                arguments = json.loads(arguments) if isinstance(arguments, str) else arguments
+            except (ValueError, TypeError, RecursionError) as exc:
+                raise BrokerError("policy", "Tool-call arguments cannot be rendered") from exc
+            if not isinstance(arguments, dict):
+                raise BrokerError("policy", "Tool-call arguments must be an object")
+            reserve += 128 + 64 * len(arguments) + _ascii_normalized_size(arguments)
+    return reserve
 
 
 class InvocationRequest(StrictModel):

@@ -180,7 +180,7 @@ class Executor:
         ):
             raise BrokerError("budget")
         # Conservative byte ceiling rejects before claim; tokenizer refinement is separately versioned.
-        if required_input_reserve(request.payload) > self.settings.max_input_tokens:
+        if await required_input_reserve(request.payload, request.contract) > self.settings.max_input_tokens:
             raise BrokerError("budget")
         permit = await self.ledger.claim(request, self.settings.lease_id)
         if permit.request_id != request.request_id or permit.lease_id != self.settings.lease_id:

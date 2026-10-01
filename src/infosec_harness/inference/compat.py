@@ -60,3 +60,122 @@ class _CompatOpenAIChatModel(OpenAIChatModelBase):  # type: ignore[misc,valid-ty
         return _merge_leading_system_messages(mapped) if self._merge_system else mapped
 
 
+
+
+def _check_schema_expansion(schema: Any) -> tuple[int, int]:
+    """Bound acyclic local-ref expansion before SDK inlining/deepcopy.
+
+    The SDK protects cycles but repeated acyclic references can expand exponentially.
+    These are rendering resource bounds, independent of token/context admission.
+    """
+    from .protocol import BrokerError, _ascii_normalized_size
+
+    definitions = schema.get("$defs", {}) if isinstance(schema, dict) else {}
+    cache: dict[str, tuple[int, int, int]] = {}
+
+    def visit(value: Any, depth: int, stack: tuple[str, ...]) -> tuple[int, int, int]:
+        if depth > 64:
+            raise BrokerError("policy", "Admission schema exceeds rendering depth")
+        size, nodes, height = 0, 1, 1
+        if isinstance(value, dict):
+            for key, child in value.items():
+                child_size, child_nodes, child_height = visit(child, depth + 1, stack)
+                size += _ascii_normalized_size(key) + child_size + 4
+                nodes += child_nodes
+                height = max(height, child_height + 1)
+            if "$ref" in value:
+                reference = value["$ref"]
+                if not isinstance(reference, str) or not reference.startswith("#/$defs/"):
+                    raise BrokerError("policy", "Admission schema has an unsupported reference")
+                name = reference[8:]
+                if name in stack or name not in definitions:
+                    raise BrokerError("policy", "Admission schema reference cannot be bounded")
+                if name not in cache:
+                    cache[name] = visit(definitions[name], depth + 1, (*stack, name))
+                extra_size, extra_nodes, extra_height = cache[name]
+                size += extra_size
+                nodes += extra_nodes
+                height = max(height, extra_height + 1)
+        elif isinstance(value, list):
+            for child in value:
+                child_size, child_nodes, child_height = visit(child, depth + 1, stack)
+                size += child_size + 2
+                nodes += child_nodes
+                height = max(height, child_height + 1)
+        else:
+            size = _ascii_normalized_size(value)
+        if depth + height > 64:
+            raise BrokerError("policy", "Admission schema exceeds expanded rendering depth")
+        if size > 262_144 or nodes > 16_384:
+            raise BrokerError("policy", "Admission schema exceeds rendering expansion bound")
+        return size, nodes, height
+
+    size, nodes, _ = visit(schema, 0, ())
+    return size, nodes
+
+
+async def input_wire(payload: Any, contract: Any) -> dict[str, Any]:
+    """Pure SDK shaping, in the same order as request/_completions_create.
+
+    The restricted codec excludes every content item that can fetch a remote resource.
+    A rejecting transport additionally prevents any accidental provider request. This
+    deliberately does not invoke request() or its global allow-model-requests check.
+    """
+    import httpx2
+    from openai import AsyncOpenAI
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    from .codec import decode_payload
+    from .protocol import MAX_BODY_BYTES, BrokerError, _ascii_normalized_size
+
+    def deny_request(request: Any) -> Any:
+        raise BrokerError("policy", "Admission rendering cannot send a provider request")
+
+    messages, settings, params = decode_payload(payload)
+    schemas = [schema for definition in (*params.function_tools, *params.output_tools)
+               for schema in (definition.parameters_json_schema, definition.return_schema)
+               if schema is not None]
+    if params.output_object is not None:
+        schemas.append(params.output_object.json_schema)
+    total_size, total_nodes = 0, 0
+    for schema in schemas:
+        size, nodes = _check_schema_expansion(schema)
+        total_size += size
+        total_nodes += nodes
+        if total_size > 1_048_576 or total_nodes > 65_536:
+            raise BrokerError("policy", "Aggregate admission schemas exceed rendering bound")
+    async with (
+        httpx2.AsyncClient(transport=httpx2.MockTransport(deny_request), trust_env=False) as transport,
+        AsyncOpenAI(base_url=contract.endpoint, api_key="admission-no-network",
+                    max_retries=0, http_client=transport) as client,
+    ):
+        provider = OpenAIProvider(openai_client=client)
+        extra: dict[str, Any] = {}
+        if contract.atomic_intake:
+            from infosec_harness.agents.intake_schema import intake_openai_profile
+
+            extra["profile"] = intake_openai_profile(provider.model_profile(contract.model))
+        model = _CompatOpenAIChatModel(
+            contract.model, provider=provider, merge_system=contract.merge_system_messages,
+            min_max_tokens=contract.min_max_tokens, **extra,
+        )
+        try:
+            settings, params = model.prepare_request(settings, params)
+            settings = settings or {}
+            tools, _ = model._get_tool_choice(settings, params)
+            mapped = await model._map_messages(messages, params, model_settings=settings)
+            response_format = None
+            if params.output_mode == "native":
+                if params.output_object is None:
+                    raise BrokerError("policy", "Native output schema is missing")
+                response_format = model._map_json_schema(params.output_object)
+            elif params.output_mode == "prompted":
+                raise BrokerError("policy", "Prompted output is not qualified for admission")
+        except BrokerError:
+            raise
+        except Exception as exc:
+            raise BrokerError("policy", "Unsupported admission rendering") from exc
+    wire = {"messages": mapped, "tools": tools, "response_format": response_format}
+    if _ascii_normalized_size(wire) > MAX_BODY_BYTES:
+        raise BrokerError("policy", "Transformed admission input exceeds rendering bound")
+    return wire

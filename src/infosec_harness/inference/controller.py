@@ -60,7 +60,7 @@ class Controller:
         self.ledger, self.issue_invocation, self.clock = ledger, issue_invocation, clock
         self.lifecycle_lock = asyncio.Lock()
 
-    def policy(self, request: InferenceRequest) -> ReservationPolicy:
+    async def policy(self, request: InferenceRequest) -> ReservationPolicy:
         policy = (
             self.policies(request)
             if callable(self.policies)
@@ -68,7 +68,7 @@ class Controller:
         )
         if policy is None:
             raise BrokerError("identity")
-        authorize(request, policy)
+        await authorize(request, policy)
         return policy
 
     def lease_identity(self, authorization: str):
@@ -160,7 +160,7 @@ class Controller:
                     or claim.request.contract != lease.contract
                 ):
                     raise BrokerError("identity")
-                self.policy(claim.request)
+                await self.policy(claim.request)
                 await self.adapter.verify(lease)
                 permit = await self.ledger.claim(claim.request.request_id, lease_id=lease.lease_id)
                 return permit.model_dump(mode="json")
@@ -196,7 +196,7 @@ class Controller:
             raise BrokerError("identity") from None
 
     async def infer(self, request: InferenceRequest) -> InferenceResult:
-        policy = self.policy(request)
+        policy = await self.policy(request)
         stored = await self.ledger.get(request.request_id)
         if stored is not None:
             if stored.request != request:
@@ -218,7 +218,7 @@ class Controller:
                 raise BrokerError("expired")
             lease = await self.adapter.ensure(request.binding.run_id, request.contract)
             stored = await self.ledger.admit(
-                request, lease_id=lease.lease_id, allocation=authorize(request, policy)
+                request, lease_id=lease.lease_id, allocation=await authorize(request, policy)
             )
             if stored.state == "completed" and stored.result:
                 return stored.result
