@@ -5,7 +5,7 @@ __pycache__/
 .env
 *.egg-info/
 node_modules/
-web/dist/
+ui/dist/
 .ruff_cache/
 deploy/extra-ca.crt
 # Agent worktrees checked out inside the repository, and the pre-redesign research notes.

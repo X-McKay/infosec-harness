@@ -4,7 +4,7 @@ version: "1"
 # -- it says the path exists and a named control stops it, which is a claim about behaviour and
 # so gets probed. That split is the whole point of these cases.
 #
-# The pairs come from the seeded corpus, whose ground truth tests/test_corpus_oracle.py
+# The pairs come from the seeded corpus, whose ground truth tests/evals/test_corpus_oracle.py
 # verifies by driving each variant with a reference probe. So the labels here are not opinion:
 # the fixed variant demonstrably resists the payload, and the vulnerable one does not. Each
 # fixed variant is `neutralized` by a construct its cwe-* skill names verbatim, which is what

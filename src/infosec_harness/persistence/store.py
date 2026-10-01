@@ -8,7 +8,7 @@ from typing import Any
 
 from sqlalchemy import func, select, update
 
-from infosec_harness.domain.models import TriageRunOutput, canonical_json
+from infosec_harness.domain.models import TriageRunOutput
 from infosec_harness.graph.manifests import persisted_manifest
 from infosec_harness.persistence import db
 
@@ -224,7 +224,3 @@ def _run_summary(r: db.TriageRun) -> dict:
 
 def payload_hash(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
-
-
-def run_config_signature(out: TriageRunOutput) -> str:
-    return payload_hash(canonical_json({i.agent: i.config_hash for i in out.invocations}))

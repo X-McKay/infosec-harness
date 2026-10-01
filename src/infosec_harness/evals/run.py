@@ -262,6 +262,9 @@ async def run_experiment(
         ).hexdigest()[:16]
     )
 
+    if report is None:
+        report = get_settings().reports_dir / "evals" / f"{exp_id}.json"
+
     total = passed = invalid_output = budget_exhausted = unevidenced_safe = 0
     execution_not_checked_outcomes = execution_checks_passed = execution_failed = 0
     completed_cases = 0

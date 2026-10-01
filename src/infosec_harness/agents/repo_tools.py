@@ -151,7 +151,7 @@ def read_files(ctx: RunContext[AgentDeps], paths: list[str], start_line: int = 1
 # accuracy, because a truncated listing does not name the directories it left out: on the same
 # tree the procedure ends knowing 101 of 127 directories and 304 of 500 sources, and on a
 # 2000-file tree 288 of 501 directories -- a profile of part of a repository is wrong rather
-# than merely expensive. tests/test_exploration_cost.py holds those measurements.
+# than merely expensive. tests/agents/test_exploration_cost.py holds those measurements.
 #
 # This returns one line per DIRECTORY instead of one per file, so what it truncates is a
 # summary rather than the existence of most of the repository, and it always states the total

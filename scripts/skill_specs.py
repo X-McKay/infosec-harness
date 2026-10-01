@@ -223,7 +223,7 @@ SKILLS = {
                       "**That skill wins** wherever the two disagree, which is why the fallback "
                       "below hooks the real connection instead of replacing it — a run that "
                       "wrapped the cursor in a stand-in the target never used reported a clean "
-                      "negative on an exploitable finding (docs/LIVE_VALIDATION.md)."),
+                      "negative on an exploitable finding (docs/validation/LIVE_VALIDATION.md)."),
         ],
         safety=CWE_SAFETY, completion=CWE_COMPLETION),
     "cwe-78-os-command-injection": dict(

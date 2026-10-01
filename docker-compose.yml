@@ -31,7 +31,7 @@ services:
     environment:
       POSTGRES_USER: harness
       POSTGRES_PASSWORD: harness
-      POSTGRES_MULTIPLE: harness,temporal
+      POSTGRES_MULTIPLE: harness,temporal,temporal_visibility
     ports: ["${HARNESS_POSTGRES_PORT:-5432}:5432"]
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -53,7 +53,7 @@ services:
       POSTGRES_PWD: harness
       POSTGRES_SEEDS: postgres
       DBNAME: temporal
-      VISIBILITY_DBNAME: temporal
+      VISIBILITY_DBNAME: temporal_visibility
     ports: ["${HARNESS_TEMPORAL_PORT:-7233}:7233"]
 
   temporal-ui:
@@ -105,7 +105,7 @@ services:
     ports: ["${HARNESS_API_PORT:-8000}:8000"]
 
   web:
-    build: ./web
+    build: ./ui
     depends_on: [api]
     ports: ["${HARNESS_WEB_PORT:-8080}:${HARNESS_WEB_TARGET_PORT:-80}"]
 

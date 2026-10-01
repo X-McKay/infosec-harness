@@ -8,7 +8,7 @@
 #
 # KNOWN DEFECT, not fixed here: the Maven fragment this skill shows omits
 # -Dmaven.repo.local=/opt/home/.m2/repository, which install_path_violations rejects. See
-# tests/test_skill_evals.py::KNOWN_DEFECTS.
+# tests/agents/test_skill_evals.py::KNOWN_DEFECTS.
 skill: partial-build
 
 cases:

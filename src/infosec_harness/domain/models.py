@@ -398,7 +398,7 @@ class ProbePlan(_Model):
     # tool's JSON schema, and they are the only length guidance it gets there: with none, a
     # reasoning model has nothing telling it the answer is short, and deliberating over an
     # open-ended one is how probe-planner spent a whole 16000-token cap on thinking and
-    # emitted nothing (docs/LIVE_VALIDATION.md). The agent's instructions say the same thing;
+    # emitted nothing (docs/validation/LIVE_VALIDATION.md). The agent's instructions say the same thing;
     # saying it in both places means it survives a prompt the model skims.
     hypothesis: str = Field(description="One sentence: the exploit condition the test attempts")
     payload: str = Field(

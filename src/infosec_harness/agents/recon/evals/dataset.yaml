@@ -74,7 +74,7 @@ cases:
     payload: {}
     expected: javascript/jest
 
-  # --- Regression: a defect measured in a live run (docs/LIVE_VALIDATION.md) ----------------
+  # --- Regression: a defect measured in a live run (docs/validation/LIVE_VALIDATION.md) ----------------
   - name: a-test-tree-holding-only-a-gitkeep-still-declares-junit5
     category: regression
     # This is the fixture from the Maven warm-up defect: `src/test/java/com/example/` holds

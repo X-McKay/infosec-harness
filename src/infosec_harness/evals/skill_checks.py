@@ -38,7 +38,7 @@ def non_activation_problems(skill: SkillDoc) -> list[str]:
     word-overlap measure reads as a collision and which is in fact the correct complementary
     pair. A check that flags those trains its readers to ignore it, so only contradictions that
     are unambiguous from the text are raised here, and the semantic version is reported as
-    needing a model. Redirect targets are checked by tests/test_skills_consistency.py; they are
+    needing a model. Redirect targets are checked by tests/agents/test_skills_consistency.py; they are
     not re-checked here.
     """
     problems: list[str] = []
@@ -155,7 +155,7 @@ COMPETING_PAIRS = (
         "the protocol forbids mocking the sink while cwe-89's structure oracle needs to see the "
         "statement the driver received; the more specific skill won and a wrapped cursor the "
         "target never used reported a clean negative on an exploitable finding "
-        "(docs/LIVE_VALIDATION.md)",
+        "(docs/validation/LIVE_VALIDATION.md)",
     ),
     CompetingPair(
         "cwe-918-ssrf",
@@ -305,7 +305,7 @@ def ambiguity_problems(skills: tuple[SkillDoc, ...]) -> list[str]:
                 f"{pair.a} and {pair.b} disagree about which of them wins: "
                 + "; ".join(f"{r.skill} says {r.winner}" for r in relations)
                 + ". Two skills contradicting each other is the failure this repository has "
-                "already paid for once (docs/LIVE_VALIDATION.md)"
+                "already paid for once (docs/validation/LIVE_VALIDATION.md)"
             )
 
     for key in sorted(mutual_redirects(skills)):

@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     # Shared scratch space for repo snapshots and build contexts.
     workspace_dir: Path = Path(".harness/workspace")
 
+    # Local exports are separate from snapshots/build contexts and committed baselines.
+    reports_dir: Path = Path(".harness/reports")
+
     # Agents and models
     # Packaged with the code (agent-playbook 02, Build and packaging), not read from the
     # working directory: an installed wheel has no repository root to look beside.

@@ -45,7 +45,7 @@ GVISOR = {
                     "ensure_runtime_available raises SandboxUnavailable when runsc is absent "
                     "unless HARNESS_ALLOW_INSECURE_RUNTIME is set for development."),
     "owner": OWNER,
-    "evidence": ["tests/test_sandbox_policy.py", "src/infosec_harness/sandbox/policy.py"],
+    "evidence": ["tests/runtime/test_sandbox_policy.py", "src/infosec_harness/sandbox/policy.py"],
     # The fail-closed *check* is verified by tests; the isolation it selects has never run.
     # No host available to this project has runsc, so it earns no residual reduction.
     "effectiveness": "implemented",
@@ -55,25 +55,25 @@ CONTAINER_HARDENING = {
     "description": ("Containers run non-root with all capabilities dropped, no-new-privileges, "
                     "a read-only root filesystem, a tmpfs workdir, and CPU/memory/pid caps."),
     "owner": OWNER,
-    "evidence": ["tests/test_sandbox.py", "tests/test_sandbox_policy.py"],
+    "evidence": ["tests/runtime/test_sandbox.py", "tests/runtime/test_sandbox_policy.py"],
     "effectiveness": "verified",
 }
 NO_PROBE_NETWORK = {
     "id": "CTRL-SBX-003", "type": "preventive",
     "description": "Probe containers run with --network=none, so a probe has no egress at all.",
-    "owner": OWNER, "evidence": ["tests/test_sandbox.py"], "effectiveness": "verified",
+    "owner": OWNER, "evidence": ["tests/runtime/test_sandbox.py"], "effectiveness": "verified",
 }
 IMAGE_AND_EGRESS_ALLOWLIST = {
     "id": "CTRL-SBX-004", "type": "preventive",
     "description": ("Base images are restricted to an allowlisted registry set and build-time "
                     "egress is pinned to the registries a repo's declared ecosystem needs."),
-    "owner": OWNER, "evidence": ["tests/test_sandbox_policy.py"], "effectiveness": "verified",
+    "owner": OWNER, "evidence": ["tests/runtime/test_sandbox_policy.py"], "effectiveness": "verified",
 }
 UNTRUSTED_DATA_FRAMING = {
     "id": "CTRL-INJ-001", "type": "preventive",
     "description": ("Every prompt labels repository content, finding text, and probe output as "
                     "untrusted data and forbids following instructions found in it."),
-    "owner": OWNER, "evidence": ["tests/test_render.py"],
+    "owner": OWNER, "evidence": ["tests/runtime/test_render.py"],
     # Prompt-level defence against a capable adversary is not a control you can call verified.
     "effectiveness": "implemented",
 }
@@ -81,7 +81,7 @@ READ_ONLY_TOOLS = {
     "id": "CTRL-INJ-002", "type": "preventive",
     "description": ("The capability allowlist exposes no write tool at all: injected text has no "
                     "consequential operation to reach, only file reads and skill loads."),
-    "owner": OWNER, "evidence": ["tests/test_agents.py", "src/infosec_harness/agents/registry.py"],
+    "owner": OWNER, "evidence": ["tests/agents/test_agents.py", "src/infosec_harness/agents/registry.py"],
     "effectiveness": "verified",
 }
 ORACLE_CONTRACT = {
@@ -90,7 +90,7 @@ ORACLE_CONTRACT = {
                     "detected deterministically in code — never from a test passing, and never "
                     "from the model asserting it."),
     "owner": OWNER,
-    "evidence": ["tests/test_sandbox.py", "src/infosec_harness/sandbox/docker.py"],
+    "evidence": ["tests/runtime/test_sandbox.py", "src/infosec_harness/sandbox/docker.py"],
     "effectiveness": "verified",
 }
 VERDICT_EVIDENCE_CONTRACT = {
@@ -99,14 +99,14 @@ VERDICT_EVIDENCE_CONTRACT = {
                     "support: potentially_exploitable requires the oracle to have fired, and "
                     "likely_not_exploitable requires either a valid negative that reached the "
                     "precondition or an evidenced unreachable sink."),
-    "owner": OWNER, "evidence": ["tests/test_validators.py", "tests/test_graph.py"],
+    "owner": OWNER, "evidence": ["tests/agents/test_validators.py", "tests/runtime/test_graph.py"],
     "effectiveness": "verified",
 }
 THREE_WAY_VERDICT = {
     "id": "CTRL-FN-003", "type": "recovery",
     "description": ("`inconclusive` is a first-class outcome, so the absence of evidence is "
                     "reported as such instead of being rounded to 'not exploitable'."),
-    "owner": OWNER, "evidence": ["tests/test_graph.py", "docs/LIVE_VALIDATION.md"],
+    "owner": OWNER, "evidence": ["tests/runtime/test_graph.py", "docs/validation/LIVE_VALIDATION.md"],
     "effectiveness": "verified",
 }
 CORPUS_GROUND_TRUTH = {
@@ -115,7 +115,7 @@ CORPUS_GROUND_TRUTH = {
                     "assert each vulnerable variant really is exploitable and its fixed twin is "
                     "not — so a corpus whose ground truth has rotted fails rather than flatters."),
     "owner": OWNER,
-    "evidence": ["tests/test_corpus_oracle.py", "tests/test_corpus.py"],
+    "evidence": ["tests/evals/test_corpus_oracle.py", "tests/evals/test_corpus.py"],
     "effectiveness": "verified",
 }
 SKILL_CONSISTENCY = {
@@ -123,40 +123,40 @@ SKILL_CONSISTENCY = {
     "description": ("An invariant test prevents a per-CWE skill from recommending an oracle that "
                     "violates the probe protocol, which previously produced a probe whose "
                     "instrumentation was never used — a silent false negative."),
-    "owner": OWNER, "evidence": ["tests/test_skills_consistency.py"],
+    "owner": OWNER, "evidence": ["tests/agents/test_skills_consistency.py"],
     "effectiveness": "verified",
 }
 RUN_BUDGETS = {
     "id": "CTRL-OPS-001", "type": "preventive",
     "description": ("Each agent declares a per-run ceiling on model requests, tool calls, tokens, "
                     "and cost, enforced through UsageLimits in both the local and durable paths."),
-    "owner": OWNER, "evidence": ["tests/test_budgets.py"], "effectiveness": "verified",
+    "owner": OWNER, "evidence": ["tests/agents/test_budgets.py"], "effectiveness": "verified",
 }
 BOUNDED_RETRIES = {
     "id": "CTRL-OPS-002", "type": "preventive",
     "description": ("All four retry layers are bounded and their product is asserted, so a "
                     "deterministic failure cannot retry indefinitely."),
-    "owner": OWNER, "evidence": ["tests/test_retry_bounds.py"], "effectiveness": "verified",
+    "owner": OWNER, "evidence": ["tests/agents/test_retry_bounds.py"], "effectiveness": "verified",
 }
 FAILURE_CONTAINMENT = {
     "id": "CTRL-OPS-003", "type": "recovery",
     "description": ("A failure on one finding is recorded as inconclusive/error and the batch "
                     "continues; in the durable path each finding is its own child workflow."),
-    "owner": OWNER, "evidence": ["tests/test_graph.py"], "effectiveness": "verified",
+    "owner": OWNER, "evidence": ["tests/runtime/test_graph.py"], "effectiveness": "verified",
 }
 REVIEWED_BACKEND_CONFIG = {
     "id": "CTRL-PRIV-001", "type": "preventive",
     "description": ("The model backend and endpoint are declarative config in config/models.yaml "
                     "with no secrets, reviewed like code; a self-hosted OpenAI-spec endpoint is "
                     "supported so source need not leave the deployment's trust boundary."),
-    "owner": OWNER, "evidence": ["config/models.yaml", "tests/test_agents.py"],
+    "owner": OWNER, "evidence": ["config/models.yaml", "tests/agents/test_agents.py"],
     "effectiveness": "implemented",
 }
 COST_TELEMETRY = {
     "id": "CTRL-OPS-004", "type": "detective",
     "description": ("Tokens, cache hits, and estimated cost are recorded per agent invocation and "
                     "persisted with the run, and emitted as span attributes."),
-    "owner": OWNER, "evidence": ["tests/test_telemetry.py", "tests/test_persistence.py"],
+    "owner": OWNER, "evidence": ["tests/runtime/test_telemetry.py", "tests/persistence/test_persistence.py"],
     "effectiveness": "verified",
 }
 

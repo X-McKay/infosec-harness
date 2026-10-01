@@ -24,7 +24,7 @@ version: "3"
 # the sandbox — one to root, one to a host outside the egress allowlist — to make a build pass.
 #
 # The `regression` block below is seven defects measured in live runs, recorded in
-# docs/LIVE_VALIDATION.md. Each is a build that reported success, or a probe that reported
+# docs/validation/LIVE_VALIDATION.md. Each is a build that reported success, or a probe that reported
 # nothing, because the environment was wrong in a way no agent downstream could see. Several
 # arrive through the probe-time repair edge (graph.triage.RepairEnvironment), where the image
 # built and smoke-tested clean and the absence only shows up inside the probe — so those cases
@@ -147,7 +147,7 @@ cases:
           hint: the package may live on an internal index, e.g. https://pypi.acme.example/simple
     expected: unaddressed
 
-  # --- Regressions: defects measured in live runs (docs/LIVE_VALIDATION.md) -----------------
+  # --- Regressions: defects measured in live runs (docs/validation/LIVE_VALIDATION.md) -----------------
   - name: perl-dbi-driver-not-installed
     category: regression
     # Measured on the Perl corpus, and the reason eval-corpus/perl/*/cpanfile now declares

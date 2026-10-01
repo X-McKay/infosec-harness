@@ -136,14 +136,6 @@ class ModelsConfig(BaseModel):
     model_policies: dict[str, str] = Field(default_factory=dict)
     agents: dict[str, dict[str, str]] = Field(default_factory=dict)
 
-    def tier_for_policy(self, policy: str) -> str:
-        try:
-            return self.model_policies[policy]
-        except KeyError as e:
-            raise KeyError(
-                f"Unknown model policy {policy!r}; known: {sorted(self.model_policies)}"
-            ) from e
-
     def backend_for(self, agent_name: str | None) -> str:
         if agent_name and (b := self.agents.get(agent_name, {}).get("backend")):
             return b

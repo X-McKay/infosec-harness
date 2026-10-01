@@ -140,7 +140,7 @@ def eval_run(
         help="Model tier to run against (repeat to sweep and compare, e.g. -m sonnet -m opus)"),
     overlay: Path = typer.Option(None, help="Experiment overlay YAML"),
     repeat: int = typer.Option(1, help="Repetitions (LLM variance)"),
-    report: Path = typer.Option(None, help="Write an agentctl-compatible release report here"),
+    report: Path = typer.Option(None, help="Release report path (default: HARNESS_REPORTS_DIR/evals/<experiment-id>.json)"),
     report_dir: Path = typer.Option(
         None, help="With several --model, write one release report per model into this directory"),
 ):

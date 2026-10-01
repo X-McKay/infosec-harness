@@ -19,6 +19,7 @@ through the API and real Temporal worker. It never changes the host Docker conte
 The offline profile runs component checks and explicitly does not check Temporal or isolation.
 stop preserves this checkout's VM, volumes, findings, downloads, and generated configuration.
 reload restarts the editable API and worker after backend source changes without touching data.
+logs [service] displays and saves a bounded snapshot under .harness/logs/.
 EOF
 }
 
@@ -167,7 +168,20 @@ smoke_stack() {
   python_managed scripts/dev_setup_smoke.py \
     --api-url "http://127.0.0.1:${HARNESS_API_PORT}" \
     --web-url "http://127.0.0.1:${HARNESS_WEB_PORT}" \
+    --temporal-address "127.0.0.1:${HARNESS_TEMPORAL_PORT}" \
     --minio-url "http://127.0.0.1:${HARNESS_MINIO_PORT}/minio/health/ready"
+}
+
+save_logs() {
+  mkdir -p .harness/logs
+  local log_file
+  log_file="$(mktemp .harness/logs/compose-XXXXXXXX)"
+  if [[ -n "$SERVICE" ]]; then
+    compose logs --no-color --timestamps --tail=100 "$SERVICE" 2>&1 | tee "$log_file"
+  else
+    compose logs --no-color --timestamps --tail=100 2>&1 | tee "$log_file"
+  fi
+  echo "saved logs: $log_file"
 }
 
 start_full() {
@@ -177,6 +191,7 @@ start_full() {
   verify_sandbox
   compose up --build -d
   smoke_stack
+  save_logs
   echo "profile: full (stub inference; zero credentials and zero paid requests)"
   echo "sandbox: runsc probe and allowlisted build boundary passed"
   echo "temporal: deterministic API submission reached a terminal persisted result"
@@ -207,11 +222,12 @@ case "$COMMAND" in
     python_managed scripts/dev_setup_smoke.py \
       --api-url "http://127.0.0.1:${HARNESS_API_PORT}" \
       --web-url "http://127.0.0.1:${HARNESS_WEB_PORT}" \
+      --temporal-address "127.0.0.1:${HARNESS_TEMPORAL_PORT}" \
       --minio-url "http://127.0.0.1:${HARNESS_MINIO_PORT}/minio/health/ready"
     echo "reloaded API and worker; persisted data was preserved"
     ;;
   logs)
-    if [[ -n "$SERVICE" ]]; then compose logs --tail=100 "$SERVICE"; else compose logs --tail=100; fi
+    save_logs
     ;;
   smoke)
     if [[ "$PROFILE" == offline ]]; then

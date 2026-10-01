@@ -6,7 +6,7 @@ the verdict contract — so the spec's job is to state it declaratively and let 
 not to introduce a second source of truth. Member lists, roles, skills, and toolsets are read
 from the agent specs so the spec cannot drift from them.
 
-Run `uv run python scripts/gen_system_spec.py`; tests/test_system_spec.py asserts the
+Run `uv run python scripts/gen_system_spec.py`; tests/development/test_system_spec.py asserts the
 committed files match.
 """
 
