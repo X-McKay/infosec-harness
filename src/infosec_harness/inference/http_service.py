@@ -13,7 +13,9 @@ from urllib.parse import urlsplit
 import httpcore
 import httpx
 
+from .diagnostics import report_transport_failure
 from .protocol import MAX_BODY_BYTES, BrokerError, canonical_bytes
+from .timing import SERVER_TIMEOUT_S
 
 
 def https_origin(value: str) -> str:
@@ -153,6 +155,7 @@ class JsonChannel:
             raise BrokerError("policy")
         try:
             async with (
+                asyncio.timeout(timeout),
                 httpx.AsyncClient(
                     verify=self.context,
                     trust_env=False,
@@ -201,7 +204,9 @@ class JsonChannel:
             httpcore.ProtocolError,
             ssl.SSLError,
             OSError,
-        ):
+            TimeoutError,
+        ) as error:
+            report_transport_failure("json_channel", error)
             raise BrokerError("unavailable") from None
 
 
@@ -220,6 +225,7 @@ def serve(
             pass
 
         def do_POST(self):
+            future = None
             try:
                 if (
                     self.headers.get("Transfer-Encoding")
@@ -241,7 +247,7 @@ def serve(
                 future = asyncio.run_coroutine_threadsafe(
                     core.handle(self.path, body, headers), loop
                 )
-                response = future.result(timeout=120)
+                response = future.result(timeout=SERVER_TIMEOUT_S)
                 status = 200
             except BrokerError as exc:
                 response = {"error": exc.code}
@@ -254,6 +260,11 @@ def serve(
                     "completion_unknown": 409,
                     "expired": 410,
                 }.get(exc.code, 503)
+            except TimeoutError as error:
+                if future is not None and not future.done():
+                    future.cancel()
+                report_transport_failure("server", error)
+                response, status = {"error": "unavailable"}, 503
             except Exception:
                 response, status = {"error": "unavailable"}, 503
             encoded = canonical_bytes(response)

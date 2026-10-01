@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 import os
 import re
@@ -15,6 +16,7 @@ from pydantic import Field
 
 from .auth import AUTH_HEADER, verify_request
 from .codec import decode_payload, encode_response
+from .diagnostics import report_transport_failure
 from .http_service import JsonChannel, https_origin, parse_body, serve
 from .protocol import (
     BrokerError,
@@ -26,6 +28,7 @@ from .protocol import (
     canonical_bytes,
     required_input_reserve,
 )
+from .timing import PROVIDER_TIMEOUT_S, remaining_timeout
 
 _LOG = logging.getLogger(__name__)
 _DIAGNOSTIC_STAGES = frozenset({"provider_request", "response_codec", "inference", "ledger_complete"})
@@ -130,9 +133,7 @@ class OpenAIInference:
         from .compat import _CompatOpenAIChatModel
 
         messages, settings, params = decode_payload(request.payload)
-        timeout = min(90.0, request.binding.expires_at - time.time())
-        if timeout <= 0:
-            raise BrokerError("expired")
+        timeout = remaining_timeout(request.binding.expires_at, PROVIDER_TIMEOUT_S)
         # SSL_CERT_FILE names OpenShell's injected trust bundle; verification remains on.
         context = ssl.create_default_context()
         async with (
@@ -166,8 +167,10 @@ class OpenAIInference:
                 **extra,
             )
             try:
-                response = await model.request(messages, settings, params)
+                async with asyncio.timeout(timeout):
+                    response = await model.request(messages, settings, params)
             except BaseException as error:
+                report_transport_failure("provider_request", error)
                 _report_failure("provider_request", error)
                 raise
         usage = {

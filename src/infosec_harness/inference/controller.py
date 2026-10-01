@@ -14,6 +14,7 @@ from . import ledger as durable_ledger
 from .admission import ReservationPolicy, authorize
 from .auth import AUTH_HEADER, sign_request, verify_request
 from .codec import decode_payload, decode_response
+from .diagnostics import report_transport_failure
 from .http_service import JsonChannel, parse_body, serve, server_tls
 from .protocol import (
     BrokerError,
@@ -23,6 +24,13 @@ from .protocol import (
     InvocationRequest,
     StrictModel,
     canonical_bytes,
+)
+from .timing import (
+    CONTROLLER_TIMEOUT_S,
+    EXECUTOR_TIMEOUT_S,
+    PREPARATION_TIMEOUT_S,
+    RECONCILIATION_TIMEOUT_S,
+    remaining_timeout,
 )
 
 
@@ -59,6 +67,7 @@ class Controller:
         self.channel = executor_channel or JsonChannel()
         self.ledger, self.issue_invocation, self.clock = ledger, issue_invocation, clock
         self.lifecycle_lock = asyncio.Lock()
+        self._reconciliation_tasks: dict[str, tuple[InferenceRequest, asyncio.Task, dict]] = {}
 
     async def policy(self, request: InferenceRequest) -> ReservationPolicy:
         policy = (
@@ -196,6 +205,89 @@ class Controller:
             raise BrokerError("identity") from None
 
     async def infer(self, request: InferenceRequest) -> InferenceResult:
+        try:
+            async with asyncio.timeout(remaining_timeout(request.binding.expires_at, CONTROLLER_TIMEOUT_S, now=self.clock())):
+                return await self._infer(request)
+        except (TimeoutError, asyncio.CancelledError) as error:
+            report_transport_failure("controller", error)
+            return await self._reconcile_interrupted_request(request, error)
+
+    async def _reconcile_interrupted_request(self, request: InferenceRequest, error: BaseException) -> InferenceResult:
+        existing = self._reconciliation_tasks.get(request.request_id)
+        if existing is not None:
+            previous, task, outcome = existing
+            if previous != request:
+                raise BrokerError("conflict") from None
+        else:
+            outcome = {"state": None, "result": None}
+            task = asyncio.create_task(self._reconcile_interrupted(request, outcome))
+            self._reconciliation_tasks[request.request_id] = (request, task, outcome)
+            task.add_done_callback(lambda completed: self._reconciliation_done(request.request_id, completed))
+        try:
+            done, _ = await asyncio.wait({task}, timeout=RECONCILIATION_TIMEOUT_S)
+            if done:
+                # An outer wall timeout can cancel this shared child before
+                # re-entering reconciliation. That is not caller cancellation.
+                if not task.cancelled():
+                    task.result()
+            else:
+                # Joining a cancelled task can wait indefinitely for its finally
+                # cleanup. The durable fence precedes native cleanup below.
+                task.cancel()
+                report_transport_failure("controller", TimeoutError())
+        except asyncio.CancelledError:
+            task.cancel()
+            raise
+        except BrokerError as reconciliation_error:
+            if reconciliation_error.code == "conflict":
+                raise
+            report_transport_failure("controller", reconciliation_error)
+        except Exception as reconciliation_error:
+            report_transport_failure("controller", reconciliation_error)
+        if isinstance(error, asyncio.CancelledError):
+            raise error
+        if outcome["state"] == "completed" and outcome["result"] is not None:
+            return outcome["result"]
+        if outcome["state"] == "completion_unknown":
+            raise BrokerError("completion_unknown") from None
+        if isinstance(error, BrokerError):
+            raise error
+        raise BrokerError("unavailable") from None
+
+    def _reconciliation_done(self, request_id: str, task: asyncio.Task) -> None:
+        existing = self._reconciliation_tasks.get(request_id)
+        if existing is not None and existing[1] is task:
+            del self._reconciliation_tasks[request_id]
+        if not task.cancelled():
+            task.exception()  # Consume errors without exposing exception content.
+
+    async def _reconcile_interrupted(self, request: InferenceRequest, outcome: dict) -> None:
+        stored = await self.ledger.get(request.request_id)
+        if stored is None:
+            return
+        if stored.request != request:
+            raise BrokerError("conflict")
+        if stored.state == "accepted":
+            try:
+                stored = await self.ledger.fail_before_dispatch(request.request_id, lease_id=stored.lease_id)
+            except BrokerError as error:
+                if error.code != "completion_unknown":
+                    raise
+                # The claim CAS may have won the race against the preclaim fence.
+                stored = await self.ledger.get(request.request_id)
+        if stored.state == "dispatch_intent":
+            stored = await self.ledger.recover(request.request_id, lease_id=stored.lease_id)
+        outcome.update(state=stored.state, result=stored.result)
+        if stored.state not in {"failed_before_dispatch", "completion_unknown"}:
+            return
+        lease = self.adapter.leases.get(stored.lease_id)
+        if lease is None or lease.deployment != self.adapter.deployment:
+            raise BrokerError("identity")
+        # Fencing the durable row first prevents late claims/results even if native
+        # cleanup stalls, is cancelled, or needs a later idempotent retry.
+        await self.adapter.revoke(lease)
+
+    async def _infer(self, request: InferenceRequest) -> InferenceResult:
         policy = await self.policy(request)
         stored = await self.ledger.get(request.request_id)
         if stored is not None:
@@ -216,7 +308,8 @@ class Controller:
         else:
             if request.binding.expires_at <= self.clock():
                 raise BrokerError("expired")
-            lease = await self.adapter.ensure(request.binding.run_id, request.contract)
+            async with asyncio.timeout(remaining_timeout(request.binding.expires_at, PREPARATION_TIMEOUT_S, now=self.clock())):
+                lease = await self.adapter.ensure(request.binding.run_id, request.contract)
             stored = await self.ledger.admit(
                 request, lease_id=lease.lease_id, allocation=await authorize(request, policy)
             )
@@ -230,28 +323,20 @@ class Controller:
         )
         try:
             await self.channel.post(
-                self.adapter.service_url(lease), body, {AUTH_HEADER: signature}, timeout=100
+                self.adapter.service_url(lease), body, {AUTH_HEADER: signature},
+                timeout=remaining_timeout(request.binding.expires_at, EXECUTOR_TIMEOUT_S, now=self.clock())
             )
         except BrokerError as error:
             # A losing duplicate has no dispatch permit; it must not fence the winner.
             if error.code in {"pending", "conflict"}:
                 raise
-            # Native expiry, proxy failure and lost ACK never imply no upstream send.
-            observed = await self.ledger.get(request.request_id)
-            if observed and observed.state == "completed" and observed.result is not None:
-                return observed.result
-            if observed and observed.state == "dispatch_intent":
-                try:
-                    await self.adapter.revoke(lease)
-                finally:
-                    await self.ledger.recover(request.request_id, lease_id=lease.lease_id)
-                raise BrokerError("completion_unknown") from None
-            raise
+            # A channel timeout is mapped to unavailable: fence before native cleanup
+            # here too, including an accepted request whose remote claim is delayed.
+            return await self._reconcile_interrupted_request(request, error)
+
         observed = await self.ledger.get(request.request_id)
         if observed is None or observed.state != "completed" or observed.result is None:
-            if observed and observed.state == "dispatch_intent":
-                await self.ledger.recover(request.request_id, lease_id=lease.lease_id)
-            raise BrokerError("completion_unknown")
+            return await self._reconcile_interrupted_request(request, BrokerError("completion_unknown"))
         return observed.result
 
     async def recover(self, request_id: str) -> InferenceResult | None:

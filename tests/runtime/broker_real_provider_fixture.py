@@ -14,6 +14,7 @@ import uuid
 from collections import Counter
 from contextlib import suppress
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -71,6 +72,9 @@ class CorrectedPilotAmendment(BaseModel):
 
 
 class NativeRerunAmendment(BaseModel):
+    review_version: Literal[1, 2] = 1
+    retained_unknown_count: int | None = None
+    retained_completed_count: int | None = None
     model_config = ConfigDict(extra="forbid", strict=True)
     original_manifest_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     baseline_report_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
@@ -90,13 +94,19 @@ class NativeRerunAmendment(BaseModel):
     @model_validator(mode="after")
     def finite_rerun(self):
         identities = self.retained_unknown_request_ids + self.retained_completed_request_ids
+        counts = (10, 3) if self.review_version == 1 else (self.retained_unknown_count, self.retained_completed_count)
+        reason = ("reviewed native generation correction; retain all outcomes; no unknown resend" if self.review_version == 1
+                  else "reviewed native transport correction; retain all outcomes; no unknown resend")
+        if (self.review_version == 1 and (self.retained_unknown_count is not None or self.retained_completed_count is not None)
+                or self.review_version == 2 and (any(value is None or value < 0 for value in counts) or counts[0] == 0)):
+            raise ValueError("New review must declare retained outcome counts; historical review counts stay fixed")
         if (self.original_manifest_sha256 != "b41fb7a2bd695825bd2eff8b613f052e8c1319ad35bd053997c1a58cc1a20745"
                 or self.additional_trials != 22 or self.additional_graph_trials != 1
-                or len(self.retained_unknown_request_ids) != 10 or len(self.retained_completed_request_ids) != 3
-                or len(set(identities)) != 13 or not self.prior_reports or len(self.candidate_files) != 3
+                or (len(self.retained_unknown_request_ids), len(self.retained_completed_request_ids)) != counts
+                or len(set(identities)) != sum(counts) or not self.prior_reports or len(self.candidate_files) != 3
                 or any(len(x) != 64 or any(c not in "0123456789abcdef" for c in x) for x in identities + list(self.prior_reports.values()) + list(self.candidate_files.values()))
-                or self.reason != "reviewed native generation correction; retain all outcomes; no unknown resend"):
-            raise ValueError("Native rerun must retain10 unknown/3 saved and authorize22 agents/1 graph")
+                or self.reason != reason):
+            raise ValueError("Native rerun must retain all explicitly reviewed outcomes and authorize22 agents/1 graph")
         return self
 
 
@@ -125,13 +135,16 @@ def verify_native_rerun(amendment: NativeRerunAmendment) -> None:
     proof = read(amendment.ledger_proof_file, amendment.ledger_proof_sha256)
     if (set(proof) != {"status", "unknown_request_ids", "completed_request_ids", "unknown_holds_retained"}
             or proof["status"] != "passed" or proof["unknown_holds_retained"] is not True
+            or not isinstance(proof["unknown_request_ids"], list) or not isinstance(proof["completed_request_ids"], list)
+            or len(proof["unknown_request_ids"]) != len(amendment.retained_unknown_request_ids)
+            or len(proof["completed_request_ids"]) != len(amendment.retained_completed_request_ids)
             or set(proof["unknown_request_ids"]) != wanted["completion_unknown"]
             or set(proof["completed_request_ids"]) != wanted["completed"]):
         raise ValueError("Authoritative retained ledger proof differs")
     cause = read(amendment.cause_resolution_file, amendment.cause_resolution_sha256)
     if (set(cause) != {"status", "reviewed", "boundary", "evidence_sha256"}
             or cause["status"] != "passed" or cause["reviewed"] is not True
-            or cause["boundary"] != "native-policy-generation"
+            or cause["boundary"] != ("native-policy-generation" if amendment.review_version == 1 else "native-response-acknowledgement")
             or not isinstance(cause["evidence_sha256"], str) or len(cause["evidence_sha256"]) != 64
             or any(c not in "0123456789abcdef" for c in cause["evidence_sha256"])):
         raise ValueError("Reviewed native cause resolution is required")
@@ -482,6 +495,16 @@ async def seed_root(root_id: str, manifest: RealProviderManifest) -> None:
         await session.commit()
 
 
+async def recover_owned_submission(client, workflow_id: str, queue: str):
+    """Recover a submitted run only after checking its declared ownership scope."""
+    description = await asyncio.wait_for(client.get_workflow_handle(workflow_id).describe(), 10)
+    if (description.id != workflow_id or description.task_queue != queue
+            or description.workflow_type != "RealProviderWorkflow" or not description.run_id):
+        raise ValueError("Submitted workflow ownership differs")
+    return client.get_workflow_handle(workflow_id, run_id=description.run_id,
+                                      first_execution_run_id=description.run_id)
+
+
 async def run_temporal(manifest: RealProviderManifest, report_path: Path) -> dict:
     from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
     from temporalio.client import Client
@@ -518,9 +541,11 @@ async def run_temporal(manifest: RealProviderManifest, report_path: Path) -> dic
             row["config"] = CONFIGS[agent].model_dump(mode="json")
             row["baseline_comparison"] = compare_baseline(agent, row["config"], case_digest)
             handle = None
+            workflow_id = "batch:" + root_id
+            row["workflow_id"] = workflow_id
             try:
                 handle = await client.start_workflow(RealProviderWorkflow.run, workflow_input(inputs),
-                    id="batch:" + root_id, task_queue=queue)
+                    id=workflow_id, task_queue=queue)
                 result = await asyncio.wait_for(handle.result(), 1200)
                 output_type = output_class(agent)
                 if agent == "verdict":
@@ -530,11 +555,20 @@ async def run_temporal(manifest: RealProviderManifest, report_path: Path) -> dic
                 row.update(score_output(agent, output, predict, expected))
                 row.update(execution="passed", requests=result["requests"], input_tokens=result["input_tokens"],
                            output_tokens=result["output_tokens"], tools_called=result["tools_called"])
-            except Exception as error:
+            except (Exception, asyncio.CancelledError) as error:
                 row["failure_type"] = type(error).__name__
+                if handle is None:
+                    try:
+                        handle = await recover_owned_submission(client, workflow_id, queue)
+                        row["submission_recovery"] = "passed"
+                    except Exception as recovery_error:
+                        row["submission_recovery"] = "failed"
+                        row["submission_recovery_failure_type"] = type(recovery_error).__name__
                 if handle is not None:
                     with suppress(Exception):
                         await handle.terminate("Bounded real-provider qualification ended")
+                if isinstance(error, asyncio.CancelledError):
+                    raise
             finally:
                 row["elapsed_seconds"] = round(time.monotonic() - started, 3)
                 if handle is None:
@@ -572,8 +606,9 @@ async def run_temporal(manifest: RealProviderManifest, report_path: Path) -> dic
                         row["ledger"] = await ledger_snapshot(root_id)
                 report["cases"].append(row)
                 private_write(report_path, report)
-    except Exception as error:
+    except (Exception, asyncio.CancelledError) as error:
         report["failure_type"] = type(error).__name__
+        report["interrupted"] = isinstance(error, asyncio.CancelledError)
         report["status"] = "failed"
     finally:
         with suppress(ProcessLookupError):
@@ -605,7 +640,8 @@ async def serve_worker(manifest: RealProviderManifest, queue: str):
 
 async def phase_main(manifest, args):
     task = asyncio.current_task()
-    asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, task.cancel)
+    for termination_signal in (signal.SIGTERM, signal.SIGINT):
+        asyncio.get_running_loop().add_signal_handler(termination_signal, task.cancel)
     if args.phase == "worker":
         await serve_worker(manifest, args.queue)
         return None

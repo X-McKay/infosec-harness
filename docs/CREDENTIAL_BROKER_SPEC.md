@@ -2,7 +2,7 @@
 
 Status: Implemented opt-in contracts; corrected-topology G0 passed; bounded native/service qualification passed; rollout disabled
 Date: 2026-10-01
-Specification version: 0.2.4
+Specification version: 0.2.5
 
 The October local-provider qualification and retained failures are recorded in [live-provider evidence](validation/CREDENTIAL_BROKER_LIVE_PROVIDER.md). Admission behavior changed without changing wire protocol v1; deploy the new immutable executor contract and drain prior allocations before adoption.
 
@@ -103,6 +103,26 @@ Brokered mode MUST require request enforcement, deny direct egress, block metada
 Upstream credentials MUST be dedicated to the required service, use short expiry where supported, and have provider-side quotas or spend limits. Runtime setup MUST explicitly select provider attachments and avoid ambient credential discovery. The gateway's secret storage, encryption or equivalent access protection, backup handling, file permissions, and admin authentication MUST be assessed before live acceptance. Broker logs MUST omit request bodies and authorization material by default.
 
 Rotation MUST stop admitting requests to the old executor, wait for the provider change acknowledgement, launch a new process with the new reference, verify the new contract, and resume admission. Do not assume an existing process has adopted a new credential. Revocation MUST block new admission immediately and detach the provider with acknowledgement; destroy the executor when acknowledgement cannot be established. In-flight provider requests may finish or remain unknown, and revocation MUST not be reported as upstream cancellation.
+
+## Nested request deadlines
+
+The provider call has a 90-second total wall deadline, independent of SDK timeout settings
+and HTTP inactivity. Ledger hops allow 30 seconds each. Native preparation allows 90 seconds;
+the executor hop allows 150 seconds, the controller request allows 285 seconds, and bounded
+reconciliation allows another 45 seconds. The HTTP server allows 345 seconds and the worker
+allows 360 seconds, below the existing 600-second model activity ceiling. Admission and
+provider execution remain capped by the binding expiry. Read-only saved-result recovery may
+continue after expiry without granting fresh dispatch authority.
+
+Timeout or cancellation MUST durably fence an accepted request before slow native cleanup.
+A concurrent claim MUST be reconciled as uncertain unless a completed result is already saved.
+Cleanup MUST remain bounded and preserve uncertain budget holds. If ledger availability
+prevents corroborating the fence, the controller MUST report unavailability and retain
+allocations for explicit recovery; response expiry is not proof of upstream cancellation.
+Transport diagnostics MUST
+contain only fixed boundary and failure categories, with no exception text, endpoints,
+headers, credentials or model payloads. These timing changes require fresh executor images and
+full-contract identities; the wire protocol and durable workflow payloads remain unchanged.
 
 ## Failure and durable recovery contract
 

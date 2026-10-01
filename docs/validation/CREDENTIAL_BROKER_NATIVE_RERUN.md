@@ -123,3 +123,40 @@ all 13 broker-owned uncertain holds retained. The fresh private database dump SH
 All ten primary container identities stayed unchanged. Actual runsc/build-egress fixtures
 and primary API/web/storage/persistence/Temporal smoke passed after the stopped trials.
 The previous intermittent OOM-notification reliability failure remains retained.
+
+## Response acknowledgement correction (fresh qualification pending)
+
+Review confirmed that the old worker's 90-second wait covered native preparation as well as
+execution, while the controller allowed a 100-second executor hop and the provider allowed
+90 seconds. Legal inner work could therefore outlast the worker. The retained Temporal
+failures are consistent with this mismatch; their suppressed exception causes do not prove
+that every failure came from the same network condition.
+
+Specification behavior is now version 0.2.5. The provider retains a 90-second total wall bound,
+including continuous streaming and an SDK timeout override. Nested preparation, ledger,
+executor, reconciliation, server and worker allowances are explicit. New fixed-category
+transport diagnostics expose the failing boundary without exception text or payloads.
+Cancellation durably fences accepted work and reconciles concurrent dispatch without releasing
+uncertain holds. Controlled regressions cover acknowledgement loss, exact-request retry,
+cached completion, unknown fencing and interruption checkpointing. Native acceptance requires
+a fresh standard executor image, new full-contract identities and a finite reviewed rerun;
+wire request identity and durable workflow payloads are unchanged. Historical histories and
+all 13 uncertain/54 completed ledger rows remain bound to their original contracts.
+
+The official [OpenShell inference debugging pattern](https://github.com/NVIDIA/OpenShell/blob/main/skills/debug-inference/SKILL.md)
+puts the request timeout under application control, attaches an exact endpoint-bound provider
+profile, waits for attachment acknowledgement and uses a fresh process. Provider readiness
+does not test model completion or establish cancellation of an already forwarded request.
+Current upstream documentation is a reference for these boundaries, not evidence that the
+pinned backported release or this harness deployment has passed qualification.
+
+Final offline acceptance for this correction passed: 2,359 tests, 40 skips and 861 warnings
+in 77.24 seconds. Canonical lint/compile/all-agent validation, generated-artifact and
+skill-drift checks passed. Independent review passed 93 controller/ledger/timing/acknowledgement
+cases; the broader focused gate passed 137 cases. The fresh standard executor image is
+`sha256:dd78036ed62051b5cc130165d9b87d557e6b000925099c4e4baaf4ebf13a7473`.
+It was built through the actual qualified runsc/build-egress builder, loaded into the dedicated
+native daemon, and matched the generated minimal context and checkout source. Its isolated
+network-none, read-only, capabilities-dropped import check passed. No diagnostic sink is
+included. This evidence establishes the controlled correction and packaging; fresh native
+agent/graph acceptance remains `not_checked` until the frozen live trial completes.

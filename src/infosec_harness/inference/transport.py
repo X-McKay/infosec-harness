@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import ssl
 import time
@@ -19,6 +20,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from infosec_harness.agents.intake_schema import intake_openai_profile
 from infosec_harness.inference.auth import AUTH_HEADER, sign_request
 from infosec_harness.inference.codec import decode_response, encode_payload
+from infosec_harness.inference.diagnostics import report_transport_failure
 from infosec_harness.inference.http_service import parse_body
 from infosec_harness.inference.protocol import (
     BrokerError,
@@ -32,6 +34,7 @@ from infosec_harness.inference.protocol import (
     digest,
     logical_request_id,
 )
+from infosec_harness.inference.timing import WORKER_TIMEOUT_S, remaining_timeout
 
 INFER_PATH = "/v1/infer"
 RESULTS_PATH = "/v1/results"
@@ -119,7 +122,7 @@ class BrokerModel(Model):
         client_key: str | None,
         request_identity: Callable[[], str] | None = None,
         http_transport: httpx.AsyncBaseTransport | None = None,
-        timeout: float = 90.0,
+        timeout: float = WORKER_TIMEOUT_S,
     ) -> None:
         if binding.contract_digest != contract.digest:
             raise BrokerError("identity")
@@ -211,14 +214,17 @@ class BrokerModel(Model):
             if self.client_cert and self.client_key:
                 cert = (self.client_cert, self.client_key)
                 context.load_cert_chain(*cert)
+            timeout = (self.timeout if request_path == RESULTS_PATH
+                       else remaining_timeout(request.binding.expires_at, self.timeout))
             async with (
+                asyncio.timeout(timeout),
                 httpx.AsyncClient(
                     verify=context,
                     cert=cert,
                     trust_env=False,
                     follow_redirects=False,
                     transport=self.http_transport,
-                    timeout=self.timeout,
+                    timeout=timeout,
                 ) as client,
                 client.stream(
                     "POST",
@@ -237,9 +243,11 @@ class BrokerModel(Model):
                     raise _response_error(response.status_code, response_body)
         except BrokerError:
             raise
-        except (httpx.HTTPError, OSError, ssl.SSLError, ValueError):
+        except (httpx.HTTPError, OSError, ssl.SSLError, ValueError, TimeoutError) as error:
+            report_transport_failure("worker_controller", error)
             raise TransientBrokerError("unavailable") from None
-        except Exception:
+        except Exception as error:
+            report_transport_failure("worker_controller", error)
             raise TransientBrokerError("unavailable") from None
 
         try:

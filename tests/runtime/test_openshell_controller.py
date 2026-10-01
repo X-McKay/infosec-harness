@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextlib import suppress
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -69,7 +70,17 @@ def controller_fixture(tmp_path):
     async def recover(identity, *, lease_id):
         events.append("recover")
         stored = rows[identity]
-        rows[identity] = replace(stored, state="completion_unknown")
+        if stored.state == "dispatch_intent":
+            rows[identity] = replace(stored, state="completion_unknown")
+        return rows[identity]
+
+    async def fail_before_dispatch(identity, *, lease_id):
+        events.append("fail_before_dispatch")
+        stored = rows[identity]
+        if stored.state == "dispatch_intent":
+            raise BrokerError("completion_unknown")
+        if stored.state == "accepted":
+            rows[identity] = replace(stored, state="failed_before_dispatch")
         return rows[identity]
 
     async def ensure(run, contract):
@@ -93,7 +104,8 @@ def controller_fixture(tmp_path):
         revoke=revoke,
         service_url=lambda lease: "https://gateway.test/s/ih-name/infer/v1/infer",
     )
-    ledger = SimpleNamespace(get=get, admit=admit, claim=claim, complete=complete, recover=recover)
+    ledger = SimpleNamespace(get=get, admit=admit, claim=claim, complete=complete, recover=recover,
+                             fail_before_dispatch=fail_before_dispatch)
     policy = ReservationPolicy("verdict", "test", request.contract.digest, "config", 10000, 16, 0)
     core = Controller(
         adapter=adapter,
@@ -176,7 +188,8 @@ async def test_ambiguous_executor_failure_revokes_fences_and_never_resends(tmp_p
     with pytest.raises(BrokerError, match="completion_unknown"):
         await core.infer(request)
     assert events.count("send") == 1
-    assert events.index("revoke") < events.index("recover")
+    # Durable fencing must precede potentially slow native cleanup.
+    assert events.index("recover") < events.index("revoke")
     assert rows[request.request_id].state == "completion_unknown"
 
 
@@ -677,3 +690,212 @@ async def test_close_during_preflight_cannot_publish_or_create_an_executor(tmp_p
         await create
     await close
     assert adapter.leases == {} and calls == []
+
+
+async def test_controller_wall_timeout_fences_claimed_request_without_redispatch(tmp_path, monkeypatch):
+    from infosec_harness.inference import controller as module
+
+    core, request, lease, events, rows = controller_fixture(tmp_path)
+    async def interrupted(_):
+        await core.ledger.admit(request, lease_id=lease.lease_id, allocation={})
+        await core.ledger.claim(request.request_id, lease_id=lease.lease_id)
+        await asyncio.sleep(1)
+        raise AssertionError("Controller wall deadline must cancel this work")
+    monkeypatch.setattr(module, "CONTROLLER_TIMEOUT_S", 0.02)
+    monkeypatch.setattr(core, "_infer", interrupted)
+    with pytest.raises(BrokerError, match="completion_unknown"):
+        await core.infer(request)
+    assert rows[request.request_id].state == "completion_unknown"
+    assert lease.status == "deleted"
+    assert events.count("revoke") == events.count("recover") == 1
+
+
+async def test_controller_cancellation_retains_unknown_and_revokes_owner(tmp_path, monkeypatch):
+    core, request, lease, events, rows = controller_fixture(tmp_path)
+    claimed = asyncio.Event()
+    async def interrupted(_):
+        await core.ledger.admit(request, lease_id=lease.lease_id, allocation={})
+        await core.ledger.claim(request.request_id, lease_id=lease.lease_id)
+        claimed.set()
+        await asyncio.sleep(1)
+    monkeypatch.setattr(core, "_infer", interrupted)
+    task = asyncio.create_task(core.infer(request))
+    await claimed.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert rows[request.request_id].state == "completion_unknown"
+    assert lease.status == "deleted"
+    assert events.count("revoke") == events.count("recover") == 1
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_interrupted_accepted_request_fences_delayed_claim_before_cleanup(tmp_path, monkeypatch, cancel):
+    from infosec_harness.inference import controller as module
+
+    core, request, lease, events, rows = controller_fixture(tmp_path)
+    admitted, cleanup_started, release_cleanup = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    async def interrupted(_):
+        await core.ledger.admit(request, lease_id=lease.lease_id, allocation={"tokens": 17})
+        admitted.set()
+        await asyncio.sleep(1)
+    async def cleanup(_):
+        cleanup_started.set()
+        await release_cleanup.wait()
+    monkeypatch.setattr(module, "CONTROLLER_TIMEOUT_S", 0.02)
+    monkeypatch.setattr(core, "_infer", interrupted)
+    monkeypatch.setattr(core.adapter, "revoke", cleanup)
+    task = asyncio.create_task(core.infer(request))
+    await admitted.wait()
+    if cancel:
+        task.cancel()
+    await cleanup_started.wait()
+    assert rows[request.request_id].state == "failed_before_dispatch"
+    assert rows[request.request_id].allocation == {"tokens": 17}
+    with pytest.raises(BrokerError):
+        await core.ledger.claim(request.request_id, lease_id=lease.lease_id)
+    release_cleanup.set()
+    with pytest.raises(asyncio.CancelledError if cancel else BrokerError):
+        await task
+    assert events.count("fail_before_dispatch") == 1 and "recover" not in events
+
+
+async def test_preclaim_fence_racing_claim_retains_unknown_before_cleanup(tmp_path, monkeypatch):
+    from infosec_harness.inference import controller as module
+
+    core, request, lease, events, rows = controller_fixture(tmp_path)
+    original = core.ledger.fail_before_dispatch
+    async def claim_race(*args, **kwargs):
+        await core.ledger.claim(request.request_id, lease_id=lease.lease_id)
+        return await original(*args, **kwargs)
+    async def interrupted(_):
+        await core.ledger.admit(request, lease_id=lease.lease_id, allocation={"tokens": 17})
+        await asyncio.sleep(1)
+    async def cleanup(_):
+        assert rows[request.request_id].state == "completion_unknown"
+        events.append("revoke")
+    monkeypatch.setattr(module, "CONTROLLER_TIMEOUT_S", 0.02)
+    monkeypatch.setattr(core, "_infer", interrupted)
+    monkeypatch.setattr(core.ledger, "fail_before_dispatch", claim_race)
+    monkeypatch.setattr(core.adapter, "revoke", cleanup)
+    with pytest.raises(BrokerError, match="completion_unknown"):
+        await core.infer(request)
+    assert rows[request.request_id].allocation == {"tokens": 17}
+    assert events.count("recover") == events.count("revoke") == 1
+
+
+async def test_reconciliation_cutoff_does_not_join_slow_cancel_cleanup_or_accumulate_duplicates(tmp_path, monkeypatch):
+    import time
+
+    from infosec_harness.inference import controller as module
+
+    core, request, lease, events, rows = controller_fixture(tmp_path)
+    cleanup_release, cleanup_cancelled = asyncio.Event(), asyncio.Event()
+    async def interrupted(_):
+        await core.ledger.admit(request, lease_id=lease.lease_id, allocation={"tokens": 17})
+        if rows[request.request_id].state == "accepted":
+            await core.ledger.claim(request.request_id, lease_id=lease.lease_id)
+        await asyncio.sleep(1)
+    async def cleanup(_):
+        events.append("revoke")
+        try:
+            await asyncio.sleep(1)
+        finally:
+            cleanup_cancelled.set()
+            # Model a native subprocess finally block that does not finish promptly.
+            while not cleanup_release.is_set():
+                with suppress(asyncio.CancelledError):
+                    await cleanup_release.wait()
+    monkeypatch.setattr(module, "CONTROLLER_TIMEOUT_S", 0.02)
+    monkeypatch.setattr(module, "RECONCILIATION_TIMEOUT_S", 0.02)
+    monkeypatch.setattr(core, "_infer", interrupted)
+    monkeypatch.setattr(core.adapter, "revoke", cleanup)
+    try:
+        for _ in range(2):
+            started = time.monotonic()
+            with pytest.raises(BrokerError, match="completion_unknown"):
+                await core.infer(request)
+            assert time.monotonic() - started < 0.2
+            assert rows[request.request_id].state == "completion_unknown"
+            assert rows[request.request_id].allocation == {"tokens": 17}
+        await cleanup_cancelled.wait()
+        assert len(core._reconciliation_tasks) == 1
+        assert events.count("revoke") == events.count("recover") == 1
+    finally:
+        tasks = [entry[1] for entry in core._reconciliation_tasks.values()]
+        cleanup_release.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+    assert not core._reconciliation_tasks
+
+
+async def test_preclaim_fence_racing_saved_completion_returns_exact_result(tmp_path, monkeypatch):
+    from infosec_harness.inference import controller as module
+
+    core, request, lease, events, rows = controller_fixture(tmp_path)
+    result = InferenceResult(request_id=request.request_id,
+        response=encode_response(ModelResponse(parts=[TextPart("saved")])),
+        usage={})
+    async def completed_race(identity, *, lease_id):
+        rows[identity] = replace(rows[identity], state="completed", result=result)
+        return rows[identity]
+    async def interrupted(_):
+        await core.ledger.admit(request, lease_id=lease.lease_id, allocation={"tokens": 17})
+        await asyncio.sleep(1)
+    monkeypatch.setattr(module, "CONTROLLER_TIMEOUT_S", 0.02)
+    monkeypatch.setattr(core, "_infer", interrupted)
+    monkeypatch.setattr(core.ledger, "fail_before_dispatch", completed_race)
+    assert await core.infer(request) is result
+    assert "recover" not in events and "revoke" not in events
+    assert rows[request.request_id].allocation == {"tokens": 17}
+
+
+async def test_mapped_channel_wall_timeout_fences_delayed_remote_claim(tmp_path):
+    core, request, lease, events, rows = controller_fixture(tmp_path)
+    async def failed_channel(*args, **kwargs):
+        assert rows[request.request_id].state == "accepted"
+        raise BrokerError("unavailable")  # JsonChannel maps its wall timeout to this code.
+    core.channel = SimpleNamespace(post=failed_channel)
+    with pytest.raises(BrokerError, match="unavailable"):
+        await core.infer(request)
+    assert rows[request.request_id].state == "failed_before_dispatch"
+    assert lease.status == "deleted"
+    with pytest.raises(BrokerError):
+        await core.ledger.claim(request.request_id, lease_id=lease.lease_id)
+    assert events.index("fail_before_dispatch") < events.index("revoke")
+
+
+async def test_uncommitted_native_success_ack_fences_delayed_claim(tmp_path):
+    core, request, lease, events, rows = controller_fixture(tmp_path)
+    async def uncommitted_ack(*args, **kwargs):
+        return {}
+    core.channel = SimpleNamespace(post=uncommitted_ack)
+    with pytest.raises(BrokerError, match="completion_unknown"):
+        await core.infer(request)
+    assert rows[request.request_id].state == "failed_before_dispatch"
+    assert lease.status == "deleted"
+    with pytest.raises(BrokerError):
+        await core.ledger.claim(request.request_id, lease_id=lease.lease_id)
+    assert events.index("fail_before_dispatch") < events.index("revoke")
+
+
+async def test_outer_wall_during_mapped_channel_cleanup_does_not_leak_child_cancellation(tmp_path, monkeypatch):
+    from infosec_harness.inference import controller as module
+
+    core, request, lease, events, rows = controller_fixture(tmp_path)
+    cleanup_started = asyncio.Event()
+    async def unavailable_after_claim(*args, **kwargs):
+        await core.ledger.claim(request.request_id, lease_id=lease.lease_id)
+        raise BrokerError("unavailable")
+    async def slow_cleanup(_):
+        cleanup_started.set()
+        await asyncio.sleep(1)
+    monkeypatch.setattr(module, "CONTROLLER_TIMEOUT_S", 0.02)
+    monkeypatch.setattr(module, "RECONCILIATION_TIMEOUT_S", 0.2)
+    monkeypatch.setattr(core.adapter, "revoke", slow_cleanup)
+    core.channel = SimpleNamespace(post=unavailable_after_claim)
+    with pytest.raises(BrokerError, match="completion_unknown"):
+        await core.infer(request)
+    assert cleanup_started.is_set()
+    assert rows[request.request_id].state == "completion_unknown"
+    assert events.count("recover") == 1
+    assert not core._reconciliation_tasks

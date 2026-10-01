@@ -401,3 +401,217 @@ def test_native_rerun_denies_unrelated_third_candidate_file(tmp_path):
                 maximum_pilot_agent_trials=22, phases=['native-local', 'native-temporal'])
     with pytest.raises(ValidationError, match='exactly the declared'):
         RealProviderManifest.model_validate(data)
+
+
+def reviewed_transport_rerun(tmp_path):
+    rerun = native_rerun(tmp_path)
+    unknown = rerun.retained_unknown_request_ids + [hashlib.sha256(f'unknown-{i}'.encode()).hexdigest() for i in range(3)]
+    completed = rerun.retained_completed_request_ids + [hashlib.sha256(f'saved-{i}'.encode()).hexdigest() for i in range(51)]
+    path = next(iter(rerun.prior_reports))
+    Path(path).write_text(json.dumps({'ledger': {'requests': [
+        {'request_id': identity, 'state': state}
+        for state, identities in [('completion_unknown', unknown), ('completed', completed)] for identity in identities]}}))
+    proof = Path(rerun.ledger_proof_file)
+    proof.write_text(json.dumps({'status': 'passed', 'unknown_request_ids': unknown,
+        'completed_request_ids': completed, 'unknown_holds_retained': True}))
+    cause = Path(rerun.cause_resolution_file)
+    value = json.loads(cause.read_text())
+    value['boundary'] = 'native-response-acknowledgement'
+    cause.write_text(json.dumps(value))
+    values = rerun.model_dump()
+    values.update(review_version=2, retained_unknown_count=13, retained_completed_count=54,
+        retained_unknown_request_ids=unknown, retained_completed_request_ids=completed,
+        prior_reports={path: hashlib.sha256(Path(path).read_bytes()).hexdigest()},
+        ledger_proof_sha256=hashlib.sha256(proof.read_bytes()).hexdigest(),
+        cause_resolution_sha256=hashlib.sha256(cause.read_bytes()).hexdigest(),
+        reason='reviewed native transport correction; retain all outcomes; no unknown resend')
+    return type(rerun).model_validate(values)
+
+
+def test_new_review_retains_declared_current_outcomes_without_changing_historical_scope(tmp_path):
+    from broker_real_provider_fixture import verify_native_rerun
+    rerun = reviewed_transport_rerun(tmp_path)
+    verify_native_rerun(rerun)
+    assert len(rerun.retained_unknown_request_ids) == 13
+    assert len(rerun.retained_completed_request_ids) == 54
+    assert (rerun.additional_trials, rerun.additional_graph_trials) == (22, 1)
+    with pytest.raises(ValidationError):
+        type(rerun).model_validate({**rerun.model_dump(), 'review_version': 1})
+
+
+@pytest.mark.parametrize('changed', [{'retained_unknown_count': 12}, {'retained_completed_count': 53},
+    {'retained_unknown_count': None}, {'additional_trials': 23}, {'additional_graph_trials': 2}])
+def test_new_review_rejects_dropped_outcomes_or_scope_extension(tmp_path, changed):
+    rerun = reviewed_transport_rerun(tmp_path)
+    with pytest.raises(ValidationError):
+        type(rerun).model_validate({**rerun.model_dump(), **changed})
+
+
+def test_new_review_requires_new_boundary_not_old_cause_attestation(tmp_path):
+    from broker_real_provider_fixture import verify_native_rerun
+    rerun = reviewed_transport_rerun(tmp_path)
+    path = Path(rerun.cause_resolution_file)
+    value = json.loads(path.read_text())
+    value['boundary'] = 'native-policy-generation'
+    path.write_text(json.dumps(value))
+    rerun = rerun.model_copy(update={'cause_resolution_sha256': hashlib.sha256(path.read_bytes()).hexdigest()})
+    with pytest.raises(ValueError, match='cause resolution'):
+        verify_native_rerun(rerun)
+
+
+@pytest.mark.parametrize("before_handle_return", [False, True])
+async def test_cancelled_temporal_trial_terminates_current_workflow_reaps_real_worker_and_reports_terminal(tmp_path, monkeypatch, before_handle_return):
+    import asyncio
+    import subprocess
+    import sys
+    from types import SimpleNamespace
+
+    import broker_real_provider_fixture as fixture
+    from temporalio.client import Client
+    from temporalio.worker import Replayer
+
+    from infosec_harness.agents import durable
+
+    configuration = manifest(tmp_path)
+    configs = {name: value.model_copy(update={'model': value.model.model_copy(
+        update={'endpoint': configuration.endpoint})}) for name, value in durable.CONFIGS.items()}
+    monkeypatch.setattr(durable, 'CONFIGS', configs)
+    baseline = tmp_path / 'baseline.json'
+    baseline.write_text(json.dumps({'phase': 'direct', 'status': 'passed', 'cases': [
+        {'agent': name, 'case': CASES[name], 'case_digest': prepare_case(name, configuration)[3],
+         'config': value.model_dump(mode='json')} for name, value in configs.items()]}))
+    monkeypatch.setenv('HARNESS_REAL_PROVIDER_BASELINE', str(baseline))
+    monkeypatch.setenv('HARNESS_REAL_PROVIDER_MANIFEST', 'offline-manifest')
+    children = []
+    real_popen = subprocess.Popen
+    def start_owned_child(*_args, **_kwargs):
+        child = real_popen([sys.executable, '-c', 'import time; time.sleep(60)'], start_new_session=True)
+        children.append(child)
+        return child
+    monkeypatch.setattr(fixture.subprocess, 'Popen', start_owned_child)
+    started = asyncio.Event()
+    terminated = []
+    class Handle:
+        id = 'batch:owned-cancelled-fixture'
+        first_execution_run_id = 'owned-run-id'
+        async def result(self):
+            started.set()
+            await asyncio.Future()
+        async def terminate(self, _reason):
+            terminated.append(self.id)
+        async def fetch_history(self):
+            return SimpleNamespace(to_json=lambda: '{}', events=[])
+    submissions = {}
+    async def start(*_args, **kwargs):
+        submissions.update(kwargs)
+        if before_handle_return:
+            started.set()
+            await asyncio.Future()
+        return Handle()
+    async def describe():
+        return SimpleNamespace(id=submissions['id'], task_queue=submissions['task_queue'],
+                               workflow_type='RealProviderWorkflow', run_id=Handle.first_execution_run_id)
+    def get_handle(workflow_id, **kwargs):
+        assert workflow_id == submissions['id']
+        if not kwargs:
+            return SimpleNamespace(describe=describe)
+        assert kwargs == {'run_id': Handle.first_execution_run_id,
+                          'first_execution_run_id': Handle.first_execution_run_id}
+        return Handle()
+    async def connect(*_args, **_kwargs):
+        return SimpleNamespace(start_workflow=start, get_workflow_handle=get_handle)
+    async def seed(*_args, **_kwargs):
+        return None
+    async def snapshot(root):
+        return {'root_id': root, 'root_state': {'operations': {}}, 'requests': [], 'request_states': {}}
+    async def replay(*_args, **_kwargs):
+        return None
+    monkeypatch.setattr(Client, 'connect', connect)
+    monkeypatch.setattr(fixture, 'seed_root', seed)
+    monkeypatch.setattr(fixture, 'ledger_snapshot', snapshot)
+    monkeypatch.setattr(Replayer, 'replay_workflow', replay)
+    path = tmp_path / 'temporal.json'
+    task = asyncio.create_task(fixture.run_temporal(configuration, path))
+    await asyncio.wait_for(started.wait(), 10)
+    task.cancel()
+    result = await asyncio.wait_for(task, 10)
+    assert terminated == [Handle.id]
+    assert result['status'] == result['execution_status'] == 'failed'
+    assert result['interrupted'] is True and result['worker_cleanup'] == 'passed'
+    assert len(result['cases']) == 1 and result['cases'][0]['failure_type'] == 'CancelledError'
+    assert len(children) == 1 and children[0].poll() is not None
+    if before_handle_return:
+        assert result['cases'][0]['submission_recovery'] == 'passed'
+    assert json.loads(path.read_bytes())['status'] == 'failed'
+
+
+def test_outer_sigint_checkpoints_failed_report_and_reaps_owned_phase(tmp_path, monkeypatch):
+    import importlib.util
+    import subprocess
+    import sys
+
+    root = Path(__file__).resolve().parents[2]
+    spec = importlib.util.spec_from_file_location('qualification_runner_interrupt_test', root / 'scripts/broker_real_provider_check.py')
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+    configuration = manifest(tmp_path)
+    frozen = tmp_path / 'manifest.json'
+    frozen.write_text(configuration.model_dump_json())
+    monkeypatch.setattr(runner, 'ROOT', tmp_path)
+    monkeypatch.setattr(runner, 'phase_environment', lambda *_: {})
+    children = []
+    real_popen = subprocess.Popen
+    class InterruptOnce:
+        def __init__(self, child):
+            self.child, self.pid, self.interrupted = child, child.pid, False
+        def wait(self, timeout):
+            if not self.interrupted:
+                self.interrupted = True
+                raise KeyboardInterrupt
+            return self.child.wait(timeout=timeout)
+        def poll(self):
+            return self.child.poll()
+    def start(*_args, **_kwargs):
+        child = real_popen([sys.executable, '-c', 'import time; time.sleep(60)'], start_new_session=True)
+        children.append(child)
+        return InterruptOnce(child)
+    monkeypatch.setattr(runner.subprocess, 'Popen', start)
+    monkeypatch.setattr(sys, 'argv', ['qualification', '--manifest', str(frozen), '--manifest-sha256',
+        hashlib.sha256(frozen.read_bytes()).hexdigest(), '--phase', 'direct', '--allow-inference'])
+    assert runner.main() == 1
+    report = json.loads(next(tmp_path.glob('pilot-*/report.json')).read_bytes())
+    assert report['status'] == 'failed'
+    assert report['phases'] == [{'phase': 'direct', 'status': 'failed',
+        'failure_type': 'QualificationInterrupted', 'child_reaped': True}]
+    assert len(children) == 1 and children[0].poll() is not None
+
+
+@pytest.mark.parametrize('key', ['unknown_request_ids', 'completed_request_ids'])
+def test_new_review_rejects_duplicate_authoritative_proof_rows(tmp_path, key):
+    from broker_real_provider_fixture import verify_native_rerun
+    rerun = reviewed_transport_rerun(tmp_path)
+    path = Path(rerun.ledger_proof_file)
+    value = json.loads(path.read_text())
+    value[key].append(value[key][0])
+    path.write_text(json.dumps(value))
+    rerun = rerun.model_copy(update={'ledger_proof_sha256': hashlib.sha256(path.read_bytes()).hexdigest()})
+    with pytest.raises(ValueError, match='Authoritative retained ledger proof'):
+        verify_native_rerun(rerun)
+
+
+@pytest.mark.parametrize('field,value', [('id', 'foreign'), ('task_queue', 'foreign'),
+    ('workflow_type', 'ForeignWorkflow'), ('run_id', '')])
+async def test_submission_recovery_rejects_foreign_scope_before_creating_mutation_handle(field, value):
+    from types import SimpleNamespace
+
+    from broker_real_provider_fixture import recover_owned_submission
+    values = {'id': 'batch:owned', 'task_queue': 'owned-queue',
+              'workflow_type': 'RealProviderWorkflow', 'run_id': 'owned-run'}
+    values[field] = value
+    async def describe():
+        return SimpleNamespace(**values)
+    def get_handle(workflow_id, **kwargs):
+        assert workflow_id == 'batch:owned' and not kwargs
+        return SimpleNamespace(describe=describe)
+    with pytest.raises(ValueError, match='ownership differs'):
+        await recover_owned_submission(SimpleNamespace(get_workflow_handle=get_handle), 'batch:owned', 'owned-queue')

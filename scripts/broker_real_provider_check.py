@@ -15,6 +15,7 @@ import subprocess
 import sys
 import time
 import uuid
+from contextlib import suppress
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -123,14 +124,20 @@ def main() -> int:
                 phase_report = json.loads(phase_path.read_text()) if phase_path.exists() else {"status": "failed"}
                 report["phases"].append({"phase": phase, "exit_code": return_code,
                     "status": phase_report.get("status", "failed"), "report": str(phase_path)})
-            except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGTERM)
+            except (subprocess.TimeoutExpired, KeyboardInterrupt) as error:
+                with suppress(ProcessLookupError):
+                    os.killpg(process.pid, signal.SIGTERM)
                 try:
                     process.wait(timeout=20)
                 except subprocess.TimeoutExpired:
-                    os.killpg(process.pid, signal.SIGKILL)
+                    with suppress(ProcessLookupError):
+                        os.killpg(process.pid, signal.SIGKILL)
                     process.wait(timeout=5)
-                report["phases"].append({"phase": phase, "status": "failed", "failure_type": "RootDeadlineExceeded"})
+                report["phases"].append({"phase": phase, "status": "failed",
+                    "failure_type": "QualificationInterrupted" if isinstance(error, KeyboardInterrupt) else "RootDeadlineExceeded",
+                    "child_reaped": process.poll() is not None})
+                report["status"] = "failed"
+                private_write(report_path, report)
                 break
         private_write(report_path, report)
     expected_phases = len(selected_phases)

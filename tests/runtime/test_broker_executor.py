@@ -271,3 +271,60 @@ async def test_locked_sdk_uses_compatible_transport_and_one_request_only(status)
     assert len(sends) == 1
     assert sends[0].url == "https://provider.test/v1/chat/completions"
     assert sends[0].headers["authorization"] == "Bearer openshell:resolve:env:MOCK_TOKEN"
+
+
+async def test_provider_timeout_override_cannot_extend_wall_deadline(monkeypatch):
+    import asyncio
+    import time
+
+    import httpx2
+
+    from infosec_harness.inference import executor as module
+
+    request, _ = request_fixture()
+    model_settings = {"max_tokens": 16, "timeout": 999.0}
+    contract = request.contract.model_copy(update={"model_settings": model_settings})
+    payload = encode_payload([ModelRequest(parts=[UserPromptPart("bounded hello")])],
+                             model_settings, ModelRequestParameters())
+    request = request.model_copy(update={"contract": contract, "payload": payload,
+        "payload_digest": digest(payload.model_dump(mode="json")),
+        "binding": request.binding.model_copy(update={"contract_digest": contract.digest,
+                                                      "expires_at": time.time() + 60})})
+    sends = []
+    async def slow(native_request):
+        sends.append(native_request)
+        await asyncio.sleep(1)
+        raise AssertionError("Outer provider wall deadline must cancel this request")
+    monkeypatch.setattr(module, "PROVIDER_TIMEOUT_S", 0.02)
+    infer = OpenAIInference(contract, "openshell:resolve:env:MOCK_TOKEN",
+                           http_transport=httpx2.MockTransport(slow))
+    with pytest.raises(TimeoutError):
+        await infer(request)
+    assert len(sends) == 1
+
+
+async def test_provider_trickle_bytes_cannot_renew_wall_deadline(monkeypatch):
+    import asyncio
+    import time
+
+    import httpx2
+
+    from infosec_harness.inference import executor as module
+
+    request, _ = request_fixture()
+    request = request.model_copy(update={"binding": request.binding.model_copy(update={"expires_at": time.time() + 60})})
+    sends = []
+    class Trickle(httpx2.AsyncByteStream):
+        async def __aiter__(self):
+            while True:
+                await asyncio.sleep(0.005)
+                yield b" "
+    async def respond(native_request):
+        sends.append(native_request)
+        return httpx2.Response(200, stream=Trickle(), headers={"Content-Type": "application/json"})
+    monkeypatch.setattr(module, "PROVIDER_TIMEOUT_S", 0.02)
+    infer = OpenAIInference(request.contract, "openshell:resolve:env:MOCK_TOKEN",
+                           http_transport=httpx2.MockTransport(respond))
+    with pytest.raises(TimeoutError):
+        await infer(request)
+    assert len(sends) == 1
