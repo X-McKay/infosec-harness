@@ -6,6 +6,7 @@ The [root README](../README.md) explains the pipeline and common commands.
 | Topic | Read | Purpose |
 | --- | --- | --- |
 | Local development | [LOCAL_SETUP.md](development/LOCAL_SETUP.md) | Managed launcher, offline work, migrations and troubleshooting |
+| Service environments | [SERVICE_ENVIRONMENTS.md](development/SERVICE_ENVIRONMENTS.md) | Local configuration and Kubernetes workloads with hosted services |
 | Organization | [REPOSITORY_GUIDE.md](development/REPOSITORY_GUIDE.md) | Modules, generated sources, local outputs and directory conventions |
 | Architecture | [SPEC.md](architecture/SPEC.md) | Design and decision history; use current code for implemented behavior |
 | Evolution contracts | [HARNESS_EVOLUTION_SPEC.md](architecture/HARNESS_EVOLUTION_SPEC.md) | Durable behavior, provenance, accounting and acceptance requirements |

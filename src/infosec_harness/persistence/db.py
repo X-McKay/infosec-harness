@@ -6,6 +6,7 @@ columns hold what we filter and aggregate on.
 
 from __future__ import annotations
 
+import ssl
 from datetime import UTC, datetime
 from functools import lru_cache
 
@@ -19,6 +20,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -211,9 +213,29 @@ class EvalCaseResult(Base):
     experiment: Mapped[EvalExperiment] = relationship(back_populates="cases")
 
 
+def database_connect_args(url: str, settings=None) -> dict:
+    """Use the same verified PostgreSQL TLS policy for runtime and migrations."""
+    settings = settings or get_settings()
+    driver = make_url(url).drivername
+    if driver.startswith("sqlite") or not getattr(settings, "database_tls", False):
+        return {}
+    if driver != "postgresql+asyncpg":
+        raise ValueError("Database TLS requires the postgresql+asyncpg driver")
+    ca = getattr(settings, "database_tls_ca_file", None)
+    cert = getattr(settings, "database_tls_client_cert", None)
+    key = getattr(settings, "database_tls_client_key", None)
+    if bool(cert) != bool(key):
+        raise ValueError("Database TLS client certificate and key must be configured together")
+    context = ssl.create_default_context(cafile=str(ca) if ca else None)
+    if cert:
+        context.load_cert_chain(str(cert), str(key))
+    return {"ssl": context}
+
+
 @lru_cache
 def _engine():
-    return create_async_engine(get_settings().database_url, pool_pre_ping=True)
+    url = get_settings().database_url
+    return create_async_engine(url, pool_pre_ping=True, connect_args=database_connect_args(url))
 
 
 @lru_cache
@@ -301,7 +323,7 @@ def upgrade_to_head(url: str | None = None) -> str:
     target = url or get_settings().database_url
 
     async def _state():
-        engine = create_async_engine(target)
+        engine = create_async_engine(target, connect_args=database_connect_args(target))
         try:
             async with engine.connect() as conn:
                 return await conn.run_sync(_schema_state)
@@ -310,7 +332,7 @@ def upgrade_to_head(url: str | None = None) -> str:
 
     tables, revision = asyncio.run(_state())
     cfg = alembic_config()
-    cfg.set_main_option("sqlalchemy.url", target)
+    cfg.set_main_option("sqlalchemy.url", target.replace("%", "%%"))
     if revision is None and tables - {"alembic_version"}:
         command.stamp(cfg, "0001")
     command.upgrade(cfg, "head")

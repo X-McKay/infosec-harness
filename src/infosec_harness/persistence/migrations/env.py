@@ -16,7 +16,7 @@ from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from infosec_harness.persistence.db import Base
+from infosec_harness.persistence.db import Base, database_connect_args
 from infosec_harness.settings import get_settings
 
 config = context.config
@@ -53,7 +53,8 @@ def _run_sync(connection) -> None:
 
 
 async def run_migrations_online() -> None:
-    engine = create_async_engine(_url(), poolclass=pool.NullPool)
+    url = _url()
+    engine = create_async_engine(url, poolclass=pool.NullPool, connect_args=database_connect_args(url))
     try:
         async with engine.connect() as connection:
             await connection.run_sync(_run_sync)
