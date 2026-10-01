@@ -124,6 +124,24 @@ class BudgetLedger(Base):
     state: Mapped[dict] = mapped_column(JSON)
 
 
+class InferenceRequestRecord(Base):
+    """Controller-owned durable dispatch fence; terminal identities are retained."""
+    __tablename__ = "inference_requests"
+    request_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    root_id: Mapped[str] = mapped_column(ForeignKey("budget_ledgers.root_id"), index=True)
+    operation_id: Mapped[str] = mapped_column(String(512))
+    lease_id: Mapped[str] = mapped_column(String(128))
+    state: Mapped[str] = mapped_column(String(32))
+    revision: Mapped[int] = mapped_column(Integer, default=0)
+    request: Mapped[dict] = mapped_column(JSON)
+    allocation: Mapped[dict] = mapped_column(JSON)
+    overrun: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    fence: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class RunEvent(Base):
     """Idempotent activity-written state transitions; legacy runs have none."""
     __tablename__ = "run_events"
