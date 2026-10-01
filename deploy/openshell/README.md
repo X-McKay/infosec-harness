@@ -33,8 +33,8 @@ image names and configured runtime strings are insufficient evidence.
 
 `tests/runtime/broker_native_fixture.py` is a bounded, mock-only qualification factory. It
 uses the production controller, native adapter, executor, and durable ledger, with
-three explicitly registered fixture scopes: `frozen`, `temporal`, and
-`temporal-rerun`. It rejects other provider/model targets. It requires a private
+four explicitly registered fixture scopes: `frozen`, `temporal`,
+`temporal-rerun`, and `cachepoint`. It rejects other provider/model targets. It requires a private
 operator JSON file referenced by `IH_NATIVE_FIXTURE_CONFIG`, containing `native`
 (the `NativeDeploymentConfig` fields), the full `contract`, `controller_origin`,
 `controller_ca`, and `fixture`. Native specs are keyed by the full contract digest;
@@ -43,7 +43,7 @@ come from actual operator inventory. This is not a production issuance policy.
 
 Start the trusted fixture controller with a migrated private test database and real
 TLS certificate, using `--factory broker_native_fixture:controller_factory` and
-`PYTHONPATH=src:tests/runtime`. The controller alone receives gateway mTLS/admin access and
+`PYTHONPATH=src:tests/runtime/runtime`. The controller alone receives gateway mTLS/admin access and
 the dedicated Docker socket. The executor receives neither host mounts nor database
 access. After reviewed infrastructure and the mock HTTPS provider are ready:
 
@@ -58,7 +58,10 @@ close, repeat close, and saved results after closure while asserting the indepen
 mock provider counter remains unchanged. It writes a sanitized proof beside the
 private operator configuration. The Temporal fixture adds a test-only worker ACK
 barrier after production ledger completion; its host runner terminates a worker,
-retrieves the same saved request on retry, and replays history with sends forbidden.
+retrieves the same saved request on retry, and replays history with sends forbidden. The
+`cachepoint` scope sends the actual `render_prompt` output with an authored SDK
+CachePoint and checks its exact retained representation plus one counted provider
+send before authentication, saved-result, and native-close assertions.
 See `tests/runtime/broker_native_temporal_fixture.py` for its strict public operator inputs.
 
 Preserve failed-attempt evidence. Stop only corroborated owned resources, and run

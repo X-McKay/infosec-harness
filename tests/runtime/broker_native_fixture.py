@@ -1,7 +1,7 @@
 """Mock-only native acceptance fixture using the production controller and ledger.
 
 An operator supplies reviewed native deployment/contract JSON and test CA files.
-Only three static, bounded mock invocations are registered; no arbitrary root issuance.
+Only four static, bounded mock invocations are registered; no arbitrary root issuance.
 """
 
 from __future__ import annotations
@@ -14,8 +14,11 @@ import time
 from pathlib import Path
 
 from pydantic_ai import Agent
+from pydantic_ai.messages import CachePoint
 from sqlalchemy import select
 
+from infosec_harness.agents.render import render_prompt
+from infosec_harness.domain.models import StackFingerprint
 from infosec_harness.inference import admission
 from infosec_harness.inference.auth import AUTH_HEADER, sign_request
 from infosec_harness.inference.controller import Controller
@@ -46,7 +49,7 @@ def configuration():
         or contract.provider_binding != "ih-g0-canary"
     ):
         raise BrokerError("policy", "Fixture accepts only its private mock provider")
-    if value.get("fixture", "frozen") not in {"frozen", "temporal", "temporal-rerun"}:
+    if value.get("fixture", "frozen") not in {"frozen", "temporal", "temporal-rerun", "cachepoint"}:
         raise BrokerError("identity")
     return value
 
@@ -203,8 +206,16 @@ async def worker():
         client_key=None,
         request_identity=lambda: "native-fixture-step",
     )
+    prompt = "native fixture"
+    if value.get("fixture") == "cachepoint":
+        prompt = render_prompt(
+            "Exercise the authored cache marker.",
+            {"finding": {"cwe": "CWE-89"}},
+            stack=StackFingerprint(languages={"python": 2}, test_frameworks=["pytest"]),
+        )
+        assert sum(isinstance(part, CachePoint) for part in prompt) == 1
     result = await Agent(model=model, output_type=str, model_settings={"max_tokens": 32}).run(
-        "native fixture"
+        prompt
     )
     assert result.output == "g0-fixture-response"
     print("NATIVE_PRODUCTION_WORKER_AGENT_OK")
@@ -214,7 +225,11 @@ async def prove():
     value, expected = configuration(), reference()
     channel, origin = JsonChannel(ca_file=value["controller_ca"]), value["controller_origin"]
     directory = Path(os.environ["IH_NATIVE_FIXTURE_CONFIG"]).parent
-    before = json.loads((directory / "p4-mock-stats.json").read_text())
+    stats_file = directory / (
+        "p4-cachepoint-mock-stats.json" if value.get("fixture") == "cachepoint"
+        else "p4-mock-stats.json"
+    )
+    before = json.loads(stats_file.read_text())
     async with db.session() as session:
         rows = list((await session.scalars(select(db.InferenceRequestRecord))).all())
         rows = [
@@ -225,6 +240,15 @@ async def prove():
         assert len(rows) == 1
         row = rows[0]
         request = row.request
+    if value.get("fixture") == "cachepoint":
+        markers = [
+            item for message in request["payload"]["messages"]
+            for part in message["parts"] if part.get("part_kind") == "user-prompt"
+            for item in (part["content"] if isinstance(part["content"], list) else [])
+            if isinstance(item, dict) and item.get("kind") == "cache-point"
+        ]
+        assert markers == [{"kind": "cache-point", "ttl": "5m"}]
+        assert before == {"provider_admitted": 1, "ledger_admitted": 0, "denied": 0}
     body = canonical_bytes(request)
     try:
         await channel.post(
@@ -253,7 +277,7 @@ async def prove():
     assert (await post(channel, origin, "/v1/runs/close", close))["state"] == "closed"
     assert await post(channel, origin, "/v1/results", body) == result
     assert (await post(channel, origin, "/v1/runs/close", close))["state"] == "closed"
-    assert json.loads((directory / "p4-mock-stats.json").read_text()) == before
+    assert json.loads(stats_file.read_text()) == before
     proof = {
         "fixture": value.get("fixture", "frozen"),
         "completed": True,
