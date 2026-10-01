@@ -31,7 +31,7 @@ image names and configured runtime strings are insufficient evidence.
 
 ## Native qualification
 
-`tests/broker_native_fixture.py` is a bounded, mock-only qualification factory. It
+`tests/runtime/broker_native_fixture.py` is a bounded, mock-only qualification factory. It
 uses the production controller, native adapter, executor, and durable ledger, with
 three explicitly registered fixture scopes: `frozen`, `temporal`, and
 `temporal-rerun`. It rejects other provider/model targets. It requires a private
@@ -43,13 +43,13 @@ come from actual operator inventory. This is not a production issuance policy.
 
 Start the trusted fixture controller with a migrated private test database and real
 TLS certificate, using `--factory broker_native_fixture:controller_factory` and
-`PYTHONPATH=src:tests`. The controller alone receives gateway mTLS/admin access and
+`PYTHONPATH=src:tests/runtime`. The controller alone receives gateway mTLS/admin access and
 the dedicated Docker socket. The executor receives neither host mounts nor database
 access. After reviewed infrastructure and the mock HTTPS provider are ready:
 
 ```bash
-.harness/bin/mise exec -- uv run --locked python tests/broker_native_fixture.py worker
-.harness/bin/mise exec -- uv run --locked python tests/broker_native_fixture.py prove
+.harness/bin/mise exec -- uv run --locked python tests/runtime/broker_native_fixture.py worker
+.harness/bin/mise exec -- uv run --locked python tests/runtime/broker_native_fixture.py prove
 ```
 
 The first command runs a real Pydantic AI agent through the production broker. The
@@ -59,7 +59,7 @@ mock provider counter remains unchanged. It writes a sanitized proof beside the
 private operator configuration. The Temporal fixture adds a test-only worker ACK
 barrier after production ledger completion; its host runner terminates a worker,
 retrieves the same saved request on retry, and replays history with sends forbidden.
-See `tests/broker_native_temporal_fixture.py` for its strict public operator inputs.
+See `tests/runtime/broker_native_temporal_fixture.py` for its strict public operator inputs.
 
 Preserve failed-attempt evidence. Stop only corroborated owned resources, and run
 `scripts/openshell_guest.py stop` inside the checkout-owned guest after all dedicated

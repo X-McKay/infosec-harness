@@ -5,6 +5,8 @@ not the packaged harness runtime.
 
 | Scripts | Purpose / entry point |
 | --- | --- |
+| `broker_ledger_check.py`, `broker_service_check.py` | Isolated PostgreSQL, real HTTPS and optional Temporal broker qualification; sanitized reports under `.harness/reports/credential-broker/` |
+| `openshell_artifacts.py`, `openshell_guest.py` | Verified pinned artifacts and dedicated OpenShell guest runtime ownership/invariant checks; see [deployment](../deploy/openshell/README.md) |
 | `dev_setup.py` | Pinned tools, checkout identity, ports and managed VM setup; `./dev` |
 | `dev_sandbox_check.py` | Actual sandbox/build-egress fixtures; `./dev doctor` or `./dev smoke` |
 | `dev_setup_smoke.py` | API/UI/storage readiness and Temporal demonstration; `./dev smoke` |

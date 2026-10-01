@@ -4,6 +4,7 @@
 
 | Directory | Responsibility |
 | --- | --- |
+| `src/infosec_harness/inference/` | Opt-in credential broker contracts, admission, ledger, authenticated controller and native executor |
 | `src/infosec_harness/domain/` | Typed findings, plans, verdicts and shared contracts |
 | `src/infosec_harness/agents/` | Agent loading, configuration, capabilities, budgets, stubs and per-agent specs/evals |
 | `src/infosec_harness/graph/` | Preparation and triage orchestration, scoring and execution interfaces |
@@ -36,6 +37,8 @@ another directory. The launcher always switches to its own checkout.
 
 | Output | Default location | Owner / override |
 | --- | --- | --- |
+| Broker qualification reports | `.harness/reports/credential-broker/` | Explicit ledger/service qualification runners; unique run IDs |
+| Native broker recovery and qualification state | Operator-owned private lease directory; local `.harness/openshell-spike/` | Controller tombstones/leases and isolated native fixtures; retain for reconciliation, never publish secrets |
 | Checkout identity and local credentials | `.harness/dev.env` | `./dev`; generated, mode 0600 |
 | Managed tools and downloads | `.harness/` | Launcher; pinned versions in `.mise.toml` and `.dev-tools/versions.env` |
 | VM state | Short path under `~/.cache/ih/` | Launcher; actual location recorded in `.harness/runtime-home` |

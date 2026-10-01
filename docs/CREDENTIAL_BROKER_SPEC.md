@@ -1,6 +1,6 @@
 # Harness credential brokering specification
 
-Status: Implemented opt-in contracts; corrected-topology G0 passed; production qualification in progress
+Status: Implemented opt-in contracts; corrected-topology G0 passed; bounded native/service qualification passed; rollout disabled
 Date: 2026-10-01
 Specification version: 0.2.3
 
@@ -8,7 +8,7 @@ Execution sequencing and delegated work are defined in the [implementation and t
 
 This proposal removes reusable provider credentials from harness model callers and establishes a controlled path for future private repository and dependency access. The first milestone uses an isolated inference executor with OpenShell managing endpoint-bound credential substitution. Temporal, PydanticAI, repository tools, build isolation, and network-disabled probes retain their existing responsibilities.
 
-MUST, SHOULD, and MAY describe proposed requirements, not verified behavior. This document supplements [the harness evolution specification](HARNESS_EVOLUTION_SPEC.md) and [the existing redesign](redesign/SPEC.md). It does not authorize widening execution permissions or claim integration acceptance.
+MUST, SHOULD, and MAY describe proposed requirements, not verified behavior. This document supplements [the harness evolution specification](architecture/HARNESS_EVOLUTION_SPEC.md) and [the existing redesign](architecture/SPEC.md). It does not authorize widening execution permissions or claim integration acceptance.
 
 ## Baseline and scope
 

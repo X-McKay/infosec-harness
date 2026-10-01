@@ -5,7 +5,8 @@ production rollout or a provider call. The packaged catalog is disabled, and a c
 that merely names an OpenShell runtime is not evidence that a native executor is ready.
 Current reported status: PostgreSQL ledger, real TLS service, real Temporal service recovery
 with a mock native adapter, registered local/eval parity and installed-wheel checks passed.
-Production-native integration/recovery and P7 provider/held-out evaluation remain `not_checked`.
+Production-native request/authentication/closure and narrow native Temporal recovery passed.
+Full registered-graph native recovery and P7 provider/held-out evaluation remain `not_checked`.
 See the [implementation evidence](../validation/CREDENTIAL_BROKER_IMPLEMENTATION.md) for exact gate scope. Paid-provider calls are outside this runbook.
 
 ## 1. Pin and prepare operator-owned files
@@ -208,9 +209,9 @@ tombstones, or release possible spend to force cleanup.
 Useful deterministic commands are:
 
 ```bash
-uv run pytest tests/test_broker_profiles.py tests/test_broker_transport.py
-uv run pytest tests/test_inference_ledger.py tests/test_broker_admission.py tests/test_broker_invocations.py
-uv run pytest tests/test_broker_executor.py tests/test_openshell_controller.py
+uv run pytest tests/runtime/test_broker_profiles.py tests/runtime/test_broker_transport.py
+uv run pytest tests/persistence/test_inference_ledger.py tests/persistence/test_broker_admission.py tests/runtime/test_broker_invocations.py
+uv run pytest tests/runtime/test_broker_executor.py tests/runtime/test_openshell_controller.py
 just check
 just test
 ```

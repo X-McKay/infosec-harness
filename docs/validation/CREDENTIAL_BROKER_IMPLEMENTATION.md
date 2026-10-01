@@ -1,11 +1,12 @@
 # Credential broker implementation evidence
 
 Date: 2026-10-01
-Status: implementation and qualification in progress; rollout disabled
+Status: implementation ready for review; bounded qualification passed; rollout disabled
 
 This record covers the isolated `feature/openshell` worktree based on remote `develop`
-`51fe66eb7459ce8f75a0d73931cf85867b78cefc`. The original checkout's unrelated reorganization
-and uncommitted changes are excluded. The [plan](../architecture/CREDENTIAL_BROKER_IMPLEMENTATION_PLAN.md),
+`51fe66eb7459ce8f75a0d73931cf85867b78cefc`, now integrated with remote `develop`
+`4988450e21dc61f67f86a980e62af4264dc53fa7`. Its canonical test/UI reorganization is preserved;
+the original checkout was not edited by this work. The [plan](../architecture/CREDENTIAL_BROKER_IMPLEMENTATION_PLAN.md),
 [frozen protocol](../architecture/CREDENTIAL_BROKER_PROTOCOL.md),
 [operator runbook](../architecture/CREDENTIAL_BROKER_RUNBOOK.md) and
 [G0 feasibility evidence](OPENSHELL_FEASIBILITY.md) identify scope and topology.
@@ -57,15 +58,17 @@ missing retained history require explicit operator recovery; v1 replacement is u
 | PostgreSQL ledger/admission | passed | Actual PostgreSQL 16.15: 57 cases including abrupt process termination and concurrent CAS |
 | Layer B real TLS processes | passed | Real HTTPS controller/executor, PostgreSQL 16.15, mock provider; final combined B/D/eval/baseline run: 11 tests, 10 counted sends, cleanup verified |
 | Layer C production-native executor smoke | passed | One actual worker Agent request through production controller/native adapter/ledger/executor returned exact mock output with one counted approved provider request; policy/attachment/image/process verified |
-| Layer C final-image lifecycle qualification | not_checked | Final frozen image, saved result/auth/close and shared cleanup checks running |
+| Layer C final-image lifecycle qualification | passed | Frozen image/source byte equality; signed native request, unsigned/auth denials, saved response after idempotent closure, exact owned resource removal and shared invariant preservation |
 | Layer D real Temporal service recovery/replay | passed | Real service/worker kill, activity attempt 2, one operation/two allocations, saved result, 65-event broker history and 39-event current direct history replay; zero replay I/O; native adapter is a shim |
 | Pre-change workflow history replay | passed | Runtime loaded exclusively from git archive of exact 51fe66 baseline, 39-event history replayed under current broker config with broker I/O patched to fail; zero sends |
-| Layer D final OpenShell recovery | not_checked | Real native integration remains separate from the service shim recovery gate |
+| Layer D native single-agent recovery | passed | Real production native path: SIGKILL after commit, activity attempt 2 recovered same persisted ID, exactly one provider send, 11-event replay zero I/O; explicit `Agent[str]` scope |
+| Layer D full registered native graph | not_checked | Single-agent native recovery and registered local/eval service-shim checks do not qualify the complete production workflow graph |
 | Registered local/eval parity | passed | Real registered context agent, local tools and typed output; eval uses durable production configuration identity; mock native adapter |
-| Full deterministic suite | passed | Integrated source run: 2161 passed, 25 skipped, 859 warnings in 75.77s; skips include 11 explicitly gated service cases |
+| Full deterministic suite | passed | Integrated source run: 2169 passed, 27 skipped, 861 warnings in 71.50s after develop integration; skips include 11 service cases and one native case executed separately |
 | Installed-wheel packaging | passed | Installed no-deps wheel outside checkout: disabled 11-agent catalog, migration 0005/0004 and controller/executor module entrypoints |
 | Generated artifacts and development skills | passed | OpenAPI, shared instructions and canonical development-skill drift checks |
-| Final shared runsc/build-egress preservation | not_checked | Earlier real fixture passed; rerun after native lane cleanup |
+| Final shared runsc/build-egress preservation | passed | Actual post-cleanup runsc positive/negative, bounded execution, PID/memory exhaustion, internal proxy allow/deny, isolated builder and forced-removal cleanup fixtures |
+| Preserved development stack smoke | passed | API/UI/storage readiness, S3 put/get/delete and retained sentinel, fresh complete stub workflow/result and Temporal visibility; no provider calls |
 | P7 provider compatibility, tokenizer bound, held-out evaluation | not_checked | Numeric backend/model request/token/spend budget not recorded; no paid calls authorized |
 | UI checks | not_applicable | No frontend changes |
 | Rollout | not_checked | Packaged catalog disabled; production acceptance requires all applicable gates |
@@ -84,7 +87,9 @@ scalars while accepting YAML's array representation, with a regression.
 Automatic approval review rejected removing the expired worker binding dispatch check.
 The implementation instead adds read-only result recovery while preserving expiry on every
 new dispatch. A test diagnostic exposed a checkout-only PostgreSQL password; it is excluded
-from committed artifacts and must be rotated before handoff.
+from committed artifacts. The checkout-only role password was rotated after native cleanup;
+fresh authentication passed, its private environment was atomically updated, and checkout
+services were restarted without deleting volumes.
 
 Qualification uses test-only canaries. Private PKI, native databases, lease keys, raw logs,
 image archives and environment files remain ignored beneath `.harness/`; reports and this
@@ -108,8 +113,9 @@ static model profiles when a new deployment selects brokering. Current intake st
 the approved atomic contract. No historical generation gains dispatch authority.
 
 Sanitized local reports are retained under ignored `.harness/reports/credential-broker/`:
-`pg-ledger-f5ff51e4d76b4de38f12f7d24425b261.json` and
-`service-9ce9ab566ad04c77b22b63211a30bd77.json`. The original failed reports remain retained
+final post-merge `pg-ledger-f342623bb2bc4303b8b0011d9b966c86.json` and
+`service-36606b22c1b74ae6b8146eac3dfa947e.json` (57 cases in 5.46s and 11 cases in
+34.75s, respectively); prior successful reports are also retained. The original failed reports remain retained
 with explicit statuses and no secret values. These local files are not published in the PR.
 
 
@@ -128,3 +134,33 @@ but the controller dies before recording the exact native ID, restart fails clos
 requires operator reconciliation. It does not adopt or delete a similarly named resource,
 or acknowledge successful closure while an unconfirmed owned resource remains. This v1
 limit is retained rather than hidden by a broad cleanup operation.
+
+## Final native source and cleanup identity
+
+The qualified executor image is
+`sha256:8c555bfdbaf88c6192796ef09edca4a388a34c6f70d5456f82a2699e52332e86`.
+All six minimal-executor source hashes were checked unchanged after the develop merge.
+The native C proof, narrow native Temporal D report/history, fresh post-D signed/auth/close
+proof and scoped reconciliation are retained privately as `p4-frozen-proof.json`,
+`p4-native-d-report.json`, `p4-native-d-report.history.json`,
+`p4-temporal-rerun-proof.json` and `p4-final-native-cleanup.json` beneath
+`.harness/openshell-spike/`. Native provider counts were observed at the local mock,
+not inferred from a configured backend name. Native workloads and run-scoped ledger
+credential providers were removed using corroborated IDs and labels; the dedicated
+Docker/containerd were stopped after task inventory was empty. Shared firewall,
+forwarding, route and bridge snapshots matched. Test data/images remain retained.
+Eighteen native logs/proofs/stats passed fixture-canary/placeholder scans with positive
+controls. These artifacts are local evidence, not material to publish in the PR.
+
+The initial narrow native Temporal attempt recovered the saved response but its test
+postprocessing incorrectly called the SDK usage property as a function. That failed attempt
+was retained and its workflow/workers cleaned up. The corrected fixture passed in 24.78s;
+no production expectation was weakened. P7 and full native graph acceptance remain explicit
+follow-up gates, so this branch is submitted for review with broker rollout disabled.
+
+The post-merge stack smoke initially reused an older completed demo that was absent from
+upstream develop's newly selected `temporal_visibility` database. The old completed workflow
+and persisted result remained intact. A fresh controlled stub demo completed with sandbox
+execution and was queryable in the new visibility index; the unchanged full stack smoke then
+passed. Initial and successful logs are retained separately. No historical workflow or
+volume was deleted, and no visibility migration/backfill is claimed.

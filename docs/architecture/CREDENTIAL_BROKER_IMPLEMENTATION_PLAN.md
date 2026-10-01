@@ -1,11 +1,11 @@
 # Credential broker implementation and testing plan
 
-Status: Implementation in progress; G0/G1 passed; P2–P5 implemented; P6 qualification running
+Status: Implementation ready for review; G0/G1 passed; P2–P5 implemented; bounded P6 qualification passed; P7/full native graph acceptance pending
 Date: 2026-10-01
 Plan version: 0.1.3
 Design baseline: [Credential brokering specification version 0.2.3](../CREDENTIAL_BROKER_SPEC.md)
 
-Implement one OpenAI-compatible backend through a minimal isolated inference executor, preserve existing tool and probe boundaries, and prove fail-closed behavior before using real provider credentials. Work proceeds through small reviewable changes with bounded parallel delegation. The original planning review did not run infrastructure, inference, or recovery tests. P0 has now run: the actual OpenShell Landlock qualification failed under the unchanged runsc daemon. See [feasibility evidence](../validation/OPENSHELL_FEASIBILITY.md) and [the proposed deployment revision](OPENSHELL_DEPLOYMENT_REVISION.md). The corrected dedicated-daemon G0 passed independent review for the bounded test prototype after actual confinement, substitution, admission, ledger-channel, egress, rotation, native gateway discovery, and cleanup observations. P1 is frozen in [protocol v1](CREDENTIAL_BROKER_PROTOCOL.md). P2–P5 source integration and deterministic tests are implemented; real P6 service/native/recovery qualification is running. P7 remains blocked on a separately recorded provider experiment budget, and P8 rollout remains disabled. Current evidence is tracked in [the implementation record](../validation/CREDENTIAL_BROKER_IMPLEMENTATION.md). Native gateway rediscovery does not establish future harness-controller or ledger recovery. The retained intermittent primary Docker OOM notification failure remains a qualification risk.
+Implement one OpenAI-compatible backend through a minimal isolated inference executor, preserve existing tool and probe boundaries, and prove fail-closed behavior before using real provider credentials. Work proceeds through small reviewable changes with bounded parallel delegation. The original planning review did not run infrastructure, inference, or recovery tests. P0 has now run: the actual OpenShell Landlock qualification failed under the unchanged runsc daemon. See [feasibility evidence](../validation/OPENSHELL_FEASIBILITY.md) and [the proposed deployment revision](OPENSHELL_DEPLOYMENT_REVISION.md). The corrected dedicated-daemon G0 passed independent review for the bounded test prototype after actual confinement, substitution, admission, ledger-channel, egress, rotation, native gateway discovery, and cleanup observations. P1 is frozen in [protocol v1](CREDENTIAL_BROKER_PROTOCOL.md). P2–P5 source integration and deterministic tests are implemented; bounded real P6 service/native/recovery qualification passed; full registered native graph acceptance remains separate. P7 remains blocked on a separately recorded provider experiment budget, and P8 rollout remains disabled. Current evidence is tracked in [the implementation record](../validation/CREDENTIAL_BROKER_IMPLEMENTATION.md). Native gateway rediscovery does not establish future harness-controller or ledger recovery. The retained intermittent primary Docker OOM notification failure remains a qualification risk.
 
 ## Scope and completion criteria
 
@@ -49,7 +49,7 @@ flowchart TD
     I --> J[P8 Opt in rollout and handoff]
 ```
 
-Do not estimate a delivery date before P0. Its feasibility outcome may change the adapter design. The implementation branch starts from remote `develop` at `51fe66eb7459ce8f75a0d73931cf85867b78cefc`, whose tests still use a flat `tests/` layout. Paths in this copy follow that baseline rather than importing the unrelated local reorganization. After P1, estimate each package from the accepted interface and fixture scope. The critical path is feasibility, frozen contract, durable vertical slice, real enforcement/recovery, then provider acceptance. Fixture authoring and isolated module work can overlap; a shared VM, migrations, generated output, and final integration must have one owner at a time.
+Do not estimate a delivery date before P0. Its feasibility outcome may change the adapter design. The implementation branch starts from remote `develop` at `51fe66eb7459ce8f75a0d73931cf85867b78cefc`, and now integrates the subsequent remote `develop` reorganization at `4988450e21dc61f67f86a980e62af4264dc53fa7`. Paths below follow its canonical grouped test layout; the original history remains the replay baseline. After P1, estimate each package from the accepted interface and fixture scope. The critical path is feasibility, frozen contract, durable vertical slice, real enforcement/recovery, then provider acceptance. Fixture authoring and isolated module work can overlap; a shared VM, migrations, generated output, and final integration must have one owner at a time.
 
 ## P0 Establish baseline and prove feasibility
 
@@ -96,9 +96,9 @@ Use one new package, provisionally `src/infosec_harness/inference/`, with a smal
 
 | Lane | Exclusive primary paths | Dependencies and deliverables |
 | --- | --- | --- |
-| P2 Profiles and transport | New `inference/profiles.py`, `inference/transport.py`, profile catalog under packaged config; `tests/test_broker_profiles.py`, `test_broker_transport.py` | After G1: complete agent mapping, strict configuration, typed message round-trip, effective settings applied once, response/error translation, direct-mode compatibility; lead performs shared model factory and registry edits |
-| P3 Ledger and admission | New `inference/ledger.py`, `inference/admission.py`; ledger data models and one assigned migration; `tests/test_inference_ledger.py`, `tests/test_broker_admission.py` | After G1: transactional uniqueness and ownership, dispatch accounting, bounded state transitions, durable responses, explicit unknown completion, idempotent cleanup records; capable owner |
-| P4 OpenShell adapter | New `inference/openshell.py`, `inference/controller.py`, executor service/entrypoint, isolated deployment files and narrow setup script; corresponding `tests/test_openshell_controller.py` | After G0/G1: controller lifecycle, authenticated endpoints, SDK operations, policy/attachment readiness, rotation/revocation, lazy instance allocation, lease reconciliation; capable owner |
+| P2 Profiles and transport | New `inference/profiles.py`, `inference/transport.py`, profile catalog under packaged config; `tests/runtime/test_broker_profiles.py`, `test_broker_transport.py` | After G1: complete agent mapping, strict configuration, typed message round-trip, effective settings applied once, response/error translation, direct-mode compatibility; lead performs shared model factory and registry edits |
+| P3 Ledger and admission | New `inference/ledger.py`, `inference/admission.py`; ledger data models and one assigned migration; `tests/persistence/test_inference_ledger.py`, `tests/persistence/test_broker_admission.py` | After G1: transactional uniqueness and ownership, dispatch accounting, bounded state transitions, durable responses, explicit unknown completion, idempotent cleanup records; capable owner |
+| P4 OpenShell adapter | New `inference/openshell.py`, `inference/controller.py`, executor service/entrypoint, isolated deployment files and narrow setup script; corresponding `tests/runtime/test_openshell_controller.py` | After G0/G1: controller lifecycle, authenticated endpoints, SDK operations, policy/attachment readiness, rotation/revocation, lazy instance allocation, lease reconciliation; capable owner |
 
 Only the lead edits the shared protocol module once G1 is frozen. Lanes propose interface changes to the lead instead of changing each other's files. The lead also owns `settings.py`, `pyproject.toml`, `uv.lock`, `tests/conftest.py`, `justfile`, existing Compose files, agent integration, workflow modules, provenance, and generated sources. A lane needing shared fixtures adds a local fixture module until the lead deliberately consolidates it.
 
@@ -190,9 +190,9 @@ Record cold startup separately from warm request overhead, median/p95 request la
 Existing commands run from the checkout root. New filenames below are planned tests, not current executable targets.
 
 ```bash
-HARNESS_MODEL_MODE=stub uv run pytest tests/test_broker_profiles.py tests/test_broker_transport.py
-HARNESS_MODEL_MODE=stub uv run pytest tests/test_inference_ledger.py tests/test_broker_admission.py tests/test_openshell_controller.py
-HARNESS_MODEL_MODE=stub uv run pytest tests/test_model_backends.py tests/test_retry_bounds.py tests/test_root_budgets.py tests/test_migrations.py
+HARNESS_MODEL_MODE=stub uv run pytest tests/runtime/test_broker_profiles.py tests/runtime/test_broker_transport.py
+HARNESS_MODEL_MODE=stub uv run pytest tests/persistence/test_inference_ledger.py tests/persistence/test_broker_admission.py tests/runtime/test_openshell_controller.py
+HARNESS_MODEL_MODE=stub uv run pytest tests/agents/test_model_backends.py tests/agents/test_retry_bounds.py tests/runtime/test_root_budgets.py tests/persistence/test_migrations.py
 just check
 just test
 just generated-check
