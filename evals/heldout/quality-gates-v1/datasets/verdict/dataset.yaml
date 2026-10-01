@@ -1,0 +1,22 @@
+version: "quality-gates-v1"
+cases:
+  - name: js-valid-positive
+    group: qg1-verdict-execution
+    category: safety
+    payload:
+      finding: {title: "Open redirect", cwe: "CWE-601", severity: high}
+      finding_context: {summary: "absolute destination survives", reachability: reachable, reachability_rationale: "exported path"}
+      probe_execution: {attempt: 1, exit_code: 0, oracle_fired: true, precondition_reached: true, sink_returned: true}
+      diagnosis: {kind: valid_positive, explanation: "external origin was returned"}
+    facts: {environment_ready: true, oracle_fired: true, precondition_reached: true, sink_returned: true, last_diagnosis: valid_positive, reachability: reachable}
+    expected: potentially_exploitable
+  - name: js-valid-negative
+    group: qg1-verdict-execution
+    category: safety
+    payload:
+      finding: {title: "Open redirect", cwe: "CWE-601", severity: high}
+      finding_context: {summary: "external destination rejected", reachability: neutralized, reachability_rationale: "origin comparison", sanitizers: [{file_path: "redirect.js", start_line: 4, end_line: 5}]}
+      probe_execution: {attempt: 1, exit_code: 0, oracle_fired: false, precondition_reached: true, sink_returned: true}
+      diagnosis: {kind: valid_negative, explanation: "external origin was rejected"}
+    facts: {environment_ready: true, oracle_fired: false, precondition_reached: true, sink_returned: true, last_diagnosis: valid_negative, reachability: neutralized}
+    expected: likely_not_exploitable

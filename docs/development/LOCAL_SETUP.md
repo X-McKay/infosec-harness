@@ -43,7 +43,11 @@ mounted `ui/` tree. Backend edits take effect after `./dev reload` restarts the 
 Vite's normal hot reload. The packaged nginx image remains available through the base compose
 file for deployment-oriented checks.
 
-`./dev smoke` repeats the API readiness and actual sandbox fixture checks. It does not infer model
+`./dev smoke` repeats API/web/storage readiness, actual sandbox fixtures, and the completed
+demo query against Temporal visibility. History and visibility use separate PostgreSQL
+databases (`temporal` and `temporal_visibility`), so their independent schema version tables
+cannot suppress visibility migrations. Existing volumes are preserved; Temporal auto-setup
+creates the missing visibility database on an upgraded local stack. It does not infer model
 quality from stub inference. `./dev doctor` reports host/runtime readiness without starting
 services. Provider credentials are optional and are never required by the default profile.
 
@@ -170,6 +174,16 @@ generates PostgreSQL and S3 credentials in `.harness/dev.env`; default inference
 Use `./dev status`, `./dev logs <service>`, `./dev smoke`, and `./dev stop` for lifecycle
 operations. The base `docker-compose.yml` remains an advanced manual path and is not equivalent
 to the verified managed setup.
+
+## Package dependency compatibility
+
+Use the checked-in lockfile for checkout development (`uv sync --locked`). Installed wheels
+support `temporalio>=1.33,<1.34`: Temporal 1.34 added an `EventGroup` field to `ActivityConfig`
+that the current PydanticAI integration cannot turn into a Pydantic schema. Fresh wheel tests
+reproduced the failure with PydanticAI 2.52 / Temporal 1.34 and constructed all 11 agents after
+changing only Temporal to 1.33. The lockfile keeps its existing dependency versions; only the
+supported-range metadata changed. Revisit this bound with isolated wheel construction and real
+Temporal replay checks before admitting another version.
 
 ## 4. Database migrations
 

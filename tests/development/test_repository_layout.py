@@ -46,3 +46,29 @@ def test_transient_outputs_remain_ignored_after_the_directory_move():
     )
     assert result.returncode == 0, result.stderr
     assert set(result.stdout.splitlines()) == set(outputs)
+
+
+def test_temporal_history_and_visibility_use_separate_schema_databases():
+    base = yaml.load((ROOT / "docker-compose.yml").read_text(), Loader=ComposeLoader)
+    temporal = base["services"]["temporal"]["environment"]
+    assert temporal["DBNAME"] != temporal["VISIBILITY_DBNAME"]
+    bootstrap = (ROOT / "deploy/postgres-init.sh").read_text()
+    for name in (temporal["DBNAME"], temporal["VISIBILITY_DBNAME"]):
+        assert f"CREATE DATABASE {name}'" in bootstrap
+
+
+def test_temporal_database_bootstrap_sends_idempotent_sql(tmp_path):
+    import os
+
+    psql = tmp_path / "psql"
+    psql.write_text("#!/bin/sh\ncat\n")
+    psql.chmod(0o755)
+    result = subprocess.run(
+        ["bash", str(ROOT / "deploy/postgres-init.sh")], capture_output=True, text=True,
+        env={**os.environ, "POSTGRES_USER": "fixture", "PATH": f"{tmp_path}:{os.environ['PATH']}"},
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.count("CREATE DATABASE") == 2
+    for name in ("temporal", "temporal_visibility"):
+        assert f"SELECT 'CREATE DATABASE {name}' WHERE NOT EXISTS" in result.stdout
+        assert f"datname = '{name}')\\gexec" in result.stdout

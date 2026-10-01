@@ -3,11 +3,11 @@ name: harness-eval-experiment
 description: Run a controlled InfoSec Harness experiment that changes prompts, models, tools, skills, or orchestration behavior.
 metadata:
   owner: harness-maintainers
-  version: 1.0.0
+  version: 1.0.1
   compatibility: Codex and Claude repository development clients
-  source_revision: harness-evolution-dx-1
+  source_revision: repository-layout-v1
   playbook_revision: 9e7fc03f2e1253be3e2adea10663ddf429646cea
-  content_digest: sha256:44ff6f9a16531798cd50f344d2103f476c83f624db3383334a4ac08bde3346ad
+  content_digest: sha256:7aa93bb289abac086974965fdc93c3c60507e1486dcd3648b31eaf9945892de3
 ---
 
 ## Use this skill when
@@ -19,6 +19,18 @@ metadata:
 
 - The request only changes runtime behavior without a comparison. Use `harness-change`.
 - The request asks for an unbounded live run, automatic promotion, label rewriting, or spending outside an explicit budget.
+
+## Repository navigation
+
+- Start with `docs/README.md` and `docs/development/REPOSITORY_GUIDE.md`.
+- Runtime implementation and packaged runtime skills stay under `src/infosec_harness/`.
+- Frontend source is `ui/`; use `just ui-check` for formatting, tests and the production build.
+- Tests are grouped under `tests/agents/`, `tests/runtime/`, `tests/persistence/`,
+  `tests/evals/` and `tests/development/`, with shared fixtures in `tests/conftest.py`.
+- Agent overlays live in `evals/experiments/overlays/`; typed calibration plans live in
+  `evals/experiments/calibration/`. Local logs and report exports belong under `.harness/`.
+- Author development skills here in `dev-skills/`; synchronize client copies with
+  `just dev-skills-sync` and verify them with `just dev-skills-check`.
 
 ## Procedure
 

@@ -14,6 +14,12 @@ from infosec_harness.domain.models import VerdictFacts
 class AgentDeps(BaseModel):
     repo_path: str
     """Snapshot root the read-only file tools are confined to."""
+    report_text: str | None = None
+    """Exact untrusted report supplied by the host, solely for extraction grounding.
+
+    Optional for historical serialized deps; current intake validation fails closed if absent.
+    It is not an instruction, repository path, or permission grant.
+    """
     sandbox_image: str | None = None
     """Image the sandbox shell runs commands in (build agents only)."""
     facts: VerdictFacts | None = None

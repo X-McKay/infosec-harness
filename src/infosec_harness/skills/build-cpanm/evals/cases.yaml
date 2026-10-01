@@ -32,7 +32,7 @@ cases:
       install_commands:
         - cpanm --notest --local-lib=/opt/home/perl5 --installdeps .
       env:
-        PERL5LIB: /work/home/perl5/lib/perl5
+        PERL5LIB: /opt/home/perl5/lib/perl5
       test_command: prove -v {test_file}
 
   - id: a-cpanm-install-without-a-local-lib-is-rejected
@@ -47,7 +47,7 @@ cases:
       install_commands:
         - cpanm --notest --installdeps .
       env:
-        PERL5LIB: /work/home/perl5/lib/perl5
+        PERL5LIB: /opt/home/perl5/lib/perl5
       test_command: prove -v {test_file}
 
   - id: a-local-lib-install-without-perl5lib-is-rejected
@@ -63,20 +63,19 @@ cases:
         - cpanm --notest --local-lib=/opt/home/perl5 --installdeps .
       test_command: prove -v {test_file}
 
-  - id: a-local-lib-pointed-at-the-build-time-home-is-rejected
+  - id: the-legacy-runtime-copy-remains-replay-compatible
     type: procedure_adherence
     scenario: >
-      The image is built with HOME=/opt/home and the probe runs from a /work/home copy of it,
-      so an install writes under /opt and anything resolved at probe time reads from /work.
-      PERL5LIB pointing at the build-time path resolves to nothing at probe time.
-    expect_violations:
-      - "/work/home"
+      Compiled XS modules remain readable and executable under the immutable /opt/home tree.
+      The /work copy is on a noexec tmpfs, so its shared objects cannot be mapped. Historical
+      durable outputs used that path, however, so the structural validator continues to accept
+      it for replay while the execution-backed eval rejects it as a new candidate.
     environment_spec:
       base_image: perl:5.38-slim
       install_commands:
         - cpanm --notest --local-lib=/opt/home/perl5 --installdeps .
       env:
-        PERL5LIB: /opt/home/perl5/lib/perl5
+        PERL5LIB: /work/home/perl5/lib/perl5
       test_command: prove -v {test_file}
 
   - id: a-non-verbose-prove-is-rejected
@@ -92,7 +91,7 @@ cases:
       install_commands:
         - cpanm --notest --local-lib=/opt/home/perl5 --installdeps .
       env:
-        PERL5LIB: /work/home/perl5/lib/perl5
+        PERL5LIB: /opt/home/perl5/lib/perl5
       test_command: prove {test_file}
 
   - id: an-install-writing-under-work-is-rejected
@@ -107,5 +106,5 @@ cases:
       install_commands:
         - cpanm --notest --local-lib=/work/home/perl5 --installdeps .
       env:
-        PERL5LIB: /work/home/perl5/lib/perl5
+        PERL5LIB: /opt/home/perl5/lib/perl5
       test_command: prove -v {test_file}

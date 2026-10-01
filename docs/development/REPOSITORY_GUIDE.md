@@ -101,8 +101,10 @@ Agent spec overlays live in `evals/experiments/overlays/`; typed calibration pla
 
 Documents are grouped under `docs/development/`, `docs/architecture/`, `docs/evaluation/` and
 `docs/validation/`, with `docs/README.md` as the entry point. Generated risk assessments and
-threat models retain their contracted locations. The separately authored credential-broker
-proposal at `docs/CREDENTIAL_BROKER_SPEC.md` is left in place to preserve concurrent work.
+threat models retain their contracted locations. Imported qualification plans and reviews live under `docs/evaluation/`; fixes and retained
+qualification reports live under `docs/validation/`. `docs/development/HANDOFF.md` preserves the
+imported development checkpoint. The separately authored credential-broker proposal at
+`docs/CREDENTIAL_BROKER_SPEC.md` is left in place to preserve concurrent work.
 
 Tests are grouped under `tests/agents/`, `tests/runtime/`, `tests/persistence/`, `tests/evals/`
 and `tests/development/`. Shared fixtures stay in `tests/conftest.py`. Pytest discovers all groups

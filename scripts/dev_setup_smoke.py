@@ -4,17 +4,21 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import hashlib
 import json
 import os
 import sys
 import time
 import uuid
+from datetime import timedelta
 from urllib import error, request
 
 import boto3
 from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
+from temporalio.client import Client, WorkflowExecutionStatus
+from temporalio.service import RPCError
 
 LABEL = "HARNESS ONBOARDING DEMO — STUB JUDGMENT"
 
@@ -172,11 +176,33 @@ def wait_batch(api_url: str, batch_id: str, *, timeout: int = 1200) -> None:
     raise RuntimeError(f"demo batch {batch_id} did not complete within {timeout}s; last={last!r}")
 
 
+async def check_visibility(address: str, batch_id: str, *, timeout: float = 120) -> None:
+    """Require the completed demo in the index used by Temporal UI, not only in history."""
+    client = await asyncio.wait_for(Client.connect(address), timeout=10)
+    deadline = time.monotonic() + timeout
+    workflow_id = f"batch:{batch_id}"
+    query = "WorkflowId = '" + workflow_id.replace("'", "''") + "'"
+    last_error = "completed workflow not indexed"
+    while time.monotonic() < deadline:
+        try:
+            async for workflow in client.list_workflows(
+                query=query, limit=1, rpc_timeout=timedelta(seconds=10)
+            ):
+                if workflow.id == workflow_id and workflow.status == WorkflowExecutionStatus.COMPLETED:
+                    print(f"temporal visibility: completed demo {workflow_id} is queryable")
+                    return
+        except RPCError as exc:
+            last_error = str(exc)
+        await asyncio.sleep(2)
+    raise RuntimeError(f"Temporal visibility did not index {workflow_id}: {last_error}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--api-url", required=True)
     parser.add_argument("--web-url", required=True)
     parser.add_argument("--minio-url", required=True)
+    parser.add_argument("--temporal-address", required=True)
     args = parser.parse_args()
     try:
         wait_url(f"{args.api_url}/api/health", "API")
@@ -185,8 +211,10 @@ def main() -> int:
         check_s3(args.minio_url.removesuffix("/minio/health/ready"))
         batch_id = prior_demo(args.api_url) or submit_demo(args.api_url)
         wait_batch(args.api_url, batch_id)
+        asyncio.run(check_visibility(args.temporal_address, batch_id))
     except (
         RuntimeError,
+        RPCError,
         OSError,
         error.URLError,
         json.JSONDecodeError,

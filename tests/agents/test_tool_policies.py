@@ -53,12 +53,12 @@ def test_the_policy_declares_exactly_the_tools_the_code_exposes():
     `execution_class` a label before this file existed. Both directions are checked: a stale
     entry for a tool that no longer exists is also a lie about the surface.
     """
-    from infosec_harness.agents.capabilities import DEFAULT_REPO_RO_TOOLS
+    from infosec_harness.agents.capabilities import REPO_RO_TOOLS
 
     declared = {t.name for t in load_policies()["repo-read-only"].tools}
-    assert declared == set(DEFAULT_REPO_RO_TOOLS), {
-        "in the code, undeclared": sorted(set(DEFAULT_REPO_RO_TOOLS) - declared),
-        "declared, not in the code": sorted(declared - set(DEFAULT_REPO_RO_TOOLS)),
+    assert declared == set(REPO_RO_TOOLS), {
+        "in the code, undeclared": sorted(set(REPO_RO_TOOLS) - declared),
+        "declared, not in the code": sorted(declared - set(REPO_RO_TOOLS)),
     }
 
 
@@ -75,7 +75,8 @@ def test_the_declared_output_bound_covers_every_tools_own_cap():
     for name, limit in (("describe_callables", cap.MAX_DESCRIBE_BYTES),
                         ("read_files", cap.MAX_BATCH_BYTES),
                         ("list_tree", cap.MAX_TREE_BYTES),
-                        ("repo_digest", cap.MAX_DIGEST_BYTES)):
+                        ("repo_digest", cap.MAX_DIGEST_BYTES),
+                        ("inspect_target", cap.MAX_TARGET_CONTEXT_BYTES)):
         assert limit <= declared, f"{name} can return {limit} bytes, over the declared {declared}"
 
 

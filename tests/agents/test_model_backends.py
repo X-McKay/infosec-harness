@@ -95,8 +95,9 @@ def test_bedrock_construction_uses_region_and_profile_without_a_live_aws_call(mo
 
 def test_backend_capabilities_preserve_typed_output_and_tool_calling(monkeypatch):
     """Both backends advertise the capabilities required by governed agent specs."""
+    from infosec_harness.agents.outputs import VERDICT_OUTPUTS
     from infosec_harness.agents.registry import AGENT_BINDINGS, build_agent
-    from infosec_harness.domain.models import ProbeSource, Verdict
+    from infosec_harness.domain.models import ProbeSource
     from infosec_harness.settings import get_settings
 
     monkeypatch.setenv("HARNESS_MODEL_MODE", "live")
@@ -108,9 +109,9 @@ def test_backend_capabilities_preserve_typed_output_and_tool_calling(monkeypatch
             verdict = build_agent("verdict", durable=False)
             author = build_agent("probe-author", durable=False)
             resolved = models.resolve_config("probe-author", "sonnet")
-            assert verdict.output_type is Verdict
+            assert verdict.output_type == VERDICT_OUTPUTS
             assert author.output_type is ProbeSource
-            assert verdict.output_json_schema()["title"] == "Verdict"
+            assert len(verdict.output_json_schema()["anyOf"]) == 3
             assert author.output_json_schema()["title"] == "ProbeSource"
             assert resolved.capability_profile.structured_output == "tool"
             assert resolved.capability_profile.tool_calling is True

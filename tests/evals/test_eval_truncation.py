@@ -9,6 +9,7 @@ fails loudly with the truncation on the record.
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import httpx
@@ -127,6 +128,54 @@ async def test_transport_failure_keeps_the_scored_cases_and_fails_the_run(monkey
     assert observations["attempt_coverage_rate"] == 0.75
 
 
+async def test_agent_deadline_is_a_failed_budget_gate_and_remaining_cases_run(monkeypatch):
+    from infosec_harness.agents import registry
+
+    real_build = registry.build_agent
+
+    class SlowFirstInvocation:
+        def __init__(self, inner):
+            self.inner = inner
+            self.calls = 0
+
+        async def run(self, *args, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                await asyncio.sleep(10)
+            return await self.inner.run(*args, **kwargs)
+
+    monkeypatch.setattr(get_settings(), "agent_run_timeout_s", 0.1)
+    monkeypatch.setattr(registry, "build_agent", lambda *a, **kw: SlowFirstInvocation(
+        real_build(*a, **kw)
+    ))
+    experiment = await _experiment(await run_experiment(AGENT))
+    metrics = experiment.metrics
+    assert metrics["status"] == "complete"
+    assert metrics["n"] == metrics["n_planned"] == len(_dataset_cases())
+    assert metrics["budget_exhausted_count"] == 1
+    assert metrics["unexpected_budget_stops"] == 1
+    assert metrics["usage_unknown"] == 1
+    assert metrics["attempts"][0]["error_type"] == "AgentRunTimeout"
+    assert metrics["attempts"][0]["outcome"] == "budget_exhausted"
+    assert metrics["attempts"][1]["outcome"] == "answered"
+
+
+async def test_inner_timeout_is_not_mislabeled_as_agent_budget_exhaustion(monkeypatch):
+    from infosec_harness.agents import registry
+
+    class InnerTimeoutAgent:
+        async def run(self, *args, **kwargs):
+            raise TimeoutError("inner transport timeout")
+
+    monkeypatch.setattr(registry, "build_agent", lambda *a, **kw: InnerTimeoutAgent())
+    with pytest.raises(TruncatedExperiment) as error:
+        await run_experiment(AGENT)
+    experiment = await _experiment(error.value.experiment_id)
+    assert experiment.metrics["budget_exhausted_count"] == 0
+    assert experiment.metrics["status"] == "truncated"
+    assert experiment.metrics["attempts"][0]["error_type"] == "TimeoutError"
+
+
 async def test_truncated_run_writes_no_release_report(monkeypatch, tmp_path, capsys):
     _break_endpoint_after(monkeypatch, 1)
     report = tmp_path / "release.json"
@@ -205,7 +254,7 @@ async def test_invalid_output_retains_category_but_not_exception_text(monkeypatc
     assert {row.scores["error_type"] for row in rows} == {"UnexpectedModelBehavior"}
     encoded = json.dumps([row.scores for row in rows])
     assert "should-not-be-stored" not in encoded and "sensitive reason" not in encoded
-    assert {row.scores["error_category"] for row in rows} == {"output_contract_invalid"}
+    assert {row.scores["error_category"] for row in rows} == {"no_accepted_output"}
     assert all(row.scores["provider_body_retained"] is False for row in rows)
     assert exp.metrics["avg_tokens"] is None
     assert exp.metrics["cache_hit_ratio"] is None

@@ -4,7 +4,7 @@ description: Recipe for building a Perl test environment in the sandbox. Use thi
   repairing a build for a cpanfile or Makefile.PL project.
 metadata:
   owner: appsec
-  version: 1.0.0
+  version: 1.0.1
 ---
 
 # Building Perl targets
@@ -32,7 +32,7 @@ metadata:
   ```yaml
   system_packages: [gcc, make, libc6-dev]     # DBI and every other XS module is compiled here
   install_commands: ["cpanm --notest --local-lib=/opt/home/perl5 --installdeps ."]
-  env: {PERL5LIB: "/work/home/perl5/lib/perl5"}
+  env: {PERL5LIB: "/opt/home/perl5/lib/perl5"}
   test_command: "prove -v -Ilib {test_file}"
   ```
 
@@ -42,10 +42,11 @@ metadata:
     cannot write perl's site directory. Without `--local-lib`, cpanm warns, *reports success*,
     installs nothing importable, and the build goes green with the dependency missing — the
     failure then surfaces inside the probe as `Can't locate DBI.pm`, where nothing can fix it.
-  - **The install path is `/opt/home`, the `PERL5LIB` path is `/work/home`.** The image is built
-    with `HOME=/opt/home`; at probe time that directory is copied to a writable `/work/home`
-    tmpfs and the test runs from there. `--local-lib=/work/...` fails outright — /work does not
-    exist yet — and a `PERL5LIB` under `/opt` finds nothing at probe time.
+  - **Both the install path and `PERL5LIB` stay under `/opt/home`.** The image is built with
+    `HOME=/opt/home`, and that immutable tree remains readable at probe time. `/work` is a
+    noexec tmpfs: pure-Perl files can be read from its copy, but XS shared objects such as
+    `DBI.so` fail to map there. `--local-lib=/work/...` also fails because /work does not exist
+    during the build.
   - **XS modules need a compiler.** `DBI`, `DBD::SQLite`, `DBD::mysql`, `XML::LibXML` are C
     extensions; without `gcc`/`make`/`libc6-dev` cpanm reports `Building DBI ... FAIL`. Add the
     library's own `-dev` package too where one is needed (`libmysqlclient-dev`, `libxml2-dev`).

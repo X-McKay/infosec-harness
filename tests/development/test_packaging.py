@@ -73,6 +73,14 @@ def test_every_skill_ships_in_the_wheel(wheel):
     assert packaged == on_disk, f"skills missing from the wheel: {sorted(on_disk - packaged)}"
 
 
+def test_retained_intake_spec_ships_without_serialization_drift(wheel):
+    resource = "infosec_harness/agents/intake/agent-v1.0.2.yaml"
+    with zipfile.ZipFile(wheel) as archive:
+        assert archive.read(resource) == (
+            package_root() / "agents/intake/agent-v1.0.2.yaml"
+        ).read_bytes()
+
+
 def test_the_approved_model_catalogue_ships_in_the_wheel(wheel):
     """Model policy is governance data, so it travels with the code it governs rather than
     being something a deployment is trusted to place correctly."""
@@ -132,6 +140,15 @@ print(json.dumps(built))
 """, tmp_path))
     expected = sorted(p.parent.name for p in (package_root() / "agents").glob("*/agent.yaml"))
     assert names == expected
+
+
+def test_installed_wheel_builds_all_retained_intake_generations(installed, tmp_path):
+    names = json.loads(_run(installed, """
+import json
+from infosec_harness.agents.intake_generations import intake_generations
+print(json.dumps(sorted(bundle.agent.name for bundle in intake_generations().values())))
+""", tmp_path))
+    assert names == ["intake", "intake-output-v2", "intake-output-v3"]
 
 
 def test_skills_resolve_to_the_package_not_the_working_directory(installed, tmp_path):

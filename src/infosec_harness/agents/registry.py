@@ -19,7 +19,7 @@ from typing import Any
 from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.agent.spec import AgentSpec
-from pydantic_ai.capabilities import ResolveModelId
+from pydantic_ai.capabilities import PrepareOutputTools, ResolveModelId
 from pydantic_ai.durable_exec.temporal import TemporalDurability
 from pydantic_ai_harness.compaction import ClearToolResults
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
@@ -37,7 +37,32 @@ from infosec_harness.agents.budgets import (
 from infosec_harness.agents.capabilities import CUSTOM_CAPABILITIES
 from infosec_harness.agents.deps import AgentDeps
 from infosec_harness.agents.governance import GovernanceError, assert_governed
-from infosec_harness.agents.validators import OUTPUT_VALIDATORS
+from infosec_harness.agents.intake_claims import (
+    WIRE_VERSION,
+    AtomicFinding,
+    ReferenceError,
+    reconstruct,
+)
+from infosec_harness.agents.intake_contracts import (
+    ATOMIC_EXECUTION_NAME,
+    QUOTED_EXECUTION_NAME,
+    retained_intake_spec,
+)
+from infosec_harness.agents.intake_evidence import INTAKE_EVIDENCE_POLICY_VERSION
+from infosec_harness.agents.outputs import (
+    VERDICT_OUTPUTS,
+    ContextOutput,
+    PartialEnvironmentOutput,
+    prepare_verdict_tools,
+    verdict_contract_instructions,
+)
+from infosec_harness.agents.planning_window import PlanningWindow, PlanningWindowTelemetry
+from infosec_harness.agents.replay_only import ReplayOnlyModel
+from infosec_harness.agents.validators import (
+    OUTPUT_VALIDATORS,
+    bind_install_source_validator,
+    validate_intake_evidence,
+)
 from infosec_harness.domain.models import (
     EnvironmentSpec,
     ExtractedFinding,
@@ -50,6 +75,7 @@ from infosec_harness.domain.models import (
     canonical_json,
 )
 from infosec_harness.resources import package_root
+from infosec_harness.sandbox.install_sources import install_source_policy
 from infosec_harness.settings import get_settings
 
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
@@ -96,18 +122,31 @@ ACTIVITY_MAX_ATTEMPTS = 3
 # Retrying these cannot change the outcome: permanent provider rejections, a semantic
 # failure pydantic-ai has already exhausted its own retries on, and programming errors.
 NON_RETRYABLE_ERRORS = [
-    "AuthenticationError", "PermissionDeniedError", "BadRequestError", "NotFoundError",
-    "UnprocessableEntityError", "UnexpectedModelBehavior",
-    "ValidationError", "TypeError", "ValueError", "KeyError", "AttributeError",
+    "AuthenticationError",
+    "PermissionDeniedError",
+    "BadRequestError",
+    "NotFoundError",
+    "UnprocessableEntityError",
+    "UnexpectedModelBehavior",
+    "ValidationError",
+    "TypeError",
+    "ValueError",
+    "KeyError",
+    "AttributeError",
 ]
-ACTIVITY_RETRY = RetryPolicy(maximum_attempts=ACTIVITY_MAX_ATTEMPTS,
-                             non_retryable_error_types=NON_RETRYABLE_ERRORS)
+ACTIVITY_RETRY = RetryPolicy(
+    maximum_attempts=ACTIVITY_MAX_ATTEMPTS, non_retryable_error_types=NON_RETRYABLE_ERRORS
+)
 
 # Model calls can be slow; tool calls are fast except the sandbox shell.
-MODEL_ACTIVITY = ActivityConfig(start_to_close_timeout=timedelta(minutes=10),
-                                retry_policy=ACTIVITY_RETRY)
-TOOL_ACTIVITY = {"sandbox_shell": ActivityConfig(start_to_close_timeout=timedelta(minutes=5),
-                                                 retry_policy=ACTIVITY_RETRY)}
+MODEL_ACTIVITY = ActivityConfig(
+    start_to_close_timeout=timedelta(minutes=10), retry_policy=ACTIVITY_RETRY
+)
+TOOL_ACTIVITY = {
+    "sandbox_shell": ActivityConfig(
+        start_to_close_timeout=timedelta(minutes=5), retry_policy=ACTIVITY_RETRY
+    )
+}
 
 # History size (estimated tokens) at which `ClearToolResults` starts blanking the oldest tool
 # results, for an agent whose spec sets `metadata.clear_tool_results`. This is a *shape*
@@ -133,7 +172,9 @@ class ResolvedAgentConfig(BaseModel):
 
     @property
     def digest(self) -> str:
-        return hashlib.sha256(canonical_json(self.model_dump(mode="json")).encode()).hexdigest()[:16]
+        return hashlib.sha256(canonical_json(self.model_dump(mode="json")).encode()).hexdigest()[
+            :16
+        ]
 
     @property
     def effective_digest(self) -> str:
@@ -152,7 +193,9 @@ class ResolvedAgentConfig(BaseModel):
             # Routing policy is provenance for the requested tier; the resolved model below is
             # the behavior. Two policies resolving to the same concrete model are equivalent.
             metadata.pop("model_policy", None)
-        model = self.model.model_dump(mode="json", exclude={"requested_model", "requested_settings"})
+        model = self.model.model_dump(
+            mode="json", exclude={"requested_model", "requested_settings"}
+        )
         budget = {
             "agent_name": self.budget.agent_name,
             "source_files": self.budget.source_files,
@@ -196,8 +239,15 @@ def deep_merge(base: Any, overlay: Any) -> Any:
     return copy.deepcopy(overlay)
 
 
-def load_spec(name: str, overlay: Mapping[str, Any] | None = None) -> AgentSpec:
-    spec = AgentSpec.from_file(spec_path(name))
+def load_spec(
+    name: str,
+    overlay: Mapping[str, Any] | None = None,
+    *,
+    spec_override: AgentSpec | None = None,
+) -> AgentSpec:
+    if spec_override is not None and overlay is not None:
+        raise ValueError("A complete spec override cannot be combined with an overlay")
+    spec = spec_override or AgentSpec.from_file(spec_path(name))
     if overlay:
         merged = deep_merge(spec.model_dump(by_alias=True, exclude_none=True, mode="json"), overlay)
         spec = AgentSpec.from_dict(merged)
@@ -262,9 +312,23 @@ def resolve_agent_config(
         source_files=source_files,
         provider_output_floor=model.provider_output_floor,
     )
+    effective_spec = effective.model_dump(by_alias=True, exclude_none=True, mode="json")
+    if name == "intake":
+        metadata = effective_spec.setdefault("metadata", {})
+        intake_output = metadata.get("intake_output") or {}
+        metadata["output_validation"] = {
+            "version": INTAKE_EVIDENCE_POLICY_VERSION,
+            **({"wire_version": intake_output["protocol"]}
+               if intake_output.get("protocol") == WIRE_VERSION else {}),
+        }
+    if name == "build-repair":
+        # Operator configuration is resolved on the host, never from repository content.
+        effective_spec.setdefault("metadata", {})["output_validation"] = install_source_policy(
+            get_settings().default_registry_allowlist
+        )
     return ResolvedAgentConfig(
         agent_name=name,
-        effective_spec=effective.model_dump(by_alias=True, exclude_none=True, mode="json"),
+        effective_spec=effective_spec,
         skills_digest=_skills_hash(effective),
         model=model,
         budget=budget,
@@ -279,9 +343,7 @@ def config_hash(
     durable: bool = False,
 ) -> str:
     """Agent config identity (§6): effective spec + skill contents + resolved model."""
-    return resolve_agent_config(
-        name, spec, source_files=source_files, durable=durable
-    ).digest
+    return resolve_agent_config(name, spec, source_files=source_files, durable=durable).digest
 
 
 def _absolutize_skill_dirs(spec: AgentSpec) -> AgentSpec:
@@ -372,7 +434,7 @@ def _assert_tools_are_declared(name: str, spec: AgentSpec) -> None:
     because `RepoReadOnly(tools=[...])` lets a spec name a subset -- and a typo in that list
     would otherwise silently narrow the agent's tools instead of failing.
     """
-    from infosec_harness.agents.capabilities import DEFAULT_REPO_RO_TOOLS
+    from infosec_harness.agents.capabilities import DEFAULT_REPO_RO_TOOLS, REPO_RO_TOOLS
     from infosec_harness.tools.policies import load_policies
 
     declared = {t.name for t in load_policies()["repo-read-only"].tools}
@@ -380,11 +442,11 @@ def _assert_tools_are_declared(name: str, spec: AgentSpec) -> None:
         if cap.name != "RepoReadOnly":
             continue
         selected = (cap.kwargs or {}).get("tools") or DEFAULT_REPO_RO_TOOLS
-        unknown = sorted(set(selected) - set(DEFAULT_REPO_RO_TOOLS))
+        unknown = sorted(set(selected) - set(REPO_RO_TOOLS))
         if unknown:
             raise GovernanceError(
                 f"Agent {name!r} selects repo tools that do not exist: {unknown}. "
-                f"Available: {sorted(DEFAULT_REPO_RO_TOOLS)}"
+                f"Available: {sorted(REPO_RO_TOOLS)}"
             )
         undeclared = sorted(set(selected) - declared)
         if undeclared:
@@ -394,12 +456,50 @@ def _assert_tools_are_declared(name: str, spec: AgentSpec) -> None:
             )
 
 
+def _resolve_agent_model(
+    name: str,
+    tier: str,
+    *,
+    durable: bool,
+    atomic_intake: bool,
+    replay_only: bool,
+):
+    model = (
+        model_factory.resolve_intake_atomic(name, tier, durable=durable)
+        if atomic_intake
+        else model_factory.resolve(name, tier, durable=durable)
+    )
+    if replay_only and durable:
+        return ReplayOnlyModel(model)
+    return model
+
+
+def _validate_atomic_intake(ctx: Any, output: AtomicFinding) -> ExtractedFinding:
+    try:
+        finding = reconstruct(ctx.deps.report_text, output)
+    except ReferenceError as error:
+        rule = error.rule if error.rule in {
+            "source_unavailable", "unknown_source_id", "reversed_source_range"
+        } else "invalid_reference"
+        from pydantic_ai import ModelRetry
+
+        raise ModelRetry(
+            f"Extraction violates its evidence contract:\n- Source reference violates its contract: {rule}"
+        ) from None
+    return validate_intake_evidence(ctx, finding)
+
+
 def build_agent(
     name: str,
     overlay: Mapping[str, Any] | None = None,
     *,
     durable: bool = True,
     production_transport: bool | None = None,
+    legacy_output_contract: bool = False,
+    execution_name: str | None = None,
+    spec_override: AgentSpec | None = None,
+    atomic_output: bool | None = None,
+    replay_only_model: bool = False,
 ) -> Agent[AgentDeps, Any]:
     """Build an agent with independently selected execution and transport layers.
 
@@ -410,7 +510,15 @@ def build_agent(
     """
     if name not in AGENT_BINDINGS:
         raise KeyError(f"Unknown agent {name!r}")
-    spec = load_spec(name, overlay)
+    if name == "intake" and legacy_output_contract and spec_override is None:
+        spec_override = retained_intake_spec()
+    spec = load_spec(name, overlay, spec_override=spec_override)
+    metadata = spec.metadata or {}
+    intake_output = metadata.get("intake_output") or {}
+    declared_atomic = name == "intake" and intake_output.get("protocol") == WIRE_VERSION
+    use_atomic_output = declared_atomic if atomic_output is None else atomic_output
+    if name == "intake" and use_atomic_output != declared_atomic:
+        raise ValueError("Intake output mode must match the full spec's declared protocol")
     # A spec that cannot be governed must not become a running agent: owner, execution class,
     # risk tier, risk assessment, model policy, budget, skills, and toolsets are all required,
     # and the spec's risk tier must match its assessment's governance tier (§3).
@@ -419,32 +527,71 @@ def build_agent(
     _assert_tools_are_declared(name, spec)
     spec = _absolutize_skill_dirs(effective_spec(name, spec))
     transport = durable if production_transport is None else production_transport
-    capabilities: list[Any] = [ResolveModelId(
-        lambda ctx, model_id, _n=name, _d=transport: model_factory.resolve(
-            _n, model_id, durable=_d
-        ))]
+    capabilities: list[Any] = [
+        ResolveModelId(
+            lambda ctx, model_id, _n=name, _d=transport, _a=use_atomic_output,
+                   _r=replay_only_model: _resolve_agent_model(
+                       _n, model_id, durable=_d, atomic_intake=_a, replay_only=_r
+                   )
+        )
+    ]
     # Cross-cutting robustness, attached in code (see ALLOWED_CAPABILITIES note).
     if any(cap.name in {"RepoReadOnly", "SandboxShell"} for cap in spec.capabilities):
         capabilities.append(RepairToolArguments())
     metadata = spec.metadata or {}
+    if name == "build-repair" and not legacy_output_contract:
+        planning = PlanningWindow.from_metadata(metadata)
+        if planning is None:
+            raise ValueError("Current build repair requires its frozen planning window")
+        capabilities.extend([planning.capability(), PlanningWindowTelemetry(planning)])
     if metadata.get("clear_tool_results"):
-        capabilities.append(ClearToolResults(
-            max_tokens=metadata.get("clear_tool_tokens", DEFAULT_CLEAR_TOOL_TOKENS)))
+        capabilities.append(
+            ClearToolResults(
+                max_tokens=metadata.get("clear_tool_tokens", DEFAULT_CLEAR_TOOL_TOKENS)
+            )
+        )
     if durable:
-        capabilities.append(TemporalDurability(model_activity_config=MODEL_ACTIVITY,
-                                               toolset_activity_config=TOOL_ACTIVITY))
+        capabilities.append(
+            TemporalDurability(
+                model_activity_config=MODEL_ACTIVITY, toolset_activity_config=TOOL_ACTIVITY
+            )
+        )
+    output_type = AtomicFinding if use_atomic_output else AGENT_BINDINGS[name]
+    if not legacy_output_contract:
+        if name == "partial-build":
+            output_type = PartialEnvironmentOutput
+        elif name == "context":
+            output_type = ContextOutput
+        elif name == "verdict":
+            output_type = VERDICT_OUTPUTS
+            capabilities.append(PrepareOutputTools(prepare_verdict_tools))
     agent = Agent.from_spec(
         spec,
         deps_type=AgentDeps,
-        output_type=AGENT_BINDINGS[name],
+        output_type=output_type,
         custom_capability_types=ALLOWED_CAPABILITIES,
         capabilities=capabilities,
-        name=name,
+        # Temporal derives model/tool activity identities from this name. Output-contract
+        # revisions therefore need a distinct execution name; the logical name above still
+        # owns model routing, governance, budgets, telemetry and persisted AgentOutcome data.
+        name=execution_name or name,
         defer_model_check=True,
     )
     from infosec_harness.telemetry import private_instrumentation
 
     agent.instrument = private_instrumentation()
+    if name == "verdict" and not legacy_output_contract:
+        agent.instructions(verdict_contract_instructions)
+    if name == "build-repair" and not legacy_output_contract:
+        policy = resolve_agent_config(name, spec, durable=transport).effective_spec[
+            "metadata"
+        ]["output_validation"]
+        agent.output_validator(bind_install_source_validator(tuple(policy["approved_hosts"])))
+    if name == "intake" and not legacy_output_contract:
+        if use_atomic_output:
+            agent.output_validator(_validate_atomic_intake)
+        else:
+            agent.output_validator(validate_intake_evidence)
     for validator in OUTPUT_VALIDATORS.get(name, ()):
         agent.output_validator(validator)
     return agent
@@ -452,8 +599,37 @@ def build_agent(
 
 @lru_cache
 def durable_agents() -> dict[str, Agent[AgentDeps, Any]]:
-    """Baseline agents, built once at worker import and registered with Temporal."""
-    return {name: build_agent(name) for name in AGENT_BINDINGS}
+    """Current agents, with distinct Temporal identities for revised output contracts."""
+    revised = {"partial-build", "context", "verdict", "build-repair", "intake"}
+    return {
+        name: build_agent(
+            name,
+            execution_name=(ATOMIC_EXECUTION_NAME if name == "intake" else
+                            f"{name}-output-v2" if name in revised else None),
+        )
+        for name in AGENT_BINDINGS
+    }
+
+
+def quoted_intake_agent(*, durable: bool = True) -> Agent[AgentDeps, Any]:
+    """Build retained 1.0.2 quote output with the v2 Temporal identity."""
+    return build_agent(
+        "intake", durable=durable, spec_override=retained_intake_spec(),
+        atomic_output=False, replay_only_model=durable, execution_name=QUOTED_EXECUTION_NAME,
+    )
+
+
+@lru_cache
+def legacy_output_agents() -> dict[str, Agent[AgentDeps, Any]]:
+    """Original Temporal identities and parsers retained solely for history replay."""
+    return {
+        name: build_agent(
+            name, legacy_output_contract=True,
+            spec_override=retained_intake_spec() if name == "intake" else None,
+            replay_only_model=(name == "intake"),
+        )
+        for name in ("partial-build", "context", "verdict", "build-repair", "intake")
+    }
 
 
 @lru_cache
@@ -477,8 +653,7 @@ def agent_config_hashes() -> dict[str, str]:
 def resolved_agent_configs() -> dict[str, ResolvedAgentConfig]:
     """Durable base configs loaded outside workflow execution."""
     return {
-        name: resolve_agent_config(name, load_spec(name), durable=True)
-        for name in AGENT_BINDINGS
+        name: resolve_agent_config(name, load_spec(name), durable=True) for name in AGENT_BINDINGS
     }
 
 
@@ -506,9 +681,15 @@ def validate_all() -> list[str]:
     for name in sorted(on_disk & set(AGENT_BINDINGS)):
         try:
             spec = load_spec(name)
-            instructions = spec.instructions if isinstance(spec.instructions, list) else [spec.instructions or ""]
+            instructions = (
+                spec.instructions
+                if isinstance(spec.instructions, list)
+                else [spec.instructions or ""]
+            )
             if any("{{" in str(i) for i in instructions):
-                problems.append(f"{name}: instructions must be static (no Handlebars templates, §6.2)")
+                problems.append(
+                    f"{name}: instructions must be static (no Handlebars templates, §6.2)"
+                )
             if not spec.model:
                 problems.append(f"{name}: spec must name a model tier")
             build_agent(name, durable=True)

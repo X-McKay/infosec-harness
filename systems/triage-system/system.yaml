@@ -49,7 +49,7 @@ topology:
   conflict_policy: policies/termination.yaml#conflict
 members:
 - agent: intake
-  version: 1.0.0
+  version: 1.0.3
   role: normalizer
   required: false
   restrictions:
@@ -84,7 +84,7 @@ members:
     authorization_scopes_max: []
     data_classification_max: confidential
 - agent: env-planner
-  version: 1.0.0
+  version: 1.0.1
   role: environment-planner
   required: true
   restrictions:
@@ -105,7 +105,7 @@ members:
     authorization_scopes_max: []
     data_classification_max: confidential
 - agent: build-repair
-  version: 1.0.0
+  version: 1.0.5
   role: environment-repairer
   required: false
   restrictions:
@@ -123,7 +123,7 @@ members:
     authorization_scopes_max: []
     data_classification_max: confidential
 - agent: partial-build
-  version: 1.0.1
+  version: 1.1.3
   role: environment-repairer
   required: false
   restrictions:
@@ -138,11 +138,10 @@ members:
     toolsets:
       include:
       - repo-read-only
-      - sandbox-shell
     authorization_scopes_max: []
     data_classification_max: confidential
 - agent: context
-  version: 1.0.0
+  version: 1.1.1
   role: investigator
   required: true
   restrictions:
@@ -186,7 +185,7 @@ members:
     authorization_scopes_max: []
     data_classification_max: confidential
 - agent: probe-author
-  version: 1.0.0
+  version: 1.1.0
   role: probe-author
   required: true
   restrictions:
@@ -208,7 +207,7 @@ members:
     authorization_scopes_max: []
     data_classification_max: confidential
 - agent: probe-repair
-  version: 1.0.0
+  version: 1.1.0
   role: probe-author
   required: false
   restrictions:
@@ -230,7 +229,7 @@ members:
     authorization_scopes_max: []
     data_classification_max: confidential
 - agent: probe-diagnosis
-  version: 1.0.0
+  version: 1.0.1
   role: execution-judge
   required: true
   restrictions:
@@ -247,7 +246,7 @@ members:
     authorization_scopes_max: []
     data_classification_max: confidential
 - agent: verdict
-  version: 1.0.0
+  version: 1.1.0
   role: verdict-judge
   required: true
   restrictions:

@@ -61,6 +61,12 @@ tools:
       `ast`; javascript, java and perl are a text scan, and the output states per language which
       fields are certain and which are inferred. Bounded to MAX_SYMBOLS=80 symbols from the first
       MAX_SYMBOL_SOURCE_LINES=4000 lines.
+  - name: inspect_target
+    effect: read
+    notes: >-
+      Combines describe_callables with 200 numbered source lines in one model round trip.
+      Uses the same confined readers without importing or executing repository content.
+      Output is bounded to 48000 bytes and explicitly labels truncation and untrusted content.
 constraints:
   - The snapshot root is the only reachable path; traversal above it is rejected in code.
   - No write, delete, move, or metadata-changing operation exists in this toolset.

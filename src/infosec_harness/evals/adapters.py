@@ -20,8 +20,10 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+from pydantic import ValidationError
+
 from infosec_harness.agents.deps import AgentDeps
-from infosec_harness.domain.models import VerdictFacts
+from infosec_harness.domain.models import EnvironmentSpec, VerdictFacts
 from infosec_harness.sandbox.docker import CANARY_PREFIX, ORACLE_PREFIX, PRECONDITION_PREFIX
 from infosec_harness.settings import REPO_ROOT
 
@@ -60,6 +62,22 @@ def _with_detected_stack(case: dict) -> dict:
     return payload
 
 
+def _build_deps(case: dict) -> AgentDeps:
+    """Bind the failed build's image exactly as the production graph does."""
+    payload = case.get("payload")
+    if not isinstance(payload, dict):
+        raise ValueError(f"{case.get('name', '<unnamed>')}: payload must be an object")
+    try:
+        failed_spec = EnvironmentSpec.model_validate(payload.get("failed_spec"))
+    except ValidationError as exc:
+        raise ValueError(
+            f"{case.get('name', '<unnamed>')}: payload.failed_spec must be a valid EnvironmentSpec"
+        ) from exc
+    if not failed_spec.base_image.strip():
+        raise ValueError(f"{case.get('name', '<unnamed>')}: failed_spec.base_image must not be blank")
+    return _deps(case, sandbox_image=failed_spec.base_image)
+
+
 # --- Reasoning-only agents (no repository access) ---------------------------------------
 
 
@@ -78,7 +96,7 @@ def diagnosis_adapter(case: dict):
 def intake_adapter(case: dict):
     """Scored on the weakness class it extracts: that is what routes the CWE skill."""
     return ("Extract the missing finding fields from the report text, with citations.",
-            case["payload"], AgentDeps(repo_path="/nonexistent"),
+            case["payload"], AgentDeps(repo_path="/nonexistent", report_text=case["payload"]["report"]),
             lambda o: (o.cwe or "none"), case["expected"])
 
 
@@ -137,6 +155,28 @@ def env_planner_adapter(case: dict):
 
 def build_repair_adapter(case: dict):
     """Scored on whether the repair addresses the failure the log reports."""
+    if case.get("scorer") == "no_previous_attempt_repeat_v1":
+        payload = case["payload"]
+        attempted = [payload["failed_spec"], *(payload.get("previous_attempts") or [])]
+
+        def normalize(spec: Any) -> dict[str, Any]:
+            value = EnvironmentSpec.model_validate(spec).model_dump(
+                mode="json", exclude={"rationale"}
+            )
+            value["system_packages"] = sorted(value["system_packages"])
+            return value
+
+        normalized_attempts = [normalize(spec) for spec in attempted]
+
+        def predict_no_repeat(spec: Any) -> str:
+            # This negative case retains its historical labels: "unaddressed" is the
+            # expected label for avoiding the repeated failed attempt. Distinctness
+            # alone does not establish that the new configuration builds.
+            return "addressed" if normalize(spec) in normalized_attempts else "unaddressed"
+
+        return ("Repair this environment spec so the build succeeds.", case["payload"],
+                _build_deps(case), predict_no_repeat, case["expected"])
+
     def predict(spec: Any) -> str:
         packages = " ".join(spec.system_packages or []).lower()
         installs = " ".join(spec.install_commands or []).lower()
@@ -144,13 +184,13 @@ def build_repair_adapter(case: dict):
         return "addressed" if needle in packages or needle in installs else "unaddressed"
 
     return ("Repair this environment spec so the build succeeds.", case["payload"],
-            _deps(case), predict, case["expected"])
+            _build_deps(case), predict, case["expected"])
 
 
 def partial_build_adapter(case: dict):
     """Scored on whether it narrows scope rather than retrying the whole build."""
     return ("Narrow the build to the module the finding needs.", case["payload"],
-            _deps(case), lambda spec: (spec.scope or "full"), case["expected"])
+            _build_deps(case), lambda spec: (spec.scope or "full"), case["expected"])
 
 
 def context_adapter(case: dict):
@@ -237,14 +277,19 @@ def is_unevidenced_safe(agent: str, case: dict, predicted: str) -> bool:
         # the contract held rather than assuming it.
         facts = case.get("facts") or {}
         supported = (facts.get("last_diagnosis") == "valid_negative"
-                     and facts.get("precondition_reached")
-                     and facts.get("sink_returned")
-                     and not facts.get("oracle_fired"))
+                     and facts.get("precondition_reached") is True
+                     and facts.get("sink_returned") is True
+                     and facts.get("oracle_fired") is False)
         return predicted == "likely_not_exploitable" and not supported
     if agent == "probe-diagnosis":
-        # "The code resisted the payload" is only sayable if the payload reached the sink.
+        # "The code resisted the payload" is only sayable if the payload reached the sink and
+        # the call returned.  The precondition marker is emitted before the call, so it cannot
+        # distinguish a clean negative from a sink that threw before the return marker.
         execution = payload.get("probe_execution") or {}
-        return predicted == "valid_negative" and not execution.get("precondition_reached")
+        supported = (execution.get("precondition_reached") is True
+                     and execution.get("sink_returned") is True
+                     and execution.get("oracle_fired") is False)
+        return predicted == "valid_negative" and not supported
     if agent == "context":
         # Calling a sink unreachable early-exits the finding, so doing it on a variant that is
         # in fact exploitable suppresses a real vulnerability.

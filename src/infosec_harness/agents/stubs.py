@@ -171,13 +171,13 @@ def _env_plan(stack: dict | None) -> dict:
     if lang == "perl":
         # The shape verified against the corpus (see skills/build-cpanm): --local-lib because the
         # sandbox user cannot write perl's site dir and cpanm would otherwise report success and
-        # install nothing importable; the install path is the build-time /opt/home while PERL5LIB
-        # is the probe-time /work/home it gets copied to; gcc/make because DBI is an XS module.
+        # install nothing importable. Keep PERL5LIB on the immutable /opt/home install: /work is
+        # a noexec tmpfs, so copying an XS module there makes its shared object unmappable.
         # `prove` is perl core, so nothing installs it -- `App::prove` is not a distribution.
         return {"base_image": "perl:5.38-slim",
                 "system_packages": ["gcc", "make", "libc6-dev"],
                 "install_commands": ["cpanm --notest --local-lib=/opt/home/perl5 --installdeps ."],
-                "env": {"PERL5LIB": "/work/home/perl5/lib/perl5"},
+                "env": {"PERL5LIB": "/opt/home/perl5/lib/perl5"},
                 # -Ilib, not just -v: measured on a fixture whose modules live in blib/lib and
                 # one whose live in src/perl, a probe with no `use lib` and a prove with no -I
                 # dies on `Can't locate Runner.pm`. The recipe in skills/build-cpanm says both
@@ -361,6 +361,7 @@ _STUBS: dict[str, Callable[[str], dict]] = {
     "build-repair": lambda t: (_tag(t, "failed_spec") or _env_plan(_tag(t, "stack_fingerprint"))),
     "partial-build": _partial_build_plan,
     "context": lambda t: {"summary": "stub context", "reachability": "unknown",
+                          "source": None, "sink": None, "path": [], "sanitizers": [],
                           "reachability_rationale": "stub model does not analyse code"},
     "probe-planner": lambda t: {
         "hypothesis": "stub hypothesis", "payload": "' OR '1'='1", "oracle": "marker_output",
@@ -382,6 +383,22 @@ def stub_model(agent_name: str, tier: str) -> Model:
         if produce is None or not info.output_tools:
             raise RuntimeError(f"No stub for agent {agent_name!r}")
         args = produce(_prompt_text(messages))
+        if agent_name == "verdict" and "Use inconclusive_reason=environment_unbuildable." in (
+            info.instructions or ""
+        ):
+            args["inconclusive_reason"] = "environment_unbuildable"
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args)])
 
     return FunctionModel(respond, model_name=f"stub-{agent_name}-{tier}")
+
+
+def atomic_intake_stub_model(agent_name: str, tier: str) -> Model:
+    """Deterministic no-claim output for the new typed intake wire in offline mode."""
+    from pydantic_ai.messages import ModelResponse, ToolCallPart
+
+    def respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if agent_name != "intake" or not info.output_tools:
+            raise RuntimeError(f"No atomic intake stub for agent {agent_name!r}")
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {})])
+
+    return FunctionModel(respond, model_name=f"stub-{agent_name}-{tier}-atomic")

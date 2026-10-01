@@ -418,10 +418,10 @@ def test_a_local_lib_install_must_be_on_perls_search_path():
 
     unreachable = EnvironmentSpec(
         base_image="perl:5.40", test_command="prove -v {test_file}",
-        install_commands=["cpanm --notest -l /work/home/perl5 --installdeps ."])
+        install_commands=["cpanm --notest -l /opt/home/perl5 --installdeps ."])
     assert any("PERL5LIB" in p for p in environment_spec_violations(unreachable))
     reachable = unreachable.model_copy(
-        update={"env": {"PERL5LIB": "/work/home/perl5/lib/perl5"}})
+        update={"env": {"PERL5LIB": "/opt/home/perl5/lib/perl5"}})
     assert environment_spec_violations(reachable) == []
 
 
@@ -748,19 +748,19 @@ def test_cpanm_without_local_lib_is_rejected():
     assert any("PERL5LIB" in p for p in problems)
 
 
-def test_perl5lib_must_point_at_the_probe_time_path():
+def test_legacy_work_perl5lib_remains_admissible_for_durable_replay():
     from infosec_harness.agents.validators import install_path_violations
     from infosec_harness.domain.models import EnvironmentSpec
 
     spec = EnvironmentSpec(
         base_image="perl:5.38-slim", test_command="prove -v {test_file}",
         install_commands=["cpanm --notest --local-lib=/opt/home/perl5 --installdeps ."],
-        env={"PERL5LIB": "/opt/home/perl5/lib/perl5"})
-    assert any("probe time" in p for p in install_path_violations(spec))
+        env={"PERL5LIB": "/work/home/perl5/lib/perl5"})
+    assert install_path_violations(spec) == []
 
 
 def test_the_recipe_verified_against_the_corpus_passes():
-    """This exact spec was built and probed under gVisor: DBI imports, markers reach prove."""
+    """The /opt PERL5LIB shape loaded DBI/SQLite and queried it under managed runsc."""
     from infosec_harness.agents.validators import (
         environment_spec_violations,
         install_path_violations,
@@ -771,7 +771,7 @@ def test_the_recipe_verified_against_the_corpus_passes():
         base_image="perl:5.38-slim",
         system_packages=["gcc", "make", "libc6-dev"],
         install_commands=["cpanm --notest --local-lib=/opt/home/perl5 --installdeps ."],
-        env={"PERL5LIB": "/work/home/perl5/lib/perl5"},
+        env={"PERL5LIB": "/opt/home/perl5/lib/perl5"},
         test_command="prove -v {test_file}")
     assert environment_spec_violations(spec) == []
     assert install_path_violations(spec) == []

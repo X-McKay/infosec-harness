@@ -1,4 +1,6 @@
-version: "1"
+# Version 2 records diagnostic-only runsc traces for selected Python SQLi cases.
+# Scores remain structural; these forgeable observations are not target attestation.
+version: "2"
 # Each case hands the agent a probe with one specific defect diagnosed, and expects a repair
 # that still satisfies the protocol. The defects are the ones seen in real runs: a probe that
 # asserts before reaching the sink, and a probe that instruments an object the target never

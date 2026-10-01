@@ -114,7 +114,7 @@ def restructure(name: str) -> bool:
 
     frontmatter = yaml.safe_dump(
         {"name": name, "description": spec["description"],
-         "metadata": {"owner": OWNER, "version": VERSION}},
+         "metadata": {"owner": OWNER, "version": spec.get("version", VERSION)}},
         sort_keys=False, width=96, allow_unicode=True)
     rendered = (
         f"---\n{frontmatter}---\n\n{title}\n\n"

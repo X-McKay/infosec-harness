@@ -1,0 +1,30 @@
+version: '1'
+experiment: verdict-output-token-ceiling-v1
+subject: verdict
+hypothesis: A 4096 cumulative reported-output-token brake preserves task quality compared
+  with the existing 128000 brake. It may stop a completed response after usage is
+  reported; it does not lower the server per-call cap. No automatic production change.
+backend_profile: gateway
+variable: metadata.budgets.max_output_tokens
+candidates:
+- 4096
+- 128000
+repetitions: 1
+dataset:
+  calibration:
+  - valid_positive_sqli
+  - valid_negative_parameterized
+  - inconclusive_env
+  - unreachable_sink_needs_no_probe
+  - probe_unrepairable_after_budget
+  - valid_negative_that_never_reached_the_sink
+  - oracle_fired_on_a_defective_probe
+  held_out:
+  - a_runner_that_executed_no_tests_is_not_a_negative
+  - no_probe_was_ever_planned_on_reachable_code
+constraints:
+  maximum_trials: 2
+  maximum_duration_seconds: 1200
+  maximum_model_requests: 400
+  minimum_task_success_rate: 0.85
+promotion: review_required

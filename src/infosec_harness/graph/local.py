@@ -10,7 +10,8 @@ import asyncio
 from collections import defaultdict
 
 from infosec_harness.agents.deps import AgentDeps
-from infosec_harness.agents.render import render_prompt
+from infosec_harness.agents.intake_claims import WIRE_VERSION
+from infosec_harness.agents.intake_contracts import render_intake_prompt
 from infosec_harness.domain.models import (
     ComponentProfile,
     Finding,
@@ -52,9 +53,10 @@ async def triage_one(ops: LocalOps, inp: FindingInput, prepared) -> TriageRunOut
     invocations = []
     if adapters.needs_extraction(finding) and finding.description.strip():
         outcome = await ops.run_agent(
-            "intake", render_prompt("Extract the missing finding fields from the report text, "
-                                    "with citations.", {"report": finding.description, "known": finding}),
-            AgentDeps(repo_path=prepared.snapshot.path))
+            "intake", render_intake_prompt("Extract the missing finding fields from the report text, "
+                                    "with citations.", {"report": finding.description, "known": finding},
+                                    protocol=WIRE_VERSION),
+            AgentDeps(repo_path=prepared.snapshot.path, report_text=finding.description))
         invocations.append(outcome)
         finding = adapters.merge_extraction(finding, outcome.output)
     if adapters.resolve_location(finding, prepared.snapshot.path) is None:

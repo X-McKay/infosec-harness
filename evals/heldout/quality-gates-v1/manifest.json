@@ -1,0 +1,22 @@
+{
+  "agents": {
+    "context": 2,
+    "partial-build": 2,
+    "probe-author": 2,
+    "probe-repair": 2,
+    "verdict": 2
+  },
+  "case_count": 10,
+  "dataset_version": "quality-gates-v1",
+  "ecosystems": ["javascript", "python"],
+  "group_count": 5,
+  "group_hashes": [
+    "2fd8aad2934b8d1e25b6d19288280b1e178e3893c35915843400ac85770440a9",
+    "64f94118ca36baef84ee8fa55a2086543152e0d0b914f7a03884add35768d964",
+    "7a50bd42ab3e4b865ecf96a97fdcbb1ad957497ecd1bc6dde16680f8301c5e31",
+    "882b727abb0ca3e60a9bfe1647f1e07f3d9a5fe864c2ced734c07c523721ee94",
+    "f6eb24945e8fc4e42316d593d89a740a688acbbdbdff1f6f9f3c0eee3a5fe6fc"
+  ],
+  "inference_performed": false,
+  "preparation_status": "sealed"
+}

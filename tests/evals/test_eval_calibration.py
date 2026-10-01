@@ -8,6 +8,8 @@ from sqlalchemy import select
 from infosec_harness.evals.calibration import (
     CalibrationSpec,
     TrialResult,
+    _passes_hard_gates,
+    _promotion_eligible,
     _selection_key,
     load_calibration,
     run_calibration,
@@ -19,17 +21,19 @@ from infosec_harness.settings import get_settings
 
 
 def test_grouping_keeps_related_variants_together():
-    assert case_group({"name": "sqli-vulnerable", "repo": "corpus/sqli/vulnerable"}) \
-        == "corpus/sqli"
-    assert case_group({"name": "sqli-fixed", "repo": "corpus/sqli/fixed"}) \
-        == "corpus/sqli"
+    assert (
+        case_group({"name": "sqli-vulnerable", "repo": "corpus/sqli/vulnerable"}) == "corpus/sqli"
+    )
+    assert case_group({"name": "sqli-fixed", "repo": "corpus/sqli/fixed"}) == "corpus/sqli"
     assert case_group({"name": "anything", "group": "repo-17"}) == "repo-17"
 
 
 def test_candidate_ranking_preserves_observed_zero_and_penalizes_unknown_usage():
     def trial(tokens):
         return TrialResult(
-            candidate=str(tokens), effective_config_digest=str(tokens), status="complete",
+            candidate=str(tokens),
+            effective_config_digest=str(tokens),
+            status="complete",
             metrics={
                 "task_success_rate": 1.0,
                 "distributions": {"p95_latency_s": 1.0},
@@ -39,6 +43,65 @@ def test_candidate_ranking_preserves_observed_zero_and_penalizes_unknown_usage()
 
     assert _selection_key(trial(0)) > _selection_key(trial(1))
     assert _selection_key(trial(1)) > _selection_key(trial(None))
+
+
+def test_failed_or_missing_execution_evidence_fails_calibration_hard_gates():
+    metrics = {
+        "status": "complete",
+        "n": 1,
+        "n_planned": 1,
+        "schema_validity_rate": 1.0,
+        "budget_enforcement_violations": 0,
+        "unexpected_budget_stops": 0,
+        "unevidenced_safe_verdicts": 0,
+        "execution_not_checked_count": 0,
+        "execution_failed_count": 0,
+    }
+    assert _passes_hard_gates(metrics)
+    assert not _passes_hard_gates({**metrics, "execution_failed_count": 1})
+    missing = dict(metrics)
+    missing.pop("execution_failed_count")
+    assert not _passes_hard_gates(missing)
+
+
+@pytest.mark.parametrize(
+    "model_mode, dirty, expected",
+    [
+        ("stub", False, False),
+        ("stub", True, False),
+        ("live", False, True),
+        ("live", True, False),
+    ],
+)
+def test_promotion_requires_live_evidence_from_a_clean_commit(model_mode, dirty, expected):
+    from infosec_harness.evals.provenance import CodeVersion
+
+    gates = {
+        "status": "complete",
+        "n": 1,
+        "n_planned": 1,
+        "schema_validity_rate": 1.0,
+        "budget_enforcement_violations": 0,
+        "unexpected_budget_stops": 0,
+        "unevidenced_safe_verdicts": 0,
+        "execution_not_checked_count": 0,
+        "execution_failed_count": 0,
+    }
+    selected = TrialResult(candidate=1, effective_config_digest="digest", status="complete")
+    code = CodeVersion("a" * 40, dirty, "test", "3.12", "b" * 64)
+    assert (
+        _promotion_eligible(
+            selected=selected,
+            held_out_metrics=gates,
+            selected_quality=True,
+            held_out_quality=True,
+            code=code,
+            model_mode=model_mode,
+            cost_is_unknown=False,
+            maximum_cost_usd=None,
+        )
+        is expected
+    )
 
 
 def test_calibration_schema_rejects_leakage_and_safety_variables():
@@ -95,18 +158,10 @@ def test_floor_equivalent_candidates_share_effective_not_audit_identity(monkeypa
     get_settings.cache_clear()
     models.load_models_config.cache_clear()
     try:
-        first = registry.load_spec("probe-diagnosis", {
-            "model_settings": {"max_tokens": 100}
-        })
-        second = registry.load_spec("probe-diagnosis", {
-            "model_settings": {"max_tokens": 200}
-        })
-        resolved_first = registry.resolve_agent_config(
-            "probe-diagnosis", first, durable=True
-        )
-        resolved_second = registry.resolve_agent_config(
-            "probe-diagnosis", second, durable=True
-        )
+        first = registry.load_spec("probe-diagnosis", {"model_settings": {"max_tokens": 100}})
+        second = registry.load_spec("probe-diagnosis", {"model_settings": {"max_tokens": 200}})
+        resolved_first = registry.resolve_agent_config("probe-diagnosis", first, durable=True)
+        resolved_second = registry.resolve_agent_config("probe-diagnosis", second, durable=True)
         assert resolved_first.model.effective_settings["max_tokens"] == 16_000
         assert resolved_first.digest != resolved_second.digest
         assert resolved_first.effective_digest == resolved_second.effective_digest
@@ -138,18 +193,28 @@ def test_root_ceiling_only_tightens_the_scaled_member_budget():
     assert resolved.effective.max_requests == 6
     assert resolved.effective.max_tool_calls == 12
     assert set(resolved.binding_root_fields) == {
-        "max_requests", "max_input_tokens_per_request", "max_input_tokens",
-        "max_output_tokens", "max_cost_usd",
+        "max_requests",
+        "max_input_tokens_per_request",
+        "max_input_tokens",
+        "max_output_tokens",
+        "max_cost_usd",
     }
+
+
 async def test_eval_case_records_effective_limits_raw_latency_and_observed_usage():
     experiment_id = await run_experiment(
         "probe-diagnosis", groups={"positive"}, split="calibration"
     )
     async with db.session() as session:
-        rows = list((await session.execute(
-            select(db.EvalCaseResult)
-            .where(db.EvalCaseResult.experiment_id == experiment_id)
-        )).scalars())
+        rows = list(
+            (
+                await session.execute(
+                    select(db.EvalCaseResult).where(
+                        db.EvalCaseResult.experiment_id == experiment_id
+                    )
+                )
+            ).scalars()
+        )
         experiment = await session.get(db.EvalExperiment, experiment_id)
     assert rows
     assert experiment is not None
@@ -181,7 +246,8 @@ async def test_runnable_calibration_executes_candidates_then_grouped_holdout(tmp
     assert report.baseline_config_digest == registry.config_hash(
         "verdict", registry.load_spec("verdict"), durable=True
     )
-    assert not report.promotion_eligible, "a dirty source snapshot must not be promoted"
+    assert not report.promotion_eligible, "stub evidence must never be promoted"
+    assert "stub-model results exercise calibration machinery only" in " ".join(report.limitations)
 
     output = tmp_path / "report.json"
     write_report(output, report)
@@ -242,7 +308,11 @@ async def test_stub_cost_cap_has_zero_reserved_exposure():
     assert report.planned_cost_ceiling_usd == 0.0
 
 
-async def test_calibration_skips_provider_floor_equivalent_candidate(monkeypatch):
+@pytest.mark.parametrize("include_execution_metric", [True, False])
+async def test_calibration_skips_provider_floor_equivalent_candidate(
+    monkeypatch,
+    include_execution_metric,
+):
     from types import SimpleNamespace
 
     from infosec_harness.agents import models
@@ -260,13 +330,23 @@ async def test_calibration_skips_provider_floor_equivalent_candidate(monkeypatch
         split = kwargs["split"]
         identifier = f"exp-{split}-{len(calls)}"
         calls.append(split)
-        rows[identifier] = SimpleNamespace(metrics={
-            "status": "complete", "n": 1, "n_planned": 1,
-            "schema_validity_rate": 1.0, "budget_enforcement_violations": 0,
-            "unexpected_budget_stops": 0, "unevidenced_safe_verdicts": 0,
-            "task_success_rate": 1.0, "cost_usd_total": 0.0,
-            "distributions": {"p95_latency_s": 0.1}, "avg_tokens": 1,
-        })
+        metrics = {
+            "status": "complete",
+            "n": 1,
+            "n_planned": 1,
+            "schema_validity_rate": 1.0,
+            "budget_enforcement_violations": 0,
+            "unexpected_budget_stops": 0,
+            "unevidenced_safe_verdicts": 0,
+            "task_success_rate": 1.0,
+            "cost_usd_total": 0.0,
+            "distributions": {"p95_latency_s": 0.1},
+            "avg_tokens": 1,
+        }
+        if include_execution_metric:
+            metrics["execution_not_checked_count"] = 0
+            metrics["execution_failed_count"] = 0
+        rows[identifier] = SimpleNamespace(metrics=metrics)
         return identifier
 
     async def fake_row(identifier):
@@ -284,6 +364,12 @@ async def test_calibration_skips_provider_floor_equivalent_candidate(monkeypatch
         get_settings.cache_clear()
         models.load_models_config.cache_clear()
 
-    assert calls == ["calibration", "held_out"]
+    assert calls == (["calibration", "held_out"] if include_execution_metric else ["calibration"])
     assert [trial.status for trial in report.trials] == ["complete", "duplicate_effective"]
     assert report.trials[1].duplicate_of == 100
+    if include_execution_metric:
+        assert report.selected_candidate == 100
+    else:
+        assert report.selected_candidate is None
+        assert report.held_out_experiment_id is None
+        assert "no calibration candidate passed all hard gates" in report.limitations

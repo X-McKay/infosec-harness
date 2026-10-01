@@ -202,7 +202,7 @@ def _install_violations(spec: EnvironmentSpec) -> list[str]:
         ):
             problems.append(
                 "This install puts the modules in a local lib, so set "
-                "env.PERL5LIB=/work/home/perl5/lib/perl5 (matching the -l/-L path) or drop the "
+                "env.PERL5LIB=/opt/home/perl5/lib/perl5 (matching the -l/-L path) or drop the "
                 "local lib entirely. Without it prove runs with the stock @INC and the probe "
                 "dies on the modules that were just installed."
             )
@@ -511,8 +511,9 @@ def install_path_violations(spec: EnvironmentSpec) -> list[str]:
     if RUNTIME_HOME in installs or "/work/" in installs:
         problems.append(
             f"an install command writes under /work, which does not exist at build time: the "
-            f"probe tmpfs is mounted later. Install under {BUILD_HOME} and point the matching "
-            f"environment variable at {RUNTIME_HOME}, which is where it is copied."
+            f"probe tmpfs is mounted later. Install under {BUILD_HOME}. Keep runtime references "
+            "on executable artifacts: Perl XS libraries remain under /opt, while ecosystems "
+            "that only read data may use the /work copy."
         )
     # cpanm as the non-root sandbox user cannot write perl's site dir. It warns, "succeeds",
     # and installs nowhere on @INC -- so the build exits 0 with the dependency absent and the
@@ -521,7 +522,7 @@ def install_path_violations(spec: EnvironmentSpec) -> list[str]:
         problems.append(
             "a cpanm install must use --local-lib, e.g. "
             f"'cpanm --notest --local-lib={BUILD_HOME}/perl5 --installdeps .' with "
-            f"env PERL5LIB={RUNTIME_HOME}/perl5/lib/perl5. Without it cpanm cannot write perl's "
+            f"env PERL5LIB={BUILD_HOME}/perl5/lib/perl5. Without it cpanm cannot write perl's "
             "site directory as the non-root sandbox user: it reports success, installs nothing "
             "importable, and the build goes green with the dependency missing."
         )
@@ -546,13 +547,15 @@ def install_path_violations(spec: EnvironmentSpec) -> list[str]:
         perl5lib = (spec.env or {}).get("PERL5LIB", "")
         if not perl5lib:
             problems.append(
-                f"a cpanm install needs env PERL5LIB={RUNTIME_HOME}/perl5/lib/perl5 so the probe "
+                f"a cpanm install needs env PERL5LIB={BUILD_HOME}/perl5/lib/perl5 so the probe "
                 "can find what was installed; without it prove fails with 'Can't locate X.pm'."
             )
-        elif not perl5lib.startswith(RUNTIME_HOME):
+        elif not perl5lib.startswith((BUILD_HOME, RUNTIME_HOME)):
             problems.append(
-                f"env PERL5LIB is {perl5lib!r}, but at probe time the local-lib lives under "
-                f"{RUNTIME_HOME}. Point it at {RUNTIME_HOME}/perl5/lib/perl5."
+                f"env PERL5LIB is {perl5lib!r}; point it at {BUILD_HOME}/perl5/lib/perl5. "
+                f"Legacy histories using {RUNTIME_HOME}/perl5/lib/perl5 remain schema-admissible "
+                "for replay, but that noexec copy cannot load XS modules and will fail the "
+                "execution-backed build-repair check."
             )
     return problems
 

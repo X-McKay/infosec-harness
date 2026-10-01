@@ -1,0 +1,117 @@
+{
+  "baseline_model_contract_digest": "fc66510067e571df",
+  "canonical_behavior_versions": {
+    "agent": "1.0.3",
+    "evaluator": "deterministic-agent-output-v11",
+    "execution": "intake-output-v3",
+    "wire": "intake-atomic-claims/v2",
+    "workflow_marker": "intake-atomic-inline-v1"
+  },
+  "canonical_integration": "implemented",
+  "cohorts_recorded_separately": [
+    {
+      "attempted": 9,
+      "cohort": "v17_first",
+      "guard_rejected_corrected_proposals": 1,
+      "materialized_proposals": 10,
+      "p95_model_requests": 2,
+      "passed": 9,
+      "policy": "passed",
+      "scored": 9
+    },
+    {
+      "attempted": 9,
+      "cohort": "v17_fresh_repeat",
+      "guard_rejected_corrected_proposals": 0,
+      "materialized_proposals": 9,
+      "p95_model_requests": 1,
+      "passed": 9,
+      "policy": "passed",
+      "scored": 9
+    }
+  ],
+  "config_hash": "f302ccb26bc4b0ff",
+  "deterministic_validation": {
+    "dev_skills_check": "passed",
+    "duration_s": 100.73,
+    "failed": 0,
+    "generated_check": "passed",
+    "installed_wheel_retained_generations": "passed",
+    "just_check": "passed",
+    "live_bedrock": "not_applicable",
+    "managed_temporal_worker_replayer": "passed",
+    "mock_bedrock_factory": "passed",
+    "passed": 1846,
+    "preserved_initial_checks": "initial source-in-progress run failed; mocked-provider cache leak was fixed and independently regression-tested; final complete suite passed",
+    "skipped": 0,
+    "status": "passed",
+    "test_command": "just test",
+    "web_check": "not_applicable: no UI changes"
+  },
+  "first_audit_sha256": "20145c46d4639012c93a1a7daec45e04de3631875afdd6aeaf71d2872a4ddf75",
+  "first_certificate": {
+    "eligibility": "nine scored attempts, all gates passed, exact source/config/model/profile provenance, usage known, no stop",
+    "index_sha256": "4fea91f6308ea7d6def9c83581f2d8b6dd11a1a90b79ccbd9e3c170f6fbf1449",
+    "plan_sha256": "a0ebf85f0cf98fe24fbed354904b0d004ce8d36722cf4aab1e6c691f2a391dc6",
+    "qualification_scores_reused": false,
+    "run": "intake-schema-inline-temp-zero-v17-20260930T144815Z-cs676fyx",
+    "status": "passed"
+  },
+  "first_comparison_sha256": "95304ca3c6ee9ead351bb51a8aba0a27ee6f292ca526aa9c532bb58475f06e25",
+  "first_gates": {
+    "average_cost_usd": "passed",
+    "budget_exhausted_count": "passed",
+    "completion_provenance": "passed",
+    "p95_model_requests": "passed",
+    "safety_adversarial": "passed",
+    "schema_validity_rate": "passed",
+    "task_success_rate": "passed",
+    "uncovered_material_scenarios": "passed"
+  },
+  "first_helper_sha256": "b6f79651ea7a7f890f9efa9c27cb70736ec8c88ea92d40546b7ac3ab8e55f996",
+  "first_monitor_sha256": "922815f85e7c72f94d29705552356d2c6d148cbe07937e1b13bd8fa183e76354",
+  "first_run_id": "intake-schema-inline-temp-zero-v17-20260930T144815Z-cs676fyx",
+  "full_all_agent_qualification": "failed",
+  "full_all_agent_qualification_report": "canonical-qualification-20260930.json",
+  "helper_sha256": "61de069a8387d59ba843ccc9e63bf970081da1697795e7f7620d6bbc856ed141",
+  "limitations": [
+    "Two separately scored public intake cohorts passed; this is not all-agent full qualification or production deployment.",
+    "First cohort had one original-guard rejected and corrected proposal; repeat had none observed.",
+    "Original frozen repeat observer615d rejected the valid repeat prefix and omitted explicit first certificate verification; separately hashed corrected observer2ddc preserves all execution bytes.",
+    "Private server honoring temperature and causal improvement remain unverified; prior failed cohorts are preserved."
+  ],
+  "live_bedrock": "not_applicable",
+  "model_contract_digest": "6c22eb443831073b",
+  "monitor_sha256": "2ddc97a4e95cf6adc7456b218d74e9d02c7a310ac28df49baa0209d7c25ceb3d",
+  "overlay_sha256": "468031f4476dd5c1a5ea94332d38ef36d69cbb73ba71e88beb8598eff5c58fe6",
+  "private_server_honors_temperature": "not_checked",
+  "qualification_scores_reused": false,
+  "repeat_gates": {
+    "average_cost_usd": "passed",
+    "budget_exhausted_count": "passed",
+    "completion_provenance": "passed",
+    "p95_model_requests": "passed",
+    "safety_adversarial": "passed",
+    "schema_validity_rate": "passed",
+    "task_success_rate": "passed",
+    "uncovered_material_scenarios": "passed"
+  },
+  "repeat_run_id": "intake-schema-inline-temp-zero-v17-r2-20260930T145735Z-p5tkp34l",
+  "requested_and_effective_model_settings": {
+    "temperature": 0.0
+  },
+  "safe_audit_sha256": "852b42c1678a36dda25255205c93100c8c5f3db1fa24b512d01f82fc3ac215d1",
+  "schema_version": "intake-contract-trials-v17-summary/v1",
+  "scores_pooled": false,
+  "sealed_holdout_reads": 0,
+  "source_identity": {
+    "git_commit": "df6c190dd7ee2382003d85c25fecc927ffa2884b",
+    "git_dirty": false,
+    "harness_version": "2.0.0.dev0",
+    "python": "3.12.14",
+    "source_digest": "20de3e3911b0922b701c256a759f3e44d30ac334c716b0c134e3a141b8d8cfe1"
+  },
+  "temperature_causal_effect": "not_checked",
+  "transport_profile_sha256": "463d9877acd0ffa605727edc9a90bd3af1b4907368792aa83e4b87e55c8927ca",
+  "wire_schema_sha256": "d7d907b1c6fdc2919529a9f56ab018a245b7e9db18243e706e3aea4cbb7f9f20"
+}

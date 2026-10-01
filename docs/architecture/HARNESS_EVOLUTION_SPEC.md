@@ -950,3 +950,23 @@ The initial UI milestone is complete when a developer can follow a real workflow
 Broader language/strategy support is complete only per declared compatibility slice. Development procedures are complete when both coding clients and human contributors use the same executable standards and a behavior-changing proposal arrives with comparable evaluation evidence.
 
 This specification itself is complete for review when the recommendation groups, playbook classifications, proposed departures, deferred playbook items, acceptance gates, migration constraints, and unresolved decisions are explicit. Approval authorizes planning against the agreed scope; implementation and release evidence must still satisfy the resulting requirements.
+
+
+## Intake qualification follow-up: atomic claims and retained generations
+
+The selected intake candidate expresses each supported field as a typed value, positive confidence, and an exact source-line reference. The host reconstructs verbatim quotes and applies the unchanged whole-output evidence guard. External `ExtractedFinding` and downstream merge semantics remain unchanged; nullable CWE and weakness-class fields remain independent. The shared prompt replaces only the top-level report with `report_source_lines`, preserving other known fields.
+
+New intake runs use an inline OpenAI output-tool schema and requested temperature `0.0`. Construct a fresh intake-specific provider profile through the public model constructor; never mutate a cached profile or change other agents' schemas. Record protocol, source-index, schema-transformer and behavior versions in effective configuration. Declared settings are intent: server application of temperature or reasoning settings requires independent evidence. Live Bedrock qualification remains excluded, while provider compatibility remains a deterministic check.
+
+Retain the known historical full intake specification and model contract. Bare intake and quote-output v2 registrations replay completed model activities; atomic output uses a distinct v3 registration. Select agent, configuration, model and prompt protocol together before reserving root budget. Record the new generation patch at workflow entry, before normalization or model work. Block any fresh retained-generation provider activity, including pending activities and semantic retries, non-retryably; restart affected work as a new workflow. This deliberately trades old in-flight availability for deterministic, fail-closed behavior. It does not reconstruct arbitrary historical operator overlays, skill contents or provider configuration.
+
+No request/token/tool/cost ceiling, evidence predicate, golden label, or gate changes as part of this treatment. Bounded evaluation observations distinguish wire/schema errors, source-reference failures, and materialized evidence-guard failures without persisting raw proposals. Canonical evaluator version advances with this observation and prompt contract.
+
+Two separately scored prototype public cohorts passed all intake gates (9/9 each). These support canonical integration, not release qualification. Required completion evidence includes actual Temporal replay and frontier tests, retry/cancellation/accounting assessment, deterministic checks, and a fresh full all-agent public qualification followed by unused sealed cases only after public gates pass. See [the v17 experiment report](../validation/agent-quality/intake-contract-trials-v17-summary.md).
+
+
+## Qualification checkpoint: 2026-09-30
+
+The canonical intake implementation is on develop at `880a7bf`, with 1,846 deterministic tests passing. A fresh all-agent live run completed all three intake cohorts at 9/9 with all intake gates passed, but overall qualification **failed**. Probe-author exhausted its 16-request cap in one case; a third-cohort build-repair attempt received HTTP 502, stopping public evaluation before completion. Held-out qualification is **not_checked**, and no main merge has occurred.
+
+An independent audit found that context/probe-planner diagnostic closure falsely failed because the external controller rehashes Unicode differently from canonical configuration serialization. All 50 affected cases match typed configuration and budget derivation. Correct and independently regression-test the controller in a new frozen packet, then test a small probe-author loop-mitigation change under unchanged limits before another full qualification. Preserve the original failed run; correcting diagnostics cannot qualify an incomplete cohort. See [the qualification checkpoint](../validation/agent-quality/canonical-qualification-20260930.md) and [continuation handoff](../development/HANDOFF.md).

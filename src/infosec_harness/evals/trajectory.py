@@ -139,7 +139,7 @@ def check_expectations(tools_called: Iterable[str], skills_loaded: Iterable[str]
 # relevant skill loaded. Agents with no tools are absent.
 # describe_callables belongs here: it is how an agent learns a symbol's name, signature and
 # import form. Omitting it would score an agent that used it well as having read nothing.
-READ_TOOLS = frozenset({"read_file", "search_code", "list_files", "describe_callables"})
+READ_TOOLS = frozenset({"read_file", "search_code", "list_files", "describe_callables", "inspect_target", "read_files", "list_tree", "repo_digest"})
 AGENT_EXPECTATIONS: dict[str, TrajectoryExpectation] = {
     "recon": TrajectoryExpectation(tool_groups=(READ_TOOLS,)),
     "env-planner": TrajectoryExpectation(tool_groups=(READ_TOOLS,)),
@@ -185,3 +185,40 @@ def cwe_skill_prefix(cwe: str | None) -> str | None:
         return None
     prefix = f"cwe-{num}"
     return prefix if prefix in _available_cwe_skill_prefixes() else None
+
+
+def summarize_calls(messages: Sequence[ModelMessage], *, limit: int = 128) -> dict[str, object]:
+    """Retain call order using encounter-local IDs, without recoverable argument hashes."""
+    import hashlib
+    import json
+
+    counts: Counter[str] = Counter()
+    signatures: Counter[tuple[str, str]] = Counter()
+    sequence: list[dict[str, str]] = []
+    argument_ids: dict[tuple[str, str], str] = {}
+    for call in _tool_calls(messages):
+        name = call.tool_name
+        if name.startswith("final_result") or name.startswith("_"):
+            continue
+        try:
+            args = call.args_as_dict()
+        except Exception:
+            args = {"malformed": True}
+        digest = hashlib.sha256(
+            json.dumps(args, sort_keys=True, default=str).encode()
+        ).hexdigest()
+        counts[name] += 1
+        signature = (name, digest)
+        signatures[signature] += 1
+        if len(sequence) < limit:
+            argument_id = argument_ids.setdefault(signature, f"args-{len(argument_ids) + 1}")
+            sequence.append({"tool": name[:128], "argument_id": argument_id})
+    total = sum(counts.values())
+    return {
+        "tool_call_count": total,
+        "counts": dict(sorted(counts.items())[:limit]),
+        "sequence": sequence,
+        "sequence_truncated": total > limit,
+        "repeated_call_count": sum(count - 1 for count in signatures.values()),
+        "arguments_retained": False,
+    }

@@ -284,7 +284,9 @@ class _CompatOpenAIChatModel(OpenAIChatModelBase):  # type: ignore[misc,valid-ty
 
 
 @lru_cache(maxsize=64)
-def _build_live(backend_name: str, model_id: str, durable: bool = False) -> Model:
+def _build_live(
+    backend_name: str, model_id: str, durable: bool = False, intake_atomic: bool = False
+) -> Model:
     cfg = load_models_config()
     backend = cfg.backends[backend_name]
     if backend.kind == "bedrock":
@@ -304,12 +306,30 @@ def _build_live(backend_name: str, model_id: str, durable: bool = False) -> Mode
 
     retries = backend.max_retries_under_temporal if durable else backend.max_retries
     client = AsyncOpenAI(base_url=backend.base_url, api_key=api_key, max_retries=retries)
+    provider = OpenAIProvider(openai_client=client)
+    extra: dict[str, Any] = {}
+    if intake_atomic:
+        from infosec_harness.agents.intake_schema import intake_openai_profile
+
+        extra["profile"] = intake_openai_profile(OpenAIProvider.model_profile(model_id))
     return _CompatOpenAIChatModel(
         model_id,
-        provider=OpenAIProvider(openai_client=client),
+        provider=provider,
         merge_system=backend.merge_system_messages,
         min_max_tokens=backend.min_max_tokens,
+        **extra,
     )
+
+
+def resolve_intake_atomic(agent_name: str, tier: str, *, durable: bool = False) -> Model:
+    """Resolve only the current atomic-claims intake generation."""
+    if get_settings().model_mode == "stub":
+        from infosec_harness.agents.stubs import atomic_intake_stub_model
+
+        return atomic_intake_stub_model(agent_name, tier)
+    cfg = load_models_config()
+    backend = cfg.backend_for(agent_name)
+    return _build_live(backend, cfg.model_id(tier, backend), durable, intake_atomic=True)
 
 
 def resolve(agent_name: str, tier: str, *, durable: bool = False) -> Model:
