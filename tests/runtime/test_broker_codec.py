@@ -150,3 +150,51 @@ def test_wire_marker_cannot_carry_remote_authority_or_invalid_fields(marker):
     data["messages"][0]["parts"][0]["content"] = ["prefix", marker]
     with pytest.raises(BrokerError):
         decode_payload(type(payload).model_validate(data))
+
+
+def test_actual_openai_reasoning_usage_survives_response_and_history_roundtrip():
+    from infosec_harness.inference.codec import validate_result_usage
+    from infosec_harness.inference.protocol import InferenceResult
+
+    # The pinned SDK extracts a known genai-prices counter into dynamic RequestUsage state.
+    # OpenAI reports reasoning as part of completion tokens; it must not be added twice.
+    usage = RequestUsage.extract(
+        {"model": "fixture-model", "usage": {"prompt_tokens": 7, "completion_tokens": 5,
+            "completion_tokens_details": {"reasoning_tokens": 3}}},
+        provider="openai", provider_url="https://api.openai.com/v1",
+        provider_fallback="openai", api_flavor="chat")
+    assert usage.input_tokens == 7
+    assert usage.output_tokens == 5
+    assert usage.output_reasoning_tokens == 3
+    response = ModelResponse(parts=[TextPart("answer")], usage=usage)
+    wire = encode_response(response)
+    assert wire["usage"]["output_reasoning_tokens"] == 3
+    restored = decode_response(wire)
+    assert restored.usage == usage
+    assert encode_response(restored)["usage"] == wire["usage"]
+    assert restored.usage.total_tokens == 12
+    result = InferenceResult(request_id="a" * 64, response=wire,
+        usage={"input_tokens": 7, "output_tokens": 5, "output_reasoning_tokens": 3})
+    assert validate_result_usage(result).usage == usage
+    payload = encode_payload([response], {}, ModelRequestParameters())
+    messages, _, _ = decode_payload(payload)
+    assert messages[0].usage == usage
+    assert messages[0].usage.output_reasoning_tokens == 3
+    result.usage["output_reasoning_tokens"] = 2
+    with pytest.raises(BrokerError, match="Contradictory"):
+        validate_result_usage(result)
+
+
+@pytest.mark.parametrize("counter", [-1, True, 1.5, "3", None])
+def test_reasoning_usage_wire_counter_is_strict_nonnegative_integer(counter):
+    wire = encode_response(ModelResponse(parts=[TextPart("answer")], usage=RequestUsage(output_tokens=5)))
+    wire["usage"]["output_reasoning_tokens"] = counter
+    with pytest.raises(BrokerError, match="invalid_response"):
+        decode_response(wire)
+
+
+def test_unknown_dynamic_usage_fields_remain_denied():
+    wire = encode_response(ModelResponse(parts=[TextPart("answer")], usage=RequestUsage(output_tokens=5)))
+    wire["usage"]["unreviewed_usage_counter"] = 3
+    with pytest.raises(BrokerError, match="invalid_response"):
+        decode_response(wire)

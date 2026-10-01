@@ -87,7 +87,11 @@ def _messages(messages: list[dict]) -> None:
             if part_kind == "tool-return" and not isinstance(part.get("content"), (str, dict, list, int, float, bool, type(None))):
                 raise BrokerError("policy", "Unsupported tool return content")
         if kind == "response" and message.get("usage"):
-            _keys(message["usage"], RequestUsage)
+            # SDK 2.49 preserves this genai-prices extraction counter dynamically,
+            # so it is absent from RequestUsage's dataclass fields. Other extras stay denied.
+            usage_fields = {f.name for f in dataclasses.fields(RequestUsage)} | {"output_reasoning_tokens"}
+            if not isinstance(message["usage"], dict) or set(message["usage"]) - usage_fields:
+                raise BrokerError("policy", "Unknown typed usage fields")
             for key, usage in message["usage"].items():
                 if key not in {"details", "cost"} and (type(usage) is not int or usage < 0):
                     raise BrokerError("invalid_response", "Invalid typed usage counter")
