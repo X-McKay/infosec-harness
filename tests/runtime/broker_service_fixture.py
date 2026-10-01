@@ -20,7 +20,7 @@ from contextlib import suppress
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 AGENTS = ("intake", "recon", "env-planner", "build-repair", "partial-build", "context",
           "probe-planner", "probe-author", "probe-diagnosis", "probe-repair", "verdict")
 
@@ -163,7 +163,7 @@ def environment(manifest: dict) -> dict[str, str]:
         HARNESS_BROKER_CONFIG=manifest["broker"], HARNESS_DATABASE_URL=manifest["database_url"],
         HARNESS_MODEL_BACKEND="qualification", BROKER_QUALIFICATION_WORKER_KEY=manifest["worker_key"],
         HARNESS_BROKER_SERVICE_MANIFEST=manifest["manifest"], SSL_CERT_FILE=manifest["pki"]["ca"],
-        PYTHONPATH=os.pathsep.join((str(ROOT / "src"), str(ROOT / "tests"))),
+        PYTHONPATH=os.pathsep.join((str(ROOT / "src"), str(ROOT / "tests" / "runtime"))),
         PYDANTIC_AI_NO_BANNER="1", HARNESS_AGENT_RUN_TIMEOUT_S="90")
     return values
 

@@ -63,7 +63,7 @@ async def serve_worker(manifest: dict) -> None:
 
 def start_worker(manifest: dict, *, direct_stub=False):
     with (Path(manifest["directory"]) / "temporal-worker.log").open("ab") as log:
-        process = subprocess.Popen([sys.executable, str(ROOT / "tests" / "broker_service_fixture.py"),
+        process = subprocess.Popen([sys.executable, str(ROOT / "tests" / "runtime" / "broker_service_fixture.py"),
             "temporal-worker", "--manifest", manifest["manifest"],
             *(["--direct-stub"] if direct_stub else [])], env=environment(manifest),
             stdout=log, stderr=log, start_new_session=True)

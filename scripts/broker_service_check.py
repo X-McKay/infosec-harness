@@ -20,7 +20,7 @@ from urllib.parse import quote
 import asyncpg
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tests"))
+sys.path.insert(0, str(ROOT / "tests" / "runtime"))
 from broker_ledger_check import read_environment  # noqa: E402
 from broker_service_fixture import (  # noqa: E402
     baseline_recorder,
@@ -77,14 +77,14 @@ async def run(env_file: Path, *, temporal: bool, baseline_ref: str) -> int:
         runtime_environment = environment(manifest)
         for role, listener in (("provider", provider_port), ("controller", controller_port)):
             with open(directory / f"{role}.log", "ab") as log:
-                process = subprocess.Popen([sys.executable, str(ROOT / "tests" / "broker_service_fixture.py"),
+                process = subprocess.Popen([sys.executable, str(ROOT / "tests" / "runtime" / "broker_service_fixture.py"),
                     role, "--manifest", str(manifest_path)], cwd=ROOT, env=runtime_environment,
                     stdout=log, stderr=log, start_new_session=True)
             processes.append(process)
             await wait_port(listener, process=process)
-        selected = ["tests/test_broker_service_integration.py"]
+        selected = ["tests/runtime/test_broker_service_integration.py"]
         if temporal:
-            selected.append("tests/test_broker_temporal_integration.py")
+            selected.append("tests/runtime/test_broker_temporal_integration.py")
         pytest_process = await asyncio.create_subprocess_exec(sys.executable, "-m", "pytest", *selected,
             "-o", "addopts=", "-q", "--tb=short", "--show-capture=no", cwd=ROOT, env=runtime_environment,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)

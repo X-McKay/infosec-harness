@@ -112,7 +112,7 @@ def start_worker(config_path: Path, queue: str, log: Path):
     values = dict(os.environ)
     values["HARNESS_NATIVE_TEMPORAL_CONFIG"] = str(config_path)
     values["PYTHONPATH"] = os.pathsep.join((str(Path(__file__).parent),
-        str(Path(__file__).parent.parent / "src"), values.get("PYTHONPATH", "")))
+        str(Path(__file__).resolve().parents[2] / "src"), values.get("PYTHONPATH", "")))
     with log.open("ab") as output:
         return subprocess.Popen([sys.executable, "-c",
             "from broker_native_temporal_fixture import main; raise SystemExit(main())", "worker", "--config",

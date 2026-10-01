@@ -12,7 +12,7 @@ import yaml
 
 from infosec_harness.inference.profiles import REGISTERED_AGENTS
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def _broker_configuration(directory: Path) -> tuple[Path, Path]:

@@ -66,8 +66,8 @@ async def qualify(env_file: Path, host: str) -> int:
             f"postgresql+asyncpg://harness:{quote(password, safe='')}@{host}:{port}/{database}")
         environment["HARNESS_MODEL_MODE"] = "stub"
         process = await asyncio.create_subprocess_exec(
-            sys.executable, "-m", "pytest", "tests/test_inference_ledger.py",
-            "tests/test_broker_admission.py", "-o", "addopts=", "-q",
+            sys.executable, "-m", "pytest", "tests/persistence/test_inference_ledger.py",
+            "tests/persistence/test_broker_admission.py", "-o", "addopts=", "-q",
             "--tb=short", "--show-capture=no",
             cwd=ROOT, env=environment, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
@@ -81,7 +81,9 @@ async def qualify(env_file: Path, host: str) -> int:
         report["process_exit_code"] = process.returncode
         counts = re.search(r"(\d+) passed", text)
         report["passed_cases"] = int(counts.group(1)) if counts else 0
-        if process.returncode == 0 and report["passed_cases"]:
+        skipped = re.search(r"(\d+) skipped", text)
+        report["skipped_cases"] = int(skipped.group(1)) if skipped else 0
+        if process.returncode == 0 and report["passed_cases"] and not report["skipped_cases"]:
             report["status"] = "passed"
     except Exception as exc:
         # Do not emit connection strings, credentials, or dependency exception messages.
