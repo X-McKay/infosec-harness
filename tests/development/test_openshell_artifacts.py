@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import shlex
 from pathlib import Path
 
 import pytest
@@ -298,10 +299,7 @@ def test_startup_control_candidate_recipe_pins_patch_and_source_before_tests():
 
 def test_startup_control_candidate_keeps_enforcement_and_real_replay_checks():
     recipe = (ROOT / "deploy/openshell/Dockerfile.supervisor-backport").read_text()
-    assert (
-        "cargo test --locked -p openshell-sandbox --lib control_restart_replays_running_lifecycle_exactly_once"
-        in recipe
-    )
+    assert "cargo test --locked -p openshell-sandbox --lib --no-run --message-format=json" in recipe
     assert "fail_closed_validation_failure_deactivates_previous_generation" in recipe
     assert "cargo test --locked -p openshell-supervisor-network --lib generation" in recipe
     assert (
@@ -345,10 +343,19 @@ def test_unbuilt_startup_manifest_is_separate_and_all_declared_inputs_are_pinned
         for field in ("original_sha256", "patched_sha256"):
             assert source[field] + "  " + source["path"] in recipe
     for check in candidate["required_rust_tests"]:
-        assert (
-            f"cargo test --locked -p {check['package']} --lib {check['filter']} -- --nocapture"
-            in recipe
-        )
+        if check["package"] == "openshell-sandbox":
+            assert candidate["boundary_replay_test_runner"]["uid"] == 65532
+            assert candidate["boundary_replay_test_runner"]["gid"] == 65532
+            assert (
+                "--exact boundary_server::linux::tests::" + check["filter"] + " --nocapture"
+                in recipe
+            )
+            assert "cargo test --locked -p openshell-sandbox --lib --no-run" in recipe
+        else:
+            assert (
+                f"cargo test --locked -p {check['package']} --lib {check['filter']} -- --nocapture"
+                in recipe
+            )
     assert candidate["timeouts_seconds"] == {
         "attach": 300,
         "discover_policy": 300,
@@ -357,3 +364,54 @@ def test_unbuilt_startup_manifest_is_separate_and_all_declared_inputs_are_pinned
         "other_control": 30,
         "connect_retry": 30,
     }
+
+
+def test_boundary_replay_recipe_runs_exact_test_with_nonroot_identity():
+    recipe = (ROOT / "deploy/openshell/Dockerfile.supervisor-backport").read_text()
+    compile_command = (
+        "cargo test --locked -p openshell-sandbox --lib --no-run --message-format=json"
+    )
+    runner = 'setpriv --reuid=65532 --regid=65532 --clear-groups -- "$boundary_test" --exact boundary_server::linux::tests::control_restart_replays_running_lifecycle_exactly_once --nocapture'
+    assert compile_command in recipe and runner in recipe
+    assert recipe.index(compile_command) < recipe.index(runner)
+    assert "(cd /tmp && setpriv" in recipe
+    assert "command -v python3 && command -v setpriv" in recipe
+    assert "cargo test --locked -p openshell-sandbox --lib control_restart" not in recipe
+
+
+@pytest.mark.parametrize("rejection", [None, "duplicate", "foreign", "non_test", "symlink"])
+def test_boundary_replay_extractor_rejects_ambiguous_or_foreign_executable(tmp_path, rejection):
+    recipe = (ROOT / "deploy/openshell/Dockerfile.supervisor-backport").read_text()
+    line = next(line for line in recipe.splitlines() if 'boundary_test="$(python3 -c ' in line)
+    code = shlex.split(line.split("python3 -c ", 1)[1].split(')" &&', 1)[0])[0]
+    executable = tmp_path / "openshell_sandbox-0123abcd"
+    executable.write_text("fixture executable")
+    executable.chmod(0o755)
+    if rejection == "symlink":
+        target = tmp_path / "target"
+        executable.rename(target)
+        executable.symlink_to(target)
+    row = {
+        "reason": "compiler-artifact",
+        "package_id": "path+file:///src/crates/openshell-sandbox#0.0.0",
+        "target": {"name": "openshell_sandbox", "kind": ["lib"]},
+        "profile": {"test": True},
+        "executable": str(executable),
+    }
+    if rejection == "foreign":
+        row["package_id"] = "path+file:///src/crates/unrelated#0.0.0"
+    if rejection == "non_test":
+        row["profile"] = {"test": False}
+    records = tmp_path / "artifacts.json"
+    records.write_text(
+        "\n".join(json.dumps(row) for _ in range(2 if rejection == "duplicate" else 1))
+    )
+    # Relocate only the build-directory fixtures; exercise the actual recipe parser.
+    code = code.replace("/tmp/boundary-test-artifacts.json", str(records)).replace(
+        "/src/target/debug/deps/", str(tmp_path) + "/"
+    )
+    if rejection is None:
+        exec(code, {})
+    else:
+        with pytest.raises(AssertionError):
+            exec(code, {})

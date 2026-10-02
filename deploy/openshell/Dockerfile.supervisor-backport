@@ -42,7 +42,10 @@ RUN echo "50af0650f4091bce8d6e05cba4f77d9010c251cd3eac268767b73e2e4db87caa  /tmp
     echo "ffed2d2ff278f459352a82427b6e703e4f4a843e06b1d2cafffabccf784378a7  crates/openshell-sandbox-backend/src/runtime/tests/credential_renewal.rs" | sha256sum -c - && \
     echo "ea10e2922eece4077a2c1be17cac83214aa5f79f39fd6c5cc830e1a2cf9d459a  Cargo.lock" | sha256sum -c -
 RUN cargo test --locked -p openshell-sandbox-backend --lib startup_control -- --nocapture && \
-    cargo test --locked -p openshell-sandbox --lib control_restart_replays_running_lifecycle_exactly_once -- --nocapture && \
+    command -v python3 && command -v setpriv && \
+    cargo test --locked -p openshell-sandbox --lib --no-run --message-format=json > /tmp/boundary-test-artifacts.json && \
+    boundary_test="$(python3 -c 'import json,os,re,stat; rows=[json.loads(line) for line in open("/tmp/boundary-test-artifacts.json")]; matches=[row for row in rows if row.get("reason")=="compiler-artifact" and row.get("package_id")=="path+file:///src/crates/openshell-sandbox#0.0.0" and row.get("target",{}).get("name")=="openshell_sandbox" and row.get("target",{}).get("kind")==["lib"] and row.get("profile",{}).get("test") is True and row.get("executable")]; assert len(matches)==1; path=matches[0]["executable"]; assert re.fullmatch("/src/target/debug/deps/openshell_sandbox-[0-9a-f]+",path); assert stat.S_ISREG(os.lstat(path).st_mode) and os.path.realpath(path)==path and os.access(path,os.X_OK); print(path)')" && \
+    (cd /tmp && setpriv --reuid=65532 --regid=65532 --clear-groups -- "$boundary_test" --exact boundary_server::linux::tests::control_restart_replays_running_lifecycle_exactly_once --nocapture) && \
     echo "bf713402164de46be4385e7e6011a5e60b5e35b26479495c2db1f70658ff0433  crates/openshell-sandbox-backend/src/runtime.rs" | sha256sum -c - && \
     echo "ffed2d2ff278f459352a82427b6e703e4f4a843e06b1d2cafffabccf784378a7  crates/openshell-sandbox-backend/src/runtime/tests/credential_renewal.rs" | sha256sum -c - && \
     echo "ea10e2922eece4077a2c1be17cac83214aa5f79f39fd6c5cc830e1a2cf9d459a  Cargo.lock" | sha256sum -c -

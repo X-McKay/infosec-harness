@@ -139,3 +139,12 @@ The next startup candidate adds fixed control-kind timeout diagnostics and a 60-
 
 
 Follow-up canonical checks **passed**: lint, compile, agent validation, the deterministic suite (2,805 passed, 40 skipped), generated-artifact checks and development-skill checks. Log SHA256: `36c1a04cee39f0469aa46296ecf30a0006c5d93ef45ebf2513fee153a51b76dd`; source-bound check proof: `84a79a023d21afde272b33a741d831f63a966d4ad866c83c7b4528ff307dc6cf`. Fresh actual runsc positive/negative, PID/memory bounds, build-egress allow/deny and builder/fixture cleanup checks **passed**, preserving all 1,641 requests, 425 budgets and primary service identities; proof: `db6ae30bb20d25ff3ef4e085e2fae3c78df5a162a6532cbe128762a61ecbcb8f`. These checks do not establish Rust test execution, the new native image's startup behavior, full release qualification, or hosted deployment; those remain **not_checked** pending actual build and fresh trials.
+
+
+### First fresh-image build checks
+
+On source `2ebe9aa`, the supervisor's original provider-readiness/network tests and all five new startup-control regressions **passed**. The build then **failed** at the upstream exactly-once boundary-replay test: its fixture takes the current UID/GID, and the root build process supplied zero, which the workload identity validator correctly rejects. This is a test-runner fixture failure; the identity guard and assertions remain unchanged. The next recipe compiles the same test and executes it with an explicitly unprivileged identity. No supervisor image was qualified. Retained failed build proof: `65b334d9615a1c9167ff919a13d03a2a53435ba8b747aca27596ba3e4b260458`.
+
+The fresh minimal executor built and loaded, but its validation helper **failed** before creating an attestation container because it expected Docker's image ID to equal the config-blob digest. This daemon reports the OCI manifest digest; actual archive and image configuration matched. A separate check must verify the manifest-to-config/layer chain and the bytes inside that exact existing image, without rebuilding or reloading it. The failed attestation remains retained: `527de54b2a07d721c2cab7d449b61fb8b42aeb61552c7fdcc494aca1b98e303d`.
+
+Both terminal checks preserved all 1,641 request records, 425 budget records, historical uncertain holds and existing service identities. Neither attempt made a model call or activated new contracts. Fresh readiness, focused/full agent gates and all-agent native qualification remain **not_checked**.

@@ -8,7 +8,7 @@
   "historical_qualification_file": ".dev-tools/openshell-supervisor-backport.json",
   "historical_qualification_sha256": "15db1001ab76a086b22cdeefa42f12e0b00d2527ffeca13d9467d3a738dca8d5",
   "recipe_file": "deploy/openshell/Dockerfile.supervisor-backport",
-  "recipe_sha256": "78947a0935e1a5f79cd0c7c202982aed35b4a5d660fcf801d5efd0e9db184d15",
+  "recipe_sha256": "f3dc93d6d089a2353b129b5abd17bc92ccb8559ce002542d621b2ea7eae951f2",
   "patches": [
     {
       "file": "deploy/openshell/patches/0001-seed-startup-provider-readiness.patch",
@@ -90,5 +90,14 @@
     "exact owned lease cleanup and no adoption"
   ],
   "actual_image": null,
-  "actual_binary_sha256": null
+  "actual_binary_sha256": null,
+  "boundary_replay_test_runner": {
+    "compile": "cargo --locked --lib --no-run; exact compiler-artifact JSON package/lib/test executable",
+    "uid": 65532,
+    "gid": 65532,
+    "supplementary_groups": "cleared",
+    "working_directory": "/tmp",
+    "filter": "boundary_server::linux::tests::control_restart_replays_running_lifecycle_exactly_once",
+    "scope": "test harness only; upstream strict nonzero workload identity and runtime source unchanged"
+  }
 }
