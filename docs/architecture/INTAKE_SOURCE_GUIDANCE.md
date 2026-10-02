@@ -35,6 +35,8 @@ bounded budget increase, not a quality threshold change or benchmark promotion.
 
 Deterministic source/repair/selector/reservation tests cover rejection and
 historical compatibility. Synthetic marker tests are not actual Temporal replay.
-Real provider qualification, actual historical replay and deployed admission are
-`not_checked` until separately executed. No dataset labels, scorers, quality
-thresholds or source guards are changed by this candidate.
+The fresh OpenShell/`llm.almckay.io` evaluation on source `6578fe8` passed all
+nine original intake cases and unchanged intake release gates, including deployed
+admission and ordinary sandbox cleanup. Actual historical Temporal replay and
+full candidate qualification remain `not_checked`. See the [measured results](../validation/CREDENTIAL_BROKER_QUALIFICATION_IMPROVEMENTS.md#targeted-intake-v4-qualification-on-6578fe8).
+No dataset labels, scorers, quality thresholds or source guards were changed.

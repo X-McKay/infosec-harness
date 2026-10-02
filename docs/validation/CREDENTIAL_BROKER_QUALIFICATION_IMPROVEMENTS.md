@@ -164,3 +164,52 @@ The deployed vLLM 0.30.0 server accepted a 32-token reasoning limit and returned
 Intake's two stops were independently confirmed as `admission/input_reserve` in actual controller logs. They occurred after two requests, with only 62,003 and 61,001 of 144,000 invocation tokens held. Actual output totals were 457 and 1,010 tokens, with zero reasoning. The preceding proposals respectively reversed a source range and retained unsupported line numbers. Offline reconstruction through the pinned SDK and actual validator measured the next input reserve at 21,465 and 20,680, above the old 20,000 ceiling. These are reconstructed requests, not saved rejected-request attestations. The candidate intake ceiling is 32,000 with consistent cumulative input of 128,000; four requests and aggregate output of 64,000 remain unchanged. Full nine-case candidate model quality and broker qualification are **not_checked** until the fresh controlled run completes.
 
 The integrated intake v4 and reasoning-cap candidate passed canonical lint, compilation and agent validation, generated contract and development-skill drift checks, and the full deterministic suite (2,858 passed, 40 skipped). The installed-wheel tests verified the retained v3 specification and registration of all four intake generations. These offline checks do not establish actual Temporal replay, live candidate intake quality or hosted deployment; those remain **not_checked**.
+
+### Targeted intake v4 qualification on 6578fe8
+
+The fresh evaluation through the actual OpenShell broker and zero-priced
+`llm.almckay.io` endpoint **passed** all nine original intake cases once. The
+independent persisted completion witness matches every frozen case, repetition,
+configuration and budget identity. Every unchanged intake release check passed:
+task success and schema validity were 1.0, p95 model requests was 3, budget
+exhaustion was 0, and uncovered material scenarios was 0. Both previously failing
+injection-report cases passed. The complete model run and runtime guards took
+142.59 seconds.
+
+This tested intake 1.0.4 with 32,000 input tokens per request and 128,000 cumulative
+input; four requests and 64,000 cumulative output remained unchanged. Reasoning
+was disabled and the optional thinking cap was absent. This combined candidate
+pass does not isolate which improvement caused each case to succeed or establish
+that every future repair fits. No original failed report was rescored.
+
+The fresh executor image
+`sha256:242f528c2f4b644c61227600f644de6dad74b870a175f94db58f2bc95880c6b7`
+passed immutable source/layer and unprivileged import checks. The actual new
+controller passed TLS/authentication and source/configuration checks; targeted
+intake readiness and ordinary cleanup passed before model calls. Initial image
+permission and qualification-helper failures were retained and corrected before
+this cohort; they are not reported as successful attempts.
+
+Independent read-only terminal retention **passed**. All 2,154 requests and 561
+budget rows were stable across two snapshots, including 15 newly completed
+requests and nine new budget roots. Every prior 2,139 request and 552 budget row
+was unchanged. All 719 leases were deleted, including the nine evaluation leases;
+all prior 710 lease files were unchanged. Native sandbox inventory was empty,
+provider metadata was unchanged, and the 15 historical unknown completions and
+their holds remained intact. There were no new unknown completions or adopted
+resources. The tested source remained frozen through terminal retention.
+
+| Evidence | SHA256 |
+| --- | --- |
+| Intake report | `0936c825aefaf1a15f0ee5a85e2e530eeb1565bc0a40f584a8651a1a414d1871` |
+| Completion witness | `3352edb93fe286ab3438b478be2cdceedff2b649aa2afbf7f86ea73d972479ec` |
+| Aggregate intake gate result | `b3252d72b1843a144fb53eb6f1e11c9126419676808f555820f351337bc08a53` |
+| Model/runtime root proof | `8c6b9d23d3425fdd53bc55a5784985c6737a91ff91a5a0cdb7bdcc8ba58670d0` |
+| Whole terminal state seal | `7859e11d97b7c1e8864f0e67bdc34d973d1bc34e074efaab4f0688271f5010cd` |
+| Read-only terminal root proof | `0385aea5d290269e43463d8c7b5a709f097ddb37f460985e235acf0fb461b3a2` |
+
+The previous full118 release gate remains **failed**. Current full candidate
+release, native22/graph qualification, actual historical Temporal replay, and
+hosted deployment remain **not_checked**. The optional reasoning cap is not
+qualified by this non-thinking intake run. UI checks are **not_applicable** to this
+intake-only change. Rollout remains disabled and the PR remains draft.
