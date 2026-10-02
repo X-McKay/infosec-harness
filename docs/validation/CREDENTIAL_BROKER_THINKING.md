@@ -1,5 +1,9 @@
 # Per-agent non-thinking experiment
 
+Subsequent all-agent live evaluation and current LocalOps/Temporal qualification are recorded in
+[CREDENTIAL_BROKER_FULL_EVAL.md](CREDENTIAL_BROKER_FULL_EVAL.md). The observations below remain
+historical evidence for their named candidates.
+
 The 0.2.8 candidate adds optional `enable_thinking` to backend capabilities, operator profiles
 and immutable executor contracts. Omitted `None` preserves provider defaults and historical
 serialized identities; explicit `false` or `true` changes identity and must match exactly.
