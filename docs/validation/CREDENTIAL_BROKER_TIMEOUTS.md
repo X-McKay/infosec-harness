@@ -195,3 +195,9 @@ A fresh private 0600 database dump is sealed; the withheld graph was strictly re
 its exclusive execution guard without inference. Terminal evidence seal SHA-256:
 `0d555c8a05c04018d6023943a179a640f3470d9dbb5e45fcd5ef72f3336802ab`.
 The empty fixed-category diagnostic capture does not establish a historical failure cause.
+
+
+Later per-agent non-thinking and targeted source-range repair experiments are recorded in
+[CREDENTIAL_BROKER_THINKING.md](CREDENTIAL_BROKER_THINKING.md). The latest frozen intake
+case passed through OpenShell with unchanged limits and scoring; fresh full native
+qualification remains outstanding.
