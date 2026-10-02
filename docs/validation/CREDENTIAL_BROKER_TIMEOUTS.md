@@ -151,3 +151,47 @@ provider/graph regressions; 167 focused fixture/runner checks passed. The exact 
 Temporal workflow name is now checked during owned-submission recovery, with a regression
 that rejects its Python class-name alias. These changes affect qualification evidence and
 recovery checks; the production executor and controller sources remain unchanged.
+
+
+## Fresh native Temporal qualification
+
+The frozen v4 Temporal-only trial at source
+`ae9de1fc8364a955f67be0ba40d6044042de2781` completed all 11 cases. Ten passed execution
+and unchanged semantic scoring; all 11 passed scoped cleanup and Temporal history replay,
+and worker cleanup passed. Its 36 new broker responses completed without uncertain completion
+or allocation overrun. Full per-case budgets and effective model settings matched the direct
+baseline; the declared strict-output capability matched every executor contract.
+The prior successful LocalOps phase was retained rather than repeated.
+
+Intake failed after receiving a completed response with `finish_reason=length`: its entire
+16,000-token per-response allowance was consumed by reasoning, with no output-tool answer.
+This was not a provider timeout, missing output field, JSON formatting error or cumulative
+invocation output-budget exhaustion. PydanticAI correctly rejected the incomplete response.
+The ledger retained that completed response; it was not resent. The 240-second ceiling allowed
+this response to return, but cannot make the model finish its answer within the token cap.
+
+For the ten cases that produced typed outputs, saved arguments and typed outputs contained
+all provider-required nullable fields. Pinned SDK rendering confirmed strict closed output
+schemas and preserved open environment maps. Rendering is not a captured network trace or
+server grammar-enforcement attestation. The exclusive terminal read-only analysis SHA-256 is
+`94e72a3350a671c0a51f296412ec9677038eb7ec8f60b8747556e64b5299a69a`.
+
+The native Temporal all-agent gate is `failed`; the production graph remains `not_checked`
+because its prerequisite gate failed. Increasing the response cap or changing model settings
+within this frozen trial would invalidate the comparison. A separately declared experiment
+could test Qwen's documented non-thinking request option,
+`chat_template_kwargs.enable_thinking=false`, after confirming support in the deployed serving
+stack. The published API option is a candidate remedy, not evidence that this endpoint supports
+it or that it passes qualification. See the [official Qwen model guidance](https://huggingface.co/Qwen/Qwen3.6-35B-A3B#instruct-or-non-thinking-mode).
+
+
+Terminal preservation is `passed`: 171 ledger records comprise 156 completed responses and
+15 original uncertain held requests, with no accepted or dispatch-intent records. All prior
+135 request/result contents and all 15 uncertain holds matched the independent v3 dump.
+All 152 leases were deleted, native inventory was empty, and scoped ledger providers were
+absent. The two global provider identities, ten primary service identities, production image,
+source and configuration remained unchanged. Dedicated infrastructure remains running.
+A fresh private 0600 database dump is sealed; the withheld graph was strictly retired through
+its exclusive execution guard without inference. Terminal evidence seal SHA-256:
+`0d555c8a05c04018d6023943a179a640f3470d9dbb5e45fcd5ef72f3336802ab`.
+The empty fixed-category diagnostic capture does not establish a historical failure cause.
