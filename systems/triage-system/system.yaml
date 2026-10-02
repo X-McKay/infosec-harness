@@ -84,7 +84,7 @@ members:
     authorization_scopes_max: []
     data_classification_max: confidential
 - agent: env-planner
-  version: 1.0.3
+  version: 1.0.4
   role: environment-planner
   required: true
   restrictions:
@@ -105,7 +105,7 @@ members:
     authorization_scopes_max: []
     data_classification_max: confidential
 - agent: build-repair
-  version: 1.0.7
+  version: 1.0.8
   role: environment-repairer
   required: false
   restrictions:
@@ -123,7 +123,7 @@ members:
     authorization_scopes_max: []
     data_classification_max: confidential
 - agent: partial-build
-  version: 1.1.5
+  version: 1.1.6
   role: environment-repairer
   required: false
   restrictions:

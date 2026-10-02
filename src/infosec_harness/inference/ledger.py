@@ -6,6 +6,7 @@ allocation is released in v1, including pre-dispatch failure and completed reque
 """
 from __future__ import annotations
 
+import logging
 import math
 import secrets
 import time
@@ -29,6 +30,7 @@ from infosec_harness.inference.protocol import (
 )
 from infosec_harness.persistence import db
 
+_LOG = logging.getLogger(__name__)
 _ATTEMPTS = 20
 _DIMENSIONS = ("requests", "tokens", "cost_usd")
 
@@ -87,6 +89,7 @@ def _active(state: dict, request: InferenceRequest) -> dict:
     if state.get("agent_config_digests", {}).get(binding.agent) != operation.get("broker_configuration_digest"):
         raise BrokerError("identity", "Accepted root configuration no longer matches the invocation")
     if operation.get("broker_overrun"):
+        _LOG.warning("IH_BUDGET_GUARD boundary=ledger category=active_overrun")
         raise BrokerError("budget", "A provider overrun blocks further invocation dispatch")
     if operation.get("broker_revoked"):
         raise BrokerError("policy", "Inference reservation revoked")
@@ -122,6 +125,7 @@ async def admit(request: InferenceRequest, *, lease_id: str,
             updated_demand = {key: math.fsum((consumed.get(key, 0), demand[key]))
                               for key in _DIMENSIONS}
             if any(updated_demand[key] > operation["reserved"].get(key, 0) for key in _DIMENSIONS):
+                _LOG.warning("IH_BUDGET_GUARD boundary=ledger category=cumulative_allocation")
                 raise BrokerError("budget", "Invocation allocation exhausted")
             operation.update(broker_owned=True, broker_allocated=updated_demand)
             await _checkpoint("admit_before_cas")

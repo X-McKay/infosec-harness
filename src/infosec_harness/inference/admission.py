@@ -1,6 +1,7 @@
 """Trusted catalog policy and controller-only reservation binding issuance."""
 from __future__ import annotations
 
+import logging
 import math
 import time
 from copy import deepcopy
@@ -18,6 +19,7 @@ from infosec_harness.inference.protocol import (
 )
 from infosec_harness.persistence import db
 
+_LOG = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class ReservationPolicy:
@@ -60,9 +62,11 @@ async def authorize(request: InferenceRequest, policy: ReservationPolicy) -> dic
         raise BrokerError("identity", "Request differs from the trusted admission catalog")
     output = request.contract.model_settings.get("max_tokens")
     if isinstance(output, bool) or not isinstance(output, int) or not 0 < output <= policy.max_output_tokens:
+        _LOG.warning("IH_BUDGET_GUARD boundary=admission category=output_cap")
         raise BrokerError("budget", "Provider output cap is missing or exceeds trusted bounds")
     input_reserve = await required_input_reserve(request.payload, request.contract)
     if input_reserve > policy.max_input_tokens:
+        _LOG.warning("IH_BUDGET_GUARD boundary=admission category=input_reserve")
         raise BrokerError("budget", "Serialized input exceeds the trusted tokenizer/context bound")
     cost = 0.0
     if policy.input_per_mtok is not None and policy.output_per_mtok is not None:
@@ -72,6 +76,7 @@ async def authorize(request: InferenceRequest, policy: ReservationPolicy) -> dic
                    + Decimal(output) * Decimal(str(policy.output_per_mtok))) / Decimal(1_000_000)
         cost = math.nextafter(float(ceiling), math.inf) if ceiling else 0.0
     if not math.isfinite(cost) or cost > policy.max_cost_usd:
+        _LOG.warning("IH_BUDGET_GUARD boundary=admission category=price_ceiling")
         raise BrokerError("budget", "Request price ceiling exceeds the trusted invocation cap")
     return {"requests": 1, "tokens": input_reserve + output, "cost_usd": cost}
 

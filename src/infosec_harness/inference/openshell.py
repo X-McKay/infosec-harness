@@ -360,6 +360,7 @@ class OpenShellAdapter:
         spec = self.spec(contract)
         async with self.lock:
             if self.store.is_run_revoked(run_id):
+                _LOG.warning("IH_NATIVE_IDENTITY_FAILURE boundary=native_ensure category=run_fence")
                 raise BrokerError("identity")
             for lease in list(self.leases.values()):
                 if (
@@ -380,13 +381,16 @@ class OpenShellAdapter:
                 ):
                     await self.verify(lease)
                     if self.store.is_run_revoked(run_id):
+                        _LOG.warning("IH_NATIVE_IDENTITY_FAILURE boundary=native_ensure category=run_fence")
                         raise BrokerError("identity")
                     return lease
             await self.cli.preflight()
             version = await self.cli.run(["--version"])
             if version.strip() != "openshell 0.1.2":
+                _LOG.warning("IH_NATIVE_IDENTITY_FAILURE boundary=native_ensure category=cli_version")
                 raise BrokerError("identity")
             if self.store.is_run_revoked(run_id):
+                _LOG.warning("IH_NATIVE_IDENTITY_FAILURE boundary=native_ensure category=run_fence")
                 raise BrokerError("identity")
             identity = str(uuid.uuid4())
             lease = Lease(
@@ -406,6 +410,7 @@ class OpenShellAdapter:
                 await self.verify(lease)
                 if self.store.is_run_revoked(run_id):
                     await self.revoke(lease)
+                    _LOG.warning("IH_NATIVE_IDENTITY_FAILURE boundary=native_ensure category=run_fence")
                     raise BrokerError("identity")
                 lease.status = "ready"
                 self.store.save(lease)
@@ -437,6 +442,7 @@ class OpenShellAdapter:
             item for item in inventory.get("providers", []) if item.get("name") == ledger_name
         ]
         if inventory.get("next_page_token") or len(matches) != 1:
+            _LOG.warning("IH_NATIVE_IDENTITY_FAILURE boundary=native_create category=provider_inventory")
             raise BrokerError("identity")
         provider = matches[0]
         if (
@@ -445,6 +451,7 @@ class OpenShellAdapter:
             or provider.get("credential_keys") != ["IH_LEDGER_TOKEN"]
             or not provider.get("id")
         ):
+            _LOG.warning("IH_NATIVE_IDENTITY_FAILURE boundary=native_create category=provider_identity")
             raise BrokerError("identity")
         lease.ledger_native_id = provider["id"]
         self.store.save(lease)
@@ -512,6 +519,8 @@ class OpenShellAdapter:
             await self.cli.run(args, timeout=120)
             created = json.loads(await self.cli.run(["sandbox", "get", lease.name, "-o", "json"]))
             if created.get("labels") != lease.labels() or not created.get("id"):
+                _LOG.warning("IH_NATIVE_IDENTITY_FAILURE boundary=native_create category=sandbox_creation_identity labels_match=%s id_present=%s",
+                             created.get("labels") == lease.labels(), bool(created.get("id")))
                 raise BrokerError("identity")
             lease.native_id = created["id"]
             self.store.save(lease)
@@ -528,6 +537,8 @@ class OpenShellAdapter:
             )
         detail = json.loads(await self.cli.run(["sandbox", "get", lease.name, "-o", "json"]))
         if detail.get("labels") != lease.labels() or not detail.get("id"):
+            _LOG.warning("IH_NATIVE_IDENTITY_FAILURE boundary=native_create category=sandbox_upload_identity labels_match=%s id_present=%s",
+                             detail.get("labels") == lease.labels(), bool(detail.get("id")))
             raise BrokerError("identity")
         lease.native_id = detail["id"]
         self.store.save(lease)
@@ -547,6 +558,7 @@ class OpenShellAdapter:
             ):
                 raise BrokerError("policy")
             if lease.credential_revision != spec.credential_revision:
+                _LOG.warning("IH_NATIVE_IDENTITY_FAILURE boundary=native_verify category=credential_revision")
                 raise BrokerError("identity")
             for profile, approved in (
                 (spec.provider_profile, spec.provider_profile_digest),
@@ -559,6 +571,7 @@ class OpenShellAdapter:
                     raise BrokerError("policy")
             provider_inventory = json.loads(await self.cli.run(["provider", "list", "-o", "json"]))
             if provider_inventory.get("next_page_token"):
+                _LOG.warning("IH_NATIVE_IDENTITY_FAILURE boundary=native_verify category=provider_inventory")
                 raise BrokerError("identity")
             provider = next(
                 (
@@ -575,6 +588,7 @@ class OpenShellAdapter:
                 or provider.get("type") != spec.provider_profile
                 or provider.get("workspace") != self.cli.workspace
             ):
+                _LOG.warning("IH_NATIVE_IDENTITY_FAILURE boundary=native_verify category=provider_identity")
                 raise BrokerError("identity")
             ledger_provider = next(
                 (
@@ -593,6 +607,7 @@ class OpenShellAdapter:
                 or ledger_provider.get("resource_version") != 1
                 or ledger_provider.get("credential_keys") != ["IH_LEDGER_TOKEN"]
             ):
+                _LOG.warning("IH_NATIVE_IDENTITY_FAILURE boundary=native_verify category=ledger_provider_identity")
                 raise BrokerError("identity")
             providers = json.loads(
                 await self.cli.run(["sandbox", "provider", "list", lease.name, "-o", "json"])
@@ -688,6 +703,7 @@ class OpenShellAdapter:
 
     async def revoke(self, lease: Lease) -> None:
         if self.leases.get(lease.lease_id) is not lease or lease.deployment != self.deployment:
+            _LOG.warning("IH_NATIVE_IDENTITY_FAILURE boundary=native_revoke category=lease_ownership")
             raise BrokerError("identity")
         spec = self.spec(lease.contract)
         listing = json.loads(
@@ -696,6 +712,7 @@ class OpenShellAdapter:
             )
         )
         if listing.get("next_page_token") or len(listing.get("sandboxes", [])) > 1:
+            _LOG.warning("IH_NATIVE_IDENTITY_FAILURE boundary=native_revoke category=sandbox_inventory")
             raise BrokerError("identity")
         matches = listing.get("sandboxes", [])
         if matches:
@@ -706,6 +723,7 @@ class OpenShellAdapter:
                 or detail.get("name") != lease.name
                 or detail.get("labels") != lease.labels()
             ):
+                _LOG.warning("IH_NATIVE_IDENTITY_FAILURE boundary=native_revoke category=sandbox_identity")
                 raise BrokerError("identity")
         lease.status = "revoked"
         self.store.save(lease)
@@ -714,6 +732,7 @@ class OpenShellAdapter:
                 await self.cli.run(["sandbox", "provider", "list", lease.name, "-o", "json"])
             )
             if attached.get("next_page_token"):
+                _LOG.warning("IH_NATIVE_IDENTITY_FAILURE boundary=native_revoke category=attachment_inventory")
                 raise BrokerError("identity")
             if any(
                 item.get("name") == lease.contract.provider_binding
@@ -737,6 +756,7 @@ class OpenShellAdapter:
                         ["sandbox", "list", "--selector", f"ih.lease={lease.lease_id}", "-o", "json"]
                     ))
                     if current.get("next_page_token") or len(current.get("sandboxes", [])) > 1:
+                        _LOG.warning("IH_NATIVE_IDENTITY_FAILURE boundary=native_revoke category=recheck_inventory")
                         raise BrokerError("identity") from None
                     matches = current.get("sandboxes", [])
                     if matches and (
@@ -744,6 +764,7 @@ class OpenShellAdapter:
                         or matches[0].get("name") != lease.name
                         or matches[0].get("labels") != lease.labels()
                     ):
+                        _LOG.warning("IH_NATIVE_IDENTITY_FAILURE boundary=native_revoke category=recheck_identity")
                         raise BrokerError("identity") from None
             if matches:
                 await self.cli.run(["sandbox", "delete", lease.name])
@@ -755,6 +776,7 @@ class OpenShellAdapter:
                 )
             )
             if listing.get("next_page_token"):
+                _LOG.warning("IH_NATIVE_IDENTITY_FAILURE boundary=native_revoke category=absence_inventory")
                 raise BrokerError("identity")
             containers = await self.cli.containers(lease.native_id) if lease.native_id else []
             if not listing.get("sandboxes") and not containers:
@@ -766,12 +788,14 @@ class OpenShellAdapter:
         self.store.save(lease)
         inventory = json.loads(await self.cli.run(["provider", "list", "-o", "json"]))
         if inventory.get("next_page_token"):
+            _LOG.warning("IH_NATIVE_IDENTITY_FAILURE boundary=native_revoke category=provider_inventory")
             raise BrokerError("identity")
         ledger_name = f"ih-ledger-{lease.lease_id}"
         providers = [
             item for item in inventory.get("providers", []) if item.get("name") == ledger_name
         ]
         if len(providers) > 1:
+            _LOG.warning("IH_NATIVE_IDENTITY_FAILURE boundary=native_revoke category=provider_duplicates")
             raise BrokerError("identity")
         if providers:
             provider = providers[0]
@@ -782,6 +806,7 @@ class OpenShellAdapter:
                 or provider.get("workspace") != self.cli.workspace
                 or provider.get("credential_keys") != ["IH_LEDGER_TOKEN"]
             ):
+                _LOG.warning("IH_NATIVE_IDENTITY_FAILURE boundary=native_revoke category=ledger_provider_identity")
                 raise BrokerError(
                     "identity", "Unconfirmed credential creation requires operator reconciliation"
                 )
