@@ -50,3 +50,14 @@ Private evidence SHA256:
 - Independent retained database dump: `78fab16fdd9de082f1532c37497bd56e06ed661b0f42138905c87ca3509ea049`.
 
 JVM-correction canonical deterministic log SHA256: `27e2f97f22a0ecb28a1965b839397da116cf84809325a07ea8db4fe53a32184b`.
+
+
+## Maven build proxy correction
+
+The first actual zero-model execution preflight **failed** before dependency warmup: Maven attempted direct DNS for approved Central instead of consuming the supplied HTTP proxy. Direct DNS remained blocked by the build network. The failed build's exact issued target tag was confirmed absent; before/after database and primary-service retention passed, with zero provider calls. Perl execution was not dispatched in that preflight.
+
+The correction adds build-RUN-scoped Maven JVM options using only the existing validated operator proxy, including native Resolver's explicit `aether.connector.http.useSystemProperties` opt-in. Existing `MAVEN_OPTS`, settings files, mirrors and install-command arguments are preserved. Network restrictions and destination allowlists remain unchanged. Image format advances from 2 to 3 and Maven target identity includes the validated proxy address, preventing reuse after changing that address. The observed base is Maven 3.9.16; real build and control checks remain **not_checked** for this correction. Component evidence does not qualify older or custom transports or Gradle.
+
+Rendering and image identity run in activities, so this correction adds no Temporal workflow command or marker. Completed activity results and saved image tags remain authoritative. Pending activity retries may produce the new image generation and must record fresh runtime provenance; they do not authorize resending provider requests or rescoring previous outcomes. Full native provider-forbidden replay remains **not_checked**.
+
+Maven-bridge canonical checks **passed**: lint, compile, agent validation, generated and development-skill checks, with 2,746 deterministic tests passed and 40 skipped. Deterministic log SHA256: `9f1546436ef21a7e4b52977db3e891861531df8a2876b3195a77e26d0bed196e`. Actual runtime preflight and full qualification remain **not_checked** for this source.
