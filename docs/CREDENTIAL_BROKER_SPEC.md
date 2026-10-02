@@ -2,7 +2,7 @@
 
 Status: Implemented opt-in contracts; corrected-topology G0 passed; bounded native/service qualification passed; rollout disabled
 Date: 2026-10-01
-Specification version: 0.2.8
+Specification version: 0.2.9
 
 The October local-provider qualification and retained failures are recorded in [live-provider evidence](validation/CREDENTIAL_BROKER_LIVE_PROVIDER.md). Admission behavior changed without changing wire protocol v1; deploy the new immutable executor contract and drain prior allocations before adoption.
 
@@ -115,6 +115,14 @@ without changing other agents. The trusted adapter constructs only this fixed bo
 arbitrary agent-supplied body/header extensions remain blocked. Admission rendering includes
 the extension, and direct and brokered paths produce the same option. Non-OpenAI backends
 reject it. This does not establish provider support or qualify model quality.
+
+Atomic intake's reversed-source-range repair identifies the trusted claim field and explains
+source-line ordering and the single-line null endpoint. It emits only allowlisted field names
+and static instructions, never model-provided IDs, values or report text. The existing reference
+and whole-output evidence guards retain their acceptance rules. Temporal patch
+`intake-reference-repair-v1` keeps historical retry text unchanged when replaying histories
+without the marker; new histories and LocalOps use the targeted feedback. This changes subsequent
+model prompts and therefore requires new source provenance and a separately frozen experiment.
 
 A changed reasoning mode requires a new image/contract and fresh bounded experiment provenance.
 Existing completed results remain readable; uncertain holds, dispatch fences, cancellation,

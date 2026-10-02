@@ -492,6 +492,16 @@ def _resolve_agent_model(
     return model
 
 
+INTAKE_REFERENCE_REPAIR_VERSION = "intake-reference-repair-v1"
+
+
+def _targeted_reference_repair() -> bool:
+    """New histories use bounded feedback; old histories retain their retry bytes."""
+    from temporalio import workflow
+
+    return not workflow.in_workflow() or workflow.patched(INTAKE_REFERENCE_REPAIR_VERSION)
+
+
 def _validate_atomic_intake(ctx: Any, output: AtomicFinding) -> ExtractedFinding:
     try:
         finding = reconstruct(ctx.deps.report_text, output)
@@ -501,9 +511,17 @@ def _validate_atomic_intake(ctx: Any, output: AtomicFinding) -> ExtractedFinding
         } else "invalid_reference"
         from pydantic_ai import ModelRetry
 
-        raise ModelRetry(
-            f"Extraction violates its evidence contract:\n- Source reference violates its contract: {rule}"
-        ) from None
+        feedback = f"Source reference violates its contract: {rule}"
+        if (rule == "reversed_source_range" and type(error.field) is str
+                and error.field in AtomicFinding.model_fields
+                and _targeted_reference_repair()):
+            feedback += (
+                f". Fix only the source reference for claim '{error.field}': "
+                "end_id must be at or after start_id in report source-line order. "
+                "For a single source line, use end_id=null or end_id=start_id. "
+                "Keep the supported claim value and confidence unchanged."
+            )
+        raise ModelRetry("Extraction violates its evidence contract:\n- " + feedback) from None
     return validate_intake_evidence(ctx, finding)
 
 

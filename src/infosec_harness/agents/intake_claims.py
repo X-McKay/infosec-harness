@@ -83,8 +83,11 @@ ReferenceRule = Literal["source_unavailable", "unknown_source_id", "reversed_sou
 class ReferenceError(ValueError):
     """Closed source-index failure that does not echo report text or model-provided IDs."""
 
-    def __init__(self, rule: ReferenceRule) -> None:
+    def __init__(self, rule: ReferenceRule, *, field: str | None = None) -> None:
         self.rule = rule
+        # Only authored claim names may reach model repair feedback. Never retain or
+        # echo source IDs, report fragments or model-provided values in diagnostics.
+        self.field = field if type(field) is str and field in AtomicFinding.model_fields else None
         super().__init__(rule)
 
 
@@ -137,7 +140,7 @@ def reconstruct(report_text: str | None, claims: AtomicFinding) -> ExtractedFind
         start, _ = index[reference.start_id]
         end_start, end = index[end_id]
         if end_start < start:
-            raise ReferenceError("reversed_source_range")
+            raise ReferenceError("reversed_source_range", field=field_name)
 
         data[field_name] = claim.value
         evidence.append(
