@@ -65,6 +65,15 @@ key is likewise referenced by environment-variable name (`hmac_env`) and supplie
 processes by the deployment's secret manager. Do not pass the controller's native config or
 provider environment wholesale to the worker.
 
+For a Qwen-compatible endpoint, the existing `enable_thinking: false` option can be shared
+by several per-agent routes. Copy a reviewed backend with that option, add its model-catalog
+aliases, and route only the chosen agents to it. The current qualification candidate reuses
+one such backend for `intake`, `probe-diagnosis` and `verdict`; other agents preserve provider
+default reasoning. Each selected broker profile must have the exact same backend name and
+thinking option. Resolve new contracts and verify fresh native readiness before calls; do
+not rebind existing held requests. This is endpoint-specific operator configuration, not a
+change to the packaged default Bedrock routing.
+
 ## 2. Inspect the resolved contract and migrate the database
 
 Set `HARNESS_MODELS_CONFIG` and `HARNESS_BROKER_CONFIG` to the operator-managed model and

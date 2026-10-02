@@ -9,6 +9,7 @@ import pytest
 from pydantic import ValidationError
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.tools import ToolDefinition
 from test_broker_executor import request_fixture
 from test_broker_profiles import _config
 
@@ -62,14 +63,20 @@ def test_thinking_requires_exact_operator_profile_match(enabled):
     assert contract.enable_thinking is enabled
 
 
+@pytest.mark.parametrize('parallel', [None, False, True])
 @pytest.mark.parametrize('enabled', [None, False, True])
-async def test_direct_executor_and_admission_match_constrained_thinking_wire(monkeypatch, enabled):
+async def test_direct_executor_and_admission_match_constrained_thinking_wire(monkeypatch, enabled, parallel):
     import openai
 
     request, _ = request_fixture()
-    contract = request.contract.model_copy(update={'enable_thinking': enabled})
+    settings = {**request.contract.model_settings}
+    if parallel is not None:
+        settings['parallel_tool_calls'] = parallel
+    contract = request.contract.model_copy(update={'enable_thinking': enabled, 'model_settings': settings})
     messages = [ModelRequest(parts=[UserPromptPart('offline sample')])]
-    params = ModelRequestParameters()
+    schema = {'type': 'object', 'properties': {}, 'additionalProperties': False}
+    params = ModelRequestParameters(function_tools=[ToolDefinition(name='read_files', parameters_json_schema=schema)],
+        output_tools=[ToolDefinition(name='final_result', parameters_json_schema=schema, kind='output')])
     payload = encode_payload(messages, contract.model_settings, params)
     request = request.model_copy(update={'contract': contract, 'payload': payload,
         'payload_digest': digest(payload.model_dump(mode='json')), 'binding': request.binding.model_copy(
@@ -106,6 +113,11 @@ async def test_direct_executor_and_admission_match_constrained_thinking_wire(mon
     assert len(captured) == 2
     for body in captured:
         assert body['messages'] == expected['messages']
+        assert body['tools'] == expected['tools']
+        if parallel is None:
+            assert 'parallel_tool_calls' not in body
+        else:
+            assert body['parallel_tool_calls'] is parallel
         if enabled is None:
             assert 'chat_template_kwargs' not in body
         else:

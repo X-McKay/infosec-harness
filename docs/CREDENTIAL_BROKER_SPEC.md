@@ -2,7 +2,7 @@
 
 Status: Implemented opt-in contracts; corrected-topology G0 passed; bounded native/service qualification passed; rollout disabled
 Date: 2026-10-01
-Specification version: 0.2.9
+Specification version: 0.2.10
 
 The October local-provider qualification and retained failures are recorded in [live-provider evidence](validation/CREDENTIAL_BROKER_LIVE_PROVIDER.md). Admission behavior changed without changing wire protocol v1; deploy the new immutable executor contract and drain prior allocations before adoption.
 
@@ -124,7 +124,9 @@ and whole-output evidence guards retain their acceptance rules. Temporal patch
 without the marker; new histories and LocalOps use the targeted feedback. This changes subsequent
 model prompts and therefore requires new source provenance and a separately frozen experiment.
 
-A changed reasoning mode requires a new image/contract and fresh bounded experiment provenance.
+A changed reasoning mode requires a new contract and fresh bounded experiment provenance.
+An already qualified image may be reused only when its exact packaged execution sources,
+recipe and dependency lock remain unchanged and support the requested setting.
 Existing completed results remain readable; uncertain holds, dispatch fences, cancellation,
 retry bounds and root/binding expiry retain their existing semantics. Old requests cannot be
 rebound to a different reasoning setting. The change does not enlarge token or request budgets.
@@ -145,6 +147,19 @@ This opt-in records requested provider behavior, not proof that an endpoint enfo
 The locally hosted endpoint requires fresh bounded qualification before deployment enablement.
 Existing saved results remain readable; this does not release uncertain holds or authorize
 redispatch. Deploy a new executor image and matching contract when enabling the flag.
+
+Agent-authored `parallel_tool_calls: false` uses the existing typed model-setting path and
+is part of the immutable effective-settings contract. Planning agents may use it to request
+serial calls; an observed provider response, rather than request configuration alone, must
+establish compliance. Repeated output-tool bursts remain failures; budgets and token bounds
+are not raised to accommodate them.
+
+Unsupported atomic intake claims retain the same acceptance rules. A rejected literal-location
+or missing-positive-support claim receives static guidance to cite literal support or null the
+whole unsupported claim. Claim members and positive-confidence requirements are unchanged.
+Temporal patch `intake-unsupported-claim-repair-v1` preserves previous evidence feedback for
+histories without its marker, independently of the existing source-range patch. Model values,
+report text and source IDs are not echoed into the new feedback.
 
 ## Nested request deadlines
 

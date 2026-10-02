@@ -266,14 +266,25 @@ class StackFingerprint(_Model):
 class RepoProfile(_Model):
     """ReconAgent output."""
 
-    summary: str = Field(description="Two or three sentences on what the application does")
-    primary_language: str
+    summary: str = Field(
+        description="Two or three sentences on what the application does; include version "
+        "details and qualifications here rather than in language or test-framework labels"
+    )
+    primary_language: str = Field(
+        description="One canonical language label without versions or commentary, e.g. "
+        "python, java, javascript, perl; use unknown when undetermined. Other language "
+        "labels are allowed."
+    )
     frameworks: list[str] = Field(default_factory=list)
     components: list[str] = Field(default_factory=list, description="Top-level modules/services")
     entry_points: list[str] = Field(
         default_factory=list, description="Files/functions where untrusted input enters"
     )
-    test_framework: str = Field(description="e.g. pytest, junit5, jest, Test::More")
+    test_framework: str = Field(
+        description="One canonical test-framework label without versions or commentary, "
+        "e.g. pytest, junit5, junit4, jest, test::more; use unknown when undetermined. "
+        "Other framework labels are allowed; put version details in summary."
+    )
     test_layout: str = Field(description="Where tests live and how they are named")
 
 

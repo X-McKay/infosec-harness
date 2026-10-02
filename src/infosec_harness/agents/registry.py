@@ -493,13 +493,26 @@ def _resolve_agent_model(
 
 
 INTAKE_REFERENCE_REPAIR_VERSION = "intake-reference-repair-v1"
+INTAKE_UNSUPPORTED_CLAIM_REPAIR_VERSION = "intake-unsupported-claim-repair-v1"
+_UNSUPPORTED_CLAIM_EVIDENCE_ERRORS = frozenset({
+    "A literal location value is absent from its evidence quote.",
+    "Every nonempty extraction field requires positive grounded evidence.",
+})
+_UNSUPPORTED_CLAIM_REPAIR = (
+    "\nFix only unsupported claims: for symbol or file_path, the referenced report source "
+    "must literally contain the claimed value. Cite actual supporting source lines with "
+    "positive confidence, or set the whole unsupported claim field to null. "
+    "Do not null only its value, source, or confidence: a retained claim requires all three. "
+    "Confidence=0 cannot justify retaining an unsupported nonempty value. "
+    "Keep supported claims unchanged and do not invent support."
+)
 
 
-def _targeted_reference_repair() -> bool:
+def _targeted_reference_repair(version: str = INTAKE_REFERENCE_REPAIR_VERSION) -> bool:
     """New histories use bounded feedback; old histories retain their retry bytes."""
     from temporalio import workflow
 
-    return not workflow.in_workflow() or workflow.patched(INTAKE_REFERENCE_REPAIR_VERSION)
+    return not workflow.in_workflow() or workflow.patched(version)
 
 
 def _validate_atomic_intake(ctx: Any, output: AtomicFinding) -> ExtractedFinding:
@@ -522,7 +535,16 @@ def _validate_atomic_intake(ctx: Any, output: AtomicFinding) -> ExtractedFinding
                 "Keep the supported claim value and confidence unchanged."
             )
         raise ModelRetry("Extraction violates its evidence contract:\n- " + feedback) from None
-    return validate_intake_evidence(ctx, finding)
+    from pydantic_ai import ModelRetry
+
+    try:
+        return validate_intake_evidence(ctx, finding)
+    except ModelRetry as error:
+        # The existing guard emits closed diagnostics; never interpolate claim/report data.
+        if (any(f"\n- {problem}" in error.message for problem in _UNSUPPORTED_CLAIM_EVIDENCE_ERRORS)
+                and _targeted_reference_repair(INTAKE_UNSUPPORTED_CLAIM_REPAIR_VERSION)):
+            raise ModelRetry(error.message + _UNSUPPORTED_CLAIM_REPAIR) from None
+        raise
 
 
 def build_agent(

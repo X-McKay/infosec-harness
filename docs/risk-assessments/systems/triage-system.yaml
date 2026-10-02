@@ -587,19 +587,19 @@ member_assessments:
   governance_tier: medium
   assessment: docs/risk-assessments/intake.yaml
 - agent: recon
-  agent_version: 1.0.0
+  agent_version: 1.0.1
   governance_tier: medium
   assessment: docs/risk-assessments/recon.yaml
 - agent: env-planner
-  agent_version: 1.0.1
+  agent_version: 1.0.2
   governance_tier: critical
   assessment: docs/risk-assessments/env-planner.yaml
 - agent: build-repair
-  agent_version: 1.0.5
+  agent_version: 1.0.6
   governance_tier: critical
   assessment: docs/risk-assessments/build-repair.yaml
 - agent: partial-build
-  agent_version: 1.1.3
+  agent_version: 1.1.4
   governance_tier: critical
   assessment: docs/risk-assessments/partial-build.yaml
 - agent: context
