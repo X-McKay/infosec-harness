@@ -16,6 +16,7 @@ from infosec_harness.agents.intake_claims import WIRE_VERSION
 from infosec_harness.agents.intake_contracts import (
     IntakeProtocol,
     render_intake_prompt,
+    retained_atomic_intake_spec,
     retained_intake_spec,
 )
 from infosec_harness.agents.intake_evidence import INTAKE_EVIDENCE_POLICY_VERSION
@@ -27,7 +28,7 @@ from infosec_harness.agents.registry import (
 )
 from infosec_harness.domain.models import ExtractedFinding
 
-IntakeGenerationName = Literal["bare", "quoted", "atomic"]
+IntakeGenerationName = Literal["bare", "quoted", "atomic_v3", "atomic"]
 
 
 @dataclass(frozen=True)
@@ -49,7 +50,8 @@ def intake_generations() -> Mapping[IntakeGenerationName, IntakeGeneration]:
     for key, spec, execution, legacy, atomic in (
         ("bare", retained, "intake", True, False),
         ("quoted", retained, "intake-output-v2", False, False),
-        ("atomic", current, "intake-output-v3", False, True),
+        ("atomic_v3", retained_atomic_intake_spec(), "intake-output-v3", False, True),
+        ("atomic", current, "intake-output-v4", False, True),
     ):
         config = resolve_agent_config("intake", spec, durable=True, replay_only=not atomic)
         agent = build_agent(

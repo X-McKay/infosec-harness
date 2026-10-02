@@ -46,6 +46,23 @@ class ExtensionBinding(StrictModel):
     required: StrictBool = True
 
 
+def validate_thinking_token_budget(
+    budget: int | None, enable_thinking: bool | None, maximum: Any = None,
+    *, require_output_cap: bool = False,
+) -> None:
+    """Validate the typed operator cap, leaving space for an actionable answer."""
+    if budget is None:
+        return
+    if type(budget) is not int or budget <= 0:
+        raise ValueError("Thinking token budget must be a strict positive integer")
+    if enable_thinking is False:
+        raise ValueError("Thinking token budget conflicts with disabled thinking")
+    if (require_output_cap or maximum is not None) and (
+        type(maximum) is not int or maximum <= budget
+    ):
+        raise ValueError("Thinking token budget must be below the effective output cap")
+
+
 class ExecutorContract(StrictModel):
     protocol: Literal["ih-inference-v1"] = PROTOCOL_VERSION
     backend: str = Field(min_length=1, max_length=64)
@@ -65,9 +82,18 @@ class ExecutorContract(StrictModel):
     atomic_intake: StrictBool = False
     strict_closed_output_tools: StrictBool = Field(default=False, exclude_if=lambda value: value is False)
     enable_thinking: StrictBool | None = Field(default=None, exclude_if=lambda value: value is None)
+    thinking_token_budget: int | None = Field(
+        default=None, gt=0, strict=True, exclude_if=lambda value: value is None)
     provider_retries: Literal[0] = 0
     credential_driver: Literal["native"] = "native"
     inspection: tuple[ExtensionBinding, ...] = ()
+
+    @model_validator(mode="after")
+    def thinking_budget_leaves_answer_room(self):
+        validate_thinking_token_budget(
+            self.thinking_token_budget, self.enable_thinking,
+            self.model_settings.get("max_tokens"), require_output_cap=True)
+        return self
 
     @field_validator("endpoint")
     @classmethod

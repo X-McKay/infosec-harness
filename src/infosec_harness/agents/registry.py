@@ -493,6 +493,14 @@ def _resolve_agent_model(
 
 
 INTAKE_REFERENCE_REPAIR_VERSION = "intake-reference-repair-v1"
+INTAKE_LITERAL_LINE_REPAIR_VERSION = "intake-literal-line-repair-v1"
+_INTAKE_LITERAL_LINE_REPAIR = (
+    "\nFix only unsupported start_line or end_line claims: report source IDs and report-line "
+    "positions are not code line numbers. A retained code line claim needs its number "
+    "literally stated in the referenced report text. Otherwise set the whole unsupported "
+    "start_line or end_line claim to null, including its value, source and confidence. "
+    "Keep other supported claims unchanged; do not invent a code line or supporting text."
+)
 INTAKE_UNSUPPORTED_CLAIM_REPAIR_VERSION = "intake-unsupported-claim-repair-v1"
 _UNSUPPORTED_CLAIM_EVIDENCE_ERRORS = frozenset({
     "A literal location value is absent from its evidence quote.",
@@ -540,6 +548,10 @@ def _validate_atomic_intake(ctx: Any, output: AtomicFinding) -> ExtractedFinding
     try:
         return validate_intake_evidence(ctx, finding)
     except ModelRetry as error:
+        # Each new repair policy has its own marker; retained marker bytes stay intact.
+        if ("\n- A literal line number is absent from its evidence quote." in error.message
+                and _targeted_reference_repair(INTAKE_LITERAL_LINE_REPAIR_VERSION)):
+            raise ModelRetry(error.message + _INTAKE_LITERAL_LINE_REPAIR) from None
         # The existing guard emits closed diagnostics; never interpolate claim/report data.
         if (any(f"\n- {problem}" in error.message for problem in _UNSUPPORTED_CLAIM_EVIDENCE_ERRORS)
                 and _targeted_reference_repair(INTAKE_UNSUPPORTED_CLAIM_REPAIR_VERSION)):

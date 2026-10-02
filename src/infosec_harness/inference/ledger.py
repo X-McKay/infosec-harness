@@ -125,7 +125,18 @@ async def admit(request: InferenceRequest, *, lease_id: str,
             updated_demand = {key: math.fsum((consumed.get(key, 0), demand[key]))
                               for key in _DIMENSIONS}
             if any(updated_demand[key] > operation["reserved"].get(key, 0) for key in _DIMENSIONS):
-                _LOG.warning("IH_BUDGET_GUARD boundary=ledger category=cumulative_allocation")
+                # Diagnostics never serialize persisted objects or affect the rejection.
+                logged = False
+                for key in _DIMENSIONS:
+                    allocated, reserved = updated_demand[key], operation["reserved"].get(key, 0)
+                    if (all((type(value) is int and value.bit_length() <= 1023)
+                            or (type(value) is float and math.isfinite(value))
+                            for value in (allocated, reserved)) and allocated > reserved):
+                        _LOG.warning("IH_BUDGET_GUARD boundary=ledger category=cumulative_allocation "
+                                     "dimension=%s allocated=%g reserved=%g", key, allocated, reserved)
+                        logged = True
+                if not logged:
+                    _LOG.warning("IH_BUDGET_GUARD boundary=ledger category=cumulative_allocation")
                 raise BrokerError("budget", "Invocation allocation exhausted")
             operation.update(broker_owned=True, broker_allocated=updated_demand)
             await _checkpoint("admit_before_cas")

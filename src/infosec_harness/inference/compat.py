@@ -48,29 +48,42 @@ class _CompatOpenAIChatModel(OpenAIChatModelBase):  # type: ignore[misc,valid-ty
 
     def __init__(self, *args: Any, merge_system: bool = True, min_max_tokens: int = 0,
                  strict_closed_output_tools: bool = False, enable_thinking: bool | None = None,
-                 **kwargs: Any) -> None:
+                 thinking_token_budget: int | None = None, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._merge_system = merge_system
         self._min_max_tokens = min_max_tokens
         self._strict_closed_output_tools = strict_closed_output_tools
         if enable_thinking is not None and type(enable_thinking) is not bool:
             raise ValueError("Thinking control must be a strict boolean or omitted")
+        from .protocol import validate_thinking_token_budget
+
+        validate_thinking_token_budget(thinking_token_budget, enable_thinking)
         self._enable_thinking = enable_thinking
+        self._thinking_token_budget = thinking_token_budget
 
     def prepare_request(self, model_settings: Any, model_request_parameters: Any) -> Any:
         if self._strict_closed_output_tools:
             model_request_parameters = _strict_closed_outputs(model_request_parameters, self.profile)
         settings, params = super().prepare_request(model_settings, model_request_parameters)
         settings = _apply_max_tokens_floor(settings, self._min_max_tokens)
-        if self._enable_thinking is not None:
-            from .protocol import BrokerError
+        if self._enable_thinking is not None or self._thinking_token_budget is not None:
+            from .protocol import BrokerError, validate_thinking_token_budget
 
             if settings and any(key in settings for key in ("extra_body", "extra_headers")):
                 raise BrokerError("policy", "Thinking control cannot be combined with request overrides")
-            # Only this typed operator option can add a provider body extension. The
-            # broker codec still rejects arbitrary body/header overrides from agents.
-            settings = {**(settings or {}), "extra_body": {
-                "chat_template_kwargs": {"enable_thinking": self._enable_thinking}}}
+            try:
+                validate_thinking_token_budget(
+                    self._thinking_token_budget, self._enable_thinking,
+                    (settings or {}).get("max_tokens"), require_output_cap=True)
+            except ValueError:
+                raise BrokerError("policy", "Invalid thinking token budget") from None
+            # Typed operator controls are the only admitted provider body extensions.
+            body: dict[str, Any] = {}
+            if self._enable_thinking is not None:
+                body["chat_template_kwargs"] = {"enable_thinking": self._enable_thinking}
+            if self._thinking_token_budget is not None:
+                body["thinking_token_budget"] = self._thinking_token_budget
+            settings = {**(settings or {}), "extra_body": body}
         return settings, params
 
     async def _map_messages(self, *args: Any, **kwargs: Any) -> list[Any]:
@@ -224,7 +237,8 @@ async def input_wire(payload: Any, contract: Any) -> dict[str, Any]:
             contract.model, provider=provider, merge_system=contract.merge_system_messages,
             min_max_tokens=contract.min_max_tokens,
             strict_closed_output_tools=contract.strict_closed_output_tools,
-            enable_thinking=contract.enable_thinking, **extra,
+            enable_thinking=contract.enable_thinking,
+            thinking_token_budget=contract.thinking_token_budget, **extra,
         )
         try:
             settings, params = model.prepare_request(settings, params)
@@ -243,7 +257,7 @@ async def input_wire(payload: Any, contract: Any) -> dict[str, Any]:
         except Exception as exc:
             raise BrokerError("policy", "Unsupported admission rendering") from exc
     wire = {"messages": mapped, "tools": tools, "response_format": response_format}
-    if contract.enable_thinking is not None:
+    if contract.enable_thinking is not None or contract.thinking_token_budget is not None:
         wire["extra_body"] = settings["extra_body"]
     if _ascii_normalized_size(wire) > MAX_BODY_BYTES:
         raise BrokerError("policy", "Transformed admission input exceeds rendering bound")

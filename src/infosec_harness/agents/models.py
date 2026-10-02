@@ -42,6 +42,8 @@ class BackendConfig(BaseModel):
     transport: Literal["direct", "brokered"] = "direct"
     strict_closed_output_tools: bool = Field(default=False, strict=True, exclude_if=lambda value: value is False)
     enable_thinking: bool | None = Field(default=None, strict=True, exclude_if=lambda value: value is None)
+    thinking_token_budget: int | None = Field(
+        default=None, gt=0, strict=True, exclude_if=lambda value: value is None)
     kind: Literal["bedrock", "openai_compatible"]
     region: str | None = None
     aws_profile: str | None = None
@@ -72,7 +74,10 @@ class BackendConfig(BaseModel):
 
     @model_validator(mode="after")
     def broker_has_no_direct_credentials(self):
-        if self.enable_thinking is not None and self.kind != "openai_compatible":
+        from infosec_harness.inference.protocol import validate_thinking_token_budget
+
+        validate_thinking_token_budget(self.thinking_token_budget, self.enable_thinking)
+        if (self.enable_thinking is not None or self.thinking_token_budget is not None) and self.kind != "openai_compatible":
             raise ValueError("Thinking control requires an OpenAI-compatible backend")
         if self.strict_closed_output_tools and self.kind != "openai_compatible":
             raise ValueError("Strict output tools require an OpenAI-compatible backend")
@@ -93,11 +98,21 @@ class CapabilityProfile(BaseModel):
     structured_output: Literal["native", "tool"] = "tool"
     strict_closed_output_tools: bool = Field(default=False, strict=True, exclude_if=lambda value: value is False)
     enable_thinking: bool | None = Field(default=None, strict=True, exclude_if=lambda value: value is None)
+    thinking_token_budget: int | None = Field(
+        default=None, gt=0, strict=True, exclude_if=lambda value: value is None)
     tool_calling: bool = True
     message_layout: Literal["native", "single_system"] = "native"
     reasoning_accounting: Literal["separate", "inside_output", "unknown"] = "unknown"
     usage_reporting: Literal["observed", "unavailable"] = "observed"
     prompt_caching: Literal["observed", "provider_managed", "unsupported"] = "provider_managed"
+
+
+    @model_validator(mode="after")
+    def thinking_budget_is_consistent(self):
+        from infosec_harness.inference.protocol import validate_thinking_token_budget
+
+        validate_thinking_token_budget(self.thinking_token_budget, self.enable_thinking)
+        return self
 
 
 class ResolvedModelConfig(BaseModel):
@@ -221,6 +236,10 @@ def resolve_config(
     resolved_model = f"{backend_name}:{model_id}"
     source = pricing_source(resolved_model)
     effective = _apply_max_tokens_floor(requested, backend.min_max_tokens) or {}
+    from infosec_harness.inference.protocol import validate_thinking_token_budget
+
+    validate_thinking_token_budget(backend.thinking_token_budget, backend.enable_thinking,
+                                   effective.get("max_tokens"), require_output_cap=True)
     retries = backend.max_retries_under_temporal if durable else backend.max_retries
     if backend.kind == "openai_compatible":
         capabilities = CapabilityProfile(
@@ -228,6 +247,7 @@ def resolve_config(
             reasoning_accounting="inside_output",
             strict_closed_output_tools=backend.strict_closed_output_tools,
             enable_thinking=backend.enable_thinking,
+            thinking_token_budget=backend.thinking_token_budget,
         )
         credential_reference = backend.api_key_env
     else:
@@ -243,6 +263,7 @@ def resolve_config(
             min_max_tokens=backend.min_max_tokens,
             strict_closed_output_tools=backend.strict_closed_output_tools,
             enable_thinking=backend.enable_thinking,
+            thinking_token_budget=backend.thinking_token_budget,
         )
         retries = 0
         credential_reference = broker_contract.provider_binding
@@ -309,6 +330,7 @@ def _build_live(
         min_max_tokens=backend.min_max_tokens,
         strict_closed_output_tools=backend.strict_closed_output_tools,
         enable_thinking=backend.enable_thinking,
+        thinking_token_budget=backend.thinking_token_budget,
         **extra,
     )
 
@@ -518,6 +540,7 @@ def _broker_model(agent_name, tier, binding, contract, *, atomic_intake=False):
         merge_system_messages=backend.merge_system_messages, min_max_tokens=backend.min_max_tokens,
         strict_closed_output_tools=backend.strict_closed_output_tools,
         enable_thinking=backend.enable_thinking,
+        thinking_token_budget=backend.thinking_token_budget,
     )
     if expected.digest != contract.digest or binding.contract_digest != contract.digest:
         raise BrokerError("identity", "Invocation contract differs from worker deployment")

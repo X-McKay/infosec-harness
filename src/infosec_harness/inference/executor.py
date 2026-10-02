@@ -179,6 +179,7 @@ class OpenAIInference:
                 min_max_tokens=self.contract.min_max_tokens,
                 strict_closed_output_tools=self.contract.strict_closed_output_tools,
                 enable_thinking=self.contract.enable_thinking,
+                thinking_token_budget=self.contract.thinking_token_budget,
                 **extra,
             )
             try:

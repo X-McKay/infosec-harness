@@ -134,9 +134,10 @@ class FindingTriageWorkflow:
     async def run(self, args: dict) -> TriageRunOutput:
         # Memoize absence during old-history replay before its first activity/frontier.
         atomic_intake = workflow.patched("intake-atomic-inline-v1")
+        source_guidance = atomic_intake and workflow.patched("intake-source-guidance-v1")
         inp = FindingInput.model_validate(args["finding_input"])
         prepared = PreparedEnvironment.model_validate(args["prepared"])
-        ops = TemporalOps(intake_atomic_inline=atomic_intake)
+        ops = TemporalOps(intake_atomic_inline=atomic_intake, intake_source_guidance=source_guidance)
         invocations = []
         state = None
         preserve_partial_failure = workflow.patched("finding-partial-failure-v1")

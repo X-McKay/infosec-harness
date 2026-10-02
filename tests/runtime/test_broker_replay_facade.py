@@ -93,7 +93,7 @@ from infosec_harness.inference.protocol import ReservationBinding
 from pydantic_ai.models import ModelRequestParameters
 import time
 
-assert set(INTAKE_GENERATIONS) == {"bare", "quoted", "atomic"}
+assert set(INTAKE_GENERATIONS) == {"bare", "quoted", "atomic_v3", "atomic"}
 for key in ("bare", "quoted"):
     generation = INTAKE_GENERATIONS[key]
     assert generation.config.model.broker_contract is None

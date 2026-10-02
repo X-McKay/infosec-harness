@@ -55,8 +55,10 @@ _RETRY = RetryPolicy(maximum_attempts=3, non_retryable_error_types=_NON_RETRYABL
 class TemporalOps:
     """Bound to one workflow execution; created inside the workflow's run method."""
 
-    def __init__(self, *, intake_atomic_inline: bool = False) -> None:
+    def __init__(self, *, intake_atomic_inline: bool = False,
+                 intake_source_guidance: bool = False) -> None:
         self._intake_atomic_inline = intake_atomic_inline
+        self._intake_source_guidance = intake_source_guidance
         self._intake_generations = INTAKE_GENERATIONS
         self._accounting = RootAccounting()
         self._broker_identity: tuple[str, str] | None = None
@@ -163,7 +165,7 @@ class TemporalOps:
 
     def _intake_for(self, *, check_frontier: bool = True) -> IntakeGeneration:
         if self._intake_atomic_inline:
-            return self._intake_generations["atomic"]
+            return self._intake_generations["atomic" if self._intake_source_guidance else "atomic_v3"]
         key: IntakeGenerationName = "quoted" if workflow.patched("intake-evidence-v1") else "bare"
         if check_frontier and not workflow.unsafe.is_replaying():
             raise RuntimeError(

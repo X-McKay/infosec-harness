@@ -66,7 +66,8 @@ async def authorize(request: InferenceRequest, policy: ReservationPolicy) -> dic
         raise BrokerError("budget", "Provider output cap is missing or exceeds trusted bounds")
     input_reserve = await required_input_reserve(request.payload, request.contract)
     if input_reserve > policy.max_input_tokens:
-        _LOG.warning("IH_BUDGET_GUARD boundary=admission category=input_reserve")
+        _LOG.warning("IH_BUDGET_GUARD boundary=admission category=input_reserve reserve=%d limit=%d",
+                     input_reserve, policy.max_input_tokens)
         raise BrokerError("budget", "Serialized input exceeds the trusted tokenizer/context bound")
     cost = 0.0
     if policy.input_per_mtok is not None and policy.output_per_mtok is not None:

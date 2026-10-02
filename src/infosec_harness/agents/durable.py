@@ -20,7 +20,8 @@ AGENTS = {**durable_agents(), "intake": INTAKE_GENERATIONS["atomic"].agent}
 LEGACY_OUTPUT_AGENTS = {**legacy_output_agents(), "intake": INTAKE_GENERATIONS["bare"].agent}
 # Both generations must remain registered on every worker which can receive an execution
 # started before or after the output-contract patch marker was recorded.
-AGENT_LIST = [*AGENTS.values(), *LEGACY_OUTPUT_AGENTS.values(), INTAKE_GENERATIONS["quoted"].agent]
+AGENT_LIST = [*AGENTS.values(), *LEGACY_OUTPUT_AGENTS.values(),
+              INTAKE_GENERATIONS["quoted"].agent, INTAKE_GENERATIONS["atomic_v3"].agent]
 
 # Resolve eagerly on the worker host; workflow execution must never warm these I/O caches.
 CONFIGS = {**resolved_agent_configs(), "intake": INTAKE_GENERATIONS["atomic"].config}

@@ -22,11 +22,11 @@ _REVISED = {"partial-build", "context", "verdict", "build-repair", "intake"}
 
 def test_both_output_contract_generations_are_registered_with_distinct_identities() -> None:
     assert set(LEGACY_OUTPUT_AGENTS) == _REVISED
-    assert len(AGENT_LIST) == len(AGENTS) + len(_REVISED) + 1
+    assert len(AGENT_LIST) == len(AGENTS) + len(_REVISED) + 2
     assert len({agent.name for agent in AGENT_LIST}) == len(AGENT_LIST)
     for name in _REVISED:
         assert LEGACY_OUTPUT_AGENTS[name].name == name
-        assert AGENTS[name].name == ("intake-output-v3" if name == "intake" else f"{name}-output-v2")
+        assert AGENTS[name].name == ("intake-output-v4" if name == "intake" else f"{name}-output-v2")
 
 
 @pytest.mark.parametrize(

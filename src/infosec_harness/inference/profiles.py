@@ -26,7 +26,12 @@ from pydantic import (
 
 from infosec_harness.inference.policy import canonical_policy
 from infosec_harness.inference.policy import policy_digest as effective_policy_digest
-from infosec_harness.inference.protocol import ExecutorContract, ExtensionBinding, digest
+from infosec_harness.inference.protocol import (
+    ExecutorContract,
+    ExtensionBinding,
+    digest,
+    validate_thinking_token_budget,
+)
 from infosec_harness.resources import package_root
 
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -160,6 +165,8 @@ class ExecutorProfile(_StrictModel):
     min_max_tokens: int = Field(default=0, ge=0)
     strict_closed_output_tools: bool = Field(default=False, exclude_if=lambda value: value is False)
     enable_thinking: bool | None = Field(default=None, exclude_if=lambda value: value is None)
+    thinking_token_budget: int | None = Field(
+        default=None, gt=0, strict=True, exclude_if=lambda value: value is None)
     # Request context admission is separate from cumulative invocation allocation.
     # Omission preserves the identity and behavior of existing operator profiles.
     max_input_tokens_per_request: int | None = Field(
@@ -167,6 +174,11 @@ class ExecutorProfile(_StrictModel):
     credential_driver: Literal["native"] = "native"
     inspection: tuple[ExtensionBinding, ...] = ()
     provider_retries: Literal[0] = 0
+
+    @model_validator(mode="after")
+    def thinking_budget_is_consistent(self):
+        validate_thinking_token_budget(self.thinking_token_budget, self.enable_thinking)
+        return self
 
     @field_validator("backend_name", "provider_binding", "ledger_profile")
     @classmethod
@@ -335,6 +347,7 @@ class BrokerConfig(_StrictModel):
         min_max_tokens: int = 0,
         strict_closed_output_tools: bool = False,
         enable_thinking: bool | None = None,
+        thinking_token_budget: int | None = None,
     ) -> ExecutorContract:
         """Resolve a secret-free executor contract from trusted effective settings."""
         if not self.enabled:
@@ -351,6 +364,9 @@ class BrokerConfig(_StrictModel):
             raise ValueError("Output-token floor differs from the approved profile")
         if enable_thinking is not profile.enable_thinking:
             raise ValueError("Thinking control differs from the approved profile")
+        validate_thinking_token_budget(thinking_token_budget, enable_thinking)
+        if thinking_token_budget != profile.thinking_token_budget:
+            raise ValueError("Thinking token budget differs from the approved profile")
         if strict_closed_output_tools != profile.strict_closed_output_tools:
             raise ValueError("Strict output adaptation differs from the approved profile")
         if atomic_intake != (agent == "intake"):
@@ -384,6 +400,7 @@ class BrokerConfig(_StrictModel):
             atomic_intake=atomic_intake,
             strict_closed_output_tools=strict_closed_output_tools,
             enable_thinking=enable_thinking,
+            thinking_token_budget=thinking_token_budget,
             provider_retries=0,
             credential_driver="native",
             inspection=(),

@@ -583,7 +583,7 @@ open_questions:
 - What false-negative rate is acceptable once measured with the sandbox enabled?
 member_assessments:
 - agent: intake
-  agent_version: 1.0.3
+  agent_version: 1.0.4
   governance_tier: medium
   assessment: docs/risk-assessments/intake.yaml
 - agent: recon
