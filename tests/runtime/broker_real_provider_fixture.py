@@ -525,7 +525,8 @@ async def ledger_snapshot(root_id: str) -> dict:
 
 async def run_local_case(manifest: RealProviderManifest, phase: str, agent: str,
                          checkpoint: Callable[[dict], None] | None = None,
-                         validate_config: Callable[[object], None] | None = None) -> dict:
+                         validate_config: Callable[[object], None] | None = None,
+                         compare_config: Callable[[dict, str], dict] | None = None) -> dict:
     """One unchanged production case; callers own their explicit finite scope."""
     from infosec_harness.agents.registry import load_spec, resolve_agent_config
     from infosec_harness.graph.ops import LocalOps
@@ -544,7 +545,8 @@ async def run_local_case(manifest: RealProviderManifest, phase: str, agent: str,
         if config.model.endpoint != manifest.endpoint:
             raise ValueError("Resolved model endpoint differs from the frozen manifest")
         if phase != "direct":
-            row["baseline_comparison"] = compare_manifest_baseline(manifest, agent, row["config"], case_digest)
+            row["baseline_comparison"] = (compare_config(row["config"], case_digest) if compare_config is not None
+                else compare_manifest_baseline(manifest, agent, row["config"], case_digest))
         outcome = await ops.run_agent(agent, inputs["prompt"], inputs["deps"])
         row.update(score_output(agent, outcome.output, predict, expected))
         row.update(execution="passed", requests=outcome.requests, input_tokens=outcome.input_tokens,

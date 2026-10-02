@@ -64,6 +64,7 @@ class ExecutorContract(StrictModel):
     min_max_tokens: int = Field(default=0, ge=0, strict=True)
     atomic_intake: StrictBool = False
     strict_closed_output_tools: StrictBool = Field(default=False, exclude_if=lambda value: value is False)
+    enable_thinking: StrictBool | None = Field(default=None, exclude_if=lambda value: value is None)
     provider_retries: Literal[0] = 0
     credential_driver: Literal["native"] = "native"
     inspection: tuple[ExtensionBinding, ...] = ()

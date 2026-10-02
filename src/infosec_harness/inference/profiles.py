@@ -159,6 +159,7 @@ class ExecutorProfile(_StrictModel):
     merge_system_messages: bool = True
     min_max_tokens: int = Field(default=0, ge=0)
     strict_closed_output_tools: bool = Field(default=False, exclude_if=lambda value: value is False)
+    enable_thinking: bool | None = Field(default=None, exclude_if=lambda value: value is None)
     # Request context admission is separate from cumulative invocation allocation.
     # Omission preserves the identity and behavior of existing operator profiles.
     max_input_tokens_per_request: int | None = Field(
@@ -333,6 +334,7 @@ class BrokerConfig(_StrictModel):
         merge_system_messages: bool = True,
         min_max_tokens: int = 0,
         strict_closed_output_tools: bool = False,
+        enable_thinking: bool | None = None,
     ) -> ExecutorContract:
         """Resolve a secret-free executor contract from trusted effective settings."""
         if not self.enabled:
@@ -347,6 +349,8 @@ class BrokerConfig(_StrictModel):
             raise ValueError("Message adaptation differs from the approved profile")
         if min_max_tokens != profile.min_max_tokens:
             raise ValueError("Output-token floor differs from the approved profile")
+        if enable_thinking is not profile.enable_thinking:
+            raise ValueError("Thinking control differs from the approved profile")
         if strict_closed_output_tools != profile.strict_closed_output_tools:
             raise ValueError("Strict output adaptation differs from the approved profile")
         if atomic_intake != (agent == "intake"):
@@ -379,6 +383,7 @@ class BrokerConfig(_StrictModel):
             min_max_tokens=min_max_tokens,
             atomic_intake=atomic_intake,
             strict_closed_output_tools=strict_closed_output_tools,
+            enable_thinking=enable_thinking,
             provider_retries=0,
             credential_driver="native",
             inspection=(),

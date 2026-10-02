@@ -2,7 +2,7 @@
 
 Status: Implemented opt-in contracts; corrected-topology G0 passed; bounded native/service qualification passed; rollout disabled
 Date: 2026-10-01
-Specification version: 0.2.7
+Specification version: 0.2.8
 
 The October local-provider qualification and retained failures are recorded in [live-provider evidence](validation/CREDENTIAL_BROKER_LIVE_PROVIDER.md). Admission behavior changed without changing wire protocol v1; deploy the new immutable executor contract and drain prior allocations before adoption.
 
@@ -105,6 +105,21 @@ Upstream credentials MUST be dedicated to the required service, use short expiry
 Rotation MUST stop admitting requests to the old executor, wait for the provider change acknowledgement, launch a new process with the new reference, verify the new contract, and resume admission. Do not assume an existing process has adopted a new credential. Revocation MUST block new admission immediately and detach the provider with acknowledgement; destroy the executor when acknowledgement cannot be established. In-flight provider requests may finish or remain unknown, and revocation MUST not be reported as upstream cancellation. A native detach acknowledgement waits at most 30 seconds. On an unavailable acknowledgement, recheck the exact native ID, name and ownership labels before ordinary sandbox deletion; verify gateway and container absence plus scoped credential cleanup before marking the lease deleted. Identity or policy failures cannot authorize this fallback.
 
 ## Strict closed output tools
+
+OpenAI-compatible backends may configure `enable_thinking: false` or `true` for providers
+that support Qwen's `chat_template_kwargs.enable_thinking` request option. Omission preserves
+provider defaults and historical serialized identities. The optional value is a strict boolean
+in backend capabilities, operator profiles and immutable executor contracts; every value must
+match exactly. Per-agent backend mappings can select a cloned backend with thinking disabled
+without changing other agents. The trusted adapter constructs only this fixed body extension;
+arbitrary agent-supplied body/header extensions remain blocked. Admission rendering includes
+the extension, and direct and brokered paths produce the same option. Non-OpenAI backends
+reject it. This does not establish provider support or qualify model quality.
+
+A changed reasoning mode requires a new image/contract and fresh bounded experiment provenance.
+Existing completed results remain readable; uncertain holds, dispatch fences, cancellation,
+retry bounds and root/binding expiry retain their existing semantics. Old requests cannot be
+rebound to a different reasoning setting. The change does not enlarge token or request budgets.
 
 OpenAI-compatible backends can opt into `strict_closed_output_tools: true`. The same flag
 must be approved in the executor profile; it participates in the resolved capability and

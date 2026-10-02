@@ -41,6 +41,7 @@ class Prices(BaseModel):
 class BackendConfig(BaseModel):
     transport: Literal["direct", "brokered"] = "direct"
     strict_closed_output_tools: bool = Field(default=False, strict=True, exclude_if=lambda value: value is False)
+    enable_thinking: bool | None = Field(default=None, strict=True, exclude_if=lambda value: value is None)
     kind: Literal["bedrock", "openai_compatible"]
     region: str | None = None
     aws_profile: str | None = None
@@ -71,6 +72,8 @@ class BackendConfig(BaseModel):
 
     @model_validator(mode="after")
     def broker_has_no_direct_credentials(self):
+        if self.enable_thinking is not None and self.kind != "openai_compatible":
+            raise ValueError("Thinking control requires an OpenAI-compatible backend")
         if self.strict_closed_output_tools and self.kind != "openai_compatible":
             raise ValueError("Strict output tools require an OpenAI-compatible backend")
         if self.transport == "brokered" and (self.kind != "openai_compatible" or self.api_key_env
@@ -89,6 +92,7 @@ class CapabilityProfile(BaseModel):
     # format that these agents do not request.
     structured_output: Literal["native", "tool"] = "tool"
     strict_closed_output_tools: bool = Field(default=False, strict=True, exclude_if=lambda value: value is False)
+    enable_thinking: bool | None = Field(default=None, strict=True, exclude_if=lambda value: value is None)
     tool_calling: bool = True
     message_layout: Literal["native", "single_system"] = "native"
     reasoning_accounting: Literal["separate", "inside_output", "unknown"] = "unknown"
@@ -223,6 +227,7 @@ def resolve_config(
             message_layout=("single_system" if backend.merge_system_messages else "native"),
             reasoning_accounting="inside_output",
             strict_closed_output_tools=backend.strict_closed_output_tools,
+            enable_thinking=backend.enable_thinking,
         )
         credential_reference = backend.api_key_env
     else:
@@ -237,6 +242,7 @@ def resolve_config(
             atomic_intake=atomic_intake, merge_system_messages=backend.merge_system_messages,
             min_max_tokens=backend.min_max_tokens,
             strict_closed_output_tools=backend.strict_closed_output_tools,
+            enable_thinking=backend.enable_thinking,
         )
         retries = 0
         credential_reference = broker_contract.provider_binding
@@ -302,6 +308,7 @@ def _build_live(
         merge_system=backend.merge_system_messages,
         min_max_tokens=backend.min_max_tokens,
         strict_closed_output_tools=backend.strict_closed_output_tools,
+        enable_thinking=backend.enable_thinking,
         **extra,
     )
 
@@ -510,6 +517,7 @@ def _broker_model(agent_name, tier, binding, contract, *, atomic_intake=False):
         backend_endpoint=backend.base_url, atomic_intake=atomic_intake,
         merge_system_messages=backend.merge_system_messages, min_max_tokens=backend.min_max_tokens,
         strict_closed_output_tools=backend.strict_closed_output_tools,
+        enable_thinking=backend.enable_thinking,
     )
     if expected.digest != contract.digest or binding.contract_digest != contract.digest:
         raise BrokerError("identity", "Invocation contract differs from worker deployment")
