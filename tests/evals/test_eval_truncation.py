@@ -129,9 +129,24 @@ async def test_transport_failure_keeps_the_scored_cases_and_fails_the_run(monkey
 
 
 async def test_agent_deadline_is_a_failed_budget_gate_and_remaining_cases_run(monkeypatch):
+    from types import SimpleNamespace
+
     from infosec_harness.agents import registry
+    from infosec_harness.evals import invocation
 
     real_build = registry.build_agent
+    deadlines = []
+    cancelled_invocations = []
+    completed_invocations = []
+
+    def capture_deadline(seconds):
+        deadline = asyncio.timeout(seconds)
+        deadlines.append(deadline)
+        return deadline
+
+    # Patch only this module's asyncio reference, retaining the production
+    # run_with_timeout implementation and its expired-vs-inner-timeout check.
+    monkeypatch.setattr(invocation, "asyncio", SimpleNamespace(timeout=capture_deadline))
 
     class SlowFirstInvocation:
         def __init__(self, inner):
@@ -141,10 +156,19 @@ async def test_agent_deadline_is_a_failed_budget_gate_and_remaining_cases_run(mo
         async def run(self, *args, **kwargs):
             self.calls += 1
             if self.calls == 1:
-                await asyncio.sleep(10)
-            return await self.inner.run(*args, **kwargs)
+                # Expire the actual evaluator deadline after the first invocation
+                # enters it. Later cases keep their normal configured budget,
+                # independent of CI scheduling and stub execution latency.
+                deadlines[-1].reschedule(asyncio.get_running_loop().time())
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    cancelled_invocations.append(self.calls)
+                    raise
+            result = await self.inner.run(*args, **kwargs)
+            completed_invocations.append(self.calls)
+            return result
 
-    monkeypatch.setattr(get_settings(), "agent_run_timeout_s", 0.1)
     monkeypatch.setattr(registry, "build_agent", lambda *a, **kw: SlowFirstInvocation(
         real_build(*a, **kw)
     ))
@@ -158,6 +182,10 @@ async def test_agent_deadline_is_a_failed_budget_gate_and_remaining_cases_run(mo
     assert metrics["attempts"][0]["error_type"] == "AgentRunTimeout"
     assert metrics["attempts"][0]["outcome"] == "budget_exhausted"
     assert metrics["attempts"][1]["outcome"] == "answered"
+    assert cancelled_invocations == [1]
+    assert completed_invocations == list(range(2, len(_dataset_cases()) + 1))
+    assert len(deadlines) == len(_dataset_cases())
+    assert [deadline.expired() for deadline in deadlines] == [True] + [False] * (len(deadlines) - 1)
 
 
 async def test_inner_timeout_is_not_mislabeled_as_agent_budget_exhaustion(monkeypatch):

@@ -98,3 +98,11 @@ model settings, quality checks, input caps or trial limits. Live native qualific
 provider grammar enforcement remain `not_checked` for this candidate until fresh trials.
 UI validation is `not_applicable`: no frontend behavior changed. Hosted Temporal/database and
 production Kubernetes deployment remain `not_checked`.
+
+CI also exposed a scheduling race in an existing evaluator deadline test: its global
+100-millisecond limit caused an ordinary stub case to time out in addition to the deliberately
+slow first invocation. The test now reschedules the real evaluator deadline after that first
+invocation enters, observes its cancellation, and verifies that every remaining invocation
+answers under its normal budget. Exact failure counts remain unchanged. All 12 tests in the
+file and five fresh-process repetitions of the three-case recovery subset passed. No runtime
+deadline or expected outcome was changed by this test correction.
