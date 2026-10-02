@@ -10,10 +10,12 @@ import logging
 import os
 import secrets
 import shutil
+import signal
 import subprocess
 import tempfile
 import time
 import uuid
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -207,6 +209,47 @@ class LeaseStore:
         return leases
 
 
+async def _finish_owned_native(task):
+    # Finish a previously-owned cleanup despite additional cancellation requests.
+    while not task.done():
+        with suppress(asyncio.CancelledError):
+            await asyncio.shield(task)
+    return task.result()
+
+
+async def _run_owned_native_process(
+    argv: list[str], *, env: dict[str, str], timeout: float
+) -> subprocess.CompletedProcess[bytes]:
+    process = None
+    spawn = asyncio.create_task(
+        asyncio.create_subprocess_exec(
+            *argv,
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,
+        )
+    )
+    communication = None
+    try:
+        process = await asyncio.shield(spawn)
+        communication = asyncio.create_task(process.communicate())
+        stdout, stderr = await asyncio.wait_for(asyncio.shield(communication), timeout)
+        return subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
+    except BaseException:
+        if process is None:
+            with suppress(BaseException):
+                process = await _finish_owned_native(spawn)
+        if process is not None:
+            with suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
+            if communication is None:
+                communication = asyncio.create_task(process.communicate())
+            await _finish_owned_native(communication)
+            await _finish_owned_native(asyncio.create_task(process.wait()))
+        raise
+
+
 class NativeCLI:
     def __init__(
         self,
@@ -243,15 +286,14 @@ class NativeCLI:
         if ssh is None:
             raise BrokerError("unavailable", "Native file upload requires an SSH client")
         try:
-            await asyncio.to_thread(
-                subprocess.run,
+            result = await _run_owned_native_process(
                 [ssh, "-V"],
                 env=self.environment,
-                capture_output=True,
                 timeout=5,
-                check=True,
             )
-        except (OSError, subprocess.SubprocessError):
+            if result.returncode:
+                raise BrokerError("unavailable", "Native SSH client is unavailable")
+        except (OSError, TimeoutError):
             raise BrokerError("unavailable", "Native SSH client is unavailable") from None
 
     async def run(
@@ -270,21 +312,17 @@ class NativeCLI:
         if args == ["--version"]:
             argv = [str(self.binary), "--version"]
         try:
-            result = await asyncio.to_thread(
-                subprocess.run,
+            result = await _run_owned_native_process(
                 argv,
-                capture_output=True,
-                text=True,
                 env={**self.environment, **(extra_env or {})},
                 timeout=timeout,
-                check=False,
             )
-        except (OSError, subprocess.TimeoutExpired):
+        except (OSError, TimeoutError):
             raise BrokerError("unavailable") from None
         if result.returncode:
             # Native errors may contain credential material. Never echo stderr or argv.
             raise BrokerError("unavailable")
-        return result.stdout
+        return result.stdout.decode()
 
     async def containers(self, native_id: str) -> list[dict]:
         argv = [
@@ -298,29 +336,21 @@ class NativeCLI:
             f"label=openshell.ai/sandbox-id={native_id}",
         ]
         try:
-            listed = await asyncio.to_thread(
-                subprocess.run,
-                argv,
-                capture_output=True,
-                text=True,
-                timeout=15,
-                check=True,
-                env=self.environment,
-            )
-            ids = listed.stdout.split()
+            listed = await _run_owned_native_process(argv, env=self.environment, timeout=15)
+            if listed.returncode:
+                raise BrokerError("unavailable")
+            ids = listed.stdout.decode().split()
             if not ids:
                 return []
-            result = await asyncio.to_thread(
-                subprocess.run,
+            result = await _run_owned_native_process(
                 [self.docker_binary, "--host", self.docker_socket, "inspect", *ids],
-                capture_output=True,
-                text=True,
-                timeout=15,
-                check=True,
                 env=self.environment,
+                timeout=15,
             )
+            if result.returncode:
+                raise BrokerError("unavailable")
             return json.loads(result.stdout)
-        except (OSError, subprocess.SubprocessError, ValueError):
+        except (OSError, TimeoutError, ValueError):
             raise BrokerError("unavailable") from None
 
 

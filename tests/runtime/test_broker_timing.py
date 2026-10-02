@@ -19,7 +19,9 @@ def test_nested_budgets_include_setup_claim_completion_and_response_margin():
     assert timing.EXECUTOR_TIMEOUT_S >= 2 * timing.LEDGER_TIMEOUT_S + timing.PROVIDER_TIMEOUT_S
     assert timing.CONTROLLER_TIMEOUT_S >= timing.PREPARATION_TIMEOUT_S + timing.EXECUTOR_TIMEOUT_S + timing.RECONCILIATION_TIMEOUT_S
     assert timing.WORKER_TIMEOUT_S > timing.SERVER_TIMEOUT_S > timing.CONTROLLER_TIMEOUT_S + timing.RECONCILIATION_TIMEOUT_S
-    assert timing.WORKER_TIMEOUT_S <= 600 - 90  # Existing activity ceiling retains cleanup margin.
+    # Existing 600 s activity leaves the independent 45 s reconciliation
+    # allowance plus 15 s acknowledgement margin after the worker wait.
+    assert timing.WORKER_TIMEOUT_S + timing.RECONCILIATION_TIMEOUT_S + 15 <= 600
     assert timing.remaining_timeout(101, timing.WORKER_TIMEOUT_S, now=100) == 1
     for ceiling in (0, -1, float("nan"), float("inf")):
         with pytest.raises(BrokerError, match="policy"):

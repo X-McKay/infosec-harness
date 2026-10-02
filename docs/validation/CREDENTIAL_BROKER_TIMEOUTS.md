@@ -201,3 +201,26 @@ Later per-agent non-thinking and targeted source-range repair experiments are re
 [CREDENTIAL_BROKER_THINKING.md](CREDENTIAL_BROKER_THINKING.md). The latest frozen intake
 case passed through OpenShell with unchanged limits and scoring; fresh full native
 qualification remains outstanding.
+
+
+## V9 startup-control qualification candidate
+
+The full v9 trial retained a pre-inference OpenShell supervisor failure: its Ready condition reported a 30-second idempotent boundary-control timeout, with no model request admitted. This is a censored startup failure, not a successful startup-duration observation or a provider latency estimate. The fixed message is shared by confirmation and agent launch, so it does not identify which exchange stalled or establish that more time will resolve a stall.
+
+The next finite candidate doubles only the startup `Confirm` and `StartAgent` control ceiling from 30 to 60 seconds and records the fixed control kind on timeout. Initial attach and policy discovery remain at 300 seconds; ordinary control and connection-recovery waits remain at 30 seconds. The existing idempotent loop reuses its one request envelope; no new whole-call retry or model resend is added. The factor of two is an explicit engineering buffer for qualification, not a measured successful latency or production SLO. The ordinary controller preparation ceiling increases from 90 to 120 seconds. This total wall still may expire if both startup exchanges consume their maximum plus other setup work; cancellation must reap the owned CLI process and retain uncertain native mutation intent.
+
+| Current candidate nested wall | Seconds |
+| --- | ---: |
+| Native startup Confirm / StartAgent | 60 each |
+| Controller preparation | 120 total |
+| Ledger hop | 30 |
+| Provider | 240 |
+| Executor | 300 |
+| Controller | 465 |
+| HTTP server | 525 |
+| Worker | 540 |
+| Model activity | 600, unchanged |
+
+The 60 seconds after the worker ceiling reserve the independently retained 45-second reconciliation allowance and a 15-second acknowledgement margin. Binding and root deadlines still clamp every request wait; the unchanged 600-second case/activity ceiling can terminate a slower candidate. This deliberately reduces the prior extra outer margin, without relaxing admission, uncertainty fencing, sandbox enforcement or the actual activity deadline. Capacity can be occupied longer; qualification must measure cancellation and cleanup, not infer them from configured numbers.
+
+Because the bundled timing source changes, the executor requires a fresh immutable image and contract even though its provider ceiling remains 240 seconds. The supervisor patch likewise requires a new image identity and actual readiness evidence. Fresh paused/scaled control regressions and a bounded zero-model startup soak must pass before another full original-case trial. This candidate is not yet a proven fix for the observed supervisor failure; old reports, unknown holds and native provisioning failures remain retained.

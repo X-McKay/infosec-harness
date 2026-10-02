@@ -1,8 +1,8 @@
 # Harness credential brokering specification
 
 Status: Implemented opt-in contracts; corrected-topology G0 passed; bounded native/service qualification passed; rollout disabled
-Date: 2026-10-01
-Specification version: 0.2.10
+Date: 2026-10-02
+Specification version: 0.2.11
 
 The October local-provider qualification and retained failures are recorded in [live-provider evidence](validation/CREDENTIAL_BROKER_LIVE_PROVIDER.md). Admission behavior changed without changing wire protocol v1; deploy the new immutable executor contract and drain prior allocations before adoption.
 
@@ -338,3 +338,12 @@ ceilings are required; model-name price lookup alone is insufficient for broker 
 The input reserve applies only to independently qualified byte-tokenizer/context contracts.
 Credential revision and generated native resource labels remain separate from behavioral
 policy identity. No custom credential driver or inspection service is enabled.
+
+
+## Native CLI cancellation and provisioning recovery
+
+The controller MUST own and reap its native CLI subprocess and process group before timeout or cancellation leaves the lifecycle operation. Repeated cancellation MUST NOT release the controller's wait while its owned CLI child can continue issuing mutations. Terminating the CLI does not roll back a mutation already accepted by OpenShell: persisted creation intent remains quarantined until explicit, corroborated reconciliation.
+
+A persisted native ID, exact name and ownership labels remain mandatory for ordinary sandbox revocation. A selector match does not authorize automatic adoption of a resource whose creation receipt was not retained. Such preparation failures require a separate operator reconciliation with original lease backup, actual policy and provider identity checks, no admitted request for the run, and unchanged ledger state. This recovery must never authorize readiness, model dispatch, uncertain-request resends or release of unknown holds.
+
+Cancellation mechanics execute in controller processes, not Temporal workflow code. No wire format or workflow command changes; existing histories, completed results and uncertain reservations retain their original identities. New qualification uses fresh source/configuration identities and measured native readiness. [Qualification improvements](validation/CREDENTIAL_BROKER_QUALIFICATION_IMPROVEMENTS.md) retains the failed trial and distinguishes deterministic cancellation regressions from the separately observed supervisor startup timeout.

@@ -1,6 +1,6 @@
 # Credential broker qualification improvements — 2026-10-02
 
-Status: the 4307c7c full 118-case candidate **failed** and was truncated during partial-build, with 46/52 scored cases passing. Its terminal retention and operator reconciliation **passed**. Native all-agent and graph qualification remain **not_checked** for this candidate. The subsequent targeted warmup feedback and closed diagnostic improvements passed deterministic checks and actual synthetic Temporal feedback replay; live efficacy is **not_checked**. Prior failed trials remain authoritative and are not rescored.
+Status: the 5d3b268 full v9 candidate **failed** and was truncated during probe-planner: 85/88 scored cases passed. Six completed agents passed their release gates; partial-build passed all semantic cases but exceeded the unchanged request-count gate. Operator cleanup and full terminal preservation **passed**. Native all-agent and graph qualification remain **not_checked**. The next minimal cancellation and discovery-guidance corrections require fresh qualification; prior failed trials remain authoritative and are not rescored.
 
 ## Scope and hypothesis
 
@@ -85,3 +85,57 @@ The next code correction changes only existing missing-Maven-warmup retry text: 
 Controller-only logs now identify fixed native lifecycle and budget rejection guards without exception strings, identities, credentials or provider bodies. They preserve error codes, remote responses, allocation rules and denial behavior. No new service or wire format is introduced, and the inference executor's packaged source remains unchanged. Existing requests and uncertain allocations retain their original identities and dispositions; no provider resends or automatic retries are authorized by these logs. Actual final-candidate native replay, full release qualification and graph execution remain **not_checked** until their gates pass.
 
 Warmup/diagnostic canonical checks **passed**: lint, compile, agent validation, generated and development-skill checks, with 2,792 deterministic tests passed and 40 skipped. New regressions cover framework-preserving repair convergence, historical feedback bytes, marker eligibility, native identity denial without upload/dispatch, and budget denial before ledger mutation. Log SHA256: `46570a955b71360fc59d2c032695a225005586105e5ce98f00fbf870948606a8`. Actual Temporal feedback replay **passed**: two isolated synthetic histories (legacy without the new marker, and current with it) completed and replayed with zero fresh FunctionModel or provider calls; four synthetic activities ran only during recording. Both owned workflows completed and workers stopped without service resets. Evidence SHA256: `132a4c60c797c0b1d1241c72adae158891ab9fd12023ef2beaa6413db2be5653`. This is narrow feedback compatibility evidence, distinct from all-agent native or graph qualification. UI checks are **not_applicable**.
+
+
+## Full v8 TLS failure and full v9 outcome
+
+The first 5d3b268 full trial (v8) failed before model dispatch because its private worker trust root had expired. The retained server leaf was still valid. Verified TLS reported certificate expiration; zero new model requests were admitted. Terminal preservation passed. This was a qualification-fixture certificate failure, not evidence of an LLM endpoint fault.
+
+A separately reviewed fixture renewal preserved the existing CA key, subject and extensions and kept the server leaf unchanged. Actual host and native sandbox canaries both reached authenticated endpoints with hostname and chain verification enabled; neither made a model request. All prior ledger rows and lease files remained unchanged. This establishes the tested trust path, not a general production certificate-rotation feature. Subsequent worker configuration changed only its CA file; all eleven immutable contracts matched the serving controller.
+
+The fresh full v9 trial retained all original 118 cases, scoring rules, request/token/cost budgets and thresholds, with one repetition and concurrency one. It used the local zero-priced Qwen endpoint through OpenShell, with build-repair restored to its default reasoning setting. The measured outcome was:
+
+| Agent | Scored cases passed | Release gate |
+| --- | --- | --- |
+| build-repair | 14/14 | passed |
+| context | 14/15 | passed |
+| env-planner | 10/10 | passed |
+| intake | 9/9 | passed |
+| partial-build | 9/9 | failed: p95 requests 13, maximum 12 |
+| probe-author | 10/10 | passed |
+| probe-diagnosis | 12/13 | passed |
+| probe-planner | 7/8 scored; ninth attempt unscored | failed/truncated |
+| probe-repair, recon, verdict | unmeasured | not_checked |
+
+The context constant-only-sink case still predicted unknown instead of unreachable; probe-diagnosis still misclassified the defect case; the scored planner deserialization case chose a canary file instead of marker output. These original semantic failures are retained. Passing build cases and environment warmup do not establish a causal model-setting comparison across the different trials.
+
+The unscored planner attempt failed during native provisioning, before any inference request was admitted. Its persisted lease had no native ID, while the current control plane showed a unique sandbox with the exact name and all five ownership labels. The actual retained Ready condition reported `ControlSupervisorStartFailed`: the supervisor exited after a 30-second idempotent boundary-control timeout. That message is shared by multiple control operations, so it does not identify whether confirmation, agent launch or another control exchange stalled. The discarded original CLI stderr cannot be reconstructed. A longer provider-model timeout would not address this pre-inference failure.
+
+Ordinary revocation correctly refused the missing persisted native ID. A separate one-off operator cleanup verified accepted policy, provider identities and attachments, exact ownership, and zero remaining containers; it backed up the original private lease before supplying identity solely for ordinary revocation. No automatic adoption, readiness, dispatch or model retry was introduced. All 1,641 request rows and 425 budget rows remained unchanged, including the failed invocation's zero-request budget root and all 15 older unknown holds. All 356 new requests completed; there were no new unknown outcomes. The other 558 lease files, both global providers, database volume, gateway and ten primary service identities remained unchanged. Native inventory is empty. An independent PostgreSQL dump and a separate read-only snapshot matched every retained column.
+
+The failed trial's evidence was sealed before source changes. The full release gate remains failed; native all-agent replay and graph execution were withheld. Hosted deployment remains not_checked; UI checks remain not_applicable.
+
+Private evidence SHA256:
+
+- Full v9 aggregate: `d99a516f4c679422924d9aa31191a3c70019b02262b14fea8f9efe366149bee5`.
+- Read-only full-state diagnostic: `3b7f75c8923c62adbcc9beb98bf3b23435f7c9d10e090f2d91ed56a1eda0e5e9`.
+- Exact orphan policy/startup observation: `cb40fad4bebf02d7e768b4c361feb7c0147b3d2c645c279bb8db152efac93d8d`.
+- One-off operator cleanup: `36f04c6e681f24acdc2ef8b5a607f464f1d92d89147527affad9ccd291206346`.
+- Terminal retention: `5d7b86f4bb9a141367a59f582698a0d8a1026e61233dde266ad5b5ab64c40f4b`.
+- Whole 1,641-request/425-budget snapshot: `ed8c478c015830c5e06901d1ea34091e85cc8f8e07cdf5a50b62a330207487ab`.
+- Root runtime seal: `d519007facbe6b17d3e40d259c8c97fe0e28a179b1bbee6b05c7007aba633546`.
+- Independent reviewed-reference pin/source-freeze release: `0361c8ad15cb544cb797b2a7156c61b5e24e4c6b3086ac4630e53c83c56d6a80`.
+
+## Minimal follow-up corrections
+
+An independently confirmed cancellation defect affected native CLI ownership: controller preparation can cancel at 90 seconds while the thread-running create subprocess continues toward its 120-second timeout. The correction uses one shared async subprocess helper, shielding process acquisition and cleanup, killing the exact owned process group and reaping it before propagating cancellation. Killing the CLI is never treated as proof a native mutation was rolled back. This correction does not claim to fix the separately observed 30-second supervisor timeout. Actual local process regressions cover timeout, cancellation during spawn and reaping, repeated cancellation, and descendants surviving an exited leader; fresh native efficacy remains not_checked.
+
+The partial-build request-count failure has a concrete, smaller correction: reuse already returned directory and manifest results, treat a missing directory as a completed discovery result, and stop broad repository searches once the owning declarations are complete. The worst v9 case used twelve tool calls plus its final model answer, including a repeated identical directory census and unrelated broad globs after the owning manifest was already known. Partial-build advances from 1.1.6 to 1.1.7; prerequisites, unresolved outcomes, required truncated-range reads, schemas, goldens and budgets remain unchanged. This is a prospective efficiency improvement, not measured gate success. Fresh focused and full trials must establish its effect.
+
+These changes introduce no new service, wire protocol, output format or workflow command. Controller cleanup remains fail closed. No completed or uncertain provider request is resent, no old reservation is released, and no failed case is rescored. Generated governance comes from the canonical versions. Canonical checks and fresh live qualification for this follow-up must be recorded before acceptance.
+
+
+The next startup candidate adds fixed control-kind timeout diagnostics and a 60-second ceiling only for boundary confirmation and agent launch. Other control waits and the single-envelope idempotent retry behavior remain unchanged. Preparation is bounded at 120 seconds, with worker540 below the unchanged activity600 ceiling. This is an explicit buffered experiment, not a measured resolution of the v9 stall. It requires fresh supervisor and executor image identities, actual zero-model readiness/cleanup evidence and new qualification manifests; prior native drafts must not be activated. See [timeout rationale](CREDENTIAL_BROKER_TIMEOUTS.md) for the nested walls and reduced outer margin.
+
+
+Follow-up canonical checks **passed**: lint, compile, agent validation, the deterministic suite (2,805 passed, 40 skipped), generated-artifact checks and development-skill checks. Log SHA256: `36c1a04cee39f0469aa46296ecf30a0006c5d93ef45ebf2513fee153a51b76dd`; source-bound check proof: `84a79a023d21afde272b33a741d831f63a966d4ad866c83c7b4528ff307dc6cf`. Fresh actual runsc positive/negative, PID/memory bounds, build-egress allow/deny and builder/fixture cleanup checks **passed**, preserving all 1,641 requests, 425 budgets and primary service identities; proof: `db6ae30bb20d25ff3ef4e085e2fae3c78df5a162a6532cbe128762a61ecbcb8f`. These checks do not establish Rust test execution, the new native image's startup behavior, full release qualification, or hosted deployment; those remain **not_checked** pending actual build and fresh trials.

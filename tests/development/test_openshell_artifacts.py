@@ -260,3 +260,100 @@ def test_failed_refetch_removes_corrupt_cache_and_closes_temp_file_once(
     assert exits == [1]
     assert not cached.exists()
     assert list(tmp_path.iterdir()) == []
+
+
+def test_startup_control_candidate_recipe_pins_patch_and_source_before_tests():
+    recipe = (ROOT / "deploy/openshell/Dockerfile.supervisor-backport").read_text()
+    patch = (ROOT / "deploy/openshell/patches/0002-bound-startup-control-wait.patch").read_bytes()
+    assert (
+        hashlib.sha256(patch).hexdigest()
+        == "50af0650f4091bce8d6e05cba4f77d9010c251cd3eac268767b73e2e4db87caa"
+    )
+    assert b"--- a/crates/openshell-sandbox-backend/src/runtime.rs\n" in patch
+    assert patch.count(b"--- a/") == 2
+    assert (
+        b"--- a/crates/openshell-sandbox-backend/src/runtime/tests/credential_renewal.rs\n" in patch
+    )
+    assert (
+        "50af0650f4091bce8d6e05cba4f77d9010c251cd3eac268767b73e2e4db87caa  /tmp/startup-control.patch"
+        in recipe
+    )
+    before = recipe.index(
+        "1e7a0740d1dfebf4ce04aad1b1c274f9fff7d2c2e3525923cad3177c4ce26497  crates/openshell-sandbox-backend/src/runtime.rs"
+    )
+    apply = recipe.index("patch --fuzz=0 -p1 < /tmp/startup-control.patch")
+    after = recipe.index(
+        "bf713402164de46be4385e7e6011a5e60b5e35b26479495c2db1f70658ff0433  crates/openshell-sandbox-backend/src/runtime.rs"
+    )
+    tests = recipe.index("cargo test --locked -p openshell-sandbox-backend --lib startup_control")
+    build = recipe.index("cargo zigbuild --locked --release")
+    assert before < apply < after < tests < build
+    assert (
+        recipe.count(
+            "bf713402164de46be4385e7e6011a5e60b5e35b26479495c2db1f70658ff0433  crates/openshell-sandbox-backend/src/runtime.rs"
+        )
+        == 2
+    )
+
+
+def test_startup_control_candidate_keeps_enforcement_and_real_replay_checks():
+    recipe = (ROOT / "deploy/openshell/Dockerfile.supervisor-backport").read_text()
+    assert (
+        "cargo test --locked -p openshell-sandbox --lib control_restart_replays_running_lifecycle_exactly_once"
+        in recipe
+    )
+    assert "fail_closed_validation_failure_deactivates_previous_generation" in recipe
+    assert "cargo test --locked -p openshell-supervisor-network --lib generation" in recipe
+    assert (
+        "cargo test --locked -p openshell-supervisor-network --lib fail_closed_quarantine" in recipe
+    )
+    assert recipe.index("provider_poll -- --nocapture") < recipe.index(
+        "COPY 0002-bound-startup-control-wait.patch"
+    )
+    assert (
+        recipe.count("ea10e2922eece4077a2c1be17cac83214aa5f79f39fd6c5cc830e1a2cf9d459a  Cargo.lock")
+        == 5
+    )
+    # Existing qualification metadata remains historical; it is not proof of
+    # the unbuilt two-patch candidate's image or binary.
+    historical = json.loads((ROOT / ".dev-tools/openshell-supervisor-backport.json").read_text())
+    assert historical["changed_files"][0]["path"] == "crates/openshell-supervisor/src/lib.rs"
+    assert (
+        historical["patch_sha256"]
+        == "f62b1a304969ed47eddbc808c964ee6b69259118d30c61a7b63524a6d9321c54"
+    )
+
+
+def test_unbuilt_startup_manifest_is_separate_and_all_declared_inputs_are_pinned():
+    candidate = json.loads(
+        (ROOT / ".dev-tools/openshell-supervisor-startup-candidate.json").read_text()
+    )
+    assert candidate["status"] == "not_built"
+    assert candidate["runtime_qualification"] == "not_checked"
+    assert candidate["actual_image"] is None and candidate["actual_binary_sha256"] is None
+    historical = ROOT / candidate["historical_qualification_file"]
+    assert (
+        hashlib.sha256(historical.read_bytes()).hexdigest()
+        == candidate["historical_qualification_sha256"]
+    )
+    recipe_path = ROOT / candidate["recipe_file"]
+    assert hashlib.sha256(recipe_path.read_bytes()).hexdigest() == candidate["recipe_sha256"]
+    recipe = recipe_path.read_text()
+    for patch in candidate["patches"]:
+        assert hashlib.sha256((ROOT / patch["file"]).read_bytes()).hexdigest() == patch["sha256"]
+    for source in candidate["changed_files"]:
+        for field in ("original_sha256", "patched_sha256"):
+            assert source[field] + "  " + source["path"] in recipe
+    for check in candidate["required_rust_tests"]:
+        assert (
+            f"cargo test --locked -p {check['package']} --lib {check['filter']} -- --nocapture"
+            in recipe
+        )
+    assert candidate["timeouts_seconds"] == {
+        "attach": 300,
+        "discover_policy": 300,
+        "confirm": 60,
+        "start_agent": 60,
+        "other_control": 30,
+        "connect_retry": 30,
+    }

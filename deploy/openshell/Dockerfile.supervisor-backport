@@ -1,8 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # Supervisor source/patch: NVIDIA CORPORATION & AFFILIATES, Apache-2.0.
-# This is a local backport of b8932d4 onto v0.1.2, not an official release.
+# This is a local backport plus a bounded startup-control candidate on v0.1.2.
+# The startup buffer is not an upstream fix or actual runtime qualification.
+# Candidate provenance: .dev-tools/openshell-supervisor-startup-candidate.json.
+# Historical openshell-supervisor-backport.json still describes the prior image.
 # Qualification scope: linux/arm64. Source files and Cargo.lock are unchanged
-# except for the exact single-file upstream patch. No version metadata edits.
+# except for the two exact pinned patches. No version metadata edits.
 # Prepared build context contains pinned-source.tar.gz (GitHub API tarball of
 # 6648bd0c290efbc41ba131ee9831ee45cd431f94) and the patch checked in beside this file.
 # Also supply the exact Zig and cargo-zigbuild archives recorded in the manifest.
@@ -27,6 +30,21 @@ RUN rustc --version && cargo --version && \
     cargo test --locked -p openshell-supervisor --lib fail_closed_validation_failure_deactivates_previous_generation -- --nocapture && \
     cargo test --locked -p openshell-supervisor-network --lib generation -- --nocapture && \
     cargo test --locked -p openshell-supervisor-network --lib fail_closed_quarantine -- --nocapture && \
+    echo "ea10e2922eece4077a2c1be17cac83214aa5f79f39fd6c5cc830e1a2cf9d459a  Cargo.lock" | sha256sum -c -
+# Preserve the original provider-readiness build/test cache; qualify the
+# additional startup wait only after those unchanged checks have passed.
+COPY 0002-bound-startup-control-wait.patch /tmp/startup-control.patch
+RUN echo "50af0650f4091bce8d6e05cba4f77d9010c251cd3eac268767b73e2e4db87caa  /tmp/startup-control.patch" | sha256sum -c - && \
+    echo "1e7a0740d1dfebf4ce04aad1b1c274f9fff7d2c2e3525923cad3177c4ce26497  crates/openshell-sandbox-backend/src/runtime.rs" | sha256sum -c - && \
+    echo "1901dea2170aecfcd9e9bbf9c99c93e0a1d047e2be3f398c00d1eb5d214d8204  crates/openshell-sandbox-backend/src/runtime/tests/credential_renewal.rs" | sha256sum -c - && \
+    patch --fuzz=0 -p1 < /tmp/startup-control.patch && \
+    echo "bf713402164de46be4385e7e6011a5e60b5e35b26479495c2db1f70658ff0433  crates/openshell-sandbox-backend/src/runtime.rs" | sha256sum -c - && \
+    echo "ffed2d2ff278f459352a82427b6e703e4f4a843e06b1d2cafffabccf784378a7  crates/openshell-sandbox-backend/src/runtime/tests/credential_renewal.rs" | sha256sum -c - && \
+    echo "ea10e2922eece4077a2c1be17cac83214aa5f79f39fd6c5cc830e1a2cf9d459a  Cargo.lock" | sha256sum -c -
+RUN cargo test --locked -p openshell-sandbox-backend --lib startup_control -- --nocapture && \
+    cargo test --locked -p openshell-sandbox --lib control_restart_replays_running_lifecycle_exactly_once -- --nocapture && \
+    echo "bf713402164de46be4385e7e6011a5e60b5e35b26479495c2db1f70658ff0433  crates/openshell-sandbox-backend/src/runtime.rs" | sha256sum -c - && \
+    echo "ffed2d2ff278f459352a82427b6e703e4f4a843e06b1d2cafffabccf784378a7  crates/openshell-sandbox-backend/src/runtime/tests/credential_renewal.rs" | sha256sum -c - && \
     echo "ea10e2922eece4077a2c1be17cac83214aa5f79f39fd6c5cc830e1a2cf9d459a  Cargo.lock" | sha256sum -c -
 # Exact upstream mise.toml GNU build pins and unmodified staging helpers.
 COPY zig-aarch64-linux-0.14.1.tar.xz cargo-zigbuild-aarch64-unknown-linux-gnu.tar.xz /tmp/

@@ -599,7 +599,7 @@ member_assessments:
   governance_tier: critical
   assessment: docs/risk-assessments/build-repair.yaml
 - agent: partial-build
-  agent_version: 1.1.6
+  agent_version: 1.1.7
   governance_tier: critical
   assessment: docs/risk-assessments/partial-build.yaml
 - agent: context
