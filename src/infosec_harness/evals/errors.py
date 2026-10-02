@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 import httpx
 import openai
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
+
+from infosec_harness.inference.protocol import BrokerError
 
 
 class FailureDiagnostic(TypedDict):
@@ -15,11 +17,13 @@ class FailureDiagnostic(TypedDict):
     error: str
     http_status_code: int | None
     provider_body_retained: bool
+    broker_error_code: NotRequired[str]
 
 
 def failure_diagnostic(exc: BaseException) -> FailureDiagnostic:
     """Preserve recognized exception types and bounded HTTP status, not external text."""
     known_types = (
+        BrokerError,
         ModelHTTPError, ModelAPIError, openai.APITimeoutError, openai.APIConnectionError,
         openai.APIStatusError, httpx.TimeoutException, httpx.TransportError,
         TimeoutError, asyncio.CancelledError, KeyboardInterrupt, SystemExit, ValueError,
@@ -30,9 +34,18 @@ def failure_diagnostic(exc: BaseException) -> FailureDiagnostic:
         candidate = exc.status_code
         if type(candidate) is int and 400 <= candidate <= 599:
             status = candidate
-    return {
+    result: FailureDiagnostic = {
         "error_type": error_type,
         "error": "exception details omitted",
         "http_status_code": status,
         "provider_body_retained": False,
     }
+    if isinstance(exc, BrokerError):
+        code = exc.code
+        # Neither arbitrary exception text nor forged/unrecognized disposition names
+        # become evidence. Historical non-broker diagnostics retain their exact shape.
+        result["broker_error_code"] = code if type(code) is str and code in {
+            "auth", "policy", "identity", "budget", "expired", "conflict", "pending",
+            "completion_unknown", "unavailable", "invalid_response",
+        } else "unknown"
+    return result
