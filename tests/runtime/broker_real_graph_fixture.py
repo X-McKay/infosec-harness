@@ -38,12 +38,17 @@ def freeze(pilot: Path, destination: Path, phase: str, *, infrastructure_correct
     values = json.loads(pilot.read_text()) if pilot.exists() else {}
     rerun = None
     if values.get("rerun"):
-        from broker_real_provider_fixture import RealProviderManifest, verify_native_rerun
+        from broker_real_provider_fixture import (
+            RealProviderManifest,
+            verify_native_rerun,
+            verify_review5_configuration,
+        )
         reviewed = RealProviderManifest.model_validate_json(pilot.read_bytes())
         rerun = reviewed.rerun
         if phase != "native" or baseline_report is None:
             raise ValueError("Native rerun graph requires the original direct baseline")
         verify_native_rerun(rerun)
+        verify_review5_configuration(reviewed)
         if (sha(baseline_report) != rerun.baseline_report_sha256
                 or sha(baseline_report.parent / "manifest.json") != rerun.original_manifest_sha256):
             raise ValueError("Native rerun graph baseline changed")
@@ -115,6 +120,8 @@ def freeze(pilot: Path, destination: Path, phase: str, *, infrastructure_correct
     if rerun:
         manifest["native_rerun"] = {"pilot_sha256": sha(pilot), "baseline_report": str(baseline_report.resolve()),
                                     "baseline_report_sha256": rerun.baseline_report_sha256}
+        if rerun.review_version == 5:
+            manifest["native_rerun"].update(review_version=5, intake_enable_thinking=False)
     if supersedes is not None:
         manifest["supersedes_infrastructure_failure"] = supersedes
     write_private(destination, manifest)
@@ -136,10 +143,15 @@ def preflight(path: Path) -> dict:
         raise ValueError("Broker catalog changed")
     pilot_values = json.loads(Path(value["pilot_manifest"]).read_text())
     if pilot_values.get("rerun"):
-        from broker_real_provider_fixture import RealProviderManifest, verify_native_rerun
+        from broker_real_provider_fixture import (
+            RealProviderManifest,
+            verify_native_rerun,
+            verify_review5_configuration,
+        )
         reviewed = RealProviderManifest.model_validate_json(Path(value["pilot_manifest"]).read_bytes())
         rerun = reviewed.rerun
         verify_native_rerun(rerun)
+        verify_review5_configuration(reviewed)
         link = value.get("native_rerun", {})
         baseline = Path(link.get("baseline_report", ""))
         if (value["phase"] != "native" or link.get("pilot_sha256") != value["pilot_sha256"]
@@ -147,6 +159,9 @@ def preflight(path: Path) -> dict:
                 or sha(baseline) != rerun.baseline_report_sha256
                 or sha(baseline.parent / "manifest.json") != rerun.original_manifest_sha256):
             raise ValueError("Native graph rerun provenance changed")
+        if (rerun.review_version == 5 and
+                (link.get("review_version") != 5 or link.get("intake_enable_thinking") is not False)):
+            raise ValueError("Native graph must pin reviewed intake reasoning policy")
     elif "native_rerun" in value:
         raise ValueError("Unexpected native rerun link")
     repo = Path(value["repo"])

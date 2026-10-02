@@ -30,6 +30,7 @@ from broker_real_provider_fixture import (  # noqa: E402
     selected_phases,
     verify_native_rerun,
     verify_retained_failure,
+    verify_review5_configuration,
 )
 
 
@@ -76,6 +77,7 @@ def main() -> int:
             parser.error("Original direct baseline must cover every unchanged frozen case")
         try:
             verify_native_rerun(amendment) if manifest.rerun else verify_retained_failure(amendment)
+            verify_review5_configuration(manifest)
         except ValueError as error:
             parser.error(str(error))
     cases = {agent: prepare_case(agent, manifest)[3] for agent in CASES}

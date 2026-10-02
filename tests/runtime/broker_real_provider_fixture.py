@@ -73,8 +73,9 @@ class CorrectedPilotAmendment(BaseModel):
 
 
 class NativeRerunAmendment(BaseModel):
-    review_version: Literal[1, 2, 3, 4] = 1
+    review_version: Literal[1, 2, 3, 4, 5] = 1
     strict_closed_output_tools: bool = Field(default=False, strict=True, exclude_if=lambda value: value is False)
+    intake_enable_thinking: bool | None = Field(default=None, strict=True, exclude_if=lambda value: value is None)
     retained_local_report_file: str | None = Field(default=None, exclude_if=lambda value: value is None)
     retained_local_report_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$", exclude_if=lambda value: value is None)
     retained_local_manifest_file: str | None = Field(default=None, exclude_if=lambda value: value is None)
@@ -104,9 +105,10 @@ class NativeRerunAmendment(BaseModel):
         reason = ("reviewed native generation correction; retain all outcomes; no unknown resend" if self.review_version == 1
                   else "reviewed native transport correction; retain all outcomes; no unknown resend" if self.review_version == 2
                   else "reviewed native deadlines and closed-output shaping correction; retain all outcomes; no unknown resend" if self.review_version == 3
-                  else "reviewed case-scoped Temporal preflight correction; retain passed Local evidence and all outcomes; no unknown resend")
+                  else "reviewed case-scoped Temporal preflight correction; retain passed Local evidence and all outcomes; no unknown resend" if self.review_version == 4
+                  else "reviewed intake non-thinking and bounded reference repair; retain all outcomes; no unknown resend")
         if (self.review_version == 1 and (self.retained_unknown_count is not None or self.retained_completed_count is not None)
-                or self.review_version in (2, 3, 4) and (any(value is None or value < 0 for value in counts) or counts[0] == 0)):
+                or self.review_version in (2, 3, 4, 5) and (any(value is None or value < 0 for value in counts) or counts[0] == 0)):
             raise ValueError("New review must declare retained outcome counts; historical review counts stay fixed")
         if (self.review_version < 3 and self.strict_closed_output_tools
                 or self.review_version == 3 and (not self.strict_closed_output_tools or counts != (15, 80)
@@ -120,6 +122,12 @@ class NativeRerunAmendment(BaseModel):
                     or counts != (15, 120) or len(self.prior_reports) != 14
                     or self.baseline_report_sha256 != "78eac315f11c52b8e3202b4d5cc595c57888d1107a2e5d2a4f63a6d404bd4ce5")):
             raise ValueError("Review4 must pin passed Local evidence and retain15unknown/120saved fourteen-report evidence")
+        if (self.review_version < 5 and self.intake_enable_thinking is not None
+                or self.review_version == 5 and (self.intake_enable_thinking is not False
+                    or not self.strict_closed_output_tools or counts != (15, 162)
+                    or len(self.prior_reports) != 18 or any(value is not None for value in local_link)
+                    or self.baseline_report_sha256 != "78eac315f11c52b8e3202b4d5cc595c57888d1107a2e5d2a4f63a6d404bd4ce5")):
+            raise ValueError("Review5 must declare intake non-thinking and retain15unknown/162saved eighteen-report evidence")
         if (self.original_manifest_sha256 != "b41fb7a2bd695825bd2eff8b613f052e8c1319ad35bd053997c1a58cc1a20745"
                 or self.additional_trials != (11 if self.review_version == 4 else 22) or self.additional_graph_trials != 1
                 or (len(self.retained_unknown_request_ids), len(self.retained_completed_request_ids)) != counts
@@ -168,10 +176,59 @@ def verify_native_rerun(amendment: NativeRerunAmendment) -> None:
             or cause["status"] != "passed" or cause["reviewed"] is not True
             or cause["boundary"] != {1: "native-policy-generation", 2: "native-response-acknowledgement",
                 3: "native-inference-deadlines-and-output-shaping",
-                4: "native-temporal-case-budget-preflight"}[amendment.review_version]
+                4: "native-temporal-case-budget-preflight",
+                5: "native-intake-nonthinking-and-reference-repair"}[amendment.review_version]
             or not isinstance(cause["evidence_sha256"], str) or len(cause["evidence_sha256"]) != 64
             or any(c not in "0123456789abcdef" for c in cause["evidence_sha256"])):
         raise ValueError("Reviewed native cause resolution is required")
+
+
+def verify_review5_configuration(manifest: RealProviderManifest) -> dict:
+    """Resolve every v5 operator contract locally; never create a provider client."""
+    if not manifest.rerun or manifest.rerun.review_version != 5:
+        return {}
+    import yaml
+    from pydantic_ai.agent.spec import AgentSpec
+
+    from infosec_harness.agents.models import ModelsConfig
+    from infosec_harness.inference.compat import _apply_max_tokens_floor
+    from infosec_harness.inference.profiles import BrokerConfig
+
+    models = ModelsConfig.model_validate(yaml.safe_load(Path(manifest.broker_models_config).read_text()))
+    catalog = BrokerConfig.model_validate(yaml.safe_load(Path(manifest.broker_config).read_text()))
+    if (models.default_backend != "gateway" or set(models.backends) != {"gateway", "gateway-intake"}
+            or models.agents != {"intake": {"backend": "gateway-intake"}}):
+        raise ValueError("Review5 requires the exact isolated intake backend routing")
+    base, intake = models.backends["gateway"], models.backends["gateway-intake"]
+    if (base.enable_thinking is not None or intake.enable_thinking is not False
+            or base.model_dump(mode="json", exclude={"enable_thinking"})
+                != intake.model_dump(mode="json", exclude={"enable_thinking"})
+            or base.transport != "brokered" or base.kind != "openai_compatible"
+            or base.base_url != manifest.endpoint or not base.strict_closed_output_tools):
+        raise ValueError("Review5 intake backend must be an exact clone except thinking control")
+    if any(mapping.get("gateway-intake") != manifest.model or mapping.get("gateway") != manifest.model
+           for mapping in models.model_catalog.values()):
+        raise ValueError("Review5 model aliases must preserve the exact provider model")
+    contracts = {}
+    for agent in CASES:
+        backend_name = "gateway-intake" if agent == "intake" else "gateway"
+        backend = models.backends[backend_name]
+        profile_name, profile = catalog.profile_for_agent(agent)
+        if (profile.enable_thinking is not (False if agent == "intake" else None)
+                or profile.backend_name != backend_name):
+            raise ValueError("Review5 operator thinking policy or backend differs")
+        spec = AgentSpec.from_file(ROOT / "src/infosec_harness/agents" / agent / "agent.yaml")
+        model = models.model_id(spec.model or "sonnet", backend_name)
+        if model != manifest.model:
+            raise ValueError("Review5 agent resolves a different provider model")
+        settings = _apply_max_tokens_floor(dict(spec.model_settings or {}), backend.min_max_tokens)
+        contract = catalog.resolve_contract(agent, backend_name, model, settings,
+            backend_endpoint=backend.base_url, atomic_intake=agent == "intake",
+            merge_system_messages=backend.merge_system_messages, min_max_tokens=backend.min_max_tokens,
+            strict_closed_output_tools=backend.strict_closed_output_tools, enable_thinking=backend.enable_thinking)
+        contracts[agent] = {"backend": backend_name, "profile": profile_name,
+            "enable_thinking": contract.enable_thinking, "contract_digest": contract.digest}
+    return contracts
 
 
 def verify_retained_local(amendment: NativeRerunAmendment, read) -> None:
@@ -205,6 +262,8 @@ def verify_retained_local(amendment: NativeRerunAmendment, read) -> None:
 
 
 def selected_phases(manifest: RealProviderManifest, phase: str) -> tuple[str, ...]:
+    if manifest.rerun and manifest.rerun.review_version == 5 and phase == "direct":
+        raise ValueError("Review5 authorizes only fresh native Local and Temporal phases")
     if manifest.rerun and manifest.rerun.review_version == 4:
         if phase not in {"validate", "all", "temporal"}:
             raise ValueError("Review4 authorizes only a fresh Temporal phase")
@@ -357,7 +416,7 @@ def phase_environment(manifest: RealProviderManifest, phase: str) -> dict[str, s
             raise ValueError("Invalid worker credential reference")
         values[manifest.worker_hmac_env] = secret
         values["HARNESS_BROKER_CONFIG"] = manifest.broker_config
-        if manifest.rerun and manifest.rerun.review_version in (3, 4):
+        if manifest.rerun and manifest.rerun.review_version in (3, 4, 5):
             values["HARNESS_REAL_PROVIDER_STRICT_CLOSED_OUTPUT_TOOLS"] = "true"
     return values
 
@@ -486,8 +545,19 @@ def compare_baseline(agent: str, config: dict, case_digest: str, *,
 
 
 def compare_manifest_baseline(manifest: RealProviderManifest, agent: str, config: dict, case_digest: str) -> dict:
-    if manifest.rerun and manifest.rerun.review_version in (3, 4):
-        result = compare_baseline(agent, config, case_digest, reviewed_strict_closed_output_tools=True)
+    if manifest.rerun and manifest.rerun.review_version in (3, 4, 5):
+        if manifest.rerun.review_version == 5 and agent == "intake":
+            from broker_thinking_diagnostic_fixture import compare_intake_nonthinking
+
+            result = compare_intake_nonthinking(config, case_digest)
+            result["declared_reasoning_difference"]["review_version"] = 5
+            result["declared_reasoning_difference"]["scope"] = "full frozen native qualification; acceptance pending execution and semantic gates"
+        else:
+            if (manifest.rerun.review_version == 5 and
+                    (config["model"].get("capability_profile", {}).get("enable_thinking") is not None
+                     or config["model"].get("broker_contract", {}).get("enable_thinking") is not None)):
+                raise ValueError("Review5 permits thinking control only for intake")
+            result = compare_baseline(agent, config, case_digest, reviewed_strict_closed_output_tools=True)
         result["declared_output_shaping_difference"]["review_version"] = manifest.rerun.review_version
         return result
     return compare_baseline(agent, config, case_digest)
@@ -768,6 +838,7 @@ async def serve_worker(manifest: RealProviderManifest, queue: str):
 
 
 async def phase_main(manifest, args):
+    verify_review5_configuration(manifest)
     if args.phase != "worker":
         selected_phases(manifest, args.phase)
     task = asyncio.current_task()
