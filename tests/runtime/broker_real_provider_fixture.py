@@ -73,8 +73,12 @@ class CorrectedPilotAmendment(BaseModel):
 
 
 class NativeRerunAmendment(BaseModel):
-    review_version: Literal[1, 2, 3] = 1
+    review_version: Literal[1, 2, 3, 4] = 1
     strict_closed_output_tools: bool = Field(default=False, strict=True, exclude_if=lambda value: value is False)
+    retained_local_report_file: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    retained_local_report_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$", exclude_if=lambda value: value is None)
+    retained_local_manifest_file: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    retained_local_manifest_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$", exclude_if=lambda value: value is None)
     retained_unknown_count: int | None = None
     retained_completed_count: int | None = None
     model_config = ConfigDict(extra="forbid", strict=True)
@@ -99,22 +103,30 @@ class NativeRerunAmendment(BaseModel):
         counts = (10, 3) if self.review_version == 1 else (self.retained_unknown_count, self.retained_completed_count)
         reason = ("reviewed native generation correction; retain all outcomes; no unknown resend" if self.review_version == 1
                   else "reviewed native transport correction; retain all outcomes; no unknown resend" if self.review_version == 2
-                  else "reviewed native deadlines and closed-output shaping correction; retain all outcomes; no unknown resend")
+                  else "reviewed native deadlines and closed-output shaping correction; retain all outcomes; no unknown resend" if self.review_version == 3
+                  else "reviewed case-scoped Temporal preflight correction; retain passed Local evidence and all outcomes; no unknown resend")
         if (self.review_version == 1 and (self.retained_unknown_count is not None or self.retained_completed_count is not None)
-                or self.review_version in (2, 3) and (any(value is None or value < 0 for value in counts) or counts[0] == 0)):
+                or self.review_version in (2, 3, 4) and (any(value is None or value < 0 for value in counts) or counts[0] == 0)):
             raise ValueError("New review must declare retained outcome counts; historical review counts stay fixed")
         if (self.review_version < 3 and self.strict_closed_output_tools
                 or self.review_version == 3 and (not self.strict_closed_output_tools or counts != (15, 80)
                     or len(self.prior_reports) != 12
                     or self.baseline_report_sha256 != "78eac315f11c52b8e3202b4d5cc595c57888d1107a2e5d2a4f63a6d404bd4ce5")):
             raise ValueError("Review3 must declare closed output shaping and retain15unknown/80saved twelve-report evidence")
+        local_link = (self.retained_local_report_file, self.retained_local_report_sha256,
+                      self.retained_local_manifest_file, self.retained_local_manifest_sha256)
+        if (self.review_version < 4 and any(value is not None for value in local_link)
+                or self.review_version == 4 and (not all(local_link) or not self.strict_closed_output_tools
+                    or counts != (15, 120) or len(self.prior_reports) != 14
+                    or self.baseline_report_sha256 != "78eac315f11c52b8e3202b4d5cc595c57888d1107a2e5d2a4f63a6d404bd4ce5")):
+            raise ValueError("Review4 must pin passed Local evidence and retain15unknown/120saved fourteen-report evidence")
         if (self.original_manifest_sha256 != "b41fb7a2bd695825bd2eff8b613f052e8c1319ad35bd053997c1a58cc1a20745"
-                or self.additional_trials != 22 or self.additional_graph_trials != 1
+                or self.additional_trials != (11 if self.review_version == 4 else 22) or self.additional_graph_trials != 1
                 or (len(self.retained_unknown_request_ids), len(self.retained_completed_request_ids)) != counts
                 or len(set(identities)) != sum(counts) or not self.prior_reports or len(self.candidate_files) != 3
                 or any(len(x) != 64 or any(c not in "0123456789abcdef" for c in x) for x in identities + list(self.prior_reports.values()) + list(self.candidate_files.values()))
                 or self.reason != reason):
-            raise ValueError("Native rerun must retain all explicitly reviewed outcomes and authorize22 agents/1 graph")
+            raise ValueError("Native rerun must retain all explicitly reviewed outcomes and its finite agent/graph scope")
         return self
 
 
@@ -149,14 +161,57 @@ def verify_native_rerun(amendment: NativeRerunAmendment) -> None:
             or set(proof["unknown_request_ids"]) != wanted["completion_unknown"]
             or set(proof["completed_request_ids"]) != wanted["completed"]):
         raise ValueError("Authoritative retained ledger proof differs")
+    if amendment.review_version == 4:
+        verify_retained_local(amendment, read)
     cause = read(amendment.cause_resolution_file, amendment.cause_resolution_sha256)
     if (set(cause) != {"status", "reviewed", "boundary", "evidence_sha256"}
             or cause["status"] != "passed" or cause["reviewed"] is not True
             or cause["boundary"] != {1: "native-policy-generation", 2: "native-response-acknowledgement",
-                3: "native-inference-deadlines-and-output-shaping"}[amendment.review_version]
+                3: "native-inference-deadlines-and-output-shaping",
+                4: "native-temporal-case-budget-preflight"}[amendment.review_version]
             or not isinstance(cause["evidence_sha256"], str) or len(cause["evidence_sha256"]) != 64
             or any(c not in "0123456789abcdef" for c in cause["evidence_sha256"])):
         raise ValueError("Reviewed native cause resolution is required")
+
+
+def verify_retained_local(amendment: NativeRerunAmendment, read) -> None:
+    """Reuse only the pinned successful Local trial; keep its failed Temporal checkpoint."""
+    path = amendment.retained_local_report_file
+    if amendment.prior_reports.get(path) != amendment.retained_local_report_sha256:
+        raise ValueError("Passed Local report must be part of the retained report union")
+    report = read(path, amendment.retained_local_report_sha256)
+    previous = RealProviderManifest.model_validate(read(amendment.retained_local_manifest_file,
+                                                        amendment.retained_local_manifest_sha256))
+    if (previous.rerun is None or previous.rerun.review_version != 3
+            or previous.rerun.original_manifest_sha256 != amendment.original_manifest_sha256
+            or previous.rerun.baseline_report_sha256 != amendment.baseline_report_sha256
+            or previous.rerun.candidate_files != amendment.candidate_files):
+        raise ValueError("Passed Local manifest must be the unchanged reviewed v3 candidate")
+    rows = report.get("cases", [])
+    if (report.get("phase") != "local" or report.get("status") != "passed"
+            or report.get("execution_status") != "passed" or report.get("semantic_status") != "passed"
+            or len(rows) != 11 or {row.get("agent") for row in rows} != set(CASES)
+            or any(row.get("execution") != "passed" or row.get("semantic_score") != "passed"
+                   or row.get("cleanup") != "passed" or row.get("case") != CASES[row["agent"]]
+                   or row.get("case_digest") != prepare_case(row["agent"], previous)[3] for row in rows)):
+        raise ValueError("Retained Local trial must pass every unchanged case and cleanup gate")
+    failed_path = str(Path(path).with_name("temporal.json"))
+    if failed_path not in amendment.prior_reports:
+        raise ValueError("Failed empty Temporal checkpoint must remain retained")
+    failed = read(failed_path, amendment.prior_reports[failed_path])
+    if (failed.get("status") != "failed" or failed.get("failure_type") != "ValueError"
+            or failed.get("cases", []) or failed.get("ledger") or failed.get("task_queue") or failed.get("worker_pid")):
+        raise ValueError("Retained Temporal checkpoint must be the pre-submission failure")
+
+
+def selected_phases(manifest: RealProviderManifest, phase: str) -> tuple[str, ...]:
+    if manifest.rerun and manifest.rerun.review_version == 4:
+        if phase not in {"validate", "all", "temporal"}:
+            raise ValueError("Review4 authorizes only a fresh Temporal phase")
+        return () if phase == "validate" else ("temporal",)
+    if phase == "all":
+        return ("local", "temporal") if manifest.rerun or manifest.amendment else ("direct", "local", "temporal")
+    return () if phase == "validate" else (phase,)
 
 
 def claim_phase(report_directory: Path, manifest_sha256: str, phase: str) -> None:
@@ -211,8 +266,10 @@ class RealProviderManifest(BaseModel):
             raise ValueError("Real-provider pilot differs from the frozen scope")
         if self.amendment and self.rerun:
             raise ValueError("Historical correction and fresh rerun cannot be combined")
-        expected_trials = 22 if self.amendment or self.rerun else 33
-        expected_phases = ["native-local", "native-temporal"] if self.amendment or self.rerun else ["direct", "native-local", "native-temporal"]
+        temporal_only = self.rerun is not None and self.rerun.review_version == 4
+        expected_trials = 11 if temporal_only else 22 if self.amendment or self.rerun else 33
+        expected_phases = (["native-temporal"] if temporal_only else ["native-local", "native-temporal"]
+                           if self.amendment or self.rerun else ["direct", "native-local", "native-temporal"])
         if (set(self.datasets) != set(CASES) or self.maximum_pilot_agent_trials != expected_trials
                 or self.phases != expected_phases
                 or self.pricing.input_per_mtok != 0 or self.pricing.output_per_mtok != 0):
@@ -300,7 +357,7 @@ def phase_environment(manifest: RealProviderManifest, phase: str) -> dict[str, s
             raise ValueError("Invalid worker credential reference")
         values[manifest.worker_hmac_env] = secret
         values["HARNESS_BROKER_CONFIG"] = manifest.broker_config
-        if manifest.rerun and manifest.rerun.review_version == 3:
+        if manifest.rerun and manifest.rerun.review_version in (3, 4):
             values["HARNESS_REAL_PROVIDER_STRICT_CLOSED_OUTPUT_TOOLS"] = "true"
     return values
 
@@ -429,8 +486,10 @@ def compare_baseline(agent: str, config: dict, case_digest: str, *,
 
 
 def compare_manifest_baseline(manifest: RealProviderManifest, agent: str, config: dict, case_digest: str) -> dict:
-    if manifest.rerun and manifest.rerun.review_version == 3:
-        return compare_baseline(agent, config, case_digest, reviewed_strict_closed_output_tools=True)
+    if manifest.rerun and manifest.rerun.review_version in (3, 4):
+        result = compare_baseline(agent, config, case_digest, reviewed_strict_closed_output_tools=True)
+        result["declared_output_shaping_difference"]["review_version"] = manifest.rerun.review_version
+        return result
     return compare_baseline(agent, config, case_digest)
 
 
@@ -561,10 +620,16 @@ async def recover_owned_submission(client, workflow_id: str, queue: str):
     """Recover a submitted run only after checking its declared ownership scope."""
     description = await asyncio.wait_for(client.get_workflow_handle(workflow_id).describe(), 10)
     if (description.id != workflow_id or description.task_queue != queue
-            or description.workflow_type != "RealProviderWorkflow" or not description.run_id):
+            or description.workflow_type != "BrokerRealProviderQualificationWorkflow" or not description.run_id):
         raise ValueError("Submitted workflow ownership differs")
     return client.get_workflow_handle(workflow_id, run_id=description.run_id,
                                       first_execution_run_id=description.run_id)
+
+
+def temporal_case_config(agent: str, inputs: dict):
+    """Match the production per-run repository-size budget resolution."""
+    from infosec_harness.agents.durable import CONFIGS
+    return CONFIGS[agent].for_source_files(inputs["deps"].source_files)
 
 
 async def run_temporal(manifest: RealProviderManifest, report_path: Path) -> dict:
@@ -580,7 +645,8 @@ async def run_temporal(manifest: RealProviderManifest, report_path: Path) -> dic
     for agent in CASES:
         if CONFIGS[agent].model.endpoint != manifest.endpoint:
             raise ValueError("Resolved model endpoint differs from the frozen manifest")
-        compare_manifest_baseline(manifest, agent, CONFIGS[agent].model_dump(mode="json"), prepare_case(agent, manifest)[3])
+        inputs, _predict, _expected, case_digest = prepare_case(agent, manifest)
+        compare_manifest_baseline(manifest, agent, temporal_case_config(agent, inputs).model_dump(mode="json"), case_digest)
     suffix = uuid.uuid4().hex
     queue = "broker-real-provider-" + suffix
     log_path = report_path.with_suffix(".worker.log")
@@ -599,8 +665,7 @@ async def run_temporal(manifest: RealProviderManifest, report_path: Path) -> dic
             row = {"agent": agent, "case": manifest.cases[agent], "case_digest": case_digest,
                    "execution": "failed", "history_replay": "not_checked"}
             started = time.monotonic()
-            from infosec_harness.agents.durable import CONFIGS
-            row["config"] = CONFIGS[agent].model_dump(mode="json")
+            row["config"] = temporal_case_config(agent, inputs).model_dump(mode="json")
             row["baseline_comparison"] = compare_manifest_baseline(manifest, agent, row["config"], case_digest)
             handle = None
             workflow_id = "batch:" + root_id
@@ -701,6 +766,8 @@ async def serve_worker(manifest: RealProviderManifest, queue: str):
 
 
 async def phase_main(manifest, args):
+    if args.phase != "worker":
+        selected_phases(manifest, args.phase)
     task = asyncio.current_task()
     for termination_signal in (signal.SIGTERM, signal.SIGINT):
         asyncio.get_running_loop().add_signal_handler(termination_signal, task.cancel)
@@ -719,6 +786,11 @@ def main() -> int:
     parser.add_argument("--queue")
     args = parser.parse_args()
     manifest = RealProviderManifest.model_validate_json(args.manifest.read_text())
+    if args.phase != "worker":
+        try:
+            selected_phases(manifest, args.phase)
+        except ValueError as error:
+            parser.error(str(error))
     if args.phase == "worker":
         asyncio.run(phase_main(manifest, args))
         return 0

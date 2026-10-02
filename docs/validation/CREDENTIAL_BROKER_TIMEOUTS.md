@@ -106,3 +106,48 @@ invocation enters, observes its cancellation, and verifies that every remaining 
 answers under its normal budget. Exact failure counts remain unchanged. All 12 tests in the
 file and five fresh-process repetitions of the three-case recovery subset passed. No runtime
 deadline or expected outcome was changed by this test correction.
+
+## Fresh native LocalOps qualification
+
+The frozen v3 pilot at runtime source `2a42c6732d84f7b2a11b728a750066d48ce9b130`
+passed all 11 native LocalOps cases, including execution, unchanged semantic scoring and
+cleanup. It saved 40 new responses with no new uncertain completion or allocation overrun.
+All authored budgets and effective model settings matched the original direct baseline.
+The exact executor image was `sha256:472ea0188d1bf31cc77bc4f6e79fbc470a30f9a02af2bc1bd1fa6a322df3c045`.
+
+Offline rendering of the saved requests with the pinned SDK confirmed strict closed output
+schemas; environment planner, build repair and partial build retained their open environment
+mappings. Raw output-tool arguments and typed outputs contained all required nullable fields.
+This is reproducible request rendering and observed valid outputs, not a captured network trace
+or proof of server grammar enforcement. The read-only analysis SHA-256 is
+`7afff9f992cfa585e3cb69dcce09a81ed1ff40686ad59f2e448ab5a6e2a82e82`.
+
+Temporal stopped before workflow submission or inference: the qualification fixture compared
+global registration budgets with case-specific baseline budgets. Production Temporal already
+resolves `config.for_source_files(deps.source_files)` for each invocation. The fixture correction
+uses that same resolution for preflight and recorded evidence, preserving the full budget
+comparison. Its regression rejects unscoped configuration and a source count that changes
+effective limits. The consumed Temporal phase is retained; a fresh, bounded Temporal-only trial
+is required. The withheld graph was retired through its exclusive execution guard.
+
+Terminal verification found 135 records: the original 15 uncertain held requests and
+120 completed requests. All 95 prior request/result records and the original uncertain
+holds matched the independently retained dump; no accepted or dispatch-intent rows remained.
+All 141 leases were deleted, native inventory was empty, and both providers and primary service
+identities were unchanged. A fresh private database dump is sealed. Terminal evidence SHA-256:
+`a4d13cd80836739e1862458d6383b6c246d01361f80ae33d58bcb0277902c049`.
+The all-agent LocalOps gate is `passed`; the v3 Temporal gate is `failed` at fixture preflight;
+its native production graph remains `not_checked`.
+
+An auxiliary SQL analysis initially counted JSON `null` overrun values as non-null Python
+objects. Its original sealed bytes are retained; the corrected analysis is a separate immutable
+version with SHA-256 `7afff9f992cfa585e3cb69dcce09a81ed1ff40686ad59f2e448ab5a6e2a82e82`.
+A separate correction record identifies the superseded counts. All files match the unchanged
+terminal seal, and no authoritative report, ledger row, hold or database dump was changed.
+
+The fixture correction and fresh Temporal-only scope passed all canonical checks and the full
+deterministic suite: 2,484 passed, 40 skipped, 861 warnings. Independent review passed 138
+provider/graph regressions; 167 focused fixture/runner checks passed. The exact registered
+Temporal workflow name is now checked during owned-submission recovery, with a regression
+that rejects its Python class-name alias. These changes affect qualification evidence and
+recovery checks; the production executor and controller sources remain unchanged.

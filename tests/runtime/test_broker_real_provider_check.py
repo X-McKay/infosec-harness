@@ -510,7 +510,7 @@ async def test_cancelled_temporal_trial_terminates_current_workflow_reaps_real_w
         return Handle()
     async def describe():
         return SimpleNamespace(id=submissions['id'], task_queue=submissions['task_queue'],
-                               workflow_type='RealProviderWorkflow', run_id=Handle.first_execution_run_id)
+                               workflow_type='BrokerRealProviderQualificationWorkflow', run_id=Handle.first_execution_run_id)
     def get_handle(workflow_id, **kwargs):
         assert workflow_id == submissions['id']
         if not kwargs:
@@ -606,7 +606,7 @@ async def test_submission_recovery_rejects_foreign_scope_before_creating_mutatio
 
     from broker_real_provider_fixture import recover_owned_submission
     values = {'id': 'batch:owned', 'task_queue': 'owned-queue',
-              'workflow_type': 'RealProviderWorkflow', 'run_id': 'owned-run'}
+              'workflow_type': 'BrokerRealProviderQualificationWorkflow', 'run_id': 'owned-run'}
     values[field] = value
     async def describe():
         return SimpleNamespace(**values)
@@ -758,3 +758,250 @@ def test_phase_environment_strips_ambient_shaping_and_only_installs_declared_exp
     assert phase_environment(config, 'local')['HARNESS_REAL_PROVIDER_STRICT_CLOSED_OUTPUT_TOOLS'] == 'true'
     assert phase_environment(config, 'temporal')['HARNESS_REAL_PROVIDER_STRICT_CLOSED_OUTPUT_TOOLS'] == 'true'
     assert 'HARNESS_REAL_PROVIDER_STRICT_CLOSED_OUTPUT_TOOLS' not in phase_environment(config, 'direct')
+
+
+def test_temporal_case_config_keeps_full_source_size_budget_comparison(tmp_path, monkeypatch):
+    from copy import deepcopy
+
+    from broker_real_provider_fixture import compare_baseline, temporal_case_config
+
+    from infosec_harness.agents.budgets import BASELINE_SOURCE_FILES
+    from infosec_harness.agents.durable import CONFIGS
+
+    config = manifest(tmp_path)
+    inputs, _, _, case_digest = prepare_case("recon", config)
+    scoped = temporal_case_config("recon", inputs)
+    assert scoped == CONFIGS["recon"].for_source_files(inputs["deps"].source_files)
+    assert scoped.budget.source_files == inputs["deps"].source_files
+    previous = scoped.model_dump(mode="json")
+    previous["model"]["capability_profile"].pop("strict_closed_output_tools", None)
+    rows = [{"agent": agent, "case": case, "case_digest": prepare_case(agent, config)[3],
+             "config": previous} for agent, case in CASES.items()]
+    path = tmp_path / "scoped-budget-baseline.json"
+    path.write_text(json.dumps({"phase": "direct", "status": "passed", "cases": rows}))
+    monkeypatch.setenv("HARNESS_REAL_PROVIDER_BASELINE", str(path))
+
+    def candidate(value):
+        current = deepcopy(value.model_dump(mode="json"))
+        current["model"]["capability_profile"]["strict_closed_output_tools"] = True
+        current["model"]["broker_contract"] = {"strict_closed_output_tools": True}
+        return current
+
+    assert compare_baseline("recon", candidate(scoped), case_digest,
+                            reviewed_strict_closed_output_tools=True)["authored_budget"] == "matched"
+    with pytest.raises(ValueError, match="Authored agent safety budget"):
+        compare_baseline("recon", candidate(CONFIGS["recon"]), case_digest,
+                         reviewed_strict_closed_output_tools=True)
+    changed = CONFIGS["recon"].for_source_files(BASELINE_SOURCE_FILES * 4)
+    assert changed.budget.effective != scoped.budget.effective
+    with pytest.raises(ValueError, match="Authored agent safety budget"):
+        compare_baseline("recon", candidate(changed), case_digest,
+                         reviewed_strict_closed_output_tools=True)
+
+
+def reviewed_temporal_only_rerun(tmp_path):
+    from broker_real_provider_fixture import NativeRerunAmendment
+
+    value = reviewed_output_rerun(tmp_path)
+    base = manifest(tmp_path)
+    previous = type(base).model_validate({**base.model_dump(), 'rerun': value.model_dump(),
+        'broker_models_config': str(tmp_path / 'broker.yaml'), 'broker_config': str(tmp_path / 'catalog.yaml'),
+        'maximum_pilot_agent_trials': 22, 'phases': ['native-local', 'native-temporal']})
+    previous_path = tmp_path / 'passed-v3-manifest.json'
+    previous_path.write_text(previous.model_dump_json())
+    new = [hashlib.sha256(f'local-saved-{i}'.encode()).hexdigest() for i in range(40)]
+    rows = [{'agent': agent, 'case': case, 'case_digest': prepare_case(agent, previous)[3],
+             'execution': 'passed', 'semantic_score': 'passed', 'cleanup': 'passed',
+             'ledger': {'requests': [{'request_id': identity, 'state': 'completed'} for identity in new[i::11]]}}
+            for i, (agent, case) in enumerate(CASES.items())]
+    local = tmp_path / 'local.json'
+    local.write_text(json.dumps({'phase': 'local', 'status': 'passed', 'execution_status': 'passed',
+                                'semantic_status': 'passed', 'cases': rows}))
+    failed = tmp_path / 'temporal.json'
+    failed.write_text(json.dumps({'status': 'failed', 'failure_type': 'ValueError'}))
+    completed = value.retained_completed_request_ids + new
+    proof = Path(value.ledger_proof_file)
+    proof.write_text(json.dumps({'status': 'passed', 'unknown_request_ids': value.retained_unknown_request_ids,
+                                'completed_request_ids': completed, 'unknown_holds_retained': True}))
+    cause = Path(value.cause_resolution_file)
+    cause.write_text(json.dumps({'status': 'passed', 'reviewed': True,
+        'boundary': 'native-temporal-case-budget-preflight', 'evidence_sha256': 'a' * 64}))
+    return NativeRerunAmendment.model_validate({**value.model_dump(), 'review_version': 4,
+        'retained_completed_count': 120, 'retained_completed_request_ids': completed, 'additional_trials': 11,
+        'prior_reports': {**value.prior_reports, str(local): hashlib.sha256(local.read_bytes()).hexdigest(),
+                          str(failed): hashlib.sha256(failed.read_bytes()).hexdigest()},
+        'retained_local_report_file': str(local), 'retained_local_report_sha256': hashlib.sha256(local.read_bytes()).hexdigest(),
+        'retained_local_manifest_file': str(previous_path),
+        'retained_local_manifest_sha256': hashlib.sha256(previous_path.read_bytes()).hexdigest(),
+        'ledger_proof_sha256': hashlib.sha256(proof.read_bytes()).hexdigest(),
+        'cause_resolution_sha256': hashlib.sha256(cause.read_bytes()).hexdigest(),
+        'reason': 'reviewed case-scoped Temporal preflight correction; retain passed Local evidence and all outcomes; no unknown resend'})
+
+
+def temporal_only_manifest(tmp_path):
+    base = manifest(tmp_path)
+    return type(base).model_validate({**base.model_dump(), 'rerun': reviewed_temporal_only_rerun(tmp_path).model_dump(),
+        'broker_models_config': str(tmp_path / 'broker.yaml'), 'broker_config': str(tmp_path / 'catalog.yaml'),
+        'maximum_pilot_agent_trials': 11, 'phases': ['native-temporal']})
+
+
+def test_review4_verifies_exact_retained_local_and_empty_temporal_union(tmp_path):
+    from broker_real_provider_fixture import verify_native_rerun
+    config = temporal_only_manifest(tmp_path)
+    verify_native_rerun(config.rerun)
+    assert (len(config.rerun.prior_reports), len(config.rerun.retained_unknown_request_ids),
+            len(config.rerun.retained_completed_request_ids)) == (14, 15, 120)
+    assert (config.rerun.additional_trials, config.rerun.additional_graph_trials) == (11, 1)
+
+
+@pytest.mark.parametrize('change', ['hash', 'execution', 'semantic', 'cleanup', 'case_digest', 'case', 'duplicate',
+                                   'missing_failed', 'failed_has_case', 'failed_has_worker', 'previous_manifest_hash'])
+def test_review4_rejects_bad_local_or_failed_temporal_provenance(tmp_path, change):
+    from broker_real_provider_fixture import verify_native_rerun
+    value = reviewed_temporal_only_rerun(tmp_path)
+    if change == 'hash':
+        value = value.model_copy(update={'retained_local_report_sha256': 'a' * 64})
+    elif change == 'previous_manifest_hash':
+        value = value.model_copy(update={'retained_local_manifest_sha256': 'a' * 64})
+    elif change == 'missing_failed':
+        reports = dict(value.prior_reports)
+        reports.pop(str(tmp_path / 'temporal.json'))
+        value = value.model_copy(update={'prior_reports': reports})
+    elif change in ('failed_has_case', 'failed_has_worker'):
+        path = tmp_path / 'temporal.json'
+        report = json.loads(path.read_text())
+        report['cases' if change == 'failed_has_case' else 'worker_pid'] = [{}] if change == 'failed_has_case' else 123
+        path.write_text(json.dumps(report))
+        value = value.model_copy(update={'prior_reports': {**value.prior_reports,
+                                str(path): hashlib.sha256(path.read_bytes()).hexdigest()}})
+    else:
+        path = Path(value.retained_local_report_file)
+        report = json.loads(path.read_text())
+        if change == 'duplicate':
+            report['cases'][1]['agent'] = report['cases'][0]['agent']
+        else:
+            report['cases'][0][{'semantic': 'semantic_score'}.get(change, change)] = 'failed'
+        path.write_text(json.dumps(report))
+        checksum = hashlib.sha256(path.read_bytes()).hexdigest()
+        value = value.model_copy(update={'retained_local_report_sha256': checksum,
+                                'prior_reports': {**value.prior_reports, str(path): checksum}})
+    with pytest.raises(ValueError):
+        verify_native_rerun(value)
+
+
+@pytest.mark.parametrize('change', [{'additional_trials': 22}, {'additional_graph_trials': 2},
+    {'strict_closed_output_tools': False}, {'retained_completed_count': 119},
+    {'retained_local_report_file': None}])
+def test_review4_rejects_trial_count_and_retention_drift(tmp_path, change):
+    value = reviewed_temporal_only_rerun(tmp_path)
+    with pytest.raises(ValidationError):
+        type(value).model_validate({**value.model_dump(), **change})
+
+
+@pytest.mark.parametrize('change', [{'maximum_pilot_agent_trials': 22}, {'phases': ['native-local', 'native-temporal']},
+                                  {'phases': ['native-local']}, {'phases': ['direct']}])
+def test_review4_manifest_rejects_extra_or_wrong_phases(tmp_path, change):
+    config = temporal_only_manifest(tmp_path)
+    with pytest.raises(ValidationError):
+        type(config).model_validate({**config.model_dump(), **change})
+
+
+@pytest.mark.parametrize('factory', [native_rerun, reviewed_transport_rerun, reviewed_output_rerun])
+def test_old_reviews_omit_and_reject_new_local_reuse_links(tmp_path, factory):
+    value = factory(tmp_path)
+    original = value.model_dump_json()
+    assert not any(key.startswith('retained_local') for key in value.model_dump())
+    assert type(value).model_validate(value.model_dump()).model_dump_json() == original
+    with pytest.raises(ValidationError):
+        type(value).model_validate({**value.model_dump(), 'retained_local_report_file': 'new'})
+
+
+def test_review4_only_temporal_selection_and_claim_cannot_repeat(tmp_path):
+    from broker_real_provider_fixture import claim_phase, selected_phases
+    config = temporal_only_manifest(tmp_path)
+    assert selected_phases(config, 'all') == selected_phases(config, 'temporal') == ('temporal',)
+    assert selected_phases(config, 'validate') == ()
+    for phase in ('direct', 'local'):
+        with pytest.raises(ValueError, match='only a fresh Temporal'):
+            selected_phases(config, phase)
+    checksum = hashlib.sha256(config.model_dump_json().encode()).hexdigest()
+    claim_phase(Path(config.report_directory), checksum, 'temporal')
+    with pytest.raises(FileExistsError):
+        claim_phase(Path(config.report_directory), checksum, 'temporal')
+
+
+@pytest.mark.parametrize('phase', ['direct', 'local'])
+def test_review4_runner_rejects_forbidden_phase_before_case_claim_or_child(tmp_path, monkeypatch, phase):
+    import importlib.util
+    import sys
+
+    spec = importlib.util.spec_from_file_location('temporal_only_runner', ROOT / 'scripts/broker_real_provider_check.py')
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+    config = temporal_only_manifest(tmp_path)
+    frozen = tmp_path / 'fresh.json'
+    frozen.write_text(config.model_dump_json())
+    def denied(*_args, **_kwargs):
+        pytest.fail('Forbidden phase reached case preparation, claim or process construction')
+    monkeypatch.setattr(runner, 'prepare_case', denied)
+    monkeypatch.setattr(runner, 'claim_phase', denied)
+    monkeypatch.setattr(runner.subprocess, 'Popen', denied)
+    monkeypatch.setattr(sys, 'argv', ['runner', '--manifest', str(frozen), '--manifest-sha256',
+        hashlib.sha256(frozen.read_bytes()).hexdigest(), '--phase', phase, '--allow-inference'])
+    with pytest.raises(SystemExit) as error:
+        runner.main()
+    assert error.value.code == 2
+    assert not list(tmp_path.glob('pilot-*')) and not (tmp_path / 'execution-claims').exists()
+
+
+def test_review4_baseline_still_rejects_effective_budget_drift_and_reports_v4(tmp_path, monkeypatch):
+    from broker_real_provider_fixture import compare_manifest_baseline
+    config, current, case_digest = output_comparison_fixture(tmp_path, monkeypatch)
+    config = config.model_copy(update={'rerun': reviewed_temporal_only_rerun(tmp_path)})
+    result = compare_manifest_baseline(config, 'intake', current, case_digest)
+    assert result['declared_output_shaping_difference']['review_version'] == 4
+    current['budget']['effective']['max_requests'] = 5
+    with pytest.raises(ValueError, match='Authored agent safety budget'):
+        compare_manifest_baseline(config, 'intake', current, case_digest)
+
+
+@pytest.mark.parametrize('class_name_alias', [False, True])
+async def test_submission_recovery_uses_actual_registered_workflow_name(class_name_alias):
+    from types import SimpleNamespace
+
+    from broker_real_provider_fixture import recover_owned_submission
+    from temporalio import workflow
+    from test_broker_real_provider_temporal import RealProviderWorkflow
+
+    definition = workflow._Definition.must_from_class(RealProviderWorkflow)
+    assert definition.name == "BrokerRealProviderQualificationWorkflow"
+    calls = []
+    description = SimpleNamespace(id="batch:owned", task_queue="own-queue", run_id="own-run",
+        workflow_type=RealProviderWorkflow.__name__ if class_name_alias else definition.name)
+    async def describe():
+        return description
+    recovered = object()
+    def get_handle(workflow_id, **kwargs):
+        calls.append((workflow_id, kwargs))
+        return recovered if kwargs else SimpleNamespace(describe=describe)
+    client = SimpleNamespace(get_workflow_handle=get_handle)
+    if class_name_alias:
+        with pytest.raises(ValueError, match="ownership differs"):
+            await recover_owned_submission(client, "batch:owned", "own-queue")
+        assert len(calls) == 1
+    else:
+        assert await recover_owned_submission(client, "batch:owned", "own-queue") is recovered
+        assert calls[-1] == ("batch:owned", {"run_id": "own-run", "first_execution_run_id": "own-run"})
+
+
+@pytest.mark.parametrize('phase', ['direct', 'local'])
+async def test_review4_internal_phase_entrypoint_rejects_forbidden_dispatch(tmp_path, monkeypatch, phase):
+    from types import SimpleNamespace
+
+    import broker_real_provider_fixture as fixture
+
+    async def denied(*_args, **_kwargs):
+        pytest.fail("Forbidden internal phase reached provider case body")
+    monkeypatch.setattr(fixture, "run_local", denied)
+    with pytest.raises(ValueError, match="only a fresh Temporal"):
+        await fixture.phase_main(temporal_only_manifest(tmp_path), SimpleNamespace(phase=phase))

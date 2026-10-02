@@ -27,6 +27,7 @@ from broker_real_provider_fixture import (  # noqa: E402
     phase_environment,
     prepare_case,
     private_write,
+    selected_phases,
     verify_native_rerun,
     verify_retained_failure,
 )
@@ -45,6 +46,10 @@ def main() -> int:
     if manifest_sha != args.manifest_sha256:
         parser.error("Manifest differs from the explicitly frozen digest")
     manifest = RealProviderManifest.model_validate_json(manifest_bytes)
+    try:
+        phases = selected_phases(manifest, args.phase)
+    except ValueError as error:
+        parser.error(str(error))
     if args.phase != "validate" and not args.allow_inference:
         parser.error("Inference requires the explicit frozen-manifest handoff and --allow-inference")
     if args.phase in {"local", "temporal"} and args.baseline_report is None:
@@ -89,8 +94,7 @@ def main() -> int:
     report_path = directory / "report.json"
     private_write(report_path, report)
     deadline = time.monotonic() + manifest.root_duration_seconds
-    selected_phases = (("local", "temporal") if correction else ("direct", "local", "temporal")) if args.phase == "all" else (args.phase,)
-    for phase in selected_phases:
+    for phase in phases:
         values = phase_environment(manifest, phase)
         temporary_directory = directory / (phase + "-tmp")
         if not temporary_directory.resolve().is_relative_to(ROOT.resolve()):
@@ -140,7 +144,7 @@ def main() -> int:
                 private_write(report_path, report)
                 break
         private_write(report_path, report)
-    expected_phases = len(selected_phases)
+    expected_phases = len(phases)
     report["status"] = "passed" if len(report["phases"]) == expected_phases and all(item["status"] == "passed" for item in report["phases"]) else "failed"
     private_write(report_path, report)
     print(json.dumps({"status": report["status"], "report": str(report_path)}, sort_keys=True))
