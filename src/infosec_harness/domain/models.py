@@ -298,8 +298,9 @@ class EnvironmentSpec(_Model):
         description="Shell commands run from the repo root to install dependencies and build",
     )
     test_command: str = Field(
-        description="Command to run ONE test file; use {test_file} as the placeholder, "
-        "e.g. 'python -m pytest -q {test_file}'"
+        description="Command to run ONE probe offline. Path-based runners use {test_file}; "
+        "Maven uses -Dtest=HarnessProbeTest and Gradle uses --tests '*HarnessProbeTest'. "
+        "The JVM selector must name the probe's matching simple class, never a source path."
     )
     env: dict[str, str] = Field(default_factory=dict)
     scope: Literal["full", "partial"] = "full"
