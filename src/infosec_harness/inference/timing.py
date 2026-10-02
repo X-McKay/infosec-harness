@@ -8,7 +8,10 @@ import time
 from .protocol import BrokerError
 
 LEDGER_TIMEOUT_S = 30.0
-PROVIDER_TIMEOUT_S = 90.0
+# Successful direct model activities reached 104.23 s. Double that observed
+# maximum, add 30 s, and round up: 240 s. Keep the outer worker below 600 s.
+# See docs/validation/CREDENTIAL_BROKER_TIMEOUTS.md for the finite timing sample.
+PROVIDER_TIMEOUT_S = 240.0
 PREPARATION_TIMEOUT_S = 90.0
 # Claim/verification and completion both have their own ledger-hop allowance.
 EXECUTOR_TIMEOUT_S = LEDGER_TIMEOUT_S + PROVIDER_TIMEOUT_S + LEDGER_TIMEOUT_S

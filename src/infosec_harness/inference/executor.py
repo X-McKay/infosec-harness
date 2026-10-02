@@ -177,6 +177,7 @@ class OpenAIInference:
                 provider=provider,
                 merge_system=self.contract.merge_system_messages,
                 min_max_tokens=self.contract.min_max_tokens,
+                strict_closed_output_tools=self.contract.strict_closed_output_tools,
                 **extra,
             )
             try:

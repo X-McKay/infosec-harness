@@ -330,3 +330,43 @@ async def test_provider_trickle_bytes_cannot_renew_wall_deadline(monkeypatch):
         await infer(request)
     assert error.value.diagnostic == {"boundary": "provider_request", "category": "wall_timeout"}
     assert len(sends) == 1
+
+
+@pytest.mark.parametrize("ceiling,completes", [(90.0, False), (240.0, True)])
+async def test_successful_response_past_old_ceiling_fits_new_bounded_wait(monkeypatch, ceiling, completes):
+    """Scale wall time by 1000; a 150-second response must outlive the old ceiling.
+
+    This exercises actual SDK/HTTP transport and one send, without sleeping minutes.
+    The historical successful 104.23-second activity separately justifies the ceiling.
+    """
+    import asyncio
+    import time
+
+    import httpx2
+
+    from infosec_harness.inference import executor as module
+
+    request, _ = request_fixture()
+    request = request.model_copy(update={"binding": request.binding.model_copy(
+        update={"expires_at": time.time() + 60})})
+    sends = []
+    async def respond(native_request):
+        sends.append(native_request)
+        await asyncio.sleep(0.15)
+        return httpx2.Response(200, json={
+            "id": "delayed-response", "object": "chat.completion", "created": 1,
+            "model": "test-model", "choices": [{"index": 0, "finish_reason": "stop",
+                "message": {"role": "assistant", "content": "approved"}}],
+            "usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5}})
+    monkeypatch.setattr(module, "PROVIDER_TIMEOUT_S", ceiling / 1000)
+    infer = OpenAIInference(request.contract, "openshell:resolve:env:MOCK_TOKEN",
+                           http_transport=httpx2.MockTransport(respond))
+    if completes:
+        result = await infer(request)
+        assert result.usage["input_tokens"] == 3
+        assert result.usage["output_tokens"] == 2
+    else:
+        with pytest.raises(BrokerError, match="completion_unknown") as error:
+            await infer(request)
+        assert error.value.diagnostic == {"boundary": "provider_request", "category": "wall_timeout"}
+    assert len(sends) == 1

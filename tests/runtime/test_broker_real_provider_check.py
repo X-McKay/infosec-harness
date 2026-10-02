@@ -615,3 +615,146 @@ async def test_submission_recovery_rejects_foreign_scope_before_creating_mutatio
         return SimpleNamespace(describe=describe)
     with pytest.raises(ValueError, match='ownership differs'):
         await recover_owned_submission(SimpleNamespace(get_workflow_handle=get_handle), 'batch:owned', 'owned-queue')
+
+
+def reviewed_output_rerun(tmp_path):
+    rerun = native_rerun(tmp_path)
+    unknown = rerun.retained_unknown_request_ids + [hashlib.sha256(f'v3-unknown-{i}'.encode()).hexdigest() for i in range(5)]
+    completed = rerun.retained_completed_request_ids + [hashlib.sha256(f'v3-saved-{i}'.encode()).hexdigest() for i in range(77)]
+    rows = [{'request_id': identity, 'state': state} for state, ids in
+            [('completion_unknown', unknown), ('completed', completed)] for identity in ids]
+    reports = {}
+    for number in range(12):
+        path = tmp_path / f'output-review-{number}.json'
+        path.write_text(json.dumps({'ledger': {'requests': rows[number::12]}}))
+        reports[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
+    proof = Path(rerun.ledger_proof_file)
+    proof.write_text(json.dumps({'status': 'passed', 'unknown_request_ids': unknown,
+        'completed_request_ids': completed, 'unknown_holds_retained': True}))
+    cause = Path(rerun.cause_resolution_file)
+    cause.write_text(json.dumps({'status': 'passed', 'reviewed': True,
+        'boundary': 'native-inference-deadlines-and-output-shaping', 'evidence_sha256': 'd' * 64}))
+    return type(rerun).model_validate({**rerun.model_dump(), 'review_version': 3,
+        'strict_closed_output_tools': True, 'retained_unknown_count': 15, 'retained_completed_count': 80,
+        'retained_unknown_request_ids': unknown, 'retained_completed_request_ids': completed,
+        'prior_reports': reports, 'ledger_proof_sha256': hashlib.sha256(proof.read_bytes()).hexdigest(),
+        'cause_resolution_sha256': hashlib.sha256(cause.read_bytes()).hexdigest(),
+        'baseline_report_sha256': '78eac315f11c52b8e3202b4d5cc595c57888d1107a2e5d2a4f63a6d404bd4ce5',
+        'reason': 'reviewed native deadlines and closed-output shaping correction; retain all outcomes; no unknown resend'})
+
+
+def test_review3_preserves_exact_current_union_and_finite_scope(tmp_path):
+    from broker_real_provider_fixture import verify_native_rerun
+    value = reviewed_output_rerun(tmp_path)
+    verify_native_rerun(value)
+    assert (len(value.prior_reports), len(value.retained_unknown_request_ids),
+            len(value.retained_completed_request_ids)) == (12, 15, 80)
+    assert (value.additional_trials, value.additional_graph_trials) == (22, 1)
+    assert value.model_dump()['strict_closed_output_tools'] is True
+
+
+@pytest.mark.parametrize('change', [{'strict_closed_output_tools': False}, {'strict_closed_output_tools': 'true'},
+    {'retained_unknown_count': 14}, {'retained_completed_count': 79}, {'additional_trials': 23},
+    {'additional_graph_trials': 2}, {'baseline_report_sha256': 'a' * 64}, {'reason': 'output quality accepted'}])
+def test_review3_rejects_undeclared_shaping_lost_retention_or_scope_drift(tmp_path, change):
+    value = reviewed_output_rerun(tmp_path)
+    with pytest.raises(ValidationError):
+        type(value).model_validate({**value.model_dump(), **change})
+
+
+def test_review3_rejects_old_boundary_and_missing_retained_report(tmp_path):
+    from broker_real_provider_fixture import verify_native_rerun
+    value = reviewed_output_rerun(tmp_path)
+    reports = dict(value.prior_reports)
+    reports.pop(next(iter(reports)))
+    with pytest.raises(ValidationError):
+        type(value).model_validate({**value.model_dump(), 'prior_reports': reports})
+    path = Path(value.cause_resolution_file)
+    cause = json.loads(path.read_bytes())
+    cause['boundary'] = 'native-response-acknowledgement'
+    path.write_text(json.dumps(cause))
+    value = value.model_copy(update={'cause_resolution_sha256': hashlib.sha256(path.read_bytes()).hexdigest()})
+    with pytest.raises(ValueError, match='cause resolution'):
+        verify_native_rerun(value)
+
+
+@pytest.mark.parametrize('factory', [native_rerun, reviewed_transport_rerun])
+def test_historical_review_payloads_omit_false_shaping_and_deny_true(tmp_path, factory):
+    value = factory(tmp_path)
+    before = value.model_dump_json()
+    assert 'strict_closed_output_tools' not in value.model_dump()
+    roundtrip = type(value).model_validate({**value.model_dump(), 'strict_closed_output_tools': False})
+    assert roundtrip.model_dump_json() == before
+    with pytest.raises(ValidationError):
+        type(value).model_validate({**value.model_dump(), 'strict_closed_output_tools': True})
+
+
+def output_comparison_fixture(tmp_path, monkeypatch):
+    from copy import deepcopy
+
+    from broker_real_provider_fixture import COMPARISON_MODEL_FIELDS
+    config = manifest(tmp_path)
+    previous = {'model': dict.fromkeys(COMPARISON_MODEL_FIELDS, 'frozen'),
+        'budget': {'requested': {'max_requests': 4}, 'effective': {'max_requests': 4}}}
+    previous['model']['capability_profile'] = {'structured_output': 'tool', 'reasoning_accounting': 'inside_output'}
+    rows = [{'agent': agent, 'case': name, 'case_digest': prepare_case(agent, config)[3],
+             'config': previous} for agent, name in CASES.items()]
+    path = tmp_path / 'output-direct.json'
+    path.write_text(json.dumps({'phase': 'direct', 'status': 'passed', 'cases': rows}))
+    monkeypatch.setenv('HARNESS_REAL_PROVIDER_BASELINE', str(path))
+    current = deepcopy(previous)
+    current['model']['capability_profile']['strict_closed_output_tools'] = True
+    current['model']['broker_contract'] = {'strict_closed_output_tools': True}
+    return config, current, rows[0]['case_digest']
+
+
+def test_only_manifest_declared_output_change_passes_and_is_reported(tmp_path, monkeypatch):
+    from broker_real_provider_fixture import compare_baseline, compare_manifest_baseline
+    config, current, case_digest = output_comparison_fixture(tmp_path, monkeypatch)
+    monkeypatch.setenv('HARNESS_REAL_PROVIDER_STRICT_CLOSED_OUTPUT_TOOLS', 'true')
+    with pytest.raises(ValueError, match='explicitly reviewed'):
+        compare_baseline('intake', current, case_digest)
+    with pytest.raises(ValueError, match='explicitly reviewed'):
+        compare_manifest_baseline(config, 'intake', current, case_digest)
+    config = config.model_copy(update={'rerun': reviewed_output_rerun(tmp_path)})
+    result = compare_manifest_baseline(config, 'intake', current, case_digest)
+    assert result['declared_output_shaping_difference'] == {'review_version': 3,
+        'field': 'strict_closed_output_tools', 'direct': False, 'native': True,
+        'scope': 'closed model output tools only; typed output contracts, scorer and expected outcome unchanged'}
+
+
+@pytest.mark.parametrize('change', ['false_candidate', 'false_contract', 'other_capability', 'settings',
+    'authored_budget', 'effective_budget', 'other_model', 'case'])
+def test_review3_comparison_rejects_every_other_change(tmp_path, monkeypatch, change):
+    from broker_real_provider_fixture import compare_manifest_baseline
+    config, current, case_digest = output_comparison_fixture(tmp_path, monkeypatch)
+    config = config.model_copy(update={'rerun': reviewed_output_rerun(tmp_path)})
+    if change == 'false_candidate':
+        current['model']['capability_profile']['strict_closed_output_tools'] = False
+    elif change == 'false_contract':
+        current['model']['broker_contract']['strict_closed_output_tools'] = False
+    elif change == 'other_capability':
+        current['model']['capability_profile']['reasoning_accounting'] = 'separate'
+    elif change == 'settings':
+        current['model']['effective_settings'] = 'different'
+    elif change == 'authored_budget':
+        current['budget']['requested']['max_requests'] = 5
+    elif change == 'effective_budget':
+        current['budget']['effective']['max_requests'] = 5
+    elif change == 'other_model':
+        current['model']['requested_model'] = 'different'
+    else:
+        case_digest = 'f' * 64
+    with pytest.raises(ValueError):
+        compare_manifest_baseline(config, 'intake', current, case_digest)
+
+
+def test_phase_environment_strips_ambient_shaping_and_only_installs_declared_expectation(tmp_path, monkeypatch):
+    config = manifest(tmp_path)
+    monkeypatch.setenv('HARNESS_REAL_PROVIDER_STRICT_CLOSED_OUTPUT_TOOLS', 'true')
+    assert 'HARNESS_REAL_PROVIDER_STRICT_CLOSED_OUTPUT_TOOLS' not in phase_environment(config, 'local')
+    assert 'HARNESS_REAL_PROVIDER_STRICT_CLOSED_OUTPUT_TOOLS' not in phase_environment(config, 'direct')
+    config = config.model_copy(update={'rerun': reviewed_output_rerun(tmp_path)})
+    assert phase_environment(config, 'local')['HARNESS_REAL_PROVIDER_STRICT_CLOSED_OUTPUT_TOOLS'] == 'true'
+    assert phase_environment(config, 'temporal')['HARNESS_REAL_PROVIDER_STRICT_CLOSED_OUTPUT_TOOLS'] == 'true'
+    assert 'HARNESS_REAL_PROVIDER_STRICT_CLOSED_OUTPUT_TOOLS' not in phase_environment(config, 'direct')

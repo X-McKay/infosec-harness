@@ -2,7 +2,7 @@
 
 Status: Implemented opt-in contracts; corrected-topology G0 passed; bounded native/service qualification passed; rollout disabled
 Date: 2026-10-01
-Specification version: 0.2.6
+Specification version: 0.2.7
 
 The October local-provider qualification and retained failures are recorded in [live-provider evidence](validation/CREDENTIAL_BROKER_LIVE_PROVIDER.md). Admission behavior changed without changing wire protocol v1; deploy the new immutable executor contract and drain prior allocations before adoption.
 
@@ -104,13 +104,35 @@ Upstream credentials MUST be dedicated to the required service, use short expiry
 
 Rotation MUST stop admitting requests to the old executor, wait for the provider change acknowledgement, launch a new process with the new reference, verify the new contract, and resume admission. Do not assume an existing process has adopted a new credential. Revocation MUST block new admission immediately and detach the provider with acknowledgement; destroy the executor when acknowledgement cannot be established. In-flight provider requests may finish or remain unknown, and revocation MUST not be reported as upstream cancellation. A native detach acknowledgement waits at most 30 seconds. On an unavailable acknowledgement, recheck the exact native ID, name and ownership labels before ordinary sandbox deletion; verify gateway and container absence plus scoped credential cleanup before marking the lease deleted. Identity or policy failures cannot authorize this fallback.
 
+## Strict closed output tools
+
+OpenAI-compatible backends can opt into `strict_closed_output_tools: true`. The same flag
+must be approved in the executor profile; it participates in the resolved capability and
+immutable executor contract identities. Its default is false and is omitted from serialized
+identities, preserving existing contracts. Enabled requests require a matching deployment.
+
+The shared direct/executor adapter marks only closed output-tool object schemas strict before
+PydanticAI prepares the provider request. SDK shaping makes nullable fields explicitly required;
+local Pydantic and semantic/evidence validators remain authoritative. Explicit tool opt-outs,
+function tools, native-output mode and schemas containing free-form dictionaries are preserved.
+In particular, environment mappings must continue to accept arbitrary environment keys.
+Schema expansion remains bounded. Admission renders the same shaped request as execution.
+
+This opt-in records requested provider behavior, not proof that an endpoint enforces a grammar.
+The locally hosted endpoint requires fresh bounded qualification before deployment enablement.
+Existing saved results remain readable; this does not release uncertain holds or authorize
+redispatch. Deploy a new executor image and matching contract when enabling the flag.
+
 ## Nested request deadlines
 
-The provider call has a 90-second total wall deadline, independent of SDK timeout settings
+The provider call has a 240-second total wall deadline, independent of SDK timeout settings
 and HTTP inactivity. Ledger hops allow 30 seconds each. Native preparation allows 90 seconds;
-the executor hop allows 150 seconds, the controller request allows 285 seconds, and bounded
-reconciliation allows another 45 seconds. The HTTP server allows 345 seconds and the worker
-allows 360 seconds, below the existing 600-second model activity ceiling. Admission and
+the executor hop allows 300 seconds, the controller request allows 435 seconds, and bounded
+reconciliation allows another 45 seconds. The HTTP server allows 495 seconds and the worker
+allows 510 seconds, leaving 90 seconds below the existing 600-second model activity ceiling.
+The provider ceiling is twice the retained 104.23-second successful model-activity maximum
+plus 30 seconds, rounded up; [timing evidence](validation/CREDENTIAL_BROKER_TIMEOUTS.md)
+records the sample and its limits. Admission and
 provider execution remain capped by the binding expiry. Read-only saved-result recovery may
 continue after expiry without granting fresh dispatch authority.
 

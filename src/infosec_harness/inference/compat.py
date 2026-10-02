@@ -1,6 +1,7 @@
 """Provider shaping shared by direct workers and isolated inference executors."""
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 from pydantic_ai.models.openai import OpenAIChatModel as OpenAIChatModelBase
@@ -46,12 +47,15 @@ class _CompatOpenAIChatModel(OpenAIChatModelBase):  # type: ignore[misc,valid-ty
     """
 
     def __init__(self, *args: Any, merge_system: bool = True, min_max_tokens: int = 0,
-                 **kwargs: Any) -> None:
+                 strict_closed_output_tools: bool = False, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._merge_system = merge_system
         self._min_max_tokens = min_max_tokens
+        self._strict_closed_output_tools = strict_closed_output_tools
 
     def prepare_request(self, model_settings: Any, model_request_parameters: Any) -> Any:
+        if self._strict_closed_output_tools:
+            model_request_parameters = _strict_closed_outputs(model_request_parameters, self.profile)
         settings, params = super().prepare_request(model_settings, model_request_parameters)
         return _apply_max_tokens_floor(settings, self._min_max_tokens), params
 
@@ -59,6 +63,53 @@ class _CompatOpenAIChatModel(OpenAIChatModelBase):  # type: ignore[misc,valid-ty
         mapped = await super()._map_messages(*args, **kwargs)
         return _merge_leading_system_messages(mapped) if self._merge_system else mapped
 
+
+
+
+def _closed_output_schema(schema: Any) -> bool:
+    """Conservatively qualify closed JSON objects; dictionaries keep their keys."""
+    found_object = False
+    pending = [schema]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, list):
+            pending.extend(node)
+        elif isinstance(node, dict):
+            if any(key in node for key in ("$dynamicRef", "$recursiveRef", "patternProperties", "unevaluatedProperties")):
+                return False
+            kind = node.get("type")
+            if (kind == "object" or isinstance(kind, list) and "object" in kind
+                    or "properties" in node or "additionalProperties" in node):
+                found_object = True
+                if node.get("additionalProperties") is not False:
+                    return False
+            pending.extend(node.values())
+    return found_object
+
+
+def _strict_closed_outputs(params: Any, profile: Any) -> Any:
+    """Copy output definitions only; authored parameters and local guards stay intact."""
+    from .protocol import BrokerError
+
+    if params.output_mode not in {"auto", "tool"}:
+        return params
+    tools, size, nodes = [], 0, 0
+    for tool in params.output_tools:
+        if tool.strict is not None:
+            tools.append(tool)
+            continue
+        expanded_size, expanded_nodes = _check_schema_expansion(tool.parameters_json_schema)
+        size += expanded_size
+        nodes += expanded_nodes
+        if size > 1_048_576 or nodes > 65_536:
+            raise BrokerError("policy", "Aggregate output schemas exceed rendering bound")
+        if _closed_output_schema(tool.parameters_json_schema):
+            if not profile.get("openai_supports_strict_tool_definition", True):
+                raise BrokerError("policy", "Model profile does not support strict output tools")
+            tools.append(replace(tool, strict=True))
+        else:
+            tools.append(tool)
+    return replace(params, output_tools=tools)
 
 
 
@@ -157,7 +208,8 @@ async def input_wire(payload: Any, contract: Any) -> dict[str, Any]:
             extra["profile"] = intake_openai_profile(provider.model_profile(contract.model))
         model = _CompatOpenAIChatModel(
             contract.model, provider=provider, merge_system=contract.merge_system_messages,
-            min_max_tokens=contract.min_max_tokens, **extra,
+            min_max_tokens=contract.min_max_tokens,
+            strict_closed_output_tools=contract.strict_closed_output_tools, **extra,
         )
         try:
             settings, params = model.prepare_request(settings, params)

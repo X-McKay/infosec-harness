@@ -63,6 +63,7 @@ class ExecutorContract(StrictModel):
     merge_system_messages: StrictBool = True
     min_max_tokens: int = Field(default=0, ge=0, strict=True)
     atomic_intake: StrictBool = False
+    strict_closed_output_tools: StrictBool = Field(default=False, exclude_if=lambda value: value is False)
     provider_retries: Literal[0] = 0
     credential_driver: Literal["native"] = "native"
     inspection: tuple[ExtensionBinding, ...] = ()

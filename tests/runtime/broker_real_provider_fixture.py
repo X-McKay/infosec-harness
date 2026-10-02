@@ -73,7 +73,8 @@ class CorrectedPilotAmendment(BaseModel):
 
 
 class NativeRerunAmendment(BaseModel):
-    review_version: Literal[1, 2] = 1
+    review_version: Literal[1, 2, 3] = 1
+    strict_closed_output_tools: bool = Field(default=False, strict=True, exclude_if=lambda value: value is False)
     retained_unknown_count: int | None = None
     retained_completed_count: int | None = None
     model_config = ConfigDict(extra="forbid", strict=True)
@@ -97,10 +98,16 @@ class NativeRerunAmendment(BaseModel):
         identities = self.retained_unknown_request_ids + self.retained_completed_request_ids
         counts = (10, 3) if self.review_version == 1 else (self.retained_unknown_count, self.retained_completed_count)
         reason = ("reviewed native generation correction; retain all outcomes; no unknown resend" if self.review_version == 1
-                  else "reviewed native transport correction; retain all outcomes; no unknown resend")
+                  else "reviewed native transport correction; retain all outcomes; no unknown resend" if self.review_version == 2
+                  else "reviewed native deadlines and closed-output shaping correction; retain all outcomes; no unknown resend")
         if (self.review_version == 1 and (self.retained_unknown_count is not None or self.retained_completed_count is not None)
-                or self.review_version == 2 and (any(value is None or value < 0 for value in counts) or counts[0] == 0)):
+                or self.review_version in (2, 3) and (any(value is None or value < 0 for value in counts) or counts[0] == 0)):
             raise ValueError("New review must declare retained outcome counts; historical review counts stay fixed")
+        if (self.review_version < 3 and self.strict_closed_output_tools
+                or self.review_version == 3 and (not self.strict_closed_output_tools or counts != (15, 80)
+                    or len(self.prior_reports) != 12
+                    or self.baseline_report_sha256 != "78eac315f11c52b8e3202b4d5cc595c57888d1107a2e5d2a4f63a6d404bd4ce5")):
+            raise ValueError("Review3 must declare closed output shaping and retain15unknown/80saved twelve-report evidence")
         if (self.original_manifest_sha256 != "b41fb7a2bd695825bd2eff8b613f052e8c1319ad35bd053997c1a58cc1a20745"
                 or self.additional_trials != 22 or self.additional_graph_trials != 1
                 or (len(self.retained_unknown_request_ids), len(self.retained_completed_request_ids)) != counts
@@ -145,7 +152,8 @@ def verify_native_rerun(amendment: NativeRerunAmendment) -> None:
     cause = read(amendment.cause_resolution_file, amendment.cause_resolution_sha256)
     if (set(cause) != {"status", "reviewed", "boundary", "evidence_sha256"}
             or cause["status"] != "passed" or cause["reviewed"] is not True
-            or cause["boundary"] != ("native-policy-generation" if amendment.review_version == 1 else "native-response-acknowledgement")
+            or cause["boundary"] != {1: "native-policy-generation", 2: "native-response-acknowledgement",
+                3: "native-inference-deadlines-and-output-shaping"}[amendment.review_version]
             or not isinstance(cause["evidence_sha256"], str) or len(cause["evidence_sha256"]) != 64
             or any(c not in "0123456789abcdef" for c in cause["evidence_sha256"])):
         raise ValueError("Reviewed native cause resolution is required")
@@ -260,6 +268,7 @@ def phase_environment(manifest: RealProviderManifest, phase: str) -> dict[str, s
     values.pop(manifest.worker_hmac_env, None)
     for name in ("HARNESS_BROKER_CONFIG", "HARNESS_MODEL_BACKEND", "HARNESS_BROKER_SERVICE_MANIFEST",
                  "HARNESS_NATIVE_TEMPORAL_CONFIG", "HARNESS_OPENAI_API_KEY", "HARNESS_BROKER_NATIVE_CONFIG",
+                 "HARNESS_REAL_PROVIDER_STRICT_CLOSED_OUTPUT_TOOLS",
                  "OPENAI_API_KEY", "AWS_ACCESS_KEY_ID",
                  "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"):
         values.pop(name, None)
@@ -291,6 +300,8 @@ def phase_environment(manifest: RealProviderManifest, phase: str) -> dict[str, s
             raise ValueError("Invalid worker credential reference")
         values[manifest.worker_hmac_env] = secret
         values["HARNESS_BROKER_CONFIG"] = manifest.broker_config
+        if manifest.rerun and manifest.rerun.review_version == 3:
+            values["HARNESS_REAL_PROVIDER_STRICT_CLOSED_OUTPUT_TOOLS"] = "true"
     return values
 
 
@@ -353,7 +364,8 @@ COMPARISON_MODEL_FIELDS = ("effective_settings", "provider_output_floor", "trans
     "resolved_model", "backend_kind", "pricing_status", "pricing_table", "endpoint")
 
 
-def compare_baseline(agent: str, config: dict, case_digest: str) -> dict:
+def compare_baseline(agent: str, config: dict, case_digest: str, *,
+                     reviewed_strict_closed_output_tools: bool = False) -> dict:
     path = os.environ.get("HARNESS_REAL_PROVIDER_BASELINE")
     if not path:
         raise ValueError("Native qualification requires a completed direct baseline")
@@ -366,6 +378,28 @@ def compare_baseline(agent: str, config: dict, case_digest: str) -> dict:
     if previous.get("case") != CASES[agent] or previous.get("case_digest") != case_digest:
         raise ValueError("Baseline case content differs")
     old = previous["config"]
+    old_capability = dict(old["model"].get("capability_profile", {}))
+    current_capability = dict(config["model"].get("capability_profile", {}))
+    previous_strict = old_capability.pop("strict_closed_output_tools", False)
+    current_strict = current_capability.pop("strict_closed_output_tools", False)
+    if old_capability != current_capability:
+        raise ValueError("Baseline capability profile differs")
+    if (previous_strict is not False or current_strict is not reviewed_strict_closed_output_tools
+            or type(reviewed_strict_closed_output_tools) is not bool):
+        raise ValueError("Only explicitly reviewed closed-output shaping may differ")
+    output_change = None
+    if reviewed_strict_closed_output_tools:
+        if (not isinstance(config["model"].get("broker_contract"), dict)
+                or config["model"]["broker_contract"].get("strict_closed_output_tools") is not True):
+            raise ValueError("Reviewed shaping requires the exact opted-in native contract")
+        intentional = {"durable", "broker_contract", "credential_reference", "capability_profile", "pricing_table"}
+        if ({key: value for key, value in old["model"].items() if key not in intentional}
+                != {key: value for key, value in config["model"].items() if key not in intentional}):
+            raise ValueError("Other baseline model metadata differs")
+        if old["budget"] != config["budget"]:
+            raise ValueError("Authored agent safety budget differs from baseline")
+        output_change = {"review_version": 3, "field": "strict_closed_output_tools", "direct": False, "native": True,
+                         "scope": "closed model output tools only; typed output contracts, scorer and expected outcome unchanged"}
     pricing_provenance = None
     for name in COMPARISON_MODEL_FIELDS:
         previous_value, current_value = old["model"].get(name), config["model"].get(name)
@@ -384,11 +418,20 @@ def compare_baseline(agent: str, config: dict, case_digest: str) -> dict:
             raise ValueError("Baseline model settings or pricing differ")
     if old["budget"]["requested"] != config["budget"]["requested"]:
         raise ValueError("Authored agent safety budget differs from baseline")
-    return {"status": "passed", "baseline_sha256": hashlib.sha256(Path(path).read_bytes()).hexdigest(),
+    result = {"status": "passed", "baseline_sha256": hashlib.sha256(Path(path).read_bytes()).hexdigest(),
             "matched_model_fields": list(COMPARISON_MODEL_FIELDS), "authored_budget": "matched",
             "pricing_catalog_provenance": pricing_provenance,
             "intentional_transport_fields": {name: config["model"].get(name)
                 for name in ("durable", "broker_contract", "capability_profile", "credential_reference")}}
+    if output_change is not None:
+        result["declared_output_shaping_difference"] = output_change
+    return result
+
+
+def compare_manifest_baseline(manifest: RealProviderManifest, agent: str, config: dict, case_digest: str) -> dict:
+    if manifest.rerun and manifest.rerun.review_version == 3:
+        return compare_baseline(agent, config, case_digest, reviewed_strict_closed_output_tools=True)
+    return compare_baseline(agent, config, case_digest)
 
 
 def workflow_input(inputs: dict) -> dict:
@@ -442,7 +485,7 @@ async def run_local_case(manifest: RealProviderManifest, phase: str, agent: str,
         if config.model.endpoint != manifest.endpoint:
             raise ValueError("Resolved model endpoint differs from the frozen manifest")
         if phase != "direct":
-            row["baseline_comparison"] = compare_baseline(agent, row["config"], case_digest)
+            row["baseline_comparison"] = compare_manifest_baseline(manifest, agent, row["config"], case_digest)
         outcome = await ops.run_agent(agent, inputs["prompt"], inputs["deps"])
         row.update(score_output(agent, outcome.output, predict, expected))
         row.update(execution="passed", requests=outcome.requests, input_tokens=outcome.input_tokens,
@@ -537,7 +580,7 @@ async def run_temporal(manifest: RealProviderManifest, report_path: Path) -> dic
     for agent in CASES:
         if CONFIGS[agent].model.endpoint != manifest.endpoint:
             raise ValueError("Resolved model endpoint differs from the frozen manifest")
-        compare_baseline(agent, CONFIGS[agent].model_dump(mode="json"), prepare_case(agent, manifest)[3])
+        compare_manifest_baseline(manifest, agent, CONFIGS[agent].model_dump(mode="json"), prepare_case(agent, manifest)[3])
     suffix = uuid.uuid4().hex
     queue = "broker-real-provider-" + suffix
     log_path = report_path.with_suffix(".worker.log")
@@ -558,7 +601,7 @@ async def run_temporal(manifest: RealProviderManifest, report_path: Path) -> dic
             started = time.monotonic()
             from infosec_harness.agents.durable import CONFIGS
             row["config"] = CONFIGS[agent].model_dump(mode="json")
-            row["baseline_comparison"] = compare_baseline(agent, row["config"], case_digest)
+            row["baseline_comparison"] = compare_manifest_baseline(manifest, agent, row["config"], case_digest)
             handle = None
             workflow_id = "batch:" + root_id
             row["workflow_id"] = workflow_id

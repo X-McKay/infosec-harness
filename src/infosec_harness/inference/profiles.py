@@ -158,6 +158,7 @@ class ExecutorProfile(_StrictModel):
     approved_policy: dict[str, Any] | None = None
     merge_system_messages: bool = True
     min_max_tokens: int = Field(default=0, ge=0)
+    strict_closed_output_tools: bool = Field(default=False, exclude_if=lambda value: value is False)
     # Request context admission is separate from cumulative invocation allocation.
     # Omission preserves the identity and behavior of existing operator profiles.
     max_input_tokens_per_request: int | None = Field(
@@ -331,6 +332,7 @@ class BrokerConfig(_StrictModel):
         atomic_intake: bool = False,
         merge_system_messages: bool = True,
         min_max_tokens: int = 0,
+        strict_closed_output_tools: bool = False,
     ) -> ExecutorContract:
         """Resolve a secret-free executor contract from trusted effective settings."""
         if not self.enabled:
@@ -345,6 +347,8 @@ class BrokerConfig(_StrictModel):
             raise ValueError("Message adaptation differs from the approved profile")
         if min_max_tokens != profile.min_max_tokens:
             raise ValueError("Output-token floor differs from the approved profile")
+        if strict_closed_output_tools != profile.strict_closed_output_tools:
+            raise ValueError("Strict output adaptation differs from the approved profile")
         if atomic_intake != (agent == "intake"):
             raise ValueError("Atomic intake profile is valid only for the intake agent")
 
@@ -374,6 +378,7 @@ class BrokerConfig(_StrictModel):
             merge_system_messages=merge_system_messages,
             min_max_tokens=min_max_tokens,
             atomic_intake=atomic_intake,
+            strict_closed_output_tools=strict_closed_output_tools,
             provider_retries=0,
             credential_driver="native",
             inspection=(),
