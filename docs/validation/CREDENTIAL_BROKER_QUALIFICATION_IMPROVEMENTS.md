@@ -213,3 +213,133 @@ release, native22/graph qualification, actual historical Temporal replay, and
 hosted deployment remain **not_checked**. The optional reasoning cap is not
 qualified by this non-thinking intake run. UI checks are **not_applicable** to this
 intake-only change. Rollout remains disabled and the PR remains draft.
+
+
+### Latest full original-dataset rerun on ee6c1d8
+
+The fresh rerun completed all 118 original cases across all eleven agents through
+actual OpenShell executors and the zero-priced `llm.almckay.io` endpoint. It tested
+source `ee6c1d84375b5b417951098faf49f23b5145d58c`, whose runtime bytes are identical
+to `6578fe8`; the intervening commit changed only documentation. The source and
+configuration remained frozen through actual terminal preservation. The run used
+one repetition, concurrency one, the original 600-second case bounds and a
+21,600-second outer bound. Actual execution and guards completed in 5,437.28
+seconds. All original cases, goldens, scorers and qualification thresholds were
+retained; no failed result was rescored.
+
+**Full release: failed.** There were 114 semantic passes out of 118 cases, and ten
+of eleven agent release gates passed. Environment planning was the only failed
+agent gate. Its schema-validity metric was 0.9 against the required 1.0; its
+accuracy, cost, request-count, budget and material-coverage gates passed.
+
+| Agent | Cases passed | p95 requests | Original release gates |
+| --- | --- | --- | --- |
+| build-repair | 14/14 | 10 | passed |
+| context | 14/15 | 5 | passed |
+| env-planner | 9/10 | 7 | failed: schema validity |
+| intake | 9/9 | 3 | passed |
+| partial-build | 9/9 | 9 | passed |
+| probe-author | 10/10 | 6 | passed |
+| probe-diagnosis | 12/13 | 1 | passed |
+| probe-planner | 9/10 | 2 | passed |
+| probe-repair | 10/10 | 9 | passed |
+| recon | 9/9 | 4 | passed |
+| verdict | 9/9 | 1 | passed |
+
+The previous build-repair, intake and probe-author gate failures did not recur in
+this cohort. That observation does not establish that any single candidate
+change caused the improvement. The previous full run remains failed and retained.
+
+#### Remaining environment-planning failure
+
+The failed case was
+`an-empty-test-directory-must-not-send-the-planner-in-circles`. The evaluator
+recorded `UnexpectedModelBehavior` / `no_accepted_output`, classified conservatively
+as `invalid_output`. This differs from the prior unlabelled Maven-profile failure,
+which passed in this cohort. The failed current case had seven directly retained
+broker request references, three tool calls and three unclassified output retries,
+with no repeated tool calls. Every referenced broker request completed. One
+response ended with `length` at 16,000 output tokens, including only 123 reasoning
+tokens; the other six ended with structured tool calls. These facts establish
+truncation during this case, but the saved diagnostics do not retain exact
+validator wording or establish which field/tool argument caused the rejection.
+The metric name alone is not proof of a particular schema defect.
+
+The smallest next investigation is the final/tool-output behavior for this exact
+empty-directory regression, followed by a bounded correction and fresh targeted
+and full qualification. Increasing timeouts, request limits or cumulative budgets
+is not justified by this evidence. A reasoning limit alone would not address the
+observed large non-reasoning output. Keep strict typed validation, original
+expectations and retry limits.
+
+Other semantic misses were the constant-only SQL caller in context (predicted
+`reachable`, expected `unreachable`), diagnosis case `defect`, and the planner's
+`deserialization-executes-code-and-still-needs-no-canary`. Their agent gates passed;
+they remain wrong answers and are not relabeled as correct.
+
+#### Candidate controls and terminal preservation
+
+All eleven actual native readiness checks passed before model execution. The
+fresh deployment used the previously attested immutable executor image and an
+independently verified renewed TLS leaf with the same CA, key and extensions.
+Only build-repair selected the `gateway-build-repair` backend with an authenticated
+4,000-token reasoning limit. All 73 build-repair requests carried that limit and
+returned structured tool-call parts; observed reasoning ranged up to 3,999 tokens.
+This is actual full-agent broker evidence for that configuration, rather than the
+previous isolated continuation. It does not imply that every response must reach
+the cap. The other ten contracts were unchanged. Adding the backend changed the
+whole-model-map configuration digest, which is retained explicitly.
+
+Intake used the approved 32,000 per-request / 128,000 cumulative input limits,
+with thinking disabled. Its 14 completed requests had a maximum input reservation
+of 20,361; one exceeded the previous 20,000 ceiling. Its output maximum was 420
+tokens, and no budget exhaustion occurred. This confirms the extra headroom was
+used in this cohort without changing output or request-count limits.
+
+Independent complete terminal preservation **passed**. Current state contained
+2,567 requests, 679 budget roots and 848 deleted leases. All 413 new requests were
+completed, and all 118 new budget roots and evaluation leases were retained.
+Every prior 2,154 request, 561 budget and 730 lease-file hash remained unchanged.
+Exactly the same fifteen historical unknown-completion requests and their holds
+remained; there were no new unknown or pending completions, active leases, native
+sandboxes, resource adoptions or resends. Both provider identities and exact
+runtime/process/configuration fingerprints were unchanged. All 49 raw evidence
+files, eleven reports and eleven independently checked completion witnesses were
+retained. Read-only diagnostics made no model or lifecycle calls.
+
+Initial diagnostic exporters incorrectly compared broker operator configuration
+with source-dependent evaluation configuration. Those exports and their failure
+were retained. The corrected exporter independently binds operator configuration
+to the authenticated inventory and ledger, and case configuration to the frozen
+case witness. All 413 request bindings then verified. This was an evidence-helper
+correction; no runtime source, broker record or qualification score changed.
+
+| Evidence | SHA256 |
+| --- | --- |
+| Frozen full118 plan | `749e15cd4814a25508ba006a0d3830171239a3b4db2d700f87764dd4f997a244` |
+| Original full aggregate | `eaff249f379231935c9195faaddab1ee06149c4b1f4bb1d40ab7b5c21d49d6ed` |
+| Model/runtime root proof | `a5ec24c128f787b26bed4b84b2a6019983536f77643a73dda017cfbc85778647` |
+| Complete terminal state | `e0e7846aade02de2432b1a5ffa9fcea7918e278c783cc25c00a0bf3dedc7994c` |
+| Terminal retention proof | `6c9b8096fe205e118885020a3b636bf8e01897db6609ca083985a732b43d8fad` |
+| Read-only terminal root proof | `5a5b668bd4a87408e0d18eca1412f338b34c253b77c0a7e26a284823964bcb5d` |
+| Verified numeric diagnostics | `c01bc03ae59aca46b3fdf5e0f0b88df6ecc5efe58ce2f8ebfac1b96cdcaa1cd5` |
+| Exact two-case diagnostics | `314d952d1c147e16e0b1d222648c19915969923ed00bd158a3aebffae8b77653` |
+
+Fresh canonical checks on the tested source **passed**: lint, compilation, agent
+validation, generated governance/contracts, development-skill drift, and the full
+deterministic suite (2,858 passed, 40 skipped). Existing PR backend, web and
+conformance CI checks were green before this documentation update.
+
+Fresh native22 (LocalOps11 + Temporal11), actual current Temporal-history replay,
+production graph/replay/recovery, and hosted Kubernetes/Temporal/database/artifact
+validation remain **not_checked**. Native22 and graph activation remain withheld
+because full118 release failed. The old native bootstrap carrier's exact baseline
+comparison also requires an explicit reviewed amendment for the new build backend
+and intake limits before activation; the existing comparator must not be bypassed.
+Actual pre-change history replay and failure-recovery evidence remain separate
+requirements from synthetic compatibility tests or current-history replay. The
+local endpoint did not require a provider credential, so real upstream credential
+authentication is **not_checked**; deterministic replacement checks remain separate
+evidence. Local UI checks are **not_applicable** to this model/configuration rerun.
+Rollout remains disabled and the PR remains draft. This result-only documentation
+update changes no behavior/provenance version or durable workflow semantics.
