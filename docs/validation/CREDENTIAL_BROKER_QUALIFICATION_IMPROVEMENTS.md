@@ -343,3 +343,63 @@ authentication is **not_checked**; deterministic replacement checks remain separ
 evidence. Local UI checks are **not_applicable** to this model/configuration rerun.
 Rollout remains disabled and the PR remains draft. This result-only documentation
 update changes no behavior/provenance version or durable workflow semantics.
+
+
+### Environment planner explicit installation candidate
+
+Inspection of the seven exact saved broker responses resolved the latest failure:
+the first `length` response called `repo_digest` with valid `{}` arguments; it
+was not the final plan. The planner then called `read_files` and `load_capability`,
+and submitted four byte-identical 282-character `final_result` objects. Every
+object contained only `base_image`, `system_packages` and `test_command`.
+`EnvironmentSpec` accepted their structure and supplied the default empty
+`install_commands`. Offline replay against the original Java/JUnit5 fixture
+reproduced exactly one violation: missing Maven provider warmup. The reconstructed
+field-targeted feedback matched every saved retry byte for byte. Thus this is a
+semantic repair failure, not malformed final JSON or truncated final output.
+The earlier limited numeric diagnostic did not establish that distinction.
+
+The candidate adds `PlannedEnvironmentOutput`, used only by env-planner, requiring
+an explicit `install_commands` array. Its field description explains build-time
+preparation and the real framework-specific Maven warmup. An explicit `[]` remains
+structurally valid where no preparation is needed; Maven's unchanged semantic
+guard still rejects it. `env` remains optional because its omission was not the
+confirmed defect. No generated commands are inserted and no plan is silently
+repaired. Shared/persisted `EnvironmentSpec`, other agents' output schemas, prompt,
+retry limits, budgets, model settings, source policy and release thresholds stay
+unchanged.
+
+Env-planner advances from 1.0.4 to 1.0.5. New Temporal histories record the independent
+`env-planner-output-v2` marker and use that activity identity. Old histories retain
+`env-planner`, the exact byte-retained `agent-v1.0.4.yaml`, the original output
+schema and matching resolved specification configuration. Host eager resolution
+avoids workflow filesystem I/O. Both generations are registered. The legacy model
+is replay-only, and an unrecorded old workflow frontier fails before reserving a
+new invocation. Existing `maven-warmup-repair-v1` feedback is unchanged. Provider
+single-dispatch, reservation recovery, retry, cancellation, settlement and lease
+cleanup behavior are unchanged; no completed or uncertain request is resent.
+Actual historical Temporal replay remains **not_checked**.
+
+Canonical checks **passed**: lint, compilation, agent validation, generated API and
+instruction/skill drift, development-skill drift and the full deterministic suite
+(2,873 passed, 40 skipped). Focused regressions exercise the observed omission,
+unchanged persisted defaults, explicit no-install decisions, unchanged Maven
+warmup rejection, and a real SDK `FunctionModel` missing-field retry followed by
+a valid prerequisite-preserving plan. Compatibility tests verify both registered
+identities, one marker decision, matching configuration selection and refusal of
+live legacy frontiers. These synthetic tests do not establish live model quality
+or actual history replay.
+
+Historical spec SHA256:
+`a2904a70eea103633b1035e0b6c8f7879e27af2cd51a7ad638daca838b2a90c7`.
+Retained investigation summary SHA256:
+`2ed00cb3617eade21b08c201fe748ff08f20bd2030839e282e6ce0cf72a058f7`.
+All nine packaged executor source hashes and the dependency lock match the
+previously attested image; the host-serialized output schema does not change
+`ExecutorContract`. The configuration digest does change, so the existing
+controller process's cached admission policy cannot qualify this candidate.
+Fresh controller/source/TLS/readiness evidence is required before the original
+ten-case broker evaluation. That candidate evaluation and a fresh full118 release
+remain **not_checked** pending execution. The previous full118 failure remains
+retained and failed. Native22, graph, real historical replay and hosted deployment
+remain **not_checked**; rollout remains disabled and the PR remains draft.

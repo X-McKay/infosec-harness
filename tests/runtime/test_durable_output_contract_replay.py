@@ -12,12 +12,17 @@ from infosec_harness.agents.durable import (
     LEGACY_OUTPUT_AGENTS,
 )
 from infosec_harness.agents.intake_claims import AtomicFinding
-from infosec_harness.agents.outputs import VERDICT_OUTPUTS, ContextOutput, PartialEnvironmentOutput
+from infosec_harness.agents.outputs import (
+    VERDICT_OUTPUTS,
+    ContextOutput,
+    PartialEnvironmentOutput,
+    PlannedEnvironmentOutput,
+)
 from infosec_harness.domain.models import EnvironmentSpec, ExtractedFinding, FindingContext, Verdict
 from infosec_harness.workflows import temporal_ops
 from infosec_harness.workflows.temporal_ops import TemporalOps
 
-_REVISED = {"partial-build", "context", "verdict", "build-repair", "intake"}
+_REVISED = {"partial-build", "context", "verdict", "build-repair", "intake", "env-planner"}
 
 
 def test_both_output_contract_generations_are_registered_with_distinct_identities() -> None:
@@ -33,6 +38,7 @@ def test_both_output_contract_generations_are_registered_with_distinct_identitie
     "name, legacy_type, current_type",
     [
         ("partial-build", EnvironmentSpec, PartialEnvironmentOutput),
+        ("env-planner", EnvironmentSpec, PlannedEnvironmentOutput),
         ("build-repair", EnvironmentSpec, EnvironmentSpec),
         ("intake", ExtractedFinding, AtomicFinding),
         ("context", FindingContext, ContextOutput),

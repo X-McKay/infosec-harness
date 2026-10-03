@@ -34,6 +34,7 @@ with workflow.unsafe.imports_passed_through():
         AGENTS,
         CONFIGS,
         INTAKE_GENERATIONS,
+        LEGACY_ENV_PLANNER_CONFIG,
         LEGACY_OUTPUT_AGENTS,
         MODELS,
     )
@@ -64,6 +65,8 @@ class TemporalOps:
         self._broker_identity: tuple[str, str] | None = None
         self._agents = AGENTS
         self._legacy_output_agents = LEGACY_OUTPUT_AGENTS
+        self._legacy_env_planner_config = LEGACY_ENV_PLANNER_CONFIG
+        self._env_planner_output_v2: bool | None = None
         self._configs = CONFIGS
         self._models = MODELS
         # Precomputed on the host: reading a spec inside a workflow would be I/O. The immutable
@@ -177,7 +180,14 @@ class TemporalOps:
     def intake_prompt(self, task: str, payload: dict[str, Any]) -> list[UserContent]:
         return self._intake_for().render_prompt(task, payload)
 
+    def _env_planner_is_current(self) -> bool:
+        if self._env_planner_output_v2 is None:
+            self._env_planner_output_v2 = workflow.patched("env-planner-output-v2")
+        return self._env_planner_output_v2
+
     def _config_for(self, name: str) -> ResolvedAgentConfig:
+        if name == "env-planner" and not self._env_planner_is_current():
+            return self._legacy_env_planner_config
         return (
             self._intake_for(check_frontier=False).config
             if name == "intake"
@@ -195,11 +205,15 @@ class TemporalOps:
             "build-repair": "build-repair-install-source-v1",
             "intake": "intake-evidence-v1",
         }.get(name, "agent-output-contracts-v2")
-        if name in self._legacy_output_agents and not workflow.patched(patch):
-            # Only the parser and activity identity are retained here; the historical prompt
-            # and resolved model config are not. A fresh request would therefore create new
-            # behavior with false old provenance. Recorded or pending activities replay, but
-            # an old execution which first reaches this agent after deployment fails closed.
+        current = True
+        if name in self._legacy_output_agents:
+            current = (self._env_planner_is_current() if name == "env-planner"
+                       else workflow.patched(patch))
+        if not current:
+            # Env-planner also retains its specification and resolved config generation.
+            # Other legacy agents retain only the parser/activity identity, not the old
+            # prompt/config. Neither case permits fresh behavior under historical provenance:
+            # recorded or pending activities replay, but an unrecorded live frontier fails.
             if not workflow.unsafe.is_replaying():
                 raise RuntimeError(
                     f"legacy {name} execution has no recorded model activity; "

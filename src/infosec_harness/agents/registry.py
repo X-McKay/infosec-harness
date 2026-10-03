@@ -53,6 +53,7 @@ from infosec_harness.agents.outputs import (
     VERDICT_OUTPUTS,
     ContextOutput,
     PartialEnvironmentOutput,
+    PlannedEnvironmentOutput,
     prepare_verdict_tools,
     verdict_contract_instructions,
 )
@@ -582,6 +583,10 @@ def build_agent(
         raise KeyError(f"Unknown agent {name!r}")
     if name == "intake" and legacy_output_contract and spec_override is None:
         spec_override = retained_intake_spec()
+    if name == "env-planner" and legacy_output_contract and spec_override is None:
+        spec_override = AgentSpec.from_file(
+            package_root() / "agents" / "env-planner" / "agent-v1.0.4.yaml"
+        )
     spec = load_spec(name, overlay, spec_override=spec_override)
     metadata = spec.metadata or {}
     intake_output = metadata.get("intake_output") or {}
@@ -633,7 +638,9 @@ def build_agent(
         )
     output_type = AtomicFinding if use_atomic_output else AGENT_BINDINGS[name]
     if not legacy_output_contract:
-        if name == "partial-build":
+        if name == "env-planner":
+            output_type = PlannedEnvironmentOutput
+        elif name == "partial-build":
             output_type = PartialEnvironmentOutput
         elif name == "context":
             output_type = ContextOutput
@@ -675,7 +682,7 @@ def build_agent(
 @lru_cache
 def durable_agents() -> dict[str, Agent[AgentDeps, Any]]:
     """Current agents, with distinct Temporal identities for revised output contracts."""
-    revised = {"partial-build", "context", "verdict", "build-repair", "intake"}
+    revised = {"partial-build", "context", "verdict", "build-repair", "intake", "env-planner"}
     return {
         name: build_agent(
             name,
@@ -701,9 +708,9 @@ def legacy_output_agents() -> dict[str, Agent[AgentDeps, Any]]:
         name: build_agent(
             name, legacy_output_contract=True,
             spec_override=retained_intake_spec() if name == "intake" else None,
-            replay_only_model=(name == "intake"),
+            replay_only_model=(name in {"intake", "env-planner"}),
         )
-        for name in ("partial-build", "context", "verdict", "build-repair", "intake")
+        for name in ("partial-build", "context", "verdict", "build-repair", "intake", "env-planner")
     }
 
 

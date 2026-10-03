@@ -84,7 +84,7 @@ members:
     authorization_scopes_max: []
     data_classification_max: confidential
 - agent: env-planner
-  version: 1.0.4
+  version: 1.0.5
   role: environment-planner
   required: true
   restrictions:
