@@ -8,6 +8,7 @@ daemon and enforced consistently by both the Docker and Kubernetes runners.
 from __future__ import annotations
 
 import re
+import shlex
 from pathlib import PurePosixPath
 
 from infosec_harness.domain.models import EnvironmentSpec, StackFingerprint
@@ -66,6 +67,47 @@ _ENV_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _PACKAGE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9+._:@/~=\-]*$")
 
 
+_JVM_RUNNERS = frozenset({"mvn", "mvnw", "gradle", "gradlew"})
+_TEST_CLASS = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+
+
+def jvm_class_selector(command: str) -> str | None:
+    """Recognize the existing single-class JVM form, never an arbitrary shell command."""
+    try:
+        tokens = shlex.split(command)
+    except ValueError as error:
+        first = command.split(maxsplit=1)[0] if command.strip() else ""
+        if first.rsplit("/", 1)[-1].strip("\"'") in _JVM_RUNNERS:
+            raise InvalidEnvironmentSpec("JVM test command has invalid quoting") from error
+        return None
+    if not tokens or tokens[0].rsplit("/", 1)[-1] not in _JVM_RUNNERS:
+        return None
+    if (len(command.encode()) > 8_192 or "{test_file}" in command
+            or any(character in command for character in ";&|<>`$()")):
+        raise InvalidEnvironmentSpec("JVM test command must select one literal test class")
+    selectors = [i for i, token in enumerate(tokens)
+                 if token == "-Dtest" or token.startswith("-Dtest=")
+                 or token == "--tests" or token.startswith("--tests=")]
+    if len(selectors) != 1:
+        raise InvalidEnvironmentSpec("JVM test command must contain exactly one class selector")
+    index = selectors[0]
+    runner = tokens[0].rsplit("/", 1)[-1]
+    if runner in {"mvn", "mvnw"} and tokens[index].startswith("-Dtest="):
+        selected = tokens[index].removeprefix("-Dtest=")
+    elif (runner in {"gradle", "gradlew"} and tokens[index] == "--tests"
+          and index + 1 < len(tokens)):
+        selected = tokens[index + 1].removeprefix("*")
+    else:
+        raise InvalidEnvironmentSpec("JVM test command requires its runner's class selector")
+    if not _TEST_CLASS.fullmatch(selected):
+        raise InvalidEnvironmentSpec("JVM selector must name one simple test class")
+    from infosec_harness.sandbox.canary import selector_class_name
+
+    if selector_class_name(command, default="") != selected:
+        raise InvalidEnvironmentSpec("JVM selector must agree with the canary class name")
+    return selected
+
+
 def validate_environment_spec(spec: EnvironmentSpec) -> EnvironmentSpec:
     """Validate model-authored fields before rendering a security-sensitive Dockerfile."""
     validate_base_image(spec.base_image)
@@ -76,7 +118,7 @@ def validate_environment_spec(spec: EnvironmentSpec) -> EnvironmentSpec:
     if len(spec.install_commands) > 64 or any(len(command.encode()) > 8_192
                                                for command in spec.install_commands):
         raise InvalidEnvironmentSpec("install command count or size exceeds the build policy")
-    if spec.test_command.count("{test_file}") != 1:
+    if jvm_class_selector(spec.test_command) is None and spec.test_command.count("{test_file}") != 1:
         raise InvalidEnvironmentSpec("test_command must contain exactly one {test_file} placeholder")
     for key in spec.env:
         if not _ENV_KEY.fullmatch(key):

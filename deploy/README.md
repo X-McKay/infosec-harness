@@ -5,7 +5,7 @@ with checkout-specific state, a managed VM and verified sandbox fixtures. Source
 backend take effect with `./dev reload`; web source uses Vite hot reload.
 
 This directory contains database bootstrap SQL, collector configuration, the build-egress proxy
-and [Kubernetes sandbox specifications](k8s/README.md). `docker-compose.yml` and
+and [Kubernetes control-plane templates and sandbox specifications](k8s/README.md). `docker-compose.yml` and
 `docker-compose.dev.yml` remain at the root as discoverable entry points.
 
 The base compose configuration is an advanced manual path. It does not automatically reuse the
@@ -23,3 +23,10 @@ bootstrap creates both databases for a fresh volume; Temporal auto-setup creates
 visibility database for existing volumes. Managed smoke requires the completed demo to be
 queryable through Temporal visibility, in addition to persisted API results. No volume reset
 is required for this correction.
+
+
+Service connections can use local or hosted infrastructure without changing workflow code.
+See [service environments](../docs/development/SERVICE_ENVIRONMENTS.md) for Temporal TLS/auth,
+PostgreSQL TLS, AWS/MinIO artifact storage, hosted telemetry and environment-file examples.
+The Kubernetes control-plane template leaves the Docker-backed worker disabled until its
+separate executor and shared workspace are verified. No Kubernetes probe submission is added.

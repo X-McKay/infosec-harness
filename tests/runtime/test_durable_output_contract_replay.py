@@ -12,27 +12,33 @@ from infosec_harness.agents.durable import (
     LEGACY_OUTPUT_AGENTS,
 )
 from infosec_harness.agents.intake_claims import AtomicFinding
-from infosec_harness.agents.outputs import VERDICT_OUTPUTS, ContextOutput, PartialEnvironmentOutput
+from infosec_harness.agents.outputs import (
+    VERDICT_OUTPUTS,
+    ContextOutput,
+    PartialEnvironmentOutput,
+    PlannedEnvironmentOutput,
+)
 from infosec_harness.domain.models import EnvironmentSpec, ExtractedFinding, FindingContext, Verdict
 from infosec_harness.workflows import temporal_ops
 from infosec_harness.workflows.temporal_ops import TemporalOps
 
-_REVISED = {"partial-build", "context", "verdict", "build-repair", "intake"}
+_REVISED = {"partial-build", "context", "verdict", "build-repair", "intake", "env-planner"}
 
 
 def test_both_output_contract_generations_are_registered_with_distinct_identities() -> None:
     assert set(LEGACY_OUTPUT_AGENTS) == _REVISED
-    assert len(AGENT_LIST) == len(AGENTS) + len(_REVISED) + 1
+    assert len(AGENT_LIST) == len(AGENTS) + len(_REVISED) + 2
     assert len({agent.name for agent in AGENT_LIST}) == len(AGENT_LIST)
     for name in _REVISED:
         assert LEGACY_OUTPUT_AGENTS[name].name == name
-        assert AGENTS[name].name == ("intake-output-v3" if name == "intake" else f"{name}-output-v2")
+        assert AGENTS[name].name == ("intake-output-v4" if name == "intake" else f"{name}-output-v2")
 
 
 @pytest.mark.parametrize(
     "name, legacy_type, current_type",
     [
         ("partial-build", EnvironmentSpec, PartialEnvironmentOutput),
+        ("env-planner", EnvironmentSpec, PlannedEnvironmentOutput),
         ("build-repair", EnvironmentSpec, EnvironmentSpec),
         ("intake", ExtractedFinding, AtomicFinding),
         ("context", FindingContext, ContextOutput),

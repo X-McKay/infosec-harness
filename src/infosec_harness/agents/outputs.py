@@ -26,6 +26,18 @@ from infosec_harness.domain.models import (
 )
 
 
+class PlannedEnvironmentOutput(EnvironmentSpec):
+    """Require an explicit installation decision without changing persisted plans."""
+
+    install_commands: list[str] = Field(
+        description="Required build-time dependency installation and preparation commands. "
+        "Use [] only when no installation or preparation is needed. Maven must create, "
+        "run and remove a temporary test in the repository's declared framework to warm "
+        "the offline Surefire provider; an empty test directory does not remove this need. "
+        "Preserve prerequisites and the build skill's cache paths.",
+    )
+
+
 class PartialEnvironmentOutput(EnvironmentSpec):
     scope: Literal["partial"] = Field(description="This agent always plans a partial build.")
     module_path: str = Field(

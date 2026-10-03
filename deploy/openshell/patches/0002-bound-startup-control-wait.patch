@@ -1,0 +1,398 @@
+--- a/crates/openshell-sandbox-backend/src/runtime.rs
++++ b/crates/openshell-sandbox-backend/src/runtime.rs
+@@ -44,6 +44,28 @@
+ use crate::mediation::{self, DnsQueryWire, MediationFrame, MediationFrameKind};
+ 
+ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
++// Only initial confirmation/workload launch receives extra startup headroom.
++// This does not alter transport recovery, authorization, or enforcement checks.
++const STARTUP_CONTROL_TIMEOUT: Duration = Duration::from_secs(60);
++
++fn idempotent_control_timeout(request: &Request) -> Duration {
++    match request {
++        Request::Attach { .. } | Request::DiscoverPolicy => ATTACH_REQUEST_TIMEOUT,
++        Request::Confirm | Request::StartAgent { .. } => STARTUP_CONTROL_TIMEOUT,
++        _ => REQUEST_TIMEOUT,
++    }
++}
++
++fn idempotent_control_kind(request: &Request) -> &'static str {
++    match request {
++        Request::Attach { .. } => "attach",
++        Request::DiscoverPolicy => "discover_policy",
++        Request::Confirm => "confirm",
++        Request::StartAgent { .. } => "start_agent",
++        Request::UpdateProviderEnvironment { .. } => "update_provider_environment",
++        _ => "other",
++    }
++}
+ /// Initial attachment may include runtime image pulls and trusted bootstrap
+ /// work before the boundary begins listening. Keep this aligned with the
+ /// driver bootstrap grace period rather than the normal operation timeout.
+@@ -1070,6 +1092,8 @@
+     credential_monitor_started: AtomicBool,
+     network_streams: Arc<tokio::sync::Semaphore>,
+     network_streams_exhausted: AtomicBool,
++    #[cfg(test)]
++    control_timeout_override: Option<Duration>,
+ }
+ 
+ #[derive(Clone)]
+@@ -1233,6 +1257,8 @@
+             credential_monitor_started: AtomicBool::new(false),
+             network_streams: Arc::new(tokio::sync::Semaphore::new(MAX_NETWORK_STREAMS)),
+             network_streams_exhausted: AtomicBool::new(false),
++            #[cfg(test)]
++            control_timeout_override: None,
+         }
+     }
+ 
+@@ -1261,11 +1287,10 @@
+     async fn call_idempotent(&self, request: Request) -> Result<Response, BackendError> {
+         let remember_attach = matches!(request, Request::Attach { .. });
+         let remember_confirm = matches!(request, Request::Confirm);
+-        let timeout = if remember_attach || matches!(request, Request::DiscoverPolicy) {
+-            ATTACH_REQUEST_TIMEOUT
+-        } else {
+-            REQUEST_TIMEOUT
+-        };
++        let kind = idempotent_control_kind(&request);
++        let timeout = idempotent_control_timeout(&request);
++        #[cfg(test)]
++        let timeout = self.control_timeout_override.unwrap_or(timeout);
+         let envelope = Self::prepare_request(request)?;
+         tokio::time::timeout(timeout, async {
+             loop {
+@@ -1300,9 +1325,9 @@
+         })
+         .await
+         .map_err(|_| {
+-            BackendError::Unavailable(
+-                "boundary idempotent control request timed out while waiting for remote boundary boot".to_string(),
+-            )
++            BackendError::Unavailable(format!(
++                "boundary idempotent control request timed out: control_kind={kind}"
++            ))
+         })?
+     }
+ 
+@@ -2189,6 +2214,188 @@
+         .unwrap()
+     }
+ 
++    fn startup_control_request() -> Request {
++        let context = sandbox();
++        Request::StartAgent {
++            sandbox_id: context.sandbox_id,
++            spec: AgentSpecWire::from(context.agent),
++            policy: Box::new(SandboxPolicyWire::from(context.policy)),
++            ca_cert: None,
++            ca_bundle: None,
++            provider_env_revision: 1,
++            provider_env: Default::default(),
++        }
++    }
++
++    async fn startup_control_client(
++        probe: StartupControlProbe,
++        timeout: Duration,
++    ) -> (BoundaryClient, tokio::task::JoinHandle<()>) {
++        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let address = listener.local_addr().unwrap();
++        let service = TestGrpcBoundary {
++            wait_for_half_close: false,
++            startup_probe: Some(probe),
++            expected_token: "a".repeat(32),
++            requests: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
++            mediation_failures: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
++            mediation_ready: false,
++            provider_environment_generation: 0,
++            confirmation: test_confirmation(),
++        };
++        let certificate = test_certificate();
++        let server_config = certificate.server_config.clone();
++        let server = tokio::spawn(async move {
++            loop {
++                let (stream, _) = listener.accept().await.unwrap();
++                let stream = tokio_rustls::TlsAcceptor::from(server_config.clone())
++                    .accept(stream)
++                    .await
++                    .unwrap();
++                let service = service.clone();
++                tokio::spawn(async move {
++                    tonic::transport::Server::builder()
++                        .add_service(IsolationBoundaryServer::new(service))
++                        .serve_with_incoming(tokio_stream::iter([Ok::<_, std::io::Error>(
++                            TestTlsIo(Box::new(stream)),
++                        )]))
++                        .await
++                        .unwrap();
++                });
++            }
++        });
++        let mut client = BoundaryClient::new(
++            tls_runtime_descriptor(address, certificate.client_tls),
++            test_bearer(&"a".repeat(32)),
++        );
++        client.control_timeout_override = Some(timeout);
++        (client, server)
++    }
++
++    #[test]
++    fn startup_control_real_timeout_selection_and_closed_kind() {
++        assert_eq!(
++            idempotent_control_timeout(&Request::Confirm),
++            Duration::from_secs(60)
++        );
++        assert_eq!(
++            idempotent_control_timeout(&startup_control_request()),
++            Duration::from_secs(60)
++        );
++        assert!(Duration::from_secs(31) < idempotent_control_timeout(&Request::Confirm));
++        assert_eq!(
++            idempotent_control_timeout(&Request::DiscoverPolicy),
++            Duration::from_secs(300)
++        );
++        assert_eq!(
++            idempotent_control_timeout(&Request::Attach {
++                supervisor_instance_id: crate::boundary_protocol::SupervisorInstanceId::new(),
++                policy: Box::new(SandboxPolicyWire::from(sandbox().policy)),
++                resource_claims: Default::default(),
++            }),
++            Duration::from_secs(300)
++        );
++        let ordinary = Request::Signal {
++            process_id: "secret-id".into(),
++            signal: SignalWire::Term,
++        };
++        assert_eq!(
++            idempotent_control_timeout(&ordinary),
++            Duration::from_secs(30)
++        );
++        assert_eq!(idempotent_control_kind(&ordinary), "other");
++    }
++
++    // Inject a 1:100 clock scale only in this test client. The production
++    // timeout table is checked above; these exercise the actual exchange/retry
++    // loop without wall-clock 31/60-second sleeps or Cargo feature changes.
++    #[tokio::test]
++    async fn startup_control_delayed_31_succeeds_for_confirm_and_start() {
++        for request in [Request::Confirm, startup_control_request()] {
++            let probe = StartupControlProbe {
++                delay: Duration::from_millis(310),
++                ..Default::default()
++            };
++            let seen = probe.envelopes.clone();
++            let (client, server) = startup_control_client(probe, Duration::from_millis(600)).await;
++            let response = client.call_idempotent(request).await.unwrap();
++            assert!(matches!(
++                response,
++                Response::Confirmed { .. } | Response::Started { .. }
++            ));
++            assert_eq!(seen.lock().unwrap().len(), 1);
++            server.abort();
++        }
++    }
++
++    #[tokio::test]
++    async fn startup_control_past_60_fails_with_fixed_kind_only() {
++        let probe = StartupControlProbe {
++            delay: Duration::from_millis(900),
++            ..Default::default()
++        };
++        let (client, server) = startup_control_client(probe, Duration::from_millis(600)).await;
++        let error = client
++            .call_idempotent(startup_control_request())
++            .await
++            .unwrap_err();
++        assert!(matches!(error, BackendError::Unavailable(ref message)
++            if message == "boundary idempotent control request timed out: control_kind=start_agent"));
++        server.abort();
++    }
++
++    #[tokio::test]
++    async fn startup_control_ordinary_30_stays_bounded_and_denial_terminal() {
++        let probe = StartupControlProbe {
++            delay: Duration::from_millis(310),
++            ..Default::default()
++        };
++        let (client, server) = startup_control_client(probe, Duration::from_millis(300)).await;
++        assert!(matches!(client.call_idempotent(Request::Signal {
++            process_id: "secret-id".into(), signal: SignalWire::Term,
++        }).await, Err(BackendError::Unavailable(ref message))
++            if message == "boundary idempotent control request timed out: control_kind=other"));
++        server.abort();
++        let probe = StartupControlProbe {
++            deny: true,
++            ..Default::default()
++        };
++        let seen = probe.envelopes.clone();
++        let (client, server) = startup_control_client(probe, Duration::from_millis(600)).await;
++        assert!(matches!(
++            client.call_idempotent(startup_control_request()).await,
++            Err(BackendError::Denied(_))
++        ));
++        assert_eq!(seen.lock().unwrap().len(), 1);
++        server.abort();
++    }
++
++    #[tokio::test]
++    async fn startup_control_lost_reply_reuses_exact_start_envelope() {
++        let probe = StartupControlProbe {
++            lose_first_reply: true,
++            ..Default::default()
++        };
++        let seen = probe.envelopes.clone();
++        let (client, server) = startup_control_client(probe, Duration::from_secs(2)).await;
++        assert!(matches!(
++            client
++                .call_idempotent(startup_control_request())
++                .await
++                .unwrap(),
++            Response::Started { .. }
++        ));
++        let seen = seen.lock().unwrap();
++        assert_eq!(seen.len(), 2);
++        assert_eq!(seen[0], seen[1]);
++        // The boundary replay ledger receives one unique start identity.
++        assert_eq!(
++            seen.iter().collect::<std::collections::HashSet<_>>().len(),
++            1
++        );
++        server.abort();
++    }
++
+     #[tokio::test]
+     async fn boundary_tcp_connections_enable_keepalive() {
+         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+@@ -2202,9 +2409,18 @@
+         assert!(socket2::SockRef::from(&client).keepalive().unwrap());
+     }
+ 
++    #[derive(Clone, Default)]
++    struct StartupControlProbe {
++        delay: Duration,
++        deny: bool,
++        lose_first_reply: bool,
++        envelopes: Arc<std::sync::Mutex<Vec<(String, String)>>>,
++    }
++
+     #[derive(Clone)]
+     struct TestGrpcBoundary {
+         wait_for_half_close: bool,
++        startup_probe: Option<StartupControlProbe>,
+         expected_token: String,
+         requests: Arc<std::sync::atomic::AtomicUsize>,
+         mediation_failures: Arc<std::sync::atomic::AtomicUsize>,
+@@ -2241,6 +2457,7 @@
+             let mediation_ready = self.mediation_ready;
+             let provider_environment_generation = self.provider_environment_generation;
+             let confirmation = self.confirmation.clone();
++            let startup_probe = self.startup_probe.clone();
+             let (outbound, outbound_rx) = tokio::sync::mpsc::channel(1);
+             tokio::spawn(async move {
+                 let mut frame = Vec::new();
+@@ -2270,9 +2487,37 @@
+                             return;
+                         }
+                     };
++                    if let Some(probe) = startup_probe.as_ref() {
++                        let first = {
++                            let mut seen = probe.envelopes.lock().unwrap();
++                            let first = seen.is_empty();
++                            seen.push((
++                                envelope.request_id.clone(),
++                                envelope.payload_digest.clone(),
++                            ));
++                            first
++                        };
++                        tokio::time::sleep(probe.delay).await;
++                        if first && probe.lose_first_reply {
++                            let _ = outbound
++                                .send(Err(tonic::Status::unavailable("test reply lost")))
++                                .await;
++                            return;
++                        }
++                    }
++                    let denied = startup_probe.as_ref().is_some_and(|probe| probe.deny);
+                     match encode_frame(&ResponseEnvelope {
+                         request_id: envelope.request_id,
+                         response: match envelope.request {
++                            _ if denied => Response::Error {
++                                kind: crate::boundary_protocol::BoundaryErrorKind::Denied,
++                                message: "test typed denial".to_string(),
++                            },
++                            Request::StartAgent { .. } => Response::Started {
++                                process_id: "test-generation:main:0".to_string(),
++                                provider_env_revision: 1,
++                                provider_env_generation: 0,
++                            },
+                             Request::DiscoverPolicy => Response::ImagePolicy {
+                                 yaml: None,
+                                 invalid: false,
+@@ -2384,6 +2629,7 @@
+         let requests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+         let service = TestGrpcBoundary {
+             wait_for_half_close: false,
++            startup_probe: None,
+             expected_token: "a".repeat(32),
+             requests: requests.clone(),
+             mediation_failures: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+@@ -2450,6 +2696,7 @@
+                 server_accepted.fetch_add(1, Ordering::AcqRel);
+                 let service = TestGrpcBoundary {
+                     wait_for_half_close: false,
++                    startup_probe: None,
+                     expected_token: "a".repeat(32),
+                     requests: server_requests.clone(),
+                     mediation_failures: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+@@ -2561,6 +2808,7 @@
+                     .unwrap();
+                 let service = TestGrpcBoundary {
+                     wait_for_half_close: false,
++                    startup_probe: None,
+                     expected_token: "a".repeat(32),
+                     requests: server_requests.clone(),
+                     mediation_failures: server_failures.clone(),
+@@ -2616,6 +2864,7 @@
+         let requests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+         let service = TestGrpcBoundary {
+             wait_for_half_close: true,
++            startup_probe: None,
+             expected_token: "a".repeat(32),
+             requests,
+             mediation_failures: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+@@ -2805,6 +3054,7 @@
+     ) {
+         let service = TestGrpcBoundary {
+             wait_for_half_close: false,
++            startup_probe: None,
+             expected_token,
+             requests: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+             mediation_failures: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+@@ -3270,6 +3520,7 @@
+         let handled = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+         let service = TestGrpcBoundary {
+             wait_for_half_close: false,
++            startup_probe: None,
+             expected_token: "a".repeat(32),
+             requests: handled.clone(),
+             mediation_failures: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+@@ -3342,6 +3593,7 @@
+         let requests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+         let service = TestGrpcBoundary {
+             wait_for_half_close: false,
++            startup_probe: None,
+             expected_token: "a".repeat(32),
+             requests: requests.clone(),
+             mediation_failures: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+--- a/crates/openshell-sandbox-backend/src/runtime/tests/credential_renewal.rs
++++ b/crates/openshell-sandbox-backend/src/runtime/tests/credential_renewal.rs
+@@ -61,6 +61,7 @@
+     let service = RenewingGrpcBoundary {
+         inner: TestGrpcBoundary {
+             wait_for_half_close: false,
++            startup_probe: None,
+             expected_token: "a".repeat(32),
+             requests: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+             mediation_failures: Arc::new(std::sync::atomic::AtomicUsize::new(0)),

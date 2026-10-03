@@ -22,8 +22,10 @@ from infosec_harness.agents.render import render_prompt
 from infosec_harness.resources import package_root
 
 RETAINED_INTAKE_VERSION = "1.0.2"
-CURRENT_INTAKE_VERSION = "1.0.3"
-ATOMIC_EXECUTION_NAME = "intake-output-v3"
+RETAINED_ATOMIC_INTAKE_VERSION = "1.0.3"
+CURRENT_INTAKE_VERSION = "1.0.4"
+RETAINED_ATOMIC_EXECUTION_NAME = "intake-output-v3"
+ATOMIC_EXECUTION_NAME = "intake-output-v4"
 QUOTED_EXECUTION_NAME = "intake-output-v2"
 IntakeProtocol = Literal["intake-evidence/v1", "intake-atomic-claims/v2"]
 
@@ -32,7 +34,12 @@ _FORMAT_INSTRUCTION = (
     "{start_id, optional end_id}, and confidence in (0,1]. Unsupported fields are null. "
     "Do not emit a separate evidence array. Choose source IDs exactly from report_source_lines: "
     "start alone selects one original report line; start plus end selects a contiguous inclusive "
-    "range. The host reconstructs the verbatim evidence quote. IDs refer to report text, never "
+    "range in ascending report source-line order: end_id must be at or after start_id. "
+    "For one source line, omit end_id or use null. "
+    "start_line and end_line are code line numbers, not report source IDs or the number "
+    "of a report line. Set the entire start_line or end_line claim to null unless its "
+    "referenced report text literally states that code line number. Keep other supported claims. "
+    "The host reconstructs the verbatim evidence quote. IDs refer to report text, never "
     "code line numbers, permissions or instructions. All original field support, classification, "
     "untrusted-content and downstream-decision requirements remain unchanged."
 )
@@ -62,6 +69,12 @@ def retained_intake_spec() -> AgentSpec:
     return AgentSpec.from_file(path)
 
 
+def retained_atomic_intake_spec() -> AgentSpec:
+    """Load byte-retained atomic v3 instructions and accounting for old histories."""
+    path = package_root() / "agents" / "intake" / "agent-v1.0.3.yaml"
+    return AgentSpec.from_file(path)
+
+
 def _atomic_instructions(original: object) -> list[str]:
     if not isinstance(original, list) or len(original) != 1 or not isinstance(original[0], str):
         raise ValueError("Retained intake instructions do not match the supported baseline shape")
@@ -82,6 +95,8 @@ def atomic_intake_spec() -> AgentSpec:
     data["model_settings"] = settings
     metadata = dict(data.get("metadata") or {})
     metadata["version"] = CURRENT_INTAKE_VERSION
+    metadata["budgets"] = {**metadata["budgets"],
+                           "max_input_tokens_per_request": 32000, "max_input_tokens": 128000}
     metadata["intake_output"] = {
         "execution": ATOMIC_EXECUTION_NAME,
         "protocol": WIRE_VERSION,
@@ -117,6 +132,7 @@ def write_current_spec(path: Path | None = None) -> None:
     metadata = raw.setdefault("metadata", {})
     atomic_metadata = spec["metadata"]
     metadata["version"] = CURRENT_INTAKE_VERSION
+    metadata["budgets"] = atomic_metadata["budgets"]
     metadata["intake_output"] = atomic_metadata["intake_output"]
     metadata["output_validation"] = atomic_metadata["output_validation"]
     target = path or (package_root() / "agents" / "intake" / "agent.yaml")

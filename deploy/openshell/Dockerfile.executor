@@ -1,0 +1,14 @@
+# Build through the existing qualified runsc build-egress builder. Context is generated
+# from uv.lock; worker/controller/database sources and credentials are excluded.
+FROM python@sha256:f77ac9e44ae96ef2c90b8053ea08c31f8be030f824196b0ae4db6d462c84e51f
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+COPY requirements.txt /tmp/requirements.txt
+RUN python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r /tmp/requirements.txt \
+    && rm /tmp/requirements.txt
+COPY infosec_harness /opt/executor/infosec_harness
+ENV PYTHONPATH=/opt/executor PYTHONDONTWRITEBYTECODE=1
+USER 65532:65532
+WORKDIR /tmp
+ENTRYPOINT []
+CMD ["python", "-m", "infosec_harness.inference.executor", "--config", "/tmp/ih-lease.json"]

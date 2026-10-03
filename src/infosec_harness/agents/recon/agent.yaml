@@ -26,7 +26,11 @@ instructions:
     Report: a short summary, the primary language, frameworks, top-level components, entry
     points where untrusted input enters (HTTP handlers, CLI args, message consumers, file
     parsers), the test framework actually used by existing tests, and where tests live and how
-    they are named. The lang-* skills describe conventions per ecosystem.
+    they are named. Use one canonical label for primary_language and test_framework,
+    without versions, parentheses, or explanatory prose (e.g. java and junit5, perl and
+    test::more). Put versions and qualifications in summary. Use unknown when the evidence
+    does not establish a label; other ecosystem labels are allowed. The lang-* skills
+    describe conventions per ecosystem.
 model_settings:
   max_tokens: 6000
   thinking: low
@@ -39,7 +43,7 @@ tool_timeout: 30
 instrument: true
 metadata:
   contract_version: 1
-  version: 1.0.0
+  version: 1.0.1
   owner: appsec
   execution_class: durable
   temporal_enabled: true

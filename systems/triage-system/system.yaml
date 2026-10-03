@@ -49,7 +49,7 @@ topology:
   conflict_policy: policies/termination.yaml#conflict
 members:
 - agent: intake
-  version: 1.0.3
+  version: 1.0.4
   role: normalizer
   required: false
   restrictions:
@@ -68,7 +68,7 @@ members:
     authorization_scopes_max: []
     data_classification_max: confidential
 - agent: recon
-  version: 1.0.0
+  version: 1.0.1
   role: profiler
   required: true
   restrictions:
@@ -84,7 +84,7 @@ members:
     authorization_scopes_max: []
     data_classification_max: confidential
 - agent: env-planner
-  version: 1.0.1
+  version: 1.0.5
   role: environment-planner
   required: true
   restrictions:
@@ -105,7 +105,7 @@ members:
     authorization_scopes_max: []
     data_classification_max: confidential
 - agent: build-repair
-  version: 1.0.5
+  version: 1.0.8
   role: environment-repairer
   required: false
   restrictions:
@@ -123,7 +123,7 @@ members:
     authorization_scopes_max: []
     data_classification_max: confidential
 - agent: partial-build
-  version: 1.1.3
+  version: 1.1.7
   role: environment-repairer
   required: false
   restrictions:
@@ -374,7 +374,7 @@ limits:
   max_rounds: 1
   max_model_requests: 302
   max_tool_calls: 1180
-  max_input_tokens: 51320000
+  max_input_tokens: 51368000
   max_output_tokens: 4916000
   max_cost_usd: 23.75
   deadline_seconds: 3600

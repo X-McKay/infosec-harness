@@ -79,7 +79,8 @@ async def _mutate(root_id: str, change: Callable[[dict], dict]) -> dict | None:
 
 async def reserve(root_id: str, operation_id: str, requested: dict[str, float], agent: str,
                   configuration_digest: str | None = None,
-                  operation_kind: Literal["agent", "execution"] = "agent") -> dict | None:
+                  operation_kind: Literal["agent", "execution"] = "agent",
+                  run_id: str | None = None, invocation_id: str | None = None) -> dict | None:
     _validate_usage(requested)
     if operation_kind not in {"agent", "execution"}:
         raise ValueError("Unknown budget operation kind")
@@ -89,6 +90,8 @@ async def reserve(root_id: str, operation_id: str, requested: dict[str, float], 
 
     def change(state: dict) -> dict:
         _remaining_time(state.get("deadline_at"))
+        if run_id is not None and run_id in state.get("broker_revoked_runs", []):
+            raise ValueError("Broker run admission has been revoked")
         accepted_configs = state.get("agent_config_digests")
         if accepted_configs is not None and operation_kind == "agent":
             accepted_config = accepted_configs.get(agent)
@@ -102,7 +105,9 @@ async def reserve(root_id: str, operation_id: str, requested: dict[str, float], 
         if operation_id in operations:
             operation = operations[operation_id]
             if (operation["agent"] != agent or operation["reserved"] != demand
-                    or operation.get("kind", "agent") != operation_kind):
+                    or operation.get("kind", "agent") != operation_kind
+                    or (run_id is not None and operation.get("run_id") != run_id)
+                    or (invocation_id is not None and operation.get("invocation_id") != invocation_id)):
                 raise ValueError("Operation already reserved with different budget or agent")
             return operation
         held = {key: sum(o["reserved"].get(key, 0) for o in operations.values()
@@ -111,6 +116,10 @@ async def reserve(root_id: str, operation_id: str, requested: dict[str, float], 
         if any(demand[key] > remaining[key] for key in fields):
             raise UsageLimitExceeded(f"Root budget cannot reserve invocation for {agent}; remaining={remaining}")
         operation = {"agent": agent, "kind": operation_kind, "status": "reserved", "reserved": demand}
+        if run_id is not None or invocation_id is not None:
+            if not run_id or not invocation_id:
+                raise ValueError("Broker invocation ownership requires both run and invocation")
+            operation.update(run_id=run_id, invocation_id=invocation_id)
         operations[operation_id] = operation
         return operation
     return await _mutate(root_id, change)
@@ -126,7 +135,13 @@ async def settle(root_id: str, operation_id: str, observed: dict[str, float] | N
         if operation["status"] == "settled":
             return operation
         operation["record"] = record
-        if observed is None or any(key not in observed for key in state["limits"]):
+        if operation.get("broker_owned"):
+            # Only the controller can reconcile broker dispatches, including lost results.
+            # Worker-observed usage cannot release possible spend from another attempt.
+            operation["status"] = "uncertain"
+            if observed is not None:
+                operation["worker_observed"] = observed
+        elif observed is None or any(key not in observed for key in state["limits"]):
             operation["status"] = "uncertain"
         else:
             for key in state["limits"]:

@@ -20,8 +20,8 @@ interactions:
     budget:
       max_requests: 4
       max_tool_calls: 16
-      max_input_tokens_per_request: 20000
-      max_input_tokens: 80000
+      max_input_tokens_per_request: 32000
+      max_input_tokens: 128000
       max_output_tokens: 64000
       max_cost_usd: 0.25
     retry:

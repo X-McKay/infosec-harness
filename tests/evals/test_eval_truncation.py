@@ -129,9 +129,24 @@ async def test_transport_failure_keeps_the_scored_cases_and_fails_the_run(monkey
 
 
 async def test_agent_deadline_is_a_failed_budget_gate_and_remaining_cases_run(monkeypatch):
+    from types import SimpleNamespace
+
     from infosec_harness.agents import registry
+    from infosec_harness.evals import invocation
 
     real_build = registry.build_agent
+    deadlines = []
+    cancelled_invocations = []
+    completed_invocations = []
+
+    def capture_deadline(seconds):
+        deadline = asyncio.timeout(seconds)
+        deadlines.append(deadline)
+        return deadline
+
+    # Patch only this module's asyncio reference, retaining the production
+    # run_with_timeout implementation and its expired-vs-inner-timeout check.
+    monkeypatch.setattr(invocation, "asyncio", SimpleNamespace(timeout=capture_deadline))
 
     class SlowFirstInvocation:
         def __init__(self, inner):
@@ -141,10 +156,19 @@ async def test_agent_deadline_is_a_failed_budget_gate_and_remaining_cases_run(mo
         async def run(self, *args, **kwargs):
             self.calls += 1
             if self.calls == 1:
-                await asyncio.sleep(10)
-            return await self.inner.run(*args, **kwargs)
+                # Expire the actual evaluator deadline after the first invocation
+                # enters it. Later cases keep their normal configured budget,
+                # independent of CI scheduling and stub execution latency.
+                deadlines[-1].reschedule(asyncio.get_running_loop().time())
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    cancelled_invocations.append(self.calls)
+                    raise
+            result = await self.inner.run(*args, **kwargs)
+            completed_invocations.append(self.calls)
+            return result
 
-    monkeypatch.setattr(get_settings(), "agent_run_timeout_s", 0.1)
     monkeypatch.setattr(registry, "build_agent", lambda *a, **kw: SlowFirstInvocation(
         real_build(*a, **kw)
     ))
@@ -158,6 +182,10 @@ async def test_agent_deadline_is_a_failed_budget_gate_and_remaining_cases_run(mo
     assert metrics["attempts"][0]["error_type"] == "AgentRunTimeout"
     assert metrics["attempts"][0]["outcome"] == "budget_exhausted"
     assert metrics["attempts"][1]["outcome"] == "answered"
+    assert cancelled_invocations == [1]
+    assert completed_invocations == list(range(2, len(_dataset_cases()) + 1))
+    assert len(deadlines) == len(_dataset_cases())
+    assert [deadline.expired() for deadline in deadlines] == [True] + [False] * (len(deadlines) - 1)
 
 
 async def test_inner_timeout_is_not_mislabeled_as_agent_budget_exhaustion(monkeypatch):
@@ -327,3 +355,73 @@ async def test_truncated_default_export_never_creates_a_release_report(tmp_path,
     with pytest.raises(TruncatedExperiment) as caught:
         await run_experiment(AGENT)
     assert not (tmp_path / "evals" / f"{caught.value.experiment_id}.json").exists()
+
+
+async def test_broker_budget_is_a_failed_gate_and_next_cases_run_without_sdk_retry(monkeypatch, tmp_path):
+    from pydantic_ai import Agent
+    from pydantic_ai.models.function import FunctionModel
+
+    from infosec_harness.agents import registry
+    from infosec_harness.inference.protocol import BrokerError
+
+    real_build = registry.build_agent
+    invocations, sdk_calls = [], []
+    async def broker_budget(_messages, _info):
+        sdk_calls.append(1)
+        raise BrokerError('budget', 'SECRET_BOUND_AND_BODY')
+    synthetic = Agent(FunctionModel(broker_budget), retries=3)
+    class BudgetFirstCase:
+        def __init__(self, inner):
+            self.inner = inner
+        async def run(self, *args, **kwargs):
+            invocations.append(1)
+            if len(invocations) == 1:
+                return await synthetic.run('offline')
+            return await self.inner.run(*args, **kwargs)
+    monkeypatch.setattr(registry, 'build_agent', lambda *a, **kw: BudgetFirstCase(real_build(*a, **kw)))
+    report = tmp_path / 'complete-with-failed-budget-gate.json'
+    experiment = await _experiment(await run_experiment(AGENT, report=report))
+    metrics = experiment.metrics
+    assert metrics['status'] == 'complete'
+    assert metrics['n'] == metrics['n_planned'] == len(_dataset_cases())
+    assert len(invocations) == len(_dataset_cases()) and len(sdk_calls) == 1
+    assert metrics['budget_exhausted_count'] == metrics['unexpected_budget_stops'] == 1
+    assert metrics['attempts'][0]['outcome'] == 'budget_exhausted'
+    assert metrics['attempts'][0]['error_type'] == 'BrokerError'
+    assert metrics['attempts'][0]['broker_error_code'] == 'budget'
+    assert metrics['attempts'][0]['budget_stop']['bound'] == 'unknown'
+    assert all(r['outcome'] == 'answered' for r in metrics['attempts'][1:])
+    rows = await _case_rows(experiment.id)
+    assert len(rows) == len(_dataset_cases()) and rows[0].passed is False
+    assert rows[0].scores['predicted'] == 'budget_exhausted'
+    assert json.loads(report.read_text())['hard_gates']['budget_exhausted_count'] == 1
+    assert 'SECRET' not in json.dumps(metrics)
+
+
+@pytest.mark.parametrize('code', ['auth', 'policy', 'unavailable', 'completion_unknown', 'SECRET_CODE',
+    type('SpoofedCode', (str,), {})('budget')])
+async def test_other_broker_failures_remain_truncated_with_redacted_diagnostics(monkeypatch, tmp_path, code):
+    from infosec_harness.agents import registry
+    from infosec_harness.inference.protocol import BrokerError
+
+    calls = []
+    class FailedBroker:
+        async def run(self, *_args, **_kwargs):
+            calls.append(1)
+            error = BrokerError('policy', 'SECRET_PROVIDER_TEXT')
+            error.code = code
+            raise error
+    monkeypatch.setattr(registry, 'build_agent', lambda *a, **kw: FailedBroker())
+    report = tmp_path / 'release-must-not-exist.json'
+    with pytest.raises(TruncatedExperiment) as failure:
+        await run_experiment(AGENT, report=report)
+    experiment = await _experiment(failure.value.experiment_id)
+    assert len(calls) == 1 and experiment.metrics['status'] == 'truncated'
+    assert experiment.metrics['budget_exhausted_count'] == 0
+    assert not report.exists()
+    diagnostic = experiment.metrics['attempts'][0]
+    assert diagnostic['error_type'] == 'BrokerError'
+    expected = code if type(code) is str and code != 'SECRET_CODE' else 'unknown'
+    assert diagnostic['broker_error_code'] == expected
+    assert diagnostic['provider_body_retained'] is False
+    assert 'SECRET' not in json.dumps(experiment.metrics)

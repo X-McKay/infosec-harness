@@ -53,7 +53,14 @@ class RootAccounting:
         if root_id is None:
             return None
         info = workflow.info()
+        broker_owned = getattr(config.model, "broker_contract", None) is not None
+        if broker_owned and not workflow.patched("credential-broker-invocation-v1"):
+            if not workflow.unsafe.is_replaying():
+                raise RuntimeError("Historical direct invocations cannot switch to brokered transport")
+            broker_owned = False
         operation = f"{info.workflow_id}:{self.sequence}:{config.agent_name}"
+        if broker_owned:
+            operation = f"{info.workflow_id}:{info.run_id}:{self.sequence}:{config.agent_name}"
         self.sequence += 1
         budget = config.budget.effective
         # Transport/activity retries can bill without returning usage. Reserve their full
@@ -67,6 +74,8 @@ class RootAccounting:
                             execution_seconds=budget.max_tool_calls * 300 * ACTIVITY_MAX_ATTEMPTS)
         args = {"root_id": root_id, "operation_id": operation, "requested": reserved,
                 "agent": config.agent_name}
+        if broker_owned:
+            args.update(run_id=info.run_id, invocation_id=operation)
         if workflow.patched("root-config-identity-v1"):
             args["configuration_digest"] = configuration_digest
         try:

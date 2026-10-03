@@ -168,7 +168,7 @@ async def test_actual_sdk_and_eval_persist_field_observations_without_scoring_ch
     assert summary["field_rule_counts"]["cwe"]["quote_not_verbatim"] == 1
     assert summary["quote_not_verbatim_but_whitespace_normalized_match"]["cwe"] == 1
     assert row.passed is (not protocol_failure)
-    assert run.EVALUATOR_VERSION == "deterministic-agent-output-v11"
+    assert run.EVALUATOR_VERSION == "deterministic-agent-output-v12"
     if protocol_failure:
         assert row.scores["error_category"] == "no_accepted_output" and row.scores["usage_status"] == "unknown"
         assert "SECRET" not in json.dumps(row.scores)

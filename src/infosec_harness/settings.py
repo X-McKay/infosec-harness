@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from infosec_harness.resources import (
@@ -26,22 +27,38 @@ REPO_ROOT = source_checkout() or package_root()
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="HARNESS_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="HARNESS_", env_file=".env", extra="ignore", hide_input_in_errors=True)
 
     # Persistence
-    database_url: str = "postgresql+asyncpg://harness:harness@localhost:5432/harness"
+    database_url: str = Field(default="postgresql+asyncpg://harness:harness@localhost:5432/harness", repr=False)
+    database_tls: bool = False
+    database_tls_ca_file: Path | None = None
+    database_tls_client_cert: Path | None = None
+    database_tls_client_key: Path | None = None
 
     # Temporal
     temporal_address: str = "localhost:7233"
     temporal_namespace: str = "default"
+    temporal_tls: bool = False
+    temporal_tls_ca_file: Path | None = None
+    temporal_tls_client_cert: Path | None = None
+    temporal_tls_client_key: Path | None = None
+    temporal_tls_server_name: str | None = None
+    temporal_api_key: str = Field(default="", repr=False)
+    temporal_api_key_file: Path | None = None
     task_queue: str = "triage"
 
-    # Artifacts (S3-compatible; MinIO locally). When ``s3_endpoint`` is empty the
-    # filesystem store under ``workspace_dir/artifacts`` is used instead.
+    # Artifacts: auto preserves endpoint-based local selection; explicit s3 also
+    # supports AWS endpoints and workload identity without static credentials.
+    artifact_backend: Literal["auto", "filesystem", "s3"] = "auto"
     s3_endpoint: str = ""
     s3_bucket: str = "harness-artifacts"
-    s3_access_key: str = ""
-    s3_secret_key: str = ""
+    s3_access_key: str = Field(default="", repr=False)
+    s3_secret_key: str = Field(default="", repr=False)
+    s3_session_token: str = Field(default="", repr=False)
+    s3_ca_file: Path | None = None
+    s3_addressing_style: Literal["auto", "path", "virtual"] = "auto"
+    s3_create_bucket: bool = True
     s3_region: str = "us-east-1"
 
     # Shared scratch space for repo snapshots and build contexts.
@@ -59,6 +76,8 @@ class Settings(BaseSettings):
     # ``live`` resolves model tiers through config/models.yaml; ``stub`` uses
     # deterministic in-process models (tests, offline demos, CI).
     model_mode: Literal["live", "stub"] = "live"
+    # Opt-in operator-owned catalog. Direct mode never loads or contacts it.
+    broker_config: Path | None = None
 
     # Sandbox
     sandbox_runtime: str = "runsc"  # gVisor; set to "runc" only for local development without gVisor
@@ -150,6 +169,10 @@ class Settings(BaseSettings):
     # Observability (D4). The resource attributes the agent-playbook §8 requires on every
     # span: service identity, environment, and the build the span came from.
     otel_exporter_otlp_endpoint: str = ""
+    otel_exporter_otlp_headers: dict[str, str] = Field(default_factory=dict, repr=False)
+    otel_exporter_otlp_ca_file: Path | None = None
+    otel_exporter_otlp_client_cert: Path | None = None
+    otel_exporter_otlp_client_key: Path | None = None
     service_name: str = "infosec-harness"
     environment: str = "local"
     # Set these in the image/deployment; they make a trace attributable to a build.
@@ -157,6 +180,38 @@ class Settings(BaseSettings):
     worker_build_id: str = ""
 
 
+    @model_validator(mode="after")
+    def validate_service_security(self) -> Settings:
+        for prefix in ("database", "temporal"):
+            cert = getattr(self, prefix + "_tls_client_cert")
+            key = getattr(self, prefix + "_tls_client_key")
+            if bool(cert) != bool(key):
+                raise ValueError(prefix + " TLS client certificate and key must be configured together")
+            configured = cert or getattr(self, prefix + "_tls_ca_file")
+            if prefix == "temporal":
+                configured = configured or self.temporal_tls_server_name or self.temporal_api_key or self.temporal_api_key_file
+            if configured and not getattr(self, prefix + "_tls"):
+                raise ValueError(prefix + " TLS must be enabled for configured authentication or certificates")
+        if self.temporal_api_key and self.temporal_api_key_file:
+            raise ValueError("Configure one Temporal API key source")
+        if bool(self.s3_access_key) != bool(self.s3_secret_key):
+            raise ValueError("S3 access key and secret key must be configured together")
+        if self.s3_session_token and not self.s3_access_key:
+            raise ValueError("Explicit S3 session token requires the access and secret key pair")
+        if self.artifact_backend == "filesystem" and self.s3_endpoint:
+            raise ValueError("Filesystem artifacts cannot also configure an S3 endpoint")
+        if bool(self.otel_exporter_otlp_client_cert) != bool(self.otel_exporter_otlp_client_key):
+            raise ValueError("OTLP client certificate and key must be configured together")
+        if (self.otel_exporter_otlp_headers or self.otel_exporter_otlp_client_cert) and not self.otel_exporter_otlp_endpoint.startswith("https://"):
+            raise ValueError("Authenticated OTLP export requires an HTTPS endpoint")
+        return self
+
+
 @lru_cache
 def get_settings() -> Settings:
+    profile = os.environ.get("HARNESS_ENV_FILE")
+    if profile is not None:
+        if not profile or not Path(profile).is_file():
+            raise ValueError("HARNESS_ENV_FILE must identify an existing environment file")
+        return Settings(_env_file=profile)
     return Settings()

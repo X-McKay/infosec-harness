@@ -17,11 +17,12 @@ from infosec_harness.workflows.temporal_ops import TemporalOps
 from infosec_harness.workflows.workflows import FindingTriageWorkflow
 
 
-def test_three_distinct_host_built_generations_and_retained_config():
+def test_four_distinct_host_built_generations_and_retained_config():
     assert {v.agent.name for v in INTAKE_GENERATIONS.values()} == {
         "intake",
         "intake-output-v2",
         "intake-output-v3",
+        "intake-output-v4",
     }
     assert {v.agent.name for v in INTAKE_GENERATIONS.values()} <= {a.name for a in AGENT_LIST}
     retained = resolve_agent_config("intake", retained_intake_spec(), durable=True)
@@ -32,7 +33,7 @@ def test_three_distinct_host_built_generations_and_retained_config():
 
 @pytest.mark.parametrize(
     "atomic,evidence,key",
-    [(True, False, "atomic"), (False, True, "quoted"), (False, False, "bare")],
+    [(True, False, "atomic_v3"), (False, True, "quoted"), (False, False, "bare")],
 )
 def test_generation_selector_preserves_recorded_branch(monkeypatch, atomic, evidence, key):
     monkeypatch.setattr(
@@ -63,9 +64,10 @@ async def test_retained_initial_frontier_stops_before_accounting(monkeypatch, ev
         await ops.run_agent("intake", [], AgentDeps(repo_path="/synthetic"))
 
 
-async def test_current_reservation_uses_same_bundle_and_three_argument_seam(monkeypatch):
-    ops = TemporalOps(intake_atomic_inline=True)
-    chosen = INTAKE_GENERATIONS["atomic"]
+@pytest.mark.parametrize("source_guidance", [False, True])
+async def test_current_reservation_uses_same_bundle_and_three_argument_seam(monkeypatch, source_guidance):
+    ops = TemporalOps(intake_atomic_inline=True, intake_source_guidance=source_guidance)
+    chosen = INTAKE_GENERATIONS["atomic" if source_guidance else "atomic_v3"]
     calls = []
 
     async def reserve(config, *, configuration_digest):

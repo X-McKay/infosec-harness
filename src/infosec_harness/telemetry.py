@@ -63,7 +63,8 @@ def configure(component: str = "harness") -> bool:
     are harmless. With no endpoint configured this does nothing and returns False, rather
     than installing a provider that silently drops spans.
     """
-    endpoint = get_settings().otel_exporter_otlp_endpoint
+    settings = get_settings()
+    endpoint = settings.otel_exporter_otlp_endpoint
     if not endpoint:
         return False
     from opentelemetry import trace
@@ -74,7 +75,13 @@ def configure(component: str = "harness") -> bool:
 
     resource = Resource.create({**resource_attributes(), "harness.component": component})
     provider = TracerProvider(resource=resource)
-    provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=f"{endpoint}/v1/traces")))
+    provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(
+        endpoint=f"{endpoint.rstrip('/')}/v1/traces",
+        headers=settings.otel_exporter_otlp_headers or None,
+        certificate_file=str(settings.otel_exporter_otlp_ca_file) if settings.otel_exporter_otlp_ca_file else None,
+        client_certificate_file=str(settings.otel_exporter_otlp_client_cert) if settings.otel_exporter_otlp_client_cert else None,
+        client_key_file=str(settings.otel_exporter_otlp_client_key) if settings.otel_exporter_otlp_client_key else None,
+    )))
     trace.set_tracer_provider(provider)
 
     # Agent specs set `instrument: true`; that only produces spans once a provider exists.

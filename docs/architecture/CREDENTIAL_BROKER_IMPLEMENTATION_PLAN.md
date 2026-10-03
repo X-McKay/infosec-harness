@@ -1,11 +1,11 @@
 # Credential broker implementation and testing plan
 
-Status: Proposed execution plan
+Status: Implementation ready for review; G0/G1 passed; P2–P5 implemented; bounded P6 qualification passed; P7/full native graph acceptance pending
 Date: 2026-10-01
-Plan version: 0.1.0
-Design baseline: [Credential brokering specification version 0.2.0](../CREDENTIAL_BROKER_SPEC.md)
+Plan version: 0.1.3
+Design baseline: [Credential brokering specification version 0.2.3](../CREDENTIAL_BROKER_SPEC.md)
 
-Implement one OpenAI-compatible backend through a minimal isolated inference executor, preserve existing tool and probe boundaries, and prove fail-closed behavior before using real provider credentials. Work proceeds through small reviewable changes with bounded parallel delegation. This plan describes future implementation; the planning review did not run infrastructure, inference, or recovery tests.
+Implement one OpenAI-compatible backend through a minimal isolated inference executor, preserve existing tool and probe boundaries, and prove fail-closed behavior before using real provider credentials. Work proceeds through small reviewable changes with bounded parallel delegation. The original planning review did not run infrastructure, inference, or recovery tests. P0 has now run: the actual OpenShell Landlock qualification failed under the unchanged runsc daemon. See [feasibility evidence](../validation/OPENSHELL_FEASIBILITY.md) and [the proposed deployment revision](OPENSHELL_DEPLOYMENT_REVISION.md). The corrected dedicated-daemon G0 passed independent review for the bounded test prototype after actual confinement, substitution, admission, ledger-channel, egress, rotation, native gateway discovery, and cleanup observations. P1 is frozen in [protocol v1](CREDENTIAL_BROKER_PROTOCOL.md). P2–P5 source integration and deterministic tests are implemented; bounded real P6 service/native/recovery qualification passed; full registered native graph acceptance remains separate. P7 has an authorized, frozen local-provider pilot for `llm.almckay.io`; completion, tokenizer qualification and held-out acceptance remain separate gates. P8 rollout remains disabled. Current evidence is tracked in [the implementation record](../validation/CREDENTIAL_BROKER_IMPLEMENTATION.md). Native gateway rediscovery does not establish future harness-controller or ledger recovery. The retained intermittent primary Docker OOM notification failure remains a qualification risk.
 
 ## Scope and completion criteria
 
@@ -49,7 +49,7 @@ flowchart TD
     I --> J[P8 Opt in rollout and handoff]
 ```
 
-Do not estimate a delivery date before P0. Its feasibility outcome may change the adapter design. After P1, estimate each package from the accepted interface and fixture scope. The critical path is feasibility, frozen contract, durable vertical slice, real enforcement/recovery, then provider acceptance. Fixture authoring and isolated module work can overlap; a shared VM, migrations, generated output, and final integration must have one owner at a time.
+Do not estimate a delivery date before P0. Its feasibility outcome may change the adapter design. The implementation branch starts from remote `develop` at `51fe66eb7459ce8f75a0d73931cf85867b78cefc`, and now integrates the subsequent remote `develop` reorganization at `4988450e21dc61f67f86a980e62af4264dc53fa7`. Paths below follow its canonical grouped test layout; the original history remains the replay baseline. After P1, estimate each package from the accepted interface and fixture scope. The critical path is feasibility, frozen contract, durable vertical slice, real enforcement/recovery, then provider acceptance. Fixture authoring and isolated module work can overlap; a shared VM, migrations, generated output, and final integration must have one owner at a time.
 
 ## P0 Establish baseline and prove feasibility
 
@@ -96,8 +96,8 @@ Use one new package, provisionally `src/infosec_harness/inference/`, with a smal
 
 | Lane | Exclusive primary paths | Dependencies and deliverables |
 | --- | --- | --- |
-| P2 Profiles and transport | New `inference/profiles.py`, `inference/transport.py`, profile catalog under packaged config; `tests/agents/test_broker_profiles.py`, `test_broker_transport.py` | After G1: complete agent mapping, strict configuration, typed message round-trip, effective settings applied once, response/error translation, direct-mode compatibility; lead performs shared model factory and registry edits |
-| P3 Ledger and admission | New `inference/ledger.py`, `inference/admission.py`; ledger data models and one assigned migration; `tests/persistence/test_inference_ledger.py`, `tests/runtime/test_broker_admission.py` | After G1: transactional uniqueness and ownership, dispatch accounting, bounded state transitions, durable responses, explicit unknown completion, idempotent cleanup records; capable owner |
+| P2 Profiles and transport | New `inference/profiles.py`, `inference/transport.py`, profile catalog under packaged config; `tests/runtime/test_broker_profiles.py`, `test_broker_transport.py` | After G1: complete agent mapping, strict configuration, typed message round-trip, effective settings applied once, response/error translation, direct-mode compatibility; lead performs shared model factory and registry edits |
+| P3 Ledger and admission | New `inference/ledger.py`, `inference/admission.py`; ledger data models and one assigned migration; `tests/persistence/test_inference_ledger.py`, `tests/persistence/test_broker_admission.py` | After G1: transactional uniqueness and ownership, dispatch accounting, bounded state transitions, durable responses, explicit unknown completion, idempotent cleanup records; capable owner |
 | P4 OpenShell adapter | New `inference/openshell.py`, `inference/controller.py`, executor service/entrypoint, isolated deployment files and narrow setup script; corresponding `tests/runtime/test_openshell_controller.py` | After G0/G1: controller lifecycle, authenticated endpoints, SDK operations, policy/attachment readiness, rotation/revocation, lazy instance allocation, lease reconciliation; capable owner |
 
 Only the lead edits the shared protocol module once G1 is frozen. Lanes propose interface changes to the lead instead of changing each other's files. The lead also owns `settings.py`, `pyproject.toml`, `uv.lock`, `tests/conftest.py`, `justfile`, existing Compose files, agent integration, workflow modules, provenance, and generated sources. A lane needing shared fixtures adds a local fixture module until the lead deliberately consolidates it.
@@ -190,8 +190,8 @@ Record cold startup separately from warm request overhead, median/p95 request la
 Existing commands run from the checkout root. New filenames below are planned tests, not current executable targets.
 
 ```bash
-HARNESS_MODEL_MODE=stub uv run pytest tests/agents/test_broker_profiles.py tests/agents/test_broker_transport.py
-HARNESS_MODEL_MODE=stub uv run pytest tests/persistence/test_inference_ledger.py tests/runtime/test_broker_admission.py tests/runtime/test_openshell_controller.py
+HARNESS_MODEL_MODE=stub uv run pytest tests/runtime/test_broker_profiles.py tests/runtime/test_broker_transport.py
+HARNESS_MODEL_MODE=stub uv run pytest tests/persistence/test_inference_ledger.py tests/persistence/test_broker_admission.py tests/runtime/test_openshell_controller.py
 HARNESS_MODEL_MODE=stub uv run pytest tests/agents/test_model_backends.py tests/agents/test_retry_bounds.py tests/runtime/test_root_budgets.py tests/persistence/test_migrations.py
 just check
 just test
@@ -220,14 +220,18 @@ Each change reports affected contracts, risk, behavior/provenance versions, repl
 
 The runbook must cover broker readiness, rotation, expired credentials, unknown completion, revocation failure, controller/worker restart, ledger retention, cancellation, orphan cleanup, and explicit rollback. Rollback drains/reconciles brokered operations and revokes their leases; direct mode is an explicit choice for new runs, not recovery fallback. Preserve existing VM/data and completed evidence.
 
-## Deferred packages and current planning evidence
+## Deferred packages and original planning evidence
 
 Credential-driver migration and content inspection are independent follow-up packages after the first release. Driver work rechecks secret storage, attachment, rotation, revocation, and recovery. Inspection work adds native middleware, explicit coverage/failure policy, false-positive fixtures using real vulnerability payloads, behavioral provenance, and paired evals. Private checkout, registries, and Bedrock each retain their separate live acceptance requirements from the design spec.
 
-| Planning gate | Status | Basis |
+The following table is the retained pre-implementation planning checkpoint. Current source
+and qualification outcomes are in the implementation record linked above.
+
+| Original planning gate | Status | Basis |
 | --- | --- | --- |
-| Spec and repository interface review | passed | Reviewed version 0.2.0, registered agents, current grouped tests, migration and generator conventions |
+| Spec and repository interface review | passed | Reviewed version 0.2.0, registered agents, current baseline tests, migration and generator conventions |
 | Parallel planning review | passed | Separate implementation and test planning reviews; bounded inventory delegated to a lower-cost agent |
 | Document integrity | passed | Local links, code fences, and patch whitespace checked after authoring |
-| Implementation and all runtime acceptance gates G0 to G4 | not_checked | No implementation or live tests performed by this planning task |
-| Runtime/schema/generated changes | not_applicable | Planning documentation only |
+| Initial topology G0 | failed | Actual Landlock qualification failed under runsc; see linked feasibility evidence |
+| Dependent implementation and gates G1 to G4 | not_checked | Blocked at G0; no production brokering enabled |
+| Runtime/schema/generated changes | not_applicable | No broker runtime/schema changes; P0 tooling and a baseline dependency correction are recorded separately |

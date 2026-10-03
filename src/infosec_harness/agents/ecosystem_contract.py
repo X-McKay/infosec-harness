@@ -649,7 +649,9 @@ def _warms_the_surefire_provider(install_commands: list[str]) -> bool:
     return False
 
 
-def offline_warmup_violations(spec: EnvironmentSpec, framework: str | None = None) -> list[str]:
+def offline_warmup_violations(
+    spec: EnvironmentSpec, framework: str | None = None, *, targeted_feedback: bool = False
+) -> list[str]:
     """A Maven probe runs with no network, so the build must have fetched *everything* first.
 
     Sibling of ``install_path_violations``: same two-phase layout, but about what is in the
@@ -674,18 +676,27 @@ def offline_warmup_violations(spec: EnvironmentSpec, framework: str | None = Non
         framework or "", "surefire-junit-platform"
     )
     if not _warms_the_surefire_provider(spec.install_commands):
-        problems.append(
-            f"the build must warm Surefire's {provider} provider by *running* a test, not by "
-            f"invoking the plugin with nothing to run: add the install command {wanted!r}. "
-            "Surefire resolves its provider lazily at test-execution time, from the test "
-            "framework on the test classpath, so a warm-up with an empty test tree (or with "
-            "-DfailIfNoTests=false, which makes 'no tests ran' a success) fetches the plugin and "
-            f"all of its own dependencies and never the provider. The offline probe then fails "
-            f'with "{provider}:jar:3.2.5 (absent) ... has not been downloaded from '
-            'it before". Pinning the provider with dependency:get does not fix it either: the '
-            "next missing artifact is junit-platform-launcher, whose version Surefire derives "
-            "from the project's own JUnit and which no fixed artifact list can predict."
-        )
+        if targeted_feedback:
+            problems.append(
+                "install_commands must include a build-time test that warms the declared "
+                "Surefire provider. Keep prerequisite install commands and append this "
+                f"framework-specific warm-up command: {wanted!r}. "
+                "An empty test directory still requires creating, running, and removing "
+                "the temporary test; an empty install_commands list cannot warm the provider."
+            )
+        else:
+            problems.append(
+                f"the build must warm Surefire's {provider} provider by *running* a test, not by "
+                f"invoking the plugin with nothing to run: add the install command {wanted!r}. "
+                "Surefire resolves its provider lazily at test-execution time, from the test "
+                "framework on the test classpath, so a warm-up with an empty test tree (or with "
+                "-DfailIfNoTests=false, which makes 'no tests ran' a success) fetches the plugin and "
+                f"all of its own dependencies and never the provider. The offline probe then fails "
+                f'with "{provider}:jar:3.2.5 (absent) ... has not been downloaded from '
+                'it before". Pinning the provider with dependency:get does not fix it either: the '
+                "next missing artifact is junit-platform-launcher, whose version Surefire derives "
+                "from the project's own JUnit and which no fixed artifact list can predict."
+            )
     elif framework in _FRAMEWORK_IMPORTS:
         # The warm-up runs a test, but in which framework? A JUnit 5 warm-up in a JUnit 4
         # project fails `test-compile` with "cannot find symbol: class Test" and the image is

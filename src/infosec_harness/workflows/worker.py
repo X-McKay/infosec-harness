@@ -31,15 +31,21 @@ WORKFLOWS = [TriageBatchWorkflow, RepoPreparationWorkflow, ComponentPreparationW
 async def connect() -> Client:
     from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
 
+    from infosec_harness.services import temporal_connection_options
+
     s = get_settings()
     return await Client.connect(s.temporal_address, namespace=s.temporal_namespace,
-                                plugins=[PydanticAIPlugin()])
+                                plugins=[PydanticAIPlugin()], **temporal_connection_options(s))
 
 
 async def run_worker() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     logger = logging.getLogger(__name__)
     s = get_settings()
+    from infosec_harness.agents import models
+    if (s.model_mode == "live" and s.task_queue == "triage"
+            and any(b.transport == "brokered" for b in models.load_models_config().backends.values())):
+        raise RuntimeError("Brokered deployment requires a new explicit task queue; drain legacy direct workers separately")
     from infosec_harness import telemetry
 
     # Installs the tracer provider and turns on the agents' `instrument: true`. The

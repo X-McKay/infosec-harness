@@ -266,14 +266,25 @@ class StackFingerprint(_Model):
 class RepoProfile(_Model):
     """ReconAgent output."""
 
-    summary: str = Field(description="Two or three sentences on what the application does")
-    primary_language: str
+    summary: str = Field(
+        description="Two or three sentences on what the application does; include version "
+        "details and qualifications here rather than in language or test-framework labels"
+    )
+    primary_language: str = Field(
+        description="One canonical language label without versions or commentary, e.g. "
+        "python, java, javascript, perl; use unknown when undetermined. Other language "
+        "labels are allowed."
+    )
     frameworks: list[str] = Field(default_factory=list)
     components: list[str] = Field(default_factory=list, description="Top-level modules/services")
     entry_points: list[str] = Field(
         default_factory=list, description="Files/functions where untrusted input enters"
     )
-    test_framework: str = Field(description="e.g. pytest, junit5, jest, Test::More")
+    test_framework: str = Field(
+        description="One canonical test-framework label without versions or commentary, "
+        "e.g. pytest, junit5, junit4, jest, test::more; use unknown when undetermined. "
+        "Other framework labels are allowed; put version details in summary."
+    )
     test_layout: str = Field(description="Where tests live and how they are named")
 
 
@@ -287,8 +298,9 @@ class EnvironmentSpec(_Model):
         description="Shell commands run from the repo root to install dependencies and build",
     )
     test_command: str = Field(
-        description="Command to run ONE test file; use {test_file} as the placeholder, "
-        "e.g. 'python -m pytest -q {test_file}'"
+        description="Command to run ONE probe offline. Path-based runners use {test_file}; "
+        "Maven uses -Dtest=HarnessProbeTest and Gradle uses --tests '*HarnessProbeTest'. "
+        "The JVM selector must name the probe's matching simple class, never a source path."
     )
     env: dict[str, str] = Field(default_factory=dict)
     scope: Literal["full", "partial"] = "full"

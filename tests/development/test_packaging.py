@@ -148,7 +148,17 @@ import json
 from infosec_harness.agents.intake_generations import intake_generations
 print(json.dumps(sorted(bundle.agent.name for bundle in intake_generations().values())))
 """, tmp_path))
-    assert names == ["intake", "intake-output-v2", "intake-output-v3"]
+    assert names == ["intake", "intake-output-v2", "intake-output-v3", "intake-output-v4"]
+
+
+def test_installed_wheel_preserves_atomic_v3_spec_bytes(installed, tmp_path):
+    actual = _run(installed, """
+import hashlib
+from infosec_harness.resources import package_root
+p = package_root() / "agents" / "intake" / "agent-v1.0.3.yaml"
+print(hashlib.sha256(p.read_bytes()).hexdigest())
+""", tmp_path)
+    assert actual == "dbabcbc640b87ea9b63686baf82f01452e7c96875c511de55a68bf5a9977388e"
 
 
 def test_skills_resolve_to_the_package_not_the_working_directory(installed, tmp_path):

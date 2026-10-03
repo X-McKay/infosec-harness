@@ -53,6 +53,7 @@ from infosec_harness.agents.outputs import (
     VERDICT_OUTPUTS,
     ContextOutput,
     PartialEnvironmentOutput,
+    PlannedEnvironmentOutput,
     prepare_verdict_tools,
     verdict_contract_instructions,
 )
@@ -133,6 +134,7 @@ NON_RETRYABLE_ERRORS = [
     "ValueError",
     "KeyError",
     "AttributeError",
+    "BrokerError",
 ]
 ACTIVITY_RETRY = RetryPolicy(
     maximum_attempts=ACTIVITY_MAX_ATTEMPTS, non_retryable_error_types=NON_RETRYABLE_ERRORS
@@ -296,6 +298,7 @@ def resolve_agent_config(
     *,
     source_files: int | None = None,
     durable: bool = False,
+    replay_only: bool = False,
 ) -> ResolvedAgentConfig:
     """Resolve the same effective settings and limits an invocation will receive."""
     effective = _apply_backend_token_floor(name, spec)
@@ -305,6 +308,8 @@ def resolve_agent_config(
         tier,
         model_settings=dict(spec.model_settings or {}),
         durable=durable,
+        replay_only=replay_only,
+        atomic_intake=name == "intake" and ((spec.metadata or {}).get("intake_output") or {}).get("protocol") == WIRE_VERSION,
     )
     budget = resolve_budget(
         name,
@@ -463,15 +468,60 @@ def _resolve_agent_model(
     durable: bool,
     atomic_intake: bool,
     replay_only: bool,
+    deps: AgentDeps | None = None,
 ):
+    if replay_only and durable and model_factory.get_settings().model_mode == "live":
+        cfg = model_factory.load_models_config()
+        backend = cfg.backends[cfg.backend_for(name)]
+        if backend.transport == "brokered":
+            # Retained generations have no current broker contract or dispatch authority.
+            # Build only their static SDK profile so recorded history can decode.
+            from infosec_harness.inference.unbound import UnboundBrokerModel
+            return ReplayOnlyModel(UnboundBrokerModel(
+                cfg.model_id(tier, cfg.backend_for(name)), atomic_intake=atomic_intake))
     model = (
-        model_factory.resolve_intake_atomic(name, tier, durable=durable)
+        model_factory.resolve_intake_atomic(name, tier, durable=durable,
+            **({"broker_binding": deps.broker_binding, "broker_contract": deps.broker_contract}
+               if deps and deps.broker_binding else {}))
         if atomic_intake
-        else model_factory.resolve(name, tier, durable=durable)
+        else model_factory.resolve(name, tier, durable=durable,
+            **({"broker_binding": deps.broker_binding, "broker_contract": deps.broker_contract}
+               if deps and deps.broker_binding else {}))
     )
     if replay_only and durable:
         return ReplayOnlyModel(model)
     return model
+
+
+INTAKE_REFERENCE_REPAIR_VERSION = "intake-reference-repair-v1"
+INTAKE_LITERAL_LINE_REPAIR_VERSION = "intake-literal-line-repair-v1"
+_INTAKE_LITERAL_LINE_REPAIR = (
+    "\nFix only unsupported start_line or end_line claims: report source IDs and report-line "
+    "positions are not code line numbers. A retained code line claim needs its number "
+    "literally stated in the referenced report text. Otherwise set the whole unsupported "
+    "start_line or end_line claim to null, including its value, source and confidence. "
+    "Keep other supported claims unchanged; do not invent a code line or supporting text."
+)
+INTAKE_UNSUPPORTED_CLAIM_REPAIR_VERSION = "intake-unsupported-claim-repair-v1"
+_UNSUPPORTED_CLAIM_EVIDENCE_ERRORS = frozenset({
+    "A literal location value is absent from its evidence quote.",
+    "Every nonempty extraction field requires positive grounded evidence.",
+})
+_UNSUPPORTED_CLAIM_REPAIR = (
+    "\nFix only unsupported claims: for symbol or file_path, the referenced report source "
+    "must literally contain the claimed value. Cite actual supporting source lines with "
+    "positive confidence, or set the whole unsupported claim field to null. "
+    "Do not null only its value, source, or confidence: a retained claim requires all three. "
+    "Confidence=0 cannot justify retaining an unsupported nonempty value. "
+    "Keep supported claims unchanged and do not invent support."
+)
+
+
+def _targeted_reference_repair(version: str = INTAKE_REFERENCE_REPAIR_VERSION) -> bool:
+    """New histories use bounded feedback; old histories retain their retry bytes."""
+    from temporalio import workflow
+
+    return not workflow.in_workflow() or workflow.patched(version)
 
 
 def _validate_atomic_intake(ctx: Any, output: AtomicFinding) -> ExtractedFinding:
@@ -483,10 +533,31 @@ def _validate_atomic_intake(ctx: Any, output: AtomicFinding) -> ExtractedFinding
         } else "invalid_reference"
         from pydantic_ai import ModelRetry
 
-        raise ModelRetry(
-            f"Extraction violates its evidence contract:\n- Source reference violates its contract: {rule}"
-        ) from None
-    return validate_intake_evidence(ctx, finding)
+        feedback = f"Source reference violates its contract: {rule}"
+        if (rule == "reversed_source_range" and type(error.field) is str
+                and error.field in AtomicFinding.model_fields
+                and _targeted_reference_repair()):
+            feedback += (
+                f". Fix only the source reference for claim '{error.field}': "
+                "end_id must be at or after start_id in report source-line order. "
+                "For a single source line, use end_id=null or end_id=start_id. "
+                "Keep the supported claim value and confidence unchanged."
+            )
+        raise ModelRetry("Extraction violates its evidence contract:\n- " + feedback) from None
+    from pydantic_ai import ModelRetry
+
+    try:
+        return validate_intake_evidence(ctx, finding)
+    except ModelRetry as error:
+        # Each new repair policy has its own marker; retained marker bytes stay intact.
+        if ("\n- A literal line number is absent from its evidence quote." in error.message
+                and _targeted_reference_repair(INTAKE_LITERAL_LINE_REPAIR_VERSION)):
+            raise ModelRetry(error.message + _INTAKE_LITERAL_LINE_REPAIR) from None
+        # The existing guard emits closed diagnostics; never interpolate claim/report data.
+        if (any(f"\n- {problem}" in error.message for problem in _UNSUPPORTED_CLAIM_EVIDENCE_ERRORS)
+                and _targeted_reference_repair(INTAKE_UNSUPPORTED_CLAIM_REPAIR_VERSION)):
+            raise ModelRetry(error.message + _UNSUPPORTED_CLAIM_REPAIR) from None
+        raise
 
 
 def build_agent(
@@ -512,6 +583,10 @@ def build_agent(
         raise KeyError(f"Unknown agent {name!r}")
     if name == "intake" and legacy_output_contract and spec_override is None:
         spec_override = retained_intake_spec()
+    if name == "env-planner" and legacy_output_contract and spec_override is None:
+        spec_override = AgentSpec.from_file(
+            package_root() / "agents" / "env-planner" / "agent-v1.0.4.yaml"
+        )
     spec = load_spec(name, overlay, spec_override=spec_override)
     metadata = spec.metadata or {}
     intake_output = metadata.get("intake_output") or {}
@@ -531,10 +606,15 @@ def build_agent(
         ResolveModelId(
             lambda ctx, model_id, _n=name, _d=transport, _a=use_atomic_output,
                    _r=replay_only_model: _resolve_agent_model(
-                       _n, model_id, durable=_d, atomic_intake=_a, replay_only=_r
+                       _n, model_id, durable=_d, atomic_intake=_a, replay_only=_r, deps=ctx.deps
                    )
         )
     ]
+    if model_factory.get_settings().model_mode == "live":
+        cfg = model_factory.load_models_config()
+        if cfg.backends[cfg.backend_for(name)].transport == "brokered":
+            from infosec_harness.inference.identity import BrokerRequestIdentity
+            capabilities.append(BrokerRequestIdentity())
     # Cross-cutting robustness, attached in code (see ALLOWED_CAPABILITIES note).
     if any(cap.name in {"RepoReadOnly", "SandboxShell"} for cap in spec.capabilities):
         capabilities.append(RepairToolArguments())
@@ -558,7 +638,9 @@ def build_agent(
         )
     output_type = AtomicFinding if use_atomic_output else AGENT_BINDINGS[name]
     if not legacy_output_contract:
-        if name == "partial-build":
+        if name == "env-planner":
+            output_type = PlannedEnvironmentOutput
+        elif name == "partial-build":
             output_type = PartialEnvironmentOutput
         elif name == "context":
             output_type = ContextOutput
@@ -600,7 +682,7 @@ def build_agent(
 @lru_cache
 def durable_agents() -> dict[str, Agent[AgentDeps, Any]]:
     """Current agents, with distinct Temporal identities for revised output contracts."""
-    revised = {"partial-build", "context", "verdict", "build-repair", "intake"}
+    revised = {"partial-build", "context", "verdict", "build-repair", "intake", "env-planner"}
     return {
         name: build_agent(
             name,
@@ -626,9 +708,9 @@ def legacy_output_agents() -> dict[str, Agent[AgentDeps, Any]]:
         name: build_agent(
             name, legacy_output_contract=True,
             spec_override=retained_intake_spec() if name == "intake" else None,
-            replay_only_model=(name == "intake"),
+            replay_only_model=(name in {"intake", "env-planner"}),
         )
-        for name in ("partial-build", "context", "verdict", "build-repair", "intake")
+        for name in ("partial-build", "context", "verdict", "build-repair", "intake", "env-planner")
     }
 
 

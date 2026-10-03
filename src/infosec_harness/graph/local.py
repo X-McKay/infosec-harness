@@ -127,85 +127,88 @@ async def triage_batch_local(findings: list[FindingInput], *, sandbox: bool = Tr
     if concurrency < 1:
         raise ValueError(f"concurrency must be at least 1, got {concurrency}")
     ops = LocalOps(sandbox=sandbox, recipe_cache=recipe_cache)
-    groups: dict[tuple[str, str, SourceMode | None], list[FindingInput]] = defaultdict(list)
-    for f in findings:
-        groups[(f.repo_url, f.revision, f.source_mode)].append(f)
-    results: dict[int, TriageRunOutput] = {}
-    order = {id(f): i for i, f in enumerate(findings)}
-    for (repo_url, revision, source_mode), group in groups.items():
-        snapshot = None
-        stack = None
-        try:
-            snapshot = await checkout(RepoRef(
-                repo_url=repo_url, revision=revision,
-                source_mode=source_mode,
-                exclude_paths=(mask_paths or {}).get((repo_url, revision), [])))
-            stack = detect_stack(snapshot.path)
-        except Exception as e:  # noqa: BLE001 - one repo must not sink the batch either
-            # Preparation is shared by a repo's findings, so a failure here decides all of
-            # them — but only theirs. Observed live: build-repair exhausted its token budget
-            # on real build logs and the exception left this loop, discarding every finding in
-            # the run including repos already triaged.
-            #
-            # The checkout and stack detection are inside the guard too. They are the only
-            # per-repo work that was still outside it, and a repository that cannot be cloned
-            # is the likeliest failure of all on a harvested manifest — it would have taken the
-            # whole batch with it for the same reason preparation used to.
-            #
-            # The calls preparation had already made are the only evidence about a repository
-            # that failed to prepare, so they are recorded rather than discarded: a run whose
-            # every case died here used to report nothing about which agents ran, how many
-            # requests they made, or whether one was looping.
-            for f in group:
-                results[order[id(f)]] = _inconclusive(
-                    adapters.to_finding(f), classify_pipeline_failure(e),
-                    f"Discovering {repo_url} failed: {type(e).__name__}: {e}", "failed", manifest=(
-                        source_manifest(snapshot, stack) if snapshot is not None else {}
-                    ))
-            continue
-
-        component_groups: dict[str, tuple[ComponentProfile | None, list[FindingInput]]] = {}
-        for finding_input in group:
-            component = owning_component(stack, finding_input.file_path)
-            key = preparation_key(component)
-            component_groups.setdefault(key, (component, []))[1].append(finding_input)
-
-        for component_root, (component, component_group) in component_groups.items():
-            narrowed = component_stack(stack, component) if component is not None else stack
-            effective_root = component.root if component is not None else "."
+    try:
+        groups: dict[tuple[str, str, SourceMode | None], list[FindingInput]] = defaultdict(list)
+        for f in findings:
+            groups[(f.repo_url, f.revision, f.source_mode)].append(f)
+        results: dict[int, TriageRunOutput] = {}
+        order = {id(f): i for i, f in enumerate(findings)}
+        for (repo_url, revision, source_mode), group in groups.items():
+            snapshot = None
+            stack = None
             try:
-                # Preserve the historical three-argument seam for root/single-component callers
-                # and tests which wrap preparation. Only a nested component needs the new bind.
-                if effective_root == ".":
-                    prep = await run_prepare(ops, snapshot, narrowed)
-                else:
-                    prep = await run_prepare(
-                        ops, snapshot, narrowed, component_root=effective_root)
-            except Exception as e:  # noqa: BLE001 - one component must not sink the repository
-                partial = e.invocations if isinstance(e, PrepareFailed) else []
-                cause = e.cause if isinstance(e, PrepareFailed) else e
+                snapshot = await checkout(RepoRef(
+                    repo_url=repo_url, revision=revision,
+                    source_mode=source_mode,
+                    exclude_paths=(mask_paths or {}).get((repo_url, revision), [])))
+                stack = detect_stack(snapshot.path)
+            except Exception as e:  # noqa: BLE001 - one repo must not sink the batch either
+                # Preparation is shared by a repo's findings, so a failure here decides all of
+                # them — but only theirs. Observed live: build-repair exhausted its token budget
+                # on real build logs and the exception left this loop, discarding every finding in
+                # the run including repos already triaged.
+                #
+                # The checkout and stack detection are inside the guard too. They are the only
+                # per-repo work that was still outside it, and a repository that cannot be cloned
+                # is the likeliest failure of all on a harvested manifest — it would have taken the
+                # whole batch with it for the same reason preparation used to.
+                #
+                # The calls preparation had already made are the only evidence about a repository
+                # that failed to prepare, so they are recorded rather than discarded: a run whose
+                # every case died here used to report nothing about which agents ran, how many
+                # requests they made, or whether one was looping.
+                for f in group:
+                    results[order[id(f)]] = _inconclusive(
+                        adapters.to_finding(f), classify_pipeline_failure(e),
+                        f"Discovering {repo_url} failed: {type(e).__name__}: {e}", "failed", manifest=(
+                            source_manifest(snapshot, stack) if snapshot is not None else {}
+                        ))
+                continue
+
+            component_groups: dict[str, tuple[ComponentProfile | None, list[FindingInput]]] = {}
+            for finding_input in group:
+                component = owning_component(stack, finding_input.file_path)
+                key = preparation_key(component)
+                component_groups.setdefault(key, (component, []))[1].append(finding_input)
+
+            for component_root, (component, component_group) in component_groups.items():
+                narrowed = component_stack(stack, component) if component is not None else stack
+                effective_root = component.root if component is not None else "."
+                try:
+                    # Preserve the historical three-argument seam for root/single-component callers
+                    # and tests which wrap preparation. Only a nested component needs the new bind.
+                    if effective_root == ".":
+                        prep = await run_prepare(ops, snapshot, narrowed)
+                    else:
+                        prep = await run_prepare(
+                            ops, snapshot, narrowed, component_root=effective_root)
+                except Exception as e:  # noqa: BLE001 - one component must not sink the repository
+                    partial = e.invocations if isinstance(e, PrepareFailed) else []
+                    cause = e.cause if isinstance(e, PrepareFailed) else e
+                    sink_key = ((repo_url, revision) if len(component_groups) == 1
+                                else (repo_url, revision, component_root))
+                    if prepare_sink is not None:
+                        prepare_sink[sink_key] = partial
+                    ran = ", ".join(i.agent for i in partial) or "none"
+                    for finding_input in component_group:
+                        results[order[id(finding_input)]] = _inconclusive(
+                            adapters.to_finding(finding_input), classify_pipeline_failure(cause),
+                            f"Preparing component {component_root!r} of {repo_url} failed after "
+                            f"{len(partial)} agent call(s) ({ran}): {type(cause).__name__}: {cause}",
+                            "failed", manifest=source_manifest(snapshot, narrowed))
+                    continue
                 sink_key = ((repo_url, revision) if len(component_groups) == 1
                             else (repo_url, revision, component_root))
                 if prepare_sink is not None:
-                    prepare_sink[sink_key] = partial
-                ran = ", ".join(i.agent for i in partial) or "none"
-                for finding_input in component_group:
-                    results[order[id(finding_input)]] = _inconclusive(
-                        adapters.to_finding(finding_input), classify_pipeline_failure(cause),
-                        f"Preparing component {component_root!r} of {repo_url} failed after "
-                        f"{len(partial)} agent call(s) ({ran}): {type(cause).__name__}: {cause}",
-                        "failed", manifest=source_manifest(snapshot, narrowed))
-                continue
-            sink_key = ((repo_url, revision) if len(component_groups) == 1
-                        else (repo_url, revision, component_root))
-            if prepare_sink is not None:
-                prepare_sink[sink_key] = prep.invocations
-            # Same deterministic order the workflow uses, so both paths warm the same finding.
-            component_group.sort(key=lambda f: (f.cwe or "", f.file_path or ""))
-            outputs = await _triage_group(ops, component_group, prep.prepared, concurrency)
-            for finding_input, out in zip(component_group, outputs, strict=True):
-                results[order[id(finding_input)]] = out
-    return [results[i] for i in sorted(results)]
+                    prepare_sink[sink_key] = prep.invocations
+                # Same deterministic order the workflow uses, so both paths warm the same finding.
+                component_group.sort(key=lambda f: (f.cwe or "", f.file_path or ""))
+                outputs = await _triage_group(ops, component_group, prep.prepared, concurrency)
+                for finding_input, out in zip(component_group, outputs, strict=True):
+                    results[order[id(finding_input)]] = out
+        return [results[i] for i in sorted(results)]
+    finally:
+        await ops.close()
 
 
 async def _triage_group(ops: LocalOps, group: list[FindingInput], prepared,

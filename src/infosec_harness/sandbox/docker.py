@@ -52,7 +52,7 @@ HOME_STAGE = "/opt/home"
 WORK = "/work/repo"
 WORK_HOME = "/work/home"
 IMAGE_LABEL = "harness.image=target"
-IMAGE_FORMAT_VERSION = "2"  # Writable build staging from immutable source snapshots.
+IMAGE_FORMAT_VERSION = "3"  # Build-only Maven proxy bridge and proxy-bound target cache.
 _PROXY_ENV = ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy")
 _NO_PROXY = "localhost,127.0.0.1"
 
@@ -144,6 +144,35 @@ def _hardening_args(*, network: bool, read_only: bool = False) -> list[str]:
     return args
 
 
+def _maven_build_proxy(spec: EnvironmentSpec) -> str | None:
+    """Use only the existing validated operator proxy for recognized Maven runners."""
+    try:
+        tokens = shlex.split(spec.test_command)
+    except ValueError:
+        return None  # validate_environment_spec owns malformed command rejection.
+    if not tokens or tokens[0].rsplit("/", 1)[-1] not in {"mvn", "mvnw"}:
+        return None
+    if not get_settings().build_egress_proxy:
+        return None
+    return _builder_proxy_environment()["HTTP_PROXY"]
+
+
+def _maven_install_prefix(proxy: str | None) -> str:
+    if proxy is None:
+        return ""
+    parsed = urlsplit(proxy)
+    # The caller obtained this identity exclusively from _builder_proxy_environment.
+    # Resolver1.9 native HTTP transport needs its explicit system-property opt-in.
+    # Keep existing JVM options and settings; apply these options to this RUN only.
+    properties = (
+        "-Daether.connector.http.useSystemProperties=true "
+        f"-Dhttp.proxyHost={parsed.hostname} -Dhttp.proxyPort={parsed.port} "
+        f"-Dhttps.proxyHost={parsed.hostname} -Dhttps.proxyPort={parsed.port} "
+        "-Dhttp.nonProxyHosts=localhost|127.0.0.1"
+    )
+    return 'export MAVEN_OPTS="${MAVEN_OPTS:-} ' + properties + '"; '
+
+
 def render_dockerfile(spec: EnvironmentSpec) -> str:
     """Deterministic Dockerfile for an EnvironmentSpec. Dependencies are installed at build
     time (network allowed, D14); probes later run with no network."""
@@ -172,8 +201,9 @@ def render_dockerfile(spec: EnvironmentSpec) -> str:
     lines.append(f"USER {SANDBOX_USER}")
     build_workdir = REPO_STAGE + module_suffix(spec)
     lines.append(f"WORKDIR {build_workdir}")
+    install_prefix = _maven_install_prefix(_maven_build_proxy(spec))
     for cmd in spec.install_commands:
-        lines.append(f"RUN {cmd}")
+        lines.append(f"RUN {install_prefix}{cmd}")
     return "\n".join(lines) + "\n"
 
 
@@ -187,6 +217,8 @@ def image_tag_for(repo_hash: str, spec: EnvironmentSpec) -> str:
     from infosec_harness.domain.models import canonical_json, sha256_text
 
     identity = {"spec": spec.model_dump(mode="json"), "image_format": IMAGE_FORMAT_VERSION}
+    if proxy := _maven_build_proxy(spec):
+        identity["maven_build_proxy"] = proxy
     return f"harness-target:{repo_hash[:12]}-{sha256_text(canonical_json(identity))[:12]}"
 
 
