@@ -396,10 +396,87 @@ Retained investigation summary SHA256:
 `2ed00cb3617eade21b08c201fe748ff08f20bd2030839e282e6ce0cf72a058f7`.
 All nine packaged executor source hashes and the dependency lock match the
 previously attested image; the host-serialized output schema does not change
-`ExecutorContract`. The configuration digest does change, so the existing
-controller process's cached admission policy cannot qualify this candidate.
-Fresh controller/source/TLS/readiness evidence is required before the original
-ten-case broker evaluation. That candidate evaluation and a fresh full118 release
-remain **not_checked** pending execution. The previous full118 failure remains
-retained and failed. Native22, graph, real historical replay and hosted deployment
-remain **not_checked**; rollout remains disabled and the PR remains draft.
+`ExecutorContract`. The configuration digest changed, so the previous controller
+process's cached admission policy could not qualify this candidate. The measured execution below
+refreshed that process and established current source, TLS and readiness evidence.
+The prior full118 failure remains retained and failed; the following results
+supersede the pre-execution candidate status.
+
+### Required install-command contract: measured broker evaluation
+
+On source `438ec3da9e08f39b0501972d48ef7f224ec16207`, the original ten-case env-planner broker
+evaluation **passed**. All ten cases passed, schema validity was 1.0, budget exhaustion was zero
+and p95 request count was 8. The known Java/JUnit5 prerequisite regression passed. The original
+cases, scoring rules, expected outcomes, budgets and release thresholds were unchanged.
+Completion was independently checked against the persisted experiment and all ten case results;
+static dataset coverage was not used as execution evidence.
+
+The controller was refreshed for the changed env-planner configuration digest. Its initial
+replacement stopped after starting the exact new controller because a private verification
+command exceeded the operating system's argument-size limit. A separate read-only completion
+verified that same controller and retained the failed replacement artifacts; it did not create
+or restart another controller. One actual env-planner readiness lease then verified the current
+contract and was ordinarily revoked. The passing model cohort's terminal preservation check
+retained all 2,623 request records, all 689 budget rows, all 859 deleted lease files and the
+original 15 uncertain requests. Native inventory remained zero and the two global providers were
+unchanged.
+
+Canonical checks **passed**: lint, compilation, agent validation, generated artifacts,
+development-skill drift and the deterministic suite (2,873 passed, 40 skipped). Current-head CI
+also **passed**: all six retained checks completed with SUCCESS against exact source
+`438ec3da9e08f39b0501972d48ef7f224ec16207` (CI evidence SHA256
+`4fb1404f1383e5361fab0794ddb2e2ca19e7f79731452806dd8ae5b06f848e47`). Actual historical Temporal
+replay remains **not_checked**; the durable marker and legacy-frontier checks above remain
+synthetic compatibility evidence.
+
+Private evidence SHA256s:
+
+- Model root: `3b0451a7ce4f592eccb39e17f6bc589af51f2d2d3456e6040b2960fc260a85c7`.
+- Original report: `3fc4893c5d8bf281a7fd58476b0197643caf29b8096e31bb81c277fe03be1e71`.
+- Persisted completion witness: `ef1c44499d7f8efe8fc2e04c289a55e77e732ee4337a026813fb3f95a1fcee16`.
+- Terminal root: `ad67435d95895980d7e087f1ceba2950dd389a661099d030670d3c2cd1231ae5`.
+- Whole terminal state: `ed76d81d43e201ccfc7fcc0980c3147923b8777de175635dff65c996e1ecdd70`.
+
+A fresh all-eleven native readiness check **passed** after that terminal seal. It preserved all
+request and budget rows, added exactly eleven ordinarily deleted readiness leases and sealed 870
+deleted lease files. The separate original 118-case evaluation **failed and truncated** during
+context case 15 after 14 passing build-repair cases and 14 saved passing context cases. That
+case raised `BrokerError`; no context release report or later-agent reports were produced. The
+model root retained a terminal-guard reconciliation failure. Read-only native metadata then
+established an Error sandbox with `ControlSupervisorStartFailed`: its supervisor exited before
+readiness, while configuration admission was accepted. The stored provisioning deadline was not
+recorded as exhausted. The triggering supervisor failure remains unestablished; low-level debug
+timeout text does not prove an exhausted deadline. All 136 newly admitted requests were
+completed and the old 15 uncertain requests were unchanged. This does not establish complete
+118-case qualification. It used one repetition, concurrency one, 600-second case bounds and a
+21,600-second root bound.
+
+An explicit, separately reviewed operator cleanup **passed**: two fresh observations confirmed
+the exact Error sandbox identity, policy and current resource version, then only that sandbox
+was deleted. Ordinary adapter revoke removed its recorded scoped ledger provider while the
+lease's native ID remained empty. The cleanup preserved all 2,759 request records, all 718
+budget rows, all 898 other lease files and the original 15 uncertain requests; all 899 leases
+were `deleted` afterward, native inventory was zero and the two global providers were unchanged.
+Its root evidence SHA256 is `4aee412d6c9407815b970fd9ac754f177330a323d16b8f093c6f95ca81218a8c`.
+This cleanup does not establish the supervisor failure cause or make the failed evaluation pass.
+
+A separate fresh read-only terminal seal **passed** after cleanup: all current request, state,
+budget and lease maps were stable across two observations, the original historical subset was
+unchanged, and no failed request was retried or adopted. The failed full118 cohorts remain
+failed and retained.
+
+Native22, graph, actual historical Temporal replay and hosted deployment remain **not_checked**;
+rollout remains disabled and the PR remains draft.
+
+Fresh full118 plan SHA256: `91457b2ffb86a3087ae621ba927f97ca233594c434cef1844e713b76667fa13e`.
+
+Truncated full model-root SHA256:
+`c27376ece012c6cc67145664a350955413c75575aef7beb043b172bedbfe123d`.
+
+Final terminal root SHA256: `35adb7158b4706a183408080a744bec774c371ba15a27af3412e17d92c9ae61a`.
+
+Final whole-state SHA256: `3b39a5066c0037db21add342f503f441b16dbbec3136ffab3437a6a5ea7966ac`.
+
+The next qualification step is to establish why the supervisor exited before readiness, apply a
+narrowly evidenced fix if needed, and run a fresh original 118-case cohort. No model budget or
+release threshold change is supported by this failure.
