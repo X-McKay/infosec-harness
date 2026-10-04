@@ -1,3 +1,4 @@
+import { req } from "./http.ts";
 import type { components, operations } from "./schema";
 
 type Success<Operation extends keyof operations> =
@@ -26,17 +27,6 @@ export type ExperimentCase = components["schemas"]["ExperimentCase"];
 
 export type RuntimeStatus = components["schemas"]["RuntimeStatus"];
 export type QualificationStatus = components["schemas"]["QualificationStatus"];
-
-const BASE = "";
-
-async function req<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
-  });
-  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-  return res.json() as Promise<T>;
-}
 
 export const api = {
   runtimeStatus: () =>
@@ -88,7 +78,7 @@ export const api = {
     }),
   review: (id: string, body: components["schemas"]["ReviewRequest"]) =>
     req<Success<"review_api_runs__run_id__review_post">>(
-      `/api/runs/${id}/review`,
+      `/api/runs/${encodeURIComponent(id)}/review`,
       {
         method: "POST",
         body: JSON.stringify(body),

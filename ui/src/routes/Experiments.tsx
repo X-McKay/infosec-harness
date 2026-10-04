@@ -1,16 +1,14 @@
+import { queries } from "@/api/queries";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { api } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Freshness, QueryState } from "@/components/QueryState";
 import { ExperimentContent } from "@/components/evaluations/ExperimentReport";
 
 export function Experiments() {
   const listQuery = useQuery({
-    queryKey: ["experiments"],
-    queryFn: api.experiments,
-    refetchInterval: 10000,
+    ...queries.experiments(),
   });
   const experiments = listQuery.data || [];
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -18,9 +16,7 @@ export function Experiments() {
     ? experiments.find((item) => item.id === selectedId)
     : experiments[0];
   const detailQuery = useQuery({
-    queryKey: ["experiment", selected?.id],
-    queryFn: async () => api.experiment(selected!.id),
-    enabled: !!selected?.id,
+    ...queries.experiment(selected?.id),
     refetchInterval: (query) => {
       const status =
         query.state.data?.metrics.status ?? selected?.metrics.status;

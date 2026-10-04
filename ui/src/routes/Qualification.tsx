@@ -1,5 +1,6 @@
+import { queries, queryKeys } from "@/api/queries";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type QualificationStatus } from "@/api/client";
+import { type QualificationStatus } from "@/api/client";
 import { BrokerRuntimeMetadata } from "@/components/RuntimeIndicator";
 import { componentTitle } from "@/lib/runtime";
 import { Freshness, QueryState } from "@/components/QueryState";
@@ -26,9 +27,7 @@ function StatusBadge({ status }: { status: QualificationStatus["status"] }) {
 export function Qualification() {
   const queryClient = useQueryClient();
   const query = useQuery({
-    queryKey: ["qualification"],
-    queryFn: api.qualification,
-    refetchInterval: 30000,
+    ...queries.qualification(),
   });
   const data = query.data;
   return (
@@ -48,7 +47,7 @@ export function Qualification() {
           disabled={query.isFetching}
           onClick={() => {
             void query.refetch();
-            void queryClient.refetchQueries({ queryKey: ["runtime-status"] });
+            void queryClient.refetchQueries({ queryKey: queryKeys.runtime });
           }}
         >
           Refresh

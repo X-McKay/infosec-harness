@@ -1,7 +1,5 @@
-const TERMINAL = new Set(["complete", "needs_info", "failed", "cancelled"]);
-export function workflowActive(status: string): boolean {
-  return !TERMINAL.has(status);
-}
+import { batchActive } from "./status.ts";
+export const workflowActive = batchActive;
 
 /** Missing terminal timestamps cannot become a continuously growing duration. */
 export function elapsedSeconds(

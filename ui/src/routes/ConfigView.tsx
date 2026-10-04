@@ -1,12 +1,12 @@
+import { queries } from "@/api/queries";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/api/client";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { BrokerRuntimeMetadata } from "@/components/RuntimeIndicator";
 import { QueryState, Freshness } from "@/components/QueryState";
 
 export function ConfigView() {
-  const query = useQuery({ queryKey: ["config"], queryFn: api.config });
+  const query = useQuery(queries.config());
   const config = query.data;
   return (
     <div className="space-y-6">

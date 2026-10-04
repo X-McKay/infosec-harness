@@ -1,6 +1,7 @@
+import { api } from "@/api/client";
+import { queries } from "@/api/queries";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { api } from "@/api/client";
 import {
   DistributionChart,
   type Distribution,
@@ -17,9 +18,7 @@ export function Metrics() {
     "tokens" | "input_tokens" | "output_tokens"
   >("tokens");
   const query = useQuery({
-    queryKey: ["metrics", population],
-    queryFn: api.metrics,
-    refetchInterval: 10000,
+    ...queries.metrics(),
   });
   const metrics = query.data;
   const binHref =

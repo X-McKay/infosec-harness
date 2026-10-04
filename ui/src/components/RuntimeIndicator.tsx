@@ -1,5 +1,6 @@
+import { timestamp } from "@/lib/format";
+import { queries } from "@/api/queries";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/api/client";
 import { Freshness, QueryState } from "@/components/QueryState";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,9 +12,7 @@ import {
 
 export function RuntimeIndicator() {
   const query = useQuery({
-    queryKey: ["runtime-status"],
-    queryFn: api.runtimeStatus,
-    refetchInterval: 30000,
+    ...queries.runtime(),
   });
   const runtime = query.data;
   const broker = runtime ? brokerPresentation(runtime.broker) : null;
@@ -44,9 +43,7 @@ export function RuntimeIndicator() {
 
 export function BrokerRuntimeMetadata() {
   const query = useQuery({
-    queryKey: ["runtime-status"],
-    queryFn: api.runtimeStatus,
-    refetchInterval: 30000,
+    ...queries.runtime(),
   });
   const runtime = query.data;
   const broker = runtime ? brokerPresentation(runtime.broker) : null;
@@ -133,7 +130,7 @@ export function BrokerRuntimeMetadata() {
                 <dd>{connectivity.label}</dd>
                 <dd className="text-xs text-muted-foreground">
                   {connectivity.checkedAt
-                    ? new Date(connectivity.checkedAt).toLocaleString()
+                    ? timestamp(connectivity.checkedAt)
                     : "No check recorded"}
                 </dd>
               </div>
@@ -150,7 +147,7 @@ export function BrokerRuntimeMetadata() {
               Broker configured: {runtime.broker.configured ? "yes" : "no"}.
               Observation checked:{" "}
               {runtime.broker.configured && runtime.broker.checked_at
-                ? new Date(runtime.broker.checked_at).toLocaleString()
+                ? timestamp(runtime.broker.checked_at)
                 : "not checked"}
               .
             </p>

@@ -1,7 +1,8 @@
+import { queries } from "@/api/queries";
+import { runActive } from "@/lib/status";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { FormEvent, useEffect, useState } from "react";
-import { api } from "@/api/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -25,15 +26,6 @@ const VERDICTS = [
   "likely_not_exploitable",
 ];
 const PAGE_SIZE = 25;
-const ACTIVE = new Set([
-  "pending",
-  "accepted",
-  "running",
-  "preparing",
-  "building",
-  "probing",
-  "triaging",
-]);
 
 export function TriageQueue() {
   const search = useSearch({ from: "/" });
@@ -41,11 +33,10 @@ export function TriageQueue() {
   const [draft, setDraft] = useState(search.search);
   useEffect(() => setDraft(search.search), [search.search]);
   const query = useQuery({
-    queryKey: ["run-page", search],
-    queryFn: () => api.runPage(findingPageQuery(search)),
+    ...queries.runPage(search, findingPageQuery(search)),
     placeholderData: (previous) => previous,
     refetchInterval: (current) =>
-      current.state.data?.items.some((run) => ACTIVE.has(run.status))
+      current.state.data?.items.some((run) => runActive(run.status))
         ? 2000
         : false,
   });

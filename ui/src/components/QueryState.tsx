@@ -1,3 +1,4 @@
+import { timestamp } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 export function QueryState({
   loading,
@@ -47,7 +48,7 @@ export function Freshness({
         : fetching
           ? "Refreshing · "
           : ""}
-      {at ? `Updated ${new Date(at).toLocaleTimeString()}` : "Waiting for data"}
+      {at ? `Updated ${timestamp(at, "time")}` : "Waiting for data"}
     </p>
   );
 }

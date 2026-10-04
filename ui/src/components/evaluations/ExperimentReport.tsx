@@ -1,81 +1,32 @@
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { QueryState } from "@/components/QueryState";
-import type {
-  ExperimentCase,
-  ExperimentDetail,
-  ExperimentSummary,
-} from "@/api/client";
-import { money, seconds } from "@/lib/format";
+import type { ExperimentCase, ExperimentDetail } from "@/api/client";
+import { money, seconds, timestamp } from "@/lib/format";
 import { CaseTable, ResourceDistribution, Scatter } from "./ExperimentCharts";
 
-export type Metrics = ExperimentSummary["metrics"];
-export type Experiment = ExperimentSummary;
-export type { ExperimentCase, ExperimentDetail };
-export type Gate = { label: string; status: string; detail: string };
+import {
+  comparisonPoints,
+  gateObservations,
+  metricNumber,
+  qualityFraction,
+  record,
+  text,
+  type Experiment,
+  type Metrics,
+} from "@/lib/evaluation";
 
-export const text = (value: unknown): string | null =>
-  typeof value === "string" && value ? value : null;
-export const numeric = (value: unknown): number | null =>
-  typeof value === "number" && Number.isFinite(value) ? value : null;
-export const record = (value: unknown): Metrics =>
-  value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Metrics)
-    : {};
-export function metricNumber(metrics: Metrics, ...keys: string[]) {
-  for (const key of keys) {
-    const value =
-      numeric(metrics[key]) ?? numeric(record(metrics.distributions)[key]);
-    if (value != null) return value;
-  }
-  return null;
-}
-export function gateObservations(experiment: Experiment): Gate[] {
-  const metrics = experiment.metrics;
-  const total = metricNumber(metrics, "n", "cases_completed");
-  const passed = metricNumber(metrics, "passed");
-  const accuracy = metricNumber(metrics, "accuracy", "accuracy_mean");
-  const planned = metricNumber(metrics, "n_planned");
-  const status = text(metrics.status);
-  const violations = metricNumber(metrics, "budget_enforcement_violations");
-  const unexpectedStops = metricNumber(metrics, "unexpected_budget_stops");
-  const expectedStops = metricNumber(metrics, "expected_budget_stops");
-  return [
-    {
-      label: "Quality evidence",
-      status: accuracy != null && total != null ? "recorded" : "unknown",
-      detail:
-        passed != null && total != null
-          ? `${passed} / ${total} cases passed · ${((accuracy ?? 0) * 100).toFixed(1)}% accuracy`
-          : accuracy == null
-            ? "No accuracy measurement was recorded."
-            : `${(accuracy * 100).toFixed(1)}% accuracy; case numerator unavailable.`,
-    },
-    {
-      label: "Budget evidence",
-      status:
-        violations == null && unexpectedStops == null
-          ? "unknown"
-          : violations === 0 && unexpectedStops === 0
-            ? "clear"
-            : "findings",
-      detail:
-        violations == null && unexpectedStops == null
-          ? "No budget enforcement counters were recorded."
-          : `${violations ?? 0} enforcement violations · ${unexpectedStops ?? 0} unexpected stops · ${expectedStops ?? 0} expected stops`,
-    },
-    {
-      label: "Completion evidence",
-      status: status || "unknown",
-      detail:
-        total != null && planned != null
-          ? `${total} of ${planned} planned case runs recorded${status ? ` · status ${status}` : ""}`
-          : status
-            ? `Run status: ${status}; planned and completed counts unavailable.`
-            : "No completion status was recorded.",
-    },
-  ];
-}
+// Retain the report's exports for existing consumers; interpretation lives in
+// the React-independent evaluation module.
+export {
+  gateObservations,
+  metricNumber,
+  numeric,
+  record,
+  text,
+} from "@/lib/evaluation";
+export type { Experiment, Gate, Metrics } from "@/lib/evaluation";
+export type { ExperimentCase, ExperimentDetail };
 
 export function ExperimentContent({
   experiments,
@@ -94,31 +45,7 @@ export function ExperimentContent({
     refetch: () => Promise<unknown>;
   };
 }) {
-  const cohort = selected
-    ? experiments.filter(
-        (item) =>
-          item.agent === selected.agent &&
-          item.dataset === selected.dataset &&
-          item.dataset_version === selected.dataset_version &&
-          text(item.metrics.status) === "complete",
-      )
-    : [];
-  const points = cohort
-    .map((experiment) => ({
-      experiment,
-      accuracy: metricNumber(experiment.metrics, "accuracy", "accuracy_mean"),
-      cost: metricNumber(
-        experiment.metrics,
-        "cost_usd_per_case",
-        "mean_cost_usd",
-      ),
-    }))
-    .filter(
-      (
-        item,
-      ): item is { experiment: Experiment; accuracy: number; cost: number } =>
-        item.accuracy != null && item.cost != null,
-    );
+  const points = comparisonPoints(experiments, selected);
   const confusion = record(
     (detail?.metrics || selected?.metrics || {}).confusion,
   );
@@ -392,13 +319,6 @@ function SelectedMetrics({
     </div>
   );
 }
-function qualityFraction(metrics: Metrics) {
-  const passed = metricNumber(metrics, "passed");
-  const total = metricNumber(metrics, "n", "cases_completed");
-  return passed != null && total != null
-    ? `${passed} / ${total} cases`
-    : undefined;
-}
 function GateSummary({ experiment }: { experiment: Experiment }) {
   return (
     <section aria-labelledby="gate-observations" className="space-y-3">
@@ -475,10 +395,8 @@ function Metadata({ experiment }: { experiment: Experiment }) {
       <div className="col-span-2">
         <dt className="text-xs text-muted-foreground">Recorded</dt>
         <dd>
-          {experiment.created_at
-            ? new Date(experiment.created_at).toLocaleString()
-            : "Unavailable"}{" "}
-          · {experiment.repetitions} repetition(s)
+          {timestamp(experiment.created_at)} · {experiment.repetitions}{" "}
+          repetition(s)
         </dd>
       </div>
     </dl>

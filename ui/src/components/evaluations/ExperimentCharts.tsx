@@ -1,58 +1,16 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { money, seconds } from "@/lib/format";
-import type { Experiment, ExperimentCase, Metrics } from "./ExperimentReport";
 
-const numeric = (value: unknown): number | null =>
-  typeof value === "number" && Number.isFinite(value) ? value : null;
-const record = (value: unknown): Metrics =>
-  value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Metrics)
-    : {};
-
-function caseNumber(scores: Metrics, ...keys: string[]) {
-  for (const key of keys) {
-    const direct = numeric(scores[key]);
-    if (direct != null) return direct;
-  }
-  const usage = record(scores.usage);
-  for (const key of keys) {
-    const nested = numeric(usage[key]);
-    if (nested != null) return nested;
-  }
-  return null;
-}
-
-function caseCost(item: ExperimentCase) {
-  const observed = numeric(item.scores.cost_usd);
-  const status =
-    typeof item.scores.cost_status === "string"
-      ? item.scores.cost_status
-      : null;
-  if (observed != null) return observed;
-  if (status === "known_zero") return 0;
-  if (status === "unknown" || (item.cost_usd === 0 && !status)) return null;
-  return item.cost_usd;
-}
-
-function percentile(values: number[], quantile: number) {
-  if (!values.length) return null;
-  const ordered = [...values].sort((a, b) => a - b);
-  return ordered[Math.max(0, Math.ceil(ordered.length * quantile) - 1)];
-}
+import {
+  caseCost,
+  caseResources,
+  percentile,
+  type Experiment,
+  type ExperimentCase,
+} from "@/lib/evaluation";
 
 export function ResourceDistribution({ cases }: { cases?: ExperimentCase[] }) {
-  const latencies = (cases || [])
-    .map((item) => item.latency_s ?? caseNumber(item.scores, "latency_s"))
-    .filter((value): value is number => value != null);
-  const tokens = (cases || [])
-    .map((item) => {
-      const total = caseNumber(item.scores, "total_tokens", "tokens");
-      if (total != null) return total;
-      const input = caseNumber(item.scores, "input_tokens");
-      const output = caseNumber(item.scores, "output_tokens");
-      return input != null && output != null ? input + output : null;
-    })
-    .filter((value): value is number => value != null);
+  const { latencies, tokens } = caseResources(cases);
   const rows = [
     {
       label: "Tokens",

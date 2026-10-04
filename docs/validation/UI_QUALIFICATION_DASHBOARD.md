@@ -74,3 +74,35 @@ Browser validation against retained graph records confirmed the completed native
 The additions affect public read contracts and generated clients only. They do not alter model settings, agent outputs, budgets, sandbox permissions, workflow execution or historical retry/replay identity; no behavior-version bump or state migration is required. Hosted rollout and a fresh full model qualification cohort remain `not_checked`.
 
 First-batch gates: deterministic suite `passed` (3,149 tests; 39 opt-in/capability-dependent skips), UI regressions `passed` (20 tests), lint/compile/agent specs `passed`, generated contracts/instructions/skills `passed`, UI formatting/TypeScript/production build `passed`, retained-record browser validation `passed`. The 971 existing isolated price-accounting warnings remain unrelated to provider qualification.
+
+## UI organization cleanup (2026-10-04)
+
+The approved UI cleanup centralizes query keys and shared fetch options without changing
+polling timers, operational population filtering, or review invalidation targets. Typed
+HTTP errors distinguish genuine 404 responses from network errors whose message happens
+to begin with 404. Run and batch activity helpers retain their intentionally different
+unknown-state policies. A shared timestamp formatter renders absent or malformed values
+as `Unavailable` and retains locale formatting for valid recorded times.
+
+Finding Detail now delegates controlled review presentation, evidence cards and event
+history to focused components. The route retains draft state, run-change resets, mutation
+ownership and navigation. Evaluation metric, gate, cohort and resource interpretation
+lives in a React-independent module; report exports remain compatible and charts no
+longer import their types from report presentation.
+
+Validation gates: UI regressions `passed` (34 tests, including cache deduplication,
+review invalidation, HTTP failure classification, pagination, timestamp and evaluation
+interpretation); deterministic harness suite `passed` (3,149 tests; 39 capability-dependent
+skips); repository checks, generated artifacts and development skills `passed`; UI
+formatting, TypeScript and production build `passed`; independent diff review `passed`.
+Browser validation against retained records confirmed filter restoration, finding 1/3
+to 2/3 navigation, unsaved reason/override reset with reviewer persistence, evidence and
+event sections, recorded evaluation gates, and unchanged 288.3-second workflow timing.
+No console warnings/errors were observed. No review was saved, findings seeded, or model
+requests made. Before/after read-only snapshots matched findings, budgets and all 16
+unresolved broker holds. Temporary validation services were stopped.
+
+API schemas, agent execution, model settings, sandbox permissions and durable workflow
+identities are unchanged. Runtime behavior/provenance version changes and replay/recovery
+migration are `not_applicable`. Fresh full-model and hosted/Kubernetes qualification are
+`not_checked` by this UI-only cleanup; existing qualification evidence is not promoted.

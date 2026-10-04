@@ -1,7 +1,9 @@
+import { timestamp } from "@/lib/format";
+import { queries } from "@/api/queries";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { api, type Batch } from "@/api/client";
+import { type Batch } from "@/api/client";
 import { QueryState, Freshness } from "@/components/QueryState";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -15,23 +17,10 @@ import {
   workflowCounts,
 } from "@/lib/workflow";
 
-function recordedTime(value: string | null | undefined) {
-  return value && Number.isFinite(Date.parse(value))
-    ? new Date(value).toLocaleString()
-    : "Unavailable";
-}
-
 function BatchFindings({ batchId }: { batchId: string }) {
   const [offset, setOffset] = useState(0);
   const query = useQuery({
-    queryKey: ["workflow-findings", batchId, offset],
-    queryFn: () =>
-      api.runPage({
-        batch_id: batchId,
-        offset,
-        limit: 10,
-        population: "operational",
-      }),
+    ...queries.workflowFindings(batchId, offset),
     refetchInterval: (q) =>
       q.state.data?.items.some((r) => workflowActive(r.status)) ? 2000 : 10000,
   });
@@ -147,7 +136,7 @@ function WorkflowCard({
             </Link>
             <p className="text-xs text-muted-foreground mt-1">
               {batch.finding_count} findings · Created{" "}
-              {recordedTime(batch.created_at)}
+              {timestamp(batch.created_at)}
             </p>
           </div>
           <Badge variant="outline">{batch.status}</Badge>
@@ -175,7 +164,7 @@ function WorkflowCard({
             )}
           </p>
           <p className="sm:col-span-2">
-            Last recorded activity: {recordedTime(batch.last_activity_at)}
+            Last recorded activity: {timestamp(batch.last_activity_at)}
           </p>
         </div>
         <Button
@@ -200,8 +189,7 @@ function WorkflowCard({
 
 export function Workflows() {
   const query = useQuery({
-    queryKey: ["batches"],
-    queryFn: api.batches,
+    ...queries.batches(),
     refetchInterval: (q) =>
       q.state.data?.some((b) => workflowActive(b.status)) ? 2000 : 10000,
   });
