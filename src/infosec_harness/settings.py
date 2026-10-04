@@ -78,6 +78,9 @@ class Settings(BaseSettings):
     model_mode: Literal["live", "stub"] = "live"
     # Opt-in operator-owned catalog. Direct mode never loads or contacts it.
     broker_config: Path | None = None
+    # Operator-owned pinned evidence; absent deployments report not_checked.
+    qualification_bundle: Path | None = None
+    qualification_observation_max_age_seconds: int = Field(default=3600, ge=30, le=86400)
 
     # Sandbox
     sandbox_runtime: str = "runsc"  # gVisor; set to "runc" only for local development without gVisor

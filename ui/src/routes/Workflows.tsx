@@ -18,7 +18,7 @@ export function Workflows() {
     queryKey: ["batches"],
     queryFn: api.batches,
     refetchInterval: (q) =>
-      q.state.data?.some((b) => ACTIVE.has(b.status)) ? 2000 : false,
+      q.state.data?.some((b) => ACTIVE.has(b.status)) ? 2000 : 10000,
   });
   return (
     <div className="space-y-6">

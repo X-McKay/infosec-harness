@@ -1,7 +1,11 @@
 import { parseFindingSearch } from "@/lib/search";
 import React, { useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  useQuery,
+  QueryClient,
+  QueryClientProvider,
+} from "@tanstack/react-query";
 import {
   Link,
   Outlet,
@@ -18,6 +22,8 @@ import {
   Settings2,
   ShieldCheck,
 } from "lucide-react";
+import { api } from "./api/client";
+import { Qualification } from "./routes/Qualification";
 import { ConfigView } from "./routes/ConfigView";
 import { Experiments } from "./routes/Experiments";
 import { FindingDetail } from "./routes/FindingDetail";
@@ -31,8 +37,36 @@ const navigation = [
   ["/workflows", "Workflows", Activity],
   ["/experiments", "Evaluations", FlaskConical],
   ["/metrics", "Metrics", ChartNoAxesCombined],
+  ["/qualification", "Qualification", ShieldCheck],
   ["/config", "Settings", Settings2],
 ] as const;
+
+function RuntimeIndicator() {
+  const query = useQuery({
+    queryKey: ["runtime-status"],
+    queryFn: api.runtimeStatus,
+    refetchInterval: 30000,
+  });
+  const runtime = query.data;
+  return (
+    <div className="mb-3 space-y-1 text-xs text-muted-foreground" role="status">
+      {runtime ? (
+        <>
+          <p className="font-medium text-foreground">{runtime.environment}</p>
+          <p>Models: {runtime.model_mode}</p>
+          <p>Transport: {runtime.assessment_transport}</p>
+          <p>
+            Broker: {runtime.broker.status.replaceAll("_", " ")}
+            {runtime.broker.stale ? " · observation stale" : ""}
+          </p>
+          {query.isError && <p>Refresh failed · last known runtime</p>}
+        </>
+      ) : (
+        <p>{query.isPending ? "Loading runtime…" : "Runtime unavailable"}</p>
+      )}
+    </div>
+  );
+}
 
 function Shell() {
   const [theme, setTheme] = useState(
@@ -61,10 +95,8 @@ function Shell() {
       <aside className="sidebar flex gap-4 border-b p-4 md:fixed md:inset-y-0 md:left-0 md:w-56 md:flex-col md:border-r">
         <div className="flex items-center gap-2 py-3 text-sm font-semibold">
           <ShieldCheck className="h-5 w-5 text-primary" /> Harness{" "}
-          <span className="rounded border px-1 text-[10px] text-muted-foreground">
-            LOCAL
-          </span>
         </div>
+        <RuntimeIndicator />
         <nav
           aria-label="Main navigation"
           className="flex min-w-0 flex-1 gap-1 overflow-x-auto md:flex-col"
@@ -123,6 +155,11 @@ const expRoute = createRoute({
   path: "/experiments",
   component: Experiments,
 });
+const qualificationRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/qualification",
+  component: Qualification,
+});
 const cfgRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/config",
@@ -144,6 +181,7 @@ const router = createRouter({
     detailRoute,
     expRoute,
     cfgRoute,
+    qualificationRoute,
     metricsRoute,
     workflowsRoute,
   ]),

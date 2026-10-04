@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { BrokerRuntimeMetadata } from "./Qualification";
 import { QueryState, Freshness } from "@/components/QueryState";
 
 export function ConfigView() {
@@ -32,6 +33,7 @@ export function ConfigView() {
         error={query.error}
         retry={() => void query.refetch()}
       />
+      <BrokerRuntimeMetadata />
       {config && (
         <Card>
           <CardHeader>

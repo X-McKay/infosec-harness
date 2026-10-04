@@ -1,6 +1,8 @@
 """Versioned read models shared by OpenAPI and the browser."""
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 JsonObject = dict[str, JsonValue]
@@ -237,3 +239,46 @@ class HealthResponse(BaseModel):
 
 class CancelResponse(BaseModel):
     status: str
+
+
+GateStatus = Literal["passed", "failed", "not_checked"]
+
+
+class BrokerStatus(BaseModel):
+    configured: bool
+    status: GateStatus
+    checked_at: str | None = None
+    stale: bool = True
+    unresolved_requests: int | None = None
+    detail: str
+
+
+class RuntimeStatus(BaseModel):
+    environment: str
+    model_mode: str
+    assessment_transport: str
+    api_source_commit: str | None = None
+    as_of: str
+    database_backend: str
+    temporal_mode: str
+    broker: BrokerStatus
+
+
+class QualifiedComponent(BaseModel):
+    agent: str
+    scope: str
+    status: GateStatus
+    measured_commit: str | None = None
+    freshness: Literal["fresh", "reused", "stale", "unavailable"]
+    reason: str
+    cases: int | None = None
+    passed_cases: int | None = None
+
+
+class QualificationStatus(BaseModel):
+    as_of: str
+    candidate_commit: str | None = None
+    status: GateStatus
+    detail: str
+    components: list[QualifiedComponent]
+    limitations: list[str]

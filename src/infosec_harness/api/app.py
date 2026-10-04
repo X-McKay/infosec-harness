@@ -29,6 +29,13 @@ from infosec_harness.api.contracts import (
     RunSummary,
 )
 from infosec_harness.api.observations import router
+from infosec_harness.api.population import (
+    Population,
+    batch_population,
+    operational_experiment,
+    run_population,
+)
+from infosec_harness.api.status import router as status_router
 from infosec_harness.domain.models import FindingInput, VerdictLabel
 from infosec_harness.persistence import db, store
 from infosec_harness.settings import get_settings
@@ -77,6 +84,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="InfoSec Harness", version="2.0.0", lifespan=lifespan)
 
 app.include_router(router)
+app.include_router(status_router)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
@@ -113,28 +121,71 @@ async def submit_ado(req: SubmitADORequest) -> AdoBatchAccepted:
 
 
 @app.get("/api/batches", response_model=list[BatchSummary])
-async def batches() -> list[BatchSummary]:
-    return await store.list_batches()
+async def batches(population: Population | None = None) -> list[BatchSummary]:
+    if population is None:
+        return await store.list_batches()
+    from sqlalchemy import func, select
+
+    matching = (select(db.TriageRun.batch_id, func.count().label("finding_count"))
+                .where(run_population(population)).group_by(db.TriageRun.batch_id).subquery())
+    async with db.session() as session:
+        rows = (await session.execute(
+            select(db.Batch, matching.c.finding_count)
+            .join(matching, matching.c.batch_id == db.Batch.id)
+            .order_by(db.Batch.created_at.desc()).limit(100))).all()
+        return [{"id": batch.id, "status": batch.status, "label": batch.label,
+                 "source_kind": batch.source_kind, "finding_count": count,
+                 "created_at": batch.created_at.isoformat()} for batch, count in rows]
 
 
 @app.get("/api/batches/{batch_id}", response_model=BatchDetail)
-async def batch(batch_id: str) -> BatchDetail:
-    summary = await store.batch_summary(batch_id)
-    if summary is None:
-        raise HTTPException(404, "batch not found")
-    return summary
+async def batch(batch_id: str, population: Population | None = None) -> BatchDetail:
+    if population is None:
+        summary = await store.batch_summary(batch_id)
+        if summary is None:
+            raise HTTPException(404, "batch not found")
+        return summary
+    from sqlalchemy import func, select
+
+    async with db.session() as session:
+        record = await session.scalar(select(db.Batch).where(
+            db.Batch.id == batch_id, batch_population(population)))
+        if record is None:
+            raise HTTPException(404, "batch not found")
+        selected = (db.TriageRun.batch_id == batch_id, run_population(population))
+        states = dict((await session.execute(
+            select(db.TriageRun.status, func.count()).where(*selected)
+            .group_by(db.TriageRun.status))).all())
+        verdicts = dict((await session.execute(
+            select(db.TriageRun.verdict, func.count()).where(*selected)
+            .where(db.TriageRun.verdict.is_not(None)).group_by(db.TriageRun.verdict))).all())
+        ledger = await session.get(db.BudgetLedger, batch_id)
+        return {"id": record.id, "status": record.status, "label": record.label,
+                "source_kind": record.source_kind, "finding_count": sum(states.values()),
+                "created_at": record.created_at.isoformat(), "status_counts": states,
+                "verdict_counts": verdicts, "budget": ledger.state if ledger else None}
 
 
 @app.get("/api/runs", response_model=list[RunSummary])
 async def runs(batch_id: str | None = None, verdict: str | None = None,
-               limit: int = Query(200, ge=1, le=1000)) -> list[RunSummary]:
-    return await store.list_runs(batch_id=batch_id, verdict=verdict, limit=limit)
+               limit: int = Query(200, ge=1, le=1000), population: Population | None = None) -> list[RunSummary]:
+    if population is None:
+        return await store.list_runs(batch_id=batch_id, verdict=verdict, limit=limit)
+    from sqlalchemy import select
+    statement = select(db.TriageRun).where(run_population(population))
+    if batch_id:
+        statement = statement.where(db.TriageRun.batch_id == batch_id)
+    if verdict:
+        statement = statement.where(db.TriageRun.verdict == verdict)
+    async with db.session() as session:
+        rows = (await session.scalars(statement.order_by(db.TriageRun.priority_score.desc().nullslast()).limit(limit))).all()
+        return [store._run_summary(r) for r in rows]
 
 
 @app.get("/api/runs/{run_id}", response_model=RunDetail)
-async def run(run_id: str) -> RunDetail:
+async def run(run_id: str, population: Population | None = None) -> RunDetail:
     detail = await store.get_run(run_id)
-    if detail is None:
+    if detail is None or (population is not None and (detail.get("telemetry") or {}).get("population", "legacy") != population):
         raise HTTPException(404, "run not found")
     return detail
 
@@ -154,12 +205,18 @@ async def review(run_id: str, req: ReviewRequest) -> ReviewSaved:
 
 
 @app.get("/api/experiments", response_model=list[ExperimentSummary])
-async def experiments() -> list[ExperimentSummary]:
+async def experiments(population: Population | None = None) -> list[ExperimentSummary]:
     from sqlalchemy import select
 
     async with db.session() as s:
-        rows = (await s.execute(
-            select(db.EvalExperiment).order_by(db.EvalExperiment.created_at.desc()).limit(100))).scalars().all()
+        statement = select(db.EvalExperiment)
+        if population == "operational":
+            statement = statement.where(operational_experiment())
+        elif population == "demo":
+            statement = statement.where(db.EvalExperiment.backend == "stub")
+        elif population == "legacy":
+            statement = statement.where(db.EvalExperiment.backend == "")
+        rows = (await s.execute(statement.order_by(db.EvalExperiment.created_at.desc()).limit(100))).scalars().all()
         return [{"id": e.id, "agent": e.agent, "dataset": e.dataset, "dataset_version": e.dataset_version,
                  "git_sha": e.git_sha, "overlay": e.overlay, "repetitions": e.repetitions,
                  "metrics": e.metrics, "config_hash": e.config_hash, "git_dirty": e.git_dirty,

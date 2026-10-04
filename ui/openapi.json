@@ -294,6 +294,27 @@
               "type": "string",
               "title": "Experiment Id"
             }
+          },
+          {
+            "name": "population",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "operational",
+                    "demo",
+                    "legacy"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Population"
+            }
           }
         ],
         "responses": {
@@ -320,39 +341,55 @@
         }
       }
     },
-    "/api/batches": {
+    "/api/qualification": {
       "get": {
-        "summary": "Batches",
-        "operationId": "batches_api_batches_get",
+        "summary": "Qualification",
+        "operationId": "qualification_api_qualification_get",
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/BatchSummary"
-                  },
-                  "type": "array",
-                  "title": "Response Batches Api Batches Get"
+                  "$ref": "#/components/schemas/QualificationStatus"
                 }
               }
             }
           }
         }
-      },
+      }
+    },
+    "/api/runtime-status": {
+      "get": {
+        "summary": "Runtime Status",
+        "operationId": "runtime_status_api_runtime_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/batches": {
       "post": {
         "summary": "Submit",
         "operationId": "submit_api_batches_post",
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/SubmitRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -361,6 +398,59 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/BatchAccepted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "Batches",
+        "operationId": "batches_api_batches_get",
+        "parameters": [
+          {
+            "name": "population",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "operational",
+                    "demo",
+                    "legacy"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Population"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/BatchSummary"
+                  },
+                  "title": "Response Batches Api Batches Get"
                 }
               }
             }
@@ -428,6 +518,27 @@
             "schema": {
               "type": "string",
               "title": "Batch Id"
+            }
+          },
+          {
+            "name": "population",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "operational",
+                    "demo",
+                    "legacy"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Population"
             }
           }
         ],
@@ -503,6 +614,27 @@
               "default": 200,
               "title": "Limit"
             }
+          },
+          {
+            "name": "population",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "operational",
+                    "demo",
+                    "legacy"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Population"
+            }
           }
         ],
         "responses": {
@@ -545,6 +677,27 @@
             "schema": {
               "type": "string",
               "title": "Run Id"
+            }
+          },
+          {
+            "name": "population",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "operational",
+                    "demo",
+                    "legacy"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Population"
             }
           }
         ],
@@ -625,17 +778,50 @@
       "get": {
         "summary": "Experiments",
         "operationId": "experiments_api_experiments_get",
+        "parameters": [
+          {
+            "name": "population",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "operational",
+                    "demo",
+                    "legacy"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Population"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
+                  "type": "array",
                   "items": {
                     "$ref": "#/components/schemas/ExperimentSummary"
                   },
-                  "type": "array",
                   "title": "Response Experiments Api Experiments Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -909,6 +1095,61 @@
           "count"
         ],
         "title": "Bin"
+      },
+      "BrokerStatus": {
+        "properties": {
+          "configured": {
+            "type": "boolean",
+            "title": "Configured"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "not_checked"
+            ],
+            "title": "Status"
+          },
+          "checked_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checked At"
+          },
+          "stale": {
+            "type": "boolean",
+            "title": "Stale",
+            "default": true
+          },
+          "unresolved_requests": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unresolved Requests"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "configured",
+          "status",
+          "detail"
+        ],
+        "title": "BrokerStatus"
       },
       "CancelResponse": {
         "properties": {
@@ -1562,6 +1803,138 @@
           "definitions"
         ],
         "title": "MetricsResponse"
+      },
+      "QualificationStatus": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "title": "As Of"
+          },
+          "candidate_commit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Commit"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "not_checked"
+            ],
+            "title": "Status"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          },
+          "components": {
+            "items": {
+              "$ref": "#/components/schemas/QualifiedComponent"
+            },
+            "type": "array",
+            "title": "Components"
+          },
+          "limitations": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Limitations"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "status",
+          "detail",
+          "components",
+          "limitations"
+        ],
+        "title": "QualificationStatus"
+      },
+      "QualifiedComponent": {
+        "properties": {
+          "agent": {
+            "type": "string",
+            "title": "Agent"
+          },
+          "scope": {
+            "type": "string",
+            "title": "Scope"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "not_checked"
+            ],
+            "title": "Status"
+          },
+          "measured_commit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Measured Commit"
+          },
+          "freshness": {
+            "type": "string",
+            "enum": [
+              "fresh",
+              "reused",
+              "stale",
+              "unavailable"
+            ],
+            "title": "Freshness"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "cases": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cases"
+          },
+          "passed_cases": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passed Cases"
+          }
+        },
+        "type": "object",
+        "required": [
+          "agent",
+          "scope",
+          "status",
+          "freshness",
+          "reason"
+        ],
+        "title": "QualifiedComponent"
       },
       "ReviewRecord": {
         "properties": {
@@ -2326,6 +2699,59 @@
         "additionalProperties": true,
         "type": "object",
         "title": "RunTelemetry"
+      },
+      "RuntimeStatus": {
+        "properties": {
+          "environment": {
+            "type": "string",
+            "title": "Environment"
+          },
+          "model_mode": {
+            "type": "string",
+            "title": "Model Mode"
+          },
+          "assessment_transport": {
+            "type": "string",
+            "title": "Assessment Transport"
+          },
+          "api_source_commit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Source Commit"
+          },
+          "as_of": {
+            "type": "string",
+            "title": "As Of"
+          },
+          "database_backend": {
+            "type": "string",
+            "title": "Database Backend"
+          },
+          "temporal_mode": {
+            "type": "string",
+            "title": "Temporal Mode"
+          },
+          "broker": {
+            "$ref": "#/components/schemas/BrokerStatus"
+          }
+        },
+        "type": "object",
+        "required": [
+          "environment",
+          "model_mode",
+          "assessment_transport",
+          "as_of",
+          "database_backend",
+          "temporal_mode",
+          "broker"
+        ],
+        "title": "RuntimeStatus"
       },
       "Severity": {
         "type": "string",

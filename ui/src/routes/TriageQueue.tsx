@@ -47,7 +47,7 @@ export function TriageQueue() {
         verdict: search.verdict || undefined,
         search: search.search || undefined,
         offset: search.offset,
-        population: search.population || undefined,
+        population: "operational",
         metric: search.metric || undefined,
         lower: search.lower,
         upper: search.upper,
@@ -87,10 +87,10 @@ export function TriageQueue() {
           stale={query.isError && !!page}
         />
       </div>
-      {(search.population || search.metric) && (
+      {search.metric && (
         <div className="flex flex-wrap items-center gap-3 rounded-lg border p-3 text-sm">
           <span>
-            Population: {search.population || "all"} ·{" "}
+            Population: operational ·{" "}
             {search.metric
               ? `${search.metric.replaceAll("_", " ")}: ${search.lower ?? "any"} to ${search.upper ?? "any"}${search.upper_inclusive ? " inclusive" : " exclusive"}`
               : "all measurements"}
@@ -100,7 +100,7 @@ export function TriageQueue() {
             variant="outline"
             onClick={() =>
               updateSearch({
-                population: undefined,
+                population: "operational",
                 metric: undefined,
                 lower: undefined,
                 upper: undefined,

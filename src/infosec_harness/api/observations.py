@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import func, or_, select
 
 from infosec_harness.api.contracts import ExperimentDetail, MetricsResponse, RunPage
+from infosec_harness.api.population import Population, operational_experiment
 from infosec_harness.persistence import db, store
 from infosec_harness.persistence.metrics import aggregate_metrics
 
@@ -63,9 +64,16 @@ async def metrics(batch_id: str | None = None,
 
 
 @router.get("/experiments/{experiment_id}", response_model=ExperimentDetail)
-async def experiment_detail(experiment_id: str) -> ExperimentDetail:
+async def experiment_detail(experiment_id: str, population: Population | None = None) -> ExperimentDetail:
     async with db.session() as session:
-        experiment = await session.get(db.EvalExperiment, experiment_id)
+        statement = select(db.EvalExperiment).where(db.EvalExperiment.id == experiment_id)
+        if population == "operational":
+            statement = statement.where(operational_experiment())
+        elif population == "demo":
+            statement = statement.where(db.EvalExperiment.backend == "stub")
+        elif population == "legacy":
+            statement = statement.where(db.EvalExperiment.backend == "")
+        experiment = await session.scalar(statement)
         if experiment is None:
             raise HTTPException(404, "experiment not found")
         cases = (await session.execute(select(db.EvalCaseResult).where(

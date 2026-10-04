@@ -24,6 +24,9 @@ export type ExperimentSummary = components["schemas"]["ExperimentSummary"];
 export type ExperimentDetail = components["schemas"]["ExperimentDetail"];
 export type ExperimentCase = components["schemas"]["ExperimentCase"];
 
+export type RuntimeStatus = components["schemas"]["RuntimeStatus"];
+export type QualificationStatus = components["schemas"]["QualificationStatus"];
+
 const BASE = "";
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -36,31 +39,48 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  metrics: (population: MetricsPopulation = "operational") =>
+  runtimeStatus: () =>
+    req<Success<"runtime_status_api_runtime_status_get">>(
+      "/api/runtime-status",
+    ),
+  qualification: () =>
+    req<Success<"qualification_api_qualification_get">>("/api/qualification"),
+  metrics: () =>
     req<Success<"metrics_api_metrics_get">>(
-      `/api/metrics?population=${population}`,
+      "/api/metrics?population=operational",
     ),
   runPage: (params: RunPageQuery) =>
     req<Success<"run_page_api_run_page_get">>(
       `/api/run-page?${new URLSearchParams(
-        Object.entries(params)
-          .filter(([, v]) => v !== undefined && v !== "")
+        Object.entries({ ...params, population: "operational" })
+          .filter(([, v]) => v != null && v !== "")
           .map(([k, v]) => [k, String(v)]),
       )}`,
     ),
   experiment: (id: string) =>
     req<Success<"experiment_detail_api_experiments__experiment_id__get">>(
-      `/api/experiments/${id}`,
+      `/api/experiments/${encodeURIComponent(id)}?population=operational`,
     ),
-  batches: () => req<Success<"batches_api_batches_get">>("/api/batches"),
+  batches: () =>
+    req<Success<"batches_api_batches_get">>(
+      "/api/batches?population=operational",
+    ),
   batch: (id: string) =>
-    req<Success<"batch_api_batches__batch_id__get">>(`/api/batches/${id}`),
+    req<Success<"batch_api_batches__batch_id__get">>(
+      `/api/batches/${encodeURIComponent(id)}?population=operational`,
+    ),
   runs: (params: Query<"runs_api_runs_get"> = {}) => {
-    const q = new URLSearchParams(params as Record<string, string>).toString();
+    const q = new URLSearchParams(
+      Object.entries({ ...params, population: "operational" })
+        .filter(([, value]) => value != null && value !== "")
+        .map(([key, value]) => [key, String(value)]),
+    ).toString();
     return req<Success<"runs_api_runs_get">>(`/api/runs${q ? `?${q}` : ""}`);
   },
   run: (id: string) =>
-    req<Success<"run_api_runs__run_id__get">>(`/api/runs/${id}`),
+    req<Success<"run_api_runs__run_id__get">>(
+      `/api/runs/${encodeURIComponent(id)}?population=operational`,
+    ),
   submit: (body: components["schemas"]["SubmitRequest"]) =>
     req<Success<"submit_api_batches_post">>("/api/batches", {
       method: "POST",
@@ -75,6 +95,8 @@ export const api = {
       },
     ),
   experiments: () =>
-    req<Success<"experiments_api_experiments_get">>("/api/experiments"),
+    req<Success<"experiments_api_experiments_get">>(
+      "/api/experiments?population=operational",
+    ),
   config: () => req<Success<"config_api_config_get">>("/api/config"),
 };

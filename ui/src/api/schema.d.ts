@@ -55,6 +55,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/qualification": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Qualification */
+        get: operations["qualification_api_qualification_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/runtime-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Runtime Status */
+        get: operations["runtime_status_api_runtime_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/batches": {
         parameters: {
             query?: never;
@@ -304,6 +338,27 @@ export interface components {
             /** Count */
             count: number;
         };
+        /** BrokerStatus */
+        BrokerStatus: {
+            /** Configured */
+            configured: boolean;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "passed" | "failed" | "not_checked";
+            /** Checked At */
+            checked_at?: string | null;
+            /**
+             * Stale
+             * @default true
+             */
+            stale: boolean;
+            /** Unresolved Requests */
+            unresolved_requests?: number | null;
+            /** Detail */
+            detail: string;
+        };
         /** CancelResponse */
         CancelResponse: {
             /** Status */
@@ -540,6 +595,49 @@ export interface components {
                 [key: string]: string;
             };
         };
+        /** QualificationStatus */
+        QualificationStatus: {
+            /** As Of */
+            as_of: string;
+            /** Candidate Commit */
+            candidate_commit?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "passed" | "failed" | "not_checked";
+            /** Detail */
+            detail: string;
+            /** Components */
+            components: components["schemas"]["QualifiedComponent"][];
+            /** Limitations */
+            limitations: string[];
+        };
+        /** QualifiedComponent */
+        QualifiedComponent: {
+            /** Agent */
+            agent: string;
+            /** Scope */
+            scope: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "passed" | "failed" | "not_checked";
+            /** Measured Commit */
+            measured_commit?: string | null;
+            /**
+             * Freshness
+             * @enum {string}
+             */
+            freshness: "fresh" | "reused" | "stale" | "unavailable";
+            /** Reason */
+            reason: string;
+            /** Cases */
+            cases?: number | null;
+            /** Passed Cases */
+            passed_cases?: number | null;
+        };
         /** ReviewRecord */
         ReviewRecord: {
             /**
@@ -754,6 +852,24 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** RuntimeStatus */
+        RuntimeStatus: {
+            /** Environment */
+            environment: string;
+            /** Model Mode */
+            model_mode: string;
+            /** Assessment Transport */
+            assessment_transport: string;
+            /** Api Source Commit */
+            api_source_commit?: string | null;
+            /** As Of */
+            as_of: string;
+            /** Database Backend */
+            database_backend: string;
+            /** Temporal Mode */
+            temporal_mode: string;
+            broker: components["schemas"]["BrokerStatus"];
+        };
         /**
          * Severity
          * @enum {string}
@@ -921,7 +1037,9 @@ export interface operations {
     };
     experiment_detail_api_experiments__experiment_id__get: {
         parameters: {
-            query?: never;
+            query?: {
+                population?: ("operational" | "demo" | "legacy") | null;
+            };
             header?: never;
             path: {
                 experiment_id: string;
@@ -950,7 +1068,7 @@ export interface operations {
             };
         };
     };
-    batches_api_batches_get: {
+    qualification_api_qualification_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -965,7 +1083,58 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    "application/json": components["schemas"]["QualificationStatus"];
+                };
+            };
+        };
+    };
+    runtime_status_api_runtime_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeStatus"];
+                };
+            };
+        };
+    };
+    batches_api_batches_get: {
+        parameters: {
+            query?: {
+                population?: ("operational" | "demo" | "legacy") | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
                     "application/json": components["schemas"]["BatchSummary"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -1038,7 +1207,9 @@ export interface operations {
     };
     batch_api_batches__batch_id__get: {
         parameters: {
-            query?: never;
+            query?: {
+                population?: ("operational" | "demo" | "legacy") | null;
+            };
             header?: never;
             path: {
                 batch_id: string;
@@ -1073,6 +1244,7 @@ export interface operations {
                 batch_id?: string | null;
                 verdict?: string | null;
                 limit?: number;
+                population?: ("operational" | "demo" | "legacy") | null;
             };
             header?: never;
             path?: never;
@@ -1102,7 +1274,9 @@ export interface operations {
     };
     run_api_runs__run_id__get: {
         parameters: {
-            query?: never;
+            query?: {
+                population?: ("operational" | "demo" | "legacy") | null;
+            };
             header?: never;
             path: {
                 run_id: string;
@@ -1168,7 +1342,9 @@ export interface operations {
     };
     experiments_api_experiments_get: {
         parameters: {
-            query?: never;
+            query?: {
+                population?: ("operational" | "demo" | "legacy") | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -1182,6 +1358,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ExperimentSummary"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
