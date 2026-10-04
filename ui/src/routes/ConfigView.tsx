@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { BrokerRuntimeMetadata } from "./Qualification";
+import { BrokerRuntimeMetadata } from "@/components/RuntimeIndicator";
 import { QueryState, Freshness } from "@/components/QueryState";
 
 export function ConfigView() {

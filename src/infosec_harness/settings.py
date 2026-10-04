@@ -80,6 +80,7 @@ class Settings(BaseSettings):
     broker_config: Path | None = None
     # Operator-owned pinned evidence; absent deployments report not_checked.
     qualification_bundle: Path | None = None
+    model_connection_observation: Path | None = None
     qualification_observation_max_age_seconds: int = Field(default=3600, ge=30, le=86400)
 
     # Sandbox

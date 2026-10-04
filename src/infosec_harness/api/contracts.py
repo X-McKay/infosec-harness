@@ -125,6 +125,11 @@ class BatchSummary(BaseModel):
     source_kind: str
     finding_count: int
     created_at: str
+    status_counts: dict[str, int] = Field(default_factory=dict)
+    current_phases: dict[str, int] = Field(default_factory=dict)
+    started_at: str | None = None
+    completed_at: str | None = None
+    last_activity_at: str | None = None
 
 
 class BatchDetail(BatchSummary):
@@ -253,6 +258,12 @@ class BrokerStatus(BaseModel):
     detail: str
 
 
+class ModelConnectivity(BaseModel):
+    status: GateStatus = "not_checked"
+    checked_at: str | None = None
+    detail: str = "No recorded inference check is available for the active profile."
+
+
 class RuntimeStatus(BaseModel):
     environment: str
     model_mode: str
@@ -262,6 +273,8 @@ class RuntimeStatus(BaseModel):
     database_backend: str
     temporal_mode: str
     broker: BrokerStatus
+    model_names: list[str] = Field(default_factory=list)
+    model_connectivity: ModelConnectivity = Field(default_factory=ModelConnectivity)
 
 
 class QualifiedComponent(BaseModel):
@@ -276,6 +289,8 @@ class QualifiedComponent(BaseModel):
 
 
 class QualificationStatus(BaseModel):
+    active_profile_status: GateStatus = "not_checked"
+    active_profile_detail: str = "Retained component evidence does not establish qualification of the active model and transport profile."
     as_of: str
     candidate_commit: str | None = None
     status: GateStatus

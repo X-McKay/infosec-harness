@@ -14,6 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { findingPageQuery } from "@/lib/search";
 import { money } from "@/lib/format";
 import { verdictLabel, verdictVariant } from "@/lib/verdict";
 
@@ -41,18 +42,7 @@ export function TriageQueue() {
   useEffect(() => setDraft(search.search), [search.search]);
   const query = useQuery({
     queryKey: ["run-page", search],
-    queryFn: () =>
-      api.runPage({
-        batch_id: search.batch_id || undefined,
-        verdict: search.verdict || undefined,
-        search: search.search || undefined,
-        offset: search.offset,
-        population: "operational",
-        metric: search.metric || undefined,
-        lower: search.lower,
-        upper: search.upper,
-        upper_inclusive: search.upper_inclusive,
-      }),
+    queryFn: () => api.runPage(findingPageQuery(search)),
     placeholderData: (previous) => previous,
     refetchInterval: (current) =>
       current.state.data?.items.some((run) => ACTIVE.has(run.status))
@@ -244,6 +234,7 @@ export function TriageQueue() {
                         <Link
                           to="/runs/$runId"
                           params={{ runId: run.id }}
+                          search={{ ...search, from_queue: true }}
                           className="font-medium hover:underline"
                         >
                           {run.title}

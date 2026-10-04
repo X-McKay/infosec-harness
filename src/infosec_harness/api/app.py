@@ -122,8 +122,12 @@ async def submit_ado(req: SubmitADORequest) -> AdoBatchAccepted:
 
 @app.get("/api/batches", response_model=list[BatchSummary])
 async def batches(population: Population | None = None) -> list[BatchSummary]:
+    from infosec_harness.api.progress import batch_progress
+
     if population is None:
-        return await store.list_batches()
+        summaries = await store.list_batches()
+        progress = await batch_progress([row["id"] for row in summaries])
+        return [{**row, **progress[row["id"]]} for row in summaries]
     from sqlalchemy import func, select
 
     matching = (select(db.TriageRun.batch_id, func.count().label("finding_count"))
@@ -133,9 +137,10 @@ async def batches(population: Population | None = None) -> list[BatchSummary]:
             select(db.Batch, matching.c.finding_count)
             .join(matching, matching.c.batch_id == db.Batch.id)
             .order_by(db.Batch.created_at.desc()).limit(100))).all()
+        progress = await batch_progress([batch.id for batch, _ in rows], population)
         return [{"id": batch.id, "status": batch.status, "label": batch.label,
                  "source_kind": batch.source_kind, "finding_count": count,
-                 "created_at": batch.created_at.isoformat()} for batch, count in rows]
+                 "created_at": batch.created_at.isoformat(), **progress[batch.id]} for batch, count in rows]
 
 
 @app.get("/api/batches/{batch_id}", response_model=BatchDetail)

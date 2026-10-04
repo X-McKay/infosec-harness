@@ -992,6 +992,53 @@
             "type": "string",
             "title": "Created At"
           },
+          "status_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Status Counts"
+          },
+          "current_phases": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Current Phases"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "last_activity_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Activity At"
+          },
           "budget": {
             "anyOf": [
               {
@@ -1005,13 +1052,6 @@
               }
             ],
             "title": "Budget"
-          },
-          "status_counts": {
-            "additionalProperties": {
-              "type": "integer"
-            },
-            "type": "object",
-            "title": "Status Counts"
           },
           "verdict_counts": {
             "additionalProperties": {
@@ -1029,8 +1069,8 @@
           "source_kind",
           "finding_count",
           "created_at",
-          "budget",
           "status_counts",
+          "budget",
           "verdict_counts"
         ],
         "title": "BatchDetail"
@@ -1060,6 +1100,53 @@
           "created_at": {
             "type": "string",
             "title": "Created At"
+          },
+          "status_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Status Counts"
+          },
+          "current_phases": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Current Phases"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "last_activity_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Activity At"
           }
         },
         "type": "object",
@@ -1804,8 +1891,55 @@
         ],
         "title": "MetricsResponse"
       },
+      "ModelConnectivity": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "not_checked"
+            ],
+            "title": "Status",
+            "default": "not_checked"
+          },
+          "checked_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checked At"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail",
+            "default": "No recorded inference check is available for the active profile."
+          }
+        },
+        "type": "object",
+        "title": "ModelConnectivity"
+      },
       "QualificationStatus": {
         "properties": {
+          "active_profile_status": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "not_checked"
+            ],
+            "title": "Active Profile Status",
+            "default": "not_checked"
+          },
+          "active_profile_detail": {
+            "type": "string",
+            "title": "Active Profile Detail",
+            "default": "Retained component evidence does not establish qualification of the active model and transport profile."
+          },
           "as_of": {
             "type": "string",
             "title": "As Of"
@@ -2739,6 +2873,16 @@
           },
           "broker": {
             "$ref": "#/components/schemas/BrokerStatus"
+          },
+          "model_names": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Model Names"
+          },
+          "model_connectivity": {
+            "$ref": "#/components/schemas/ModelConnectivity"
           }
         },
         "type": "object",

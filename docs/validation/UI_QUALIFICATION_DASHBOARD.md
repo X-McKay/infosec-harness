@@ -60,3 +60,17 @@ Before stopping the old UI/API, after fencing them, after normal deployment, and
 A fresh full model suite, hosted/Kubernetes rollout, and missing historical replay coverage remain `not_checked`. The component ledger continues to distinguish measured cohorts and dependency-verified reuse from a fresh full-system run.
 
 The private normal-deployment receipt `ui-normal-deployment-387a720-v1/normal-deployment-validation.json` has SHA256 `5380af6fab72dea6cbcc197659e89ee264b0444e59ec7adaaae63b5101727c0d`. It records response hashes, exact checker bytes, normal service identities, unchanged-store snapshots, browser observations and cleanup.
+
+## First UI usability batch (2026-10-04)
+
+The runtime indicator and Settings share configured model names and separately recorded model connectivity. An unconfigured broker displays `Not enabled` with no stale or unresolved-request alert. Qualification places the active-profile status and remaining gaps above retained component evidence; passed source/component receipts cannot qualify a different active transport/model profile. Model connectivity receipts bind actual configuration and broker catalog bytes, source commit, mode and transport; malformed, changed, future or expired records cannot become current connectivity evidence. Browser refresh never invokes inference.
+
+Finding details retain operational filters, metric bounds and queue offset in the URL. Previous/next reads filtered pages, including non-aligned offsets such as the workflow list's 10-row pages versus the queue's 25-row pages. A regression prevents overlapping previous ranges from selecting a later finding. Missing selection membership never invents neighbors. Finding-specific draft reviews reset when navigation selects another finding.
+
+Workflows show recorded status/phase counts, conservative acceptance/completion timing and last persisted activity. Batches expand into paginated findings. Read-model regressions independently verify mixed-population isolation, event filtering, terminal-batch completion and unavailable legacy/missing timestamps. No records were seeded to populate the current empty operational views.
+
+Browser validation against retained graph records confirmed the completed native batch's 288.3-second duration, expansion into its one recorded finding, return to the same batch filter, and progression from finding 1/3 to 2/3 in a search-filtered queue with `SQL` restored on return. The qualification view showed active-profile `not_checked` separately from passed retained component evidence. The validation session logged no console warnings or errors and was stopped afterward. These historical controlled graph records stayed in the separate validation database.
+
+The additions affect public read contracts and generated clients only. They do not alter model settings, agent outputs, budgets, sandbox permissions, workflow execution or historical retry/replay identity; no behavior-version bump or state migration is required. Hosted rollout and a fresh full model qualification cohort remain `not_checked`.
+
+First-batch gates: deterministic suite `passed` (3,149 tests; 39 opt-in/capability-dependent skips), UI regressions `passed` (20 tests), lint/compile/agent specs `passed`, generated contracts/instructions/skills `passed`, UI formatting/TypeScript/production build `passed`, retained-record browser validation `passed`. The 971 existing isolated price-accounting warnings remain unrelated to provider qualification.

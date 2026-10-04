@@ -56,3 +56,17 @@ The persistent environment/mode indicator and Settings runtime panel use the sam
 ## Contract and recovery impact
 
 These endpoints and views are read-only projections, plus the bounded unsigned admission check. They do not alter agent behavior, output contracts, budgets, thresholds, Temporal activity identities or workflow histories. No durable generation/version bump or workflow recovery migration is introduced by the dashboard. Its public contracts and generated clients must remain synchronized through the repository's generated-artifact checks.
+
+## Runtime clarity and active-profile scope
+
+Runtime and Settings now display resolved model identities separately from execution evidence. An unconfigured broker displays `Not enabled`; stale observations and held-request warnings apply only to a configured broker. The component ledger is labeled `Component evidence`, and the active model/transport profile has a separate status. Retained component gates do not automatically promote a changed live/direct profile; active-profile qualification remains `not_checked` when no independently assessed active-profile release evidence is available.
+
+An operator may set `HARNESS_MODEL_CONNECTION_OBSERVATION` to a credential-free receipt from an actual inference check. Exact fields: `version` (integer 1), `checked_at` (timezone-aware ISO timestamp), `source_commit` (the deployed source), `model_config_sha256` (actual model configuration file bytes), `broker_config_sha256` (actual broker catalog bytes, or null without a broker), `mode`, `transport`, and `status` (`passed` or `failed`). Only record a pass after a real request completes with the expected result. A configured provider name is insufficient. Duplicate/extra fields, mismatched profiles/source, invalid dates and unreadable evidence remain `not_checked`; checks expire after one hour. The API does not invoke a model when displaying or refreshing this observation, and its text identifies the check as operator-recorded rather than continuous health monitoring. This is connectivity evidence, not agent qualification.
+
+## Finding navigation and recorded workflow progress
+
+Finding detail URLs carry queue filters, metric bounds, offset and an explicit queue-context marker. Back to queue and previous/next retain this operational selection. Adjacent navigation reads the actual filtered API pages, including non-aligned offsets; absent membership or a direct link does not invent a neighbor. Finding-specific review drafts reset when selecting a different finding.
+
+Workflows aggregate counts, current nonterminal phases and timestamps from the selected persisted child population. Demo/legacy rows and their events cannot enter operational counts or last activity. Elapsed time requires recorded acceptance timestamps for every selected finding; a terminal duration additionally requires a terminal batch and every selected completion timestamp. Missing timing remains unavailable. Last activity includes persisted finding creation, acceptance/completion and events. This observation does not infer live execution from a configured runtime. Expand a batch for paginated findings, with links into the same batch selection. Refresh and foreground polling remain GET-only.
+
+The new fields are additive read contracts; no database schema, agent contract, budget, workflow definition, retry/cancellation behavior or historical replay identity changes. Generated OpenAPI/client declarations must be rebuilt from these canonical contracts.

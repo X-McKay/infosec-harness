@@ -1,12 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useParams } from "@tanstack/react-router";
-import { useState } from "react";
+import { Link, useParams, useSearch } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 import { ArrowLeft, CircleAlert, Clock3 } from "lucide-react";
 import { api, type RunDetail } from "@/api/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { QueryState, Freshness } from "@/components/QueryState";
+import { findingNeighbors, queueSearch } from "@/lib/search";
 import { money, number, seconds } from "@/lib/format";
 import { verdictLabel, verdictVariant } from "@/lib/verdict";
 
@@ -45,6 +46,8 @@ function notFound(error: unknown) {
 
 export function FindingDetail() {
   const { runId } = useParams({ from: "/runs/$runId" });
+  const search = useSearch({ from: "/runs/$runId" });
+  const returnSearch = queueSearch(search);
   const queryClient = useQueryClient();
   const query = useQuery<RunDetail>({
     queryKey: ["run", runId],
@@ -54,12 +57,22 @@ export function FindingDetail() {
         ? 2000
         : false,
   });
+  const navigation = useQuery({
+    queryKey: ["finding-neighbors", runId, returnSearch],
+    queryFn: () => findingNeighbors(runId, returnSearch, api.runPage),
+    enabled: search.from_queue && !!query.data,
+  });
   const [reviewer, setReviewer] = useState("");
   const [decision, setDecision] = useState("confirm");
   const [overrideLabel, setOverrideLabel] = useState<(typeof VERDICTS)[number]>(
     VERDICTS[0],
   );
   const [reason, setReason] = useState("");
+  useEffect(() => {
+    setReason("");
+    setDecision("confirm");
+    setOverrideLabel(VERDICTS[0]);
+  }, [runId]);
   const review = useMutation({
     mutationFn: () =>
       api.review(runId, {
@@ -81,7 +94,7 @@ export function FindingDetail() {
       <div className="space-y-4">
         <Link
           to="/"
-          search={{ verdict: "", batch_id: "", search: "", offset: 0 }}
+          search={returnSearch}
           className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="h-4 w-4" /> Back to queue
@@ -120,7 +133,7 @@ export function FindingDetail() {
         <div>
           <Link
             to="/"
-            search={{ verdict: "", batch_id: "", search: "", offset: 0 }}
+            search={returnSearch}
             className="mb-4 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
           >
             <ArrowLeft className="h-4 w-4" /> Back to queue
@@ -138,6 +151,52 @@ export function FindingDetail() {
           </Badge>
         </div>
       </div>
+      {search.from_queue && (
+        <div
+          className="flex flex-wrap items-center justify-between gap-3"
+          aria-label="Finding navigation"
+        >
+          <p className="text-sm text-muted-foreground">
+            {navigation.data?.position != null
+              ? `Finding ${navigation.data.position} of ${navigation.data.total} matching the queue filters`
+              : navigation.isPending
+                ? "Loading queue position…"
+                : "Queue results changed; return to the queue to select a finding."}
+          </p>
+          <div className="flex gap-2">
+            {(["previous", "next"] as const).map((direction) => {
+              const neighbor = navigation.data?.[direction];
+              const label =
+                direction === "previous" ? "Previous finding" : "Next finding";
+              return neighbor ? (
+                <Button key={direction} size="sm" variant="outline" asChild>
+                  <Link
+                    to="/runs/$runId"
+                    params={{ runId: neighbor.id }}
+                    search={{
+                      ...returnSearch,
+                      offset: neighbor.offset,
+                      from_queue: true,
+                    }}
+                  >
+                    {label}
+                  </Link>
+                </Button>
+              ) : (
+                <Button key={direction} size="sm" variant="outline" disabled>
+                  {label}
+                </Button>
+              );
+            })}
+          </div>
+          {navigation.isError && (
+            <QueryState
+              error={navigation.error}
+              retry={() => void navigation.refetch()}
+            />
+          )}
+        </div>
+      )}
       <Freshness
         at={query.dataUpdatedAt}
         fetching={query.isFetching}

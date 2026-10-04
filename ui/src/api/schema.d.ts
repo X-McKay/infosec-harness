@@ -301,14 +301,24 @@ export interface components {
             finding_count: number;
             /** Created At */
             created_at: string;
-            /** Budget */
-            budget: {
-                [key: string]: components["schemas"]["JsonValue"];
-            } | null;
             /** Status Counts */
             status_counts: {
                 [key: string]: number;
             };
+            /** Current Phases */
+            current_phases?: {
+                [key: string]: number;
+            };
+            /** Started At */
+            started_at?: string | null;
+            /** Completed At */
+            completed_at?: string | null;
+            /** Last Activity At */
+            last_activity_at?: string | null;
+            /** Budget */
+            budget: {
+                [key: string]: components["schemas"]["JsonValue"];
+            } | null;
             /** Verdict Counts */
             verdict_counts: {
                 [key: string]: number;
@@ -328,6 +338,20 @@ export interface components {
             finding_count: number;
             /** Created At */
             created_at: string;
+            /** Status Counts */
+            status_counts?: {
+                [key: string]: number;
+            };
+            /** Current Phases */
+            current_phases?: {
+                [key: string]: number;
+            };
+            /** Started At */
+            started_at?: string | null;
+            /** Completed At */
+            completed_at?: string | null;
+            /** Last Activity At */
+            last_activity_at?: string | null;
         };
         /** Bin */
         Bin: {
@@ -595,8 +619,35 @@ export interface components {
                 [key: string]: string;
             };
         };
+        /** ModelConnectivity */
+        ModelConnectivity: {
+            /**
+             * Status
+             * @default not_checked
+             * @enum {string}
+             */
+            status: "passed" | "failed" | "not_checked";
+            /** Checked At */
+            checked_at?: string | null;
+            /**
+             * Detail
+             * @default No recorded inference check is available for the active profile.
+             */
+            detail: string;
+        };
         /** QualificationStatus */
         QualificationStatus: {
+            /**
+             * Active Profile Status
+             * @default not_checked
+             * @enum {string}
+             */
+            active_profile_status: "passed" | "failed" | "not_checked";
+            /**
+             * Active Profile Detail
+             * @default Retained component evidence does not establish qualification of the active model and transport profile.
+             */
+            active_profile_detail: string;
             /** As Of */
             as_of: string;
             /** Candidate Commit */
@@ -869,6 +920,9 @@ export interface components {
             /** Temporal Mode */
             temporal_mode: string;
             broker: components["schemas"]["BrokerStatus"];
+            /** Model Names */
+            model_names?: string[];
+            model_connectivity?: components["schemas"]["ModelConnectivity"];
         };
         /**
          * Severity
