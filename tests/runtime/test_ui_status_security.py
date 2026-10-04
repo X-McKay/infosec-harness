@@ -575,3 +575,25 @@ def test_verified_legacy_cardinality_projects_cohort_counts(tmp_path, monkeypatc
         for row in result.components
     )
     safe(result.model_dump())
+
+
+@pytest.mark.parametrize("components", [None, []])
+def test_malformed_nested_inventory_stays_unchecked(monkeypatch, components):
+    bundle = {
+        "ledger": "ledger",
+        "current": "current",
+        "reviews": "reviews",
+        "selection": {agent: "unavailable" for agent in status.AGENT_BINDINGS},
+    }
+    values = {
+        "ledger": {"version": 1, "records": []},
+        "current": {"qualification_candidate_commit": "a" * 40, "components": components},
+        "reviews": {},
+    }
+    monkeypatch.setattr(status, "_bundle", lambda: bundle)
+    monkeypatch.setattr(status, "_ref", lambda key: values[key])
+    monkeypatch.setattr(status, "get_settings", lambda: SimpleNamespace(git_commit_sha="a" * 40))
+    result = status.qualification_status()
+    assert result.status == "not_checked"
+    assert len(result.components) == 11
+    safe(result.model_dump())

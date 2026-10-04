@@ -167,7 +167,7 @@ def qualification_status() -> QualificationStatus:
             components=projected,
             limitations=_LIMITATIONS,
         )
-    except (OSError, ValueError, TypeError, KeyError):
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
         return QualificationStatus(
             as_of=now,
             status="not_checked",

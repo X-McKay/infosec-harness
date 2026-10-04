@@ -8,7 +8,7 @@ No seed operation, demo finding, sample response or fallback result was added. P
 
 | Gate | Result | Evidence |
 | --- | --- | --- |
-| Deterministic backend suite | passed | 3,086 passed; 39 capability-dependent tests skipped |
+| Deterministic backend suite | passed | 3,088 passed; 39 opt-in/capability-dependent tests skipped |
 | UI regressions | passed | Four filter/client tests; hostile population overrides cannot select demo/legacy data |
 | Lint, compile and agent specifications | passed | `just check` |
 | Generated API, instructions and skills | passed | `just generated-check` and development-skill synchronization check |
@@ -21,6 +21,8 @@ No seed operation, demo finding, sample response or fallback result was added. P
 | Hosted/Kubernetes rollout | not_checked | Requires deployment-specific measured evidence |
 | New full model qualification rerun | not_checked | UI/API changes did not change declared agent/broker/model/Temporal dependencies; existing measured scopes remain explicit |
 | Agent/Temporal behavior version bump | not_applicable | No agent or durable workflow behavior changes |
+
+A final failure-path correction adds two regressions for malformed nested inventories. These inputs now return `not_checked` with all 11 components unavailable rather than raising an API error. The final guard rerun passed 3,088 deterministic tests; generated contracts and UI checks also passed. The browser receipt retains its original 4014fbc measurement and 3,086-test count.
 
 The final full deterministic run emitted 971 existing stub-model price-accounting warnings. Those isolated tests do not constitute provider or cost-accounting qualification. Capability-dependent skipped tests remain not checked by this run; earlier measured scopes are documented separately in the credential broker checkpoint.
 
