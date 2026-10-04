@@ -19,7 +19,7 @@ through the API and real Temporal worker. It never changes the host Docker conte
 The offline profile runs component checks and explicitly does not check Temporal or isolation.
 stop preserves this checkout's VM, volumes, findings, downloads, and generated configuration.
 reload restarts the editable API and worker, then runs the explicit stub/runtime smoke.
-reload-ui restarts API and web, then verifies UI/API integration with GET-only checks.
+reload-ui restarts API and web with normal lifecycle, then verifies integration with GET-only checks.
 logs [service] displays and saves a bounded snapshot under .harness/logs/.
 EOF
 }
@@ -230,7 +230,7 @@ case "$COMMAND" in
   reload-ui)
     compose restart api web
     load_env
-    python_managed scripts/ui_deployment_smoke.py \
+    python_managed scripts/ui_deployment_smoke.py --wait-ready \
       --api-url "http://127.0.0.1:${HARNESS_API_PORT}" \
       --web-url "http://127.0.0.1:${HARNESS_WEB_PORT}"
     echo "reloaded API and UI; GET-only deployment checks passed"

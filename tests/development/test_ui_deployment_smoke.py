@@ -1,5 +1,6 @@
 """Controlled HTTP fixtures verify deployment checks without any live services or data writes."""
 import importlib.util
+import json
 from pathlib import Path
 
 import httpx
@@ -157,3 +158,122 @@ def test_metrics_must_report_operational_population(deployment):
     deployment[2]["api.test", "/api/metrics"] = lambda request: httpx.Response(200, json=value)
     with pytest.raises(smoke.SmokeFailure, match="unexpected metrics population"):
         run(deployment)
+
+
+def test_unpaginated_existing_experiment_summaries_larger_than_five_mib(deployment):
+    # The deployed API returned 82 summaries / 6,678,651 bytes. Model the same scale
+    # with valid contracts, without copying findings, provider responses or live data.
+    rows = [{"id": f"experiment-{index}", "agent": "context", "dataset": "controlled",
+             "dataset_version": "1", "git_sha": COMMIT, "overlay": "", "repetitions": 1,
+             "metrics": {"retained_metadata": "x" * 81_000}, "config_hash": "a" * 64,
+             "git_dirty": False, "model_name": "controlled", "backend": "live",
+             "pricing": "", "harness_version": "test", "created_at": "2026-10-04T00:00:00Z"}
+            for index in range(82)]
+    payload = json.dumps(rows).encode()
+    assert 5 * 1024 * 1024 < len(payload) < smoke.MAX_RESPONSE_BYTES
+    for host in ("api.test", "web.test"):
+        deployment[2][host, "/api/experiments"] = lambda request: httpx.Response(
+            200, content=payload, headers={"content-type": "application/json"})
+    assert run(deployment)["operational_counts"]["experiments"] == 82
+
+
+def test_response_exceeding_sixteen_mib_still_fails_before_contract_parse(deployment):
+    payload = b"x" * (smoke.MAX_RESPONSE_BYTES + 1)
+    deployment[2]["api.test", "/api/experiments"] = lambda request: httpx.Response(
+        200, content=payload, headers={"content-type": "application/json"})
+    with pytest.raises(smoke.SmokeFailure, match="response too large"):
+        run(deployment)
+    assert all(request.method == "GET" for request in deployment[1])
+
+
+@pytest.mark.parametrize("transient", ["connection", "disconnect", 502, 503])
+def test_wait_ready_transient_then_real_success(deployment, monkeypatch, transient):
+    attempts = []
+    sleeps = []
+    def startup(request):
+        attempts.append(request)
+        if len(attempts) == 1:
+            if transient == "disconnect":
+                raise httpx.RemoteProtocolError("controlled startup disconnect", request=request)
+            if transient == "connection":
+                raise httpx.ConnectError("controlled startup", request=request)
+            return httpx.Response(transient)
+        return httpx.Response(200, json=deployment[3])
+    deployment[2]["api.test", "/api/runtime-status"] = startup
+    monkeypatch.setattr(smoke.time, "sleep", sleeps.append)
+    assert run(deployment, wait_ready=True)["status"] == "passed"
+    assert len(attempts) == 2 and sleeps == [0.5]
+    assert all(request.method == "GET" for request in deployment[1])
+
+
+@pytest.mark.parametrize("transient", ["connection", "disconnect", 502, 503])
+def test_persistent_startup_failure_uses_shared_deadline(deployment, monkeypatch, transient):
+    now = [0.0]
+    sleeps = []
+    def sleep(seconds):
+        sleeps.append(seconds)
+        now[0] += seconds
+    def startup(request):
+        if transient == "disconnect":
+            raise httpx.RemoteProtocolError("controlled startup disconnect", request=request)
+        if transient == "connection":
+            raise httpx.ConnectError("controlled startup", request=request)
+        return httpx.Response(transient)
+    deployment[2]["api.test", "/api/runtime-status"] = startup
+    monkeypatch.setattr(smoke.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(smoke.time, "sleep", sleep)
+    with pytest.raises(smoke.SmokeFailure, match="deadline exceeded"):
+        run(deployment, wait_ready=True, timeout=1.2)
+    assert now[0] == 1.2
+    assert len(deployment[1]) == 3
+    assert all(0 < seconds <= 0.5 for seconds in sleeps)
+
+
+@pytest.mark.parametrize("wait_ready", [False, True])
+def test_404_never_retried(deployment, monkeypatch, wait_ready):
+    deployment[2]["api.test", "/api/runtime-status"] = lambda request: httpx.Response(404)
+    monkeypatch.setattr(smoke.time, "sleep", lambda seconds: pytest.fail("unexpected retry"))
+    with pytest.raises(smoke.SmokeFailure, match="HTTP check failed"):
+        run(deployment, wait_ready=wait_ready)
+    assert len(deployment[1]) == 1
+
+
+@pytest.mark.parametrize("transient", ["connection", "disconnect", 503])
+def test_default_check_remains_immediate(deployment, monkeypatch, transient):
+    def startup(request):
+        if transient == "disconnect":
+            raise httpx.RemoteProtocolError("controlled startup disconnect", request=request)
+        if transient == "connection":
+            raise httpx.ConnectError("controlled startup", request=request)
+        return httpx.Response(transient)
+    deployment[2]["api.test", "/api/runtime-status"] = startup
+    monkeypatch.setattr(smoke.time, "sleep", lambda seconds: pytest.fail("unexpected retry"))
+    with pytest.raises(smoke.SmokeFailure):
+        run(deployment)
+    assert len(deployment[1]) == 1
+
+
+def test_wait_ready_does_not_retry_contract_failure(deployment, monkeypatch):
+    deployment[3]["broker"]["status"] = "invalid"
+    monkeypatch.setattr(smoke.time, "sleep", lambda seconds: pytest.fail("unexpected retry"))
+    with pytest.raises(smoke.SmokeFailure, match="invalid API contract"):
+        run(deployment, wait_ready=True)
+    assert len(deployment[1]) == 1
+
+
+def test_wait_ready_cli_option(monkeypatch, capsys):
+    called = []
+    monkeypatch.setattr(smoke, "check", lambda **kwargs: called.append(kwargs) or {"status": "passed"})
+    assert smoke.main(["--api-url", "http://api.test", "--web-url", "http://web.test", "--wait-ready"]) == 0
+    assert called[0]["wait_ready"] is True
+    assert "passed" in capsys.readouterr().out
+
+
+def test_wait_ready_does_not_retry_arbitrary_read_timeout(deployment, monkeypatch):
+    def broken(request):
+        raise httpx.ReadTimeout("controlled read failure", request=request)
+    deployment[2]["api.test", "/api/runtime-status"] = broken
+    monkeypatch.setattr(smoke.time, "sleep", lambda seconds: pytest.fail("unexpected retry"))
+    with pytest.raises(smoke.SmokeFailure, match="transport check failed"):
+        run(deployment, wait_ready=True)
+    assert len(deployment[1]) == 1

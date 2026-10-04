@@ -22,6 +22,10 @@ from infosec_harness.api.contracts import (
     RuntimeStatus,
 )
 
+# Evaluation summaries are unpaginated and can exceed 5 MiB in a populated deployment.
+# Keep a finite transport ceiling independent of semantic contract validation.
+MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+
 
 class SmokeFailure(ValueError):
     """Closed failure label; response bodies and transport exceptions remain private."""
@@ -57,7 +61,7 @@ class Assets(HTMLParser):
 
 
 def check(api_url, web_url, *, timeout=60, expected_source_commit=None,
-          expected_model_mode=None, expected_transport=None, client=None):
+          expected_model_mode=None, expected_transport=None, wait_ready=False, client=None):
     api_url, web_url = base_url(api_url), base_url(web_url)
     if not 1 <= timeout <= 300:
         raise SmokeFailure("invalid timeout")
@@ -65,30 +69,47 @@ def check(api_url, web_url, *, timeout=60, expected_source_commit=None,
         raise SmokeFailure("invalid expected source")
     deadline = time.monotonic() + timeout
 
+    class NotReady(Exception):
+        pass
+
     def fetch(url, kind):
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise SmokeFailure("deadline exceeded")
-        try:
-            with transport.stream("GET", url, timeout=min(5, remaining)) as response:
-                if response.status_code != 200:
-                    raise SmokeFailure("HTTP check failed")
-                content_type = response.headers.get("content-type", "").split(";")[0]
-                allowed = {"json": {"application/json"}, "html": {"text/html"},
-                           "js": {"text/javascript", "application/javascript"},
-                           "css": {"text/css"}}[kind]
-                if content_type not in allowed:
-                    raise SmokeFailure("unexpected content type")
-                body = bytearray()
-                for chunk in response.iter_bytes():
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise SmokeFailure("deadline exceeded")
+            try:
+                with transport.stream("GET", url, timeout=min(5, remaining)) as response:
+                    if wait_ready and response.status_code in {502, 503}:
+                        raise NotReady
+                    if response.status_code != 200:
+                        raise SmokeFailure("HTTP check failed")
+                    content_type = response.headers.get("content-type", "").split(";")[0]
+                    allowed = {"json": {"application/json"}, "html": {"text/html"},
+                               "js": {"text/javascript", "application/javascript"},
+                               "css": {"text/css"}}[kind]
+                    if content_type not in allowed:
+                        raise SmokeFailure("unexpected content type")
+                    body = bytearray()
+                    for chunk in response.iter_bytes():
+                        if time.monotonic() >= deadline:
+                            raise SmokeFailure("deadline exceeded")
+                        body.extend(chunk)
+                        if len(body) > MAX_RESPONSE_BYTES:
+                            raise SmokeFailure("response too large")
                     if time.monotonic() >= deadline:
                         raise SmokeFailure("deadline exceeded")
-                    body.extend(chunk)
-                    if len(body) > 5 * 1024 * 1024:
-                        raise SmokeFailure("response too large")
-                return bytes(body)
-        except httpx.HTTPError as exc:
-            raise SmokeFailure("transport check failed") from exc
+                    return bytes(body)
+            except (httpx.ConnectError, httpx.ConnectTimeout, httpx.RemoteProtocolError) as exc:
+                if not wait_ready:
+                    raise SmokeFailure("transport check failed") from exc
+            except NotReady:
+                pass
+            except httpx.HTTPError as exc:
+                raise SmokeFailure("transport check failed") from exc
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise SmokeFailure("deadline exceeded")
+            time.sleep(min(0.5, remaining))
 
     owned = client is None
     transport = client or httpx.Client(trust_env=False, follow_redirects=False)
@@ -158,6 +179,8 @@ def main(argv=None):
     parser.add_argument("--api-url", required=True)
     parser.add_argument("--web-url", required=True)
     parser.add_argument("--timeout", type=float, default=60)
+    parser.add_argument("--wait-ready", action="store_true",
+                        help="Retry startup connection/disconnect failures and HTTP 502/503 within the shared deadline.")
     parser.add_argument("--expected-source-commit")
     parser.add_argument("--expected-model-mode", choices=("live", "stub"))
     parser.add_argument("--expected-transport", choices=("brokered", "direct"))
