@@ -24,6 +24,7 @@ its exact location. Platform support remains subject to the acceptance limits be
 ```bash
 ./dev
 ./dev status
+./dev validate  # read-only checks against the running stack
 ./dev logs api
 ./dev reload  # restart API/worker and run the explicit stub/runtime smoke
 ./dev reload-ui  # restart API/web; GET-only checks without seeded findings
@@ -51,6 +52,45 @@ cannot suppress visibility migrations. Existing volumes are preserved; Temporal 
 creates the missing visibility database on an upgraded local stack. It does not infer model
 quality from stub inference. `./dev doctor` reports host/runtime readiness without starting
 services. Provider credentials are optional and are never required by the default profile.
+
+### Read-only service validation
+
+Run `./dev validate` against an already running managed stack. It checks the configured
+database and migration head, recent workflow/activity pollers for the running worker,
+API/worker source and model profile consistency, API contracts, actual UI assets and the
+same-origin proxy. It does not install tools, start services, migrate schemas, seed findings,
+submit workflows or recover broker requests. Run normal setup separately if services are absent.
+
+Inference requires an explicit flag:
+
+```bash
+./dev validate --model
+./dev validate --model --model-timeout 120 \
+  --connectivity-receipt .harness/local-model/connectivity.json
+./dev validate --expected-source-commit "$(git rev-parse HEAD)"
+```
+
+The model check uses the configured live verdict backend and PydanticAI structured output,
+with one request and no retry. It supports direct OpenAI-compatible profiles; stub, brokered
+and unsupported provider profiles remain `not_checked` without making a request. Brokered
+inference requires the separately admitted qualification path. A successful connectivity call
+is not an agent evaluation or full qualification. Provider errors are sanitized and unknown
+request counts stay unknown.
+
+Reports are private, atomically published JSON under `.harness/reports/service-validation/`;
+`--report` selects another path. Exit codes are 0 (`passed`), 1 (`failed`) and 2 (`not_checked`).
+The optional connectivity receipt is published only after a successful exact-profile request;
+it binds source, configuration hashes, mode, transport and time using the existing UI receipt
+contract. Configure `HARNESS_MODEL_CONNECTION_OBSERVATION` on the API to read that file.
+A failed check preserves an earlier receipt; inspect the new report for the current result.
+The API independently rejects stale or mismatched receipts. No receipt is published implicitly.
+
+`--timeout` bounds individual service operations (default 30 seconds, range 1–60);
+`--model-timeout` bounds inference (default 90 seconds, range 1–300). Explicit report and
+receipt paths must be distinct regular-file locations without symlink components.
+`./dev --profile offline validate` contacts no services and reports every gate `not_checked`.
+These checks do not qualify sandbox execution, artifact roundtrips, durable workflow/replay,
+agent accuracy, or hosted deployment. Use the corresponding qualification gates for those.
 
 ### Offline component profile
 

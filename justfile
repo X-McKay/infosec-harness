@@ -130,3 +130,8 @@ ui-check:
 web-build: ui-build
 
 web-check: ui-check
+
+# Read-only deployment/service checks; add --model to explicitly request inference.
+# Uses the configured HARNESS_ENV_FILE/settings for local or hosted services.
+validate-services *args:
+    uv run python scripts/service_validation.py {{args}}

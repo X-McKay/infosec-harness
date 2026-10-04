@@ -6,12 +6,13 @@ cd "$ROOT_DIR"
 PROFILE=full
 COMMAND=start
 SERVICE=""
+VALIDATION_ARGS=()
 ENV_FILE=.harness/dev.env
 VERSIONS_FILE=.dev-tools/versions.env
 
 usage() {
   cat <<'EOF'
-Usage: ./dev [--profile full|offline] [start|reload|reload-ui|status|logs|smoke|doctor|stop]
+Usage: ./dev [--profile full|offline] [start|reload|reload-ui|status|logs|smoke|doctor|validate|stop]
 
 The default profile provisions pinned tools and a checkout-owned Linux VM, verifies the runsc
 sandbox plus its build-egress boundary, starts the complete stack, and runs a stub assessment
@@ -20,6 +21,8 @@ The offline profile runs component checks and explicitly does not check Temporal
 stop preserves this checkout's VM, volumes, findings, downloads, and generated configuration.
 reload restarts the editable API and worker, then runs the explicit stub/runtime smoke.
 reload-ui restarts API and web with normal lifecycle, then verifies integration with GET-only checks.
+validate checks the running services without submissions; --model explicitly adds one inference request.
+validate --report PATH retains a sanitized report; --connectivity-receipt PATH publishes a successful check.
 logs [service] displays and saves a bounded snapshot under .harness/logs/.
 EOF
 }
@@ -28,15 +31,21 @@ while (($#)); do
   case "$1" in
     --profile) PROFILE="${2:?--profile needs full or offline}"; shift 2 ;;
     --profile=*) PROFILE="${1#*=}"; shift ;;
-    start|reload|reload-ui|status|smoke|doctor|stop) COMMAND="$1"; shift ;;
+    start|reload|reload-ui|status|smoke|doctor|validate|stop) COMMAND="$1"; shift ;;
     logs)
       COMMAND=logs
       if (($# > 1)); then SERVICE="$2"; shift 2; else shift; fi
       ;;
+    --model) VALIDATION_ARGS+=("$1"); shift ;;
+    --report|--connectivity-receipt|--timeout|--model-timeout|--api-url|--web-url|--worker-hostname|--expected-source-commit)
+      VALIDATION_ARGS+=("$1" "${2:?validation option needs a value}"); shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+if ((${#VALIDATION_ARGS[@]})) && [[ "$COMMAND" != validate ]]; then
+  echo "validation options require ./dev validate" >&2; exit 2
+fi
 if [[ "$PROFILE" != full && "$PROFILE" != offline ]]; then
   echo "profile must be full or offline" >&2
   exit 2
@@ -250,6 +259,16 @@ case "$COMMAND" in
   doctor)
     setup --check-only
     if [[ "$PROFILE" == full ]]; then verify_sandbox; fi
+    ;;
+  validate)
+    if [[ "$PROFILE" == offline ]]; then
+      python_managed scripts/service_validation.py --offline "${VALIDATION_ARGS[@]}"
+    else
+      load_env
+      python_managed scripts/service_validation.py --managed-worker \
+        --api-url "http://127.0.0.1:${HARNESS_API_PORT}" \
+        --web-url "http://127.0.0.1:${HARNESS_WEB_PORT}" "${VALIDATION_ARGS[@]}"
+    fi
     ;;
   stop)
     compose down

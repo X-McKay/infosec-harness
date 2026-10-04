@@ -77,3 +77,26 @@ and deployment trust boundaries. The full deterministic suite covers existing du
 and replay. A deployment still needs actual hosted TLS/auth connections, database writes,
 object roundtrip, Temporal workflow/replay, and executor qualification in its own environment.
 No hosted endpoints or Kubernetes cluster were modified during these tests.
+
+## Checking an existing environment
+
+Use the same environment file and mounted TLS/auth files as the service processes:
+
+```bash
+HARNESS_ENV_FILE=/absolute/path/to/hosted.env just validate-services \
+  --api-url https://api.example.internal --web-url https://ui.example.internal \
+  --worker-hostname actual-worker-hostname --expected-source-commit <40-character-commit>
+```
+
+This developer command checks existing services without migrations, workflow dispatch or
+findings. The configured source commit and API/worker model identities must match. With no
+`--worker-hostname`, queue poller availability is checked but exact worker identity remains
+`not_checked`; supply the actual worker hostname for a complete readiness result. It uses
+existing database and Temporal TLS/auth connectors without plaintext fallback.
+
+Add `--model` only when an explicit inference request is wanted. Direct OpenAI-compatible
+profiles permit one structured-output request; other transports/providers remain
+`not_checked`. An optional `--connectivity-receipt /private/path/connectivity.json` emits the
+existing UI receipt after success. See [local validation](LOCAL_SETUP.md#read-only-service-validation)
+for reports, timeouts and scope. A reachable hosted service is not production qualification;
+Kubernetes, hosted TLS/auth and execution gates still require evidence from that deployment.

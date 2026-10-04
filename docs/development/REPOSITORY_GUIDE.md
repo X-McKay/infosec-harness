@@ -37,6 +37,8 @@ another directory. The launcher always switches to its own checkout.
 
 | Output | Default location | Owner / override |
 | --- | --- | --- |
+| Service connectivity reports | `.harness/reports/service-validation/validation-<uuid>.json` | `./dev validate` / `just validate-services`; explicit `--report` override, private atomic JSON |
+| Model connectivity receipt | No implicit output | Explicit `--model --connectivity-receipt <path>` after successful exact-profile inference; API reads `HARNESS_MODEL_CONNECTION_OBSERVATION` |
 | Broker qualification reports | `.harness/reports/credential-broker/` | Explicit ledger/service qualification runners; unique run IDs |
 | Native broker recovery and qualification state | Operator-owned private lease directory; local `.harness/openshell-spike/` | Controller tombstones/leases and isolated native fixtures; retain for reconciliation, never publish secrets |
 | Checkout identity and local credentials | `.harness/dev.env` | `./dev`; generated, mode 0600 |

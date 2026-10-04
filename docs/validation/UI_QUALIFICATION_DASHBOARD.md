@@ -138,3 +138,40 @@ Public API schemas and agent/model/executor/workflow behavior are unchanged. Beh
 provenance version changes, database migration and durable replay/recovery migration are
 `not_applicable`. Fresh full-model and hosted/Kubernetes qualification remain `not_checked`
 by this organization-only change. No existing qualification evidence is promoted.
+
+## Supported service validation commands (2026-10-04)
+
+`./dev validate` checks the running managed stack; `just validate-services` checks an
+explicitly configured local or hosted environment. The default path only reads existing
+state: database/schema head, recent workflow/activity pollers, source/profile consistency,
+API contracts, actual UI assets and the same-origin proxy. It does not bootstrap services,
+migrate, seed, dispatch, recover or import the durable worker to inspect its configuration.
+The managed path executes inside the existing worker without changing its environment.
+
+Explicit `--model` adds one configured direct OpenAI-compatible verdict request using
+PydanticAI closed structured output and zero retries. Brokered, stub and unsupported
+provider profiles remain `not_checked` without inference or fallback. Errors stay sanitized;
+unknown usage remains unknown. Optional exact-profile connectivity receipts reuse the
+existing API/UI contract, strict fields, source/configuration binding and expiry. Reports
+and receipts are private atomic files; invalid destinations are refused before inference.
+A failed request preserves previous evidence and publishes its current result separately.
+
+Focused regressions `passed` (80 tests): SQLite read-only behavior, schema checks,
+TLS connector reuse, poller freshness/identity, cached configuration drift, one-call output,
+timeouts, error privacy, strict receipt validation, unsafe paths, atomic publication failures,
+profile mismatch and refusal without inference. Full deterministic suite `passed` (3,225
+tests; 39 capability-dependent skips), followed by the complete focused run covering the
+final two additional path regressions. Repository/generated/skill checks and UI checks
+`passed` (34 UI tests and production build).
+
+Actual managed service checks `passed`, and the configured `llm.almckay.io` backend
+returned the required structured result in one request. Offline validation correctly
+reported every gate `not_checked` without contacting services. Exact before/after snapshots
+of operational and retained-broker findings, budgets and all 16 unresolved holds matched.
+No findings or broker recovery actions were submitted.
+
+These are service connectivity checks, not qualification promotion. Public API schemas,
+agent behavior, model configuration, executor boundaries and durable workflow identities
+are unchanged. Behavior/provenance version changes and replay/recovery migration are
+`not_applicable`. Fresh full-agent, native broker, sandbox/artifact and hosted/Kubernetes
+qualification remain `not_checked` by this batch; existing component evidence is preserved.
