@@ -1138,3 +1138,55 @@ async def test_qualification_intake_generation_rejects_nonboolean_before_account
     monkeypatch.setattr(worker, "TemporalOps", forbidden_ops)
     with pytest.raises(ValueError, match="Intake source guidance must be a boolean"):
         await worker.RealProviderWorkflow().run({"intake_source_guidance": invalid})
+
+
+
+async def test_local_failure_retains_closed_output_observations_without_response_text(monkeypatch):
+    from types import SimpleNamespace
+
+    import broker_real_provider_fixture as fixture
+    from pydantic_ai import _agent_graph
+    from pydantic_ai.exceptions import UnexpectedModelBehavior
+    from pydantic_ai.messages import ModelRequest, ModelResponse, RetryPromptPart, ToolCallPart
+
+    from infosec_harness.agents import registry
+    from infosec_harness.agents.deps import AgentDeps
+    from infosec_harness.graph import ops
+
+    deps = AgentDeps(repo_path="/snapshot", report_text="SECRET_FINDING")
+    protocol = "intake-atomic-claims/v2"
+    selected = {"effective_spec": {"metadata": {"intake_output": {"protocol": protocol}}}}
+    config = SimpleNamespace(model=SimpleNamespace(endpoint="https://example.invalid"),
+                             model_dump=lambda **_kwargs: selected)
+    closed = []
+
+    class FakeOps:
+        def __init__(self, **_kwargs):
+            pass
+        async def run_agent(self, *_args):
+            # Inject a mock SDK trace into the actual outer capture context; no agent/model runs.
+            messages = _agent_graph.get_captured_run_messages().messages
+            messages.extend([
+                ModelResponse(parts=[ToolCallPart("final_result", {"file_path": "SECRET_MODEL"})]),
+                ModelRequest(parts=[RetryPromptPart([{"type": "missing", "loc": ("file_path", "source"),
+                    "msg": "SECRET_RETRY", "input": "SECRET_INPUT"}], tool_name="final_result")]),
+            ])
+            raise UnexpectedModelBehavior("SECRET_EXCEPTION", body="SECRET_BODY")
+        async def close(self):
+            closed.append(True)
+
+    monkeypatch.setattr(ops, "LocalOps", FakeOps)
+    monkeypatch.setattr(registry, "load_spec", lambda *_args: None)
+    monkeypatch.setattr(registry, "resolve_agent_config", lambda *_args, **_kwargs: config)
+    monkeypatch.setattr(fixture, "prepare_case", lambda *_args: (
+        {"prompt": [], "deps": deps}, None, "frozen", "a" * 64))
+    manifest = SimpleNamespace(cases={"intake": "synthetic"}, endpoint="https://example.invalid")
+    row = await fixture.run_local_case(manifest, "direct", "intake")
+    assert row["execution"] == "failed" and row["cleanup"] == "passed"
+    assert row["failure_type"] == "UnexpectedModelBehavior"
+    assert row["failure_diagnostic"]["error_type"] == "unknown"
+    assert row["output_retry_summary"]["output_schema_retry_parts"] == 1
+    assert row["intake_field_summary"]["proposals_observed"] == 1
+    assert row["intake_field_summary"]["rejection_category_counts"]["schema_invalid"] == 1
+    assert "SECRET" not in json.dumps(row)
+    assert closed == [True]

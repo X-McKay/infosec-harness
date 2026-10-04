@@ -116,6 +116,24 @@ def report_source_lines(report_text: str | None) -> list[dict[str, str]]:
     ]
 
 
+def invalid_source_references(
+    report_text: str | None, claims: AtomicFinding
+) -> tuple[tuple[str, ReferenceRule], ...]:
+    """Collect at most eight authored-field failures without retaining report/claim text."""
+    index = _source_index(report_text)
+    errors: list[tuple[str, ReferenceRule]] = []
+    for field_name in AtomicFinding.model_fields:
+        claim = getattr(claims, field_name)
+        if claim is None:
+            continue
+        end_id = claim.source.start_id if claim.source.end_id is None else claim.source.end_id
+        if claim.source.start_id not in index or end_id not in index:
+            errors.append((field_name, "unknown_source_id"))
+        elif index[end_id][0] < index[claim.source.start_id][0]:
+            errors.append((field_name, "reversed_source_range"))
+    return tuple(errors)
+
+
 def reconstruct(report_text: str | None, claims: AtomicFinding) -> ExtractedFinding:
     """Rebuild the unchanged public output type and exact verbatim evidence slices.
 

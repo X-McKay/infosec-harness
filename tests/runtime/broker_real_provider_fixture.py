@@ -776,6 +776,8 @@ async def run_local_case(manifest: RealProviderManifest, phase: str, agent: str,
                          validate_config: Callable[[object], None] | None = None,
                          compare_config: Callable[[dict, str], dict] | None = None) -> dict:
     """One unchanged production case; callers own their explicit finite scope."""
+    from pydantic_ai import capture_run_messages
+
     from infosec_harness.agents.registry import load_spec, resolve_agent_config
     from infosec_harness.graph.ops import LocalOps
     from infosec_harness.inference.protocol import digest
@@ -785,6 +787,7 @@ async def run_local_case(manifest: RealProviderManifest, phase: str, agent: str,
     row = {"agent": agent, "case": manifest.cases[agent], "case_digest": case_digest,
            "execution": "failed", "cleanup": "not_checked"}
     started = time.monotonic()
+    messages = []
     try:
         config = resolve_agent_config(agent, load_spec(agent), source_files=inputs["deps"].source_files, durable=False)
         if validate_config is not None:
@@ -795,7 +798,8 @@ async def run_local_case(manifest: RealProviderManifest, phase: str, agent: str,
         if phase != "direct":
             row["baseline_comparison"] = (compare_config(row["config"], case_digest) if compare_config is not None
                 else compare_manifest_baseline(manifest, agent, row["config"], case_digest))
-        outcome = await ops.run_agent(agent, inputs["prompt"], inputs["deps"])
+        with capture_run_messages() as messages:
+            outcome = await ops.run_agent(agent, inputs["prompt"], inputs["deps"])
         row.update(score_output(agent, outcome.output, predict, expected))
         row.update(execution="passed", requests=outcome.requests, input_tokens=outcome.input_tokens,
             output_tokens=outcome.output_tokens, tools_called=outcome.tools_called,
@@ -805,7 +809,14 @@ async def run_local_case(manifest: RealProviderManifest, phase: str, agent: str,
         raise
     except Exception as error:
         from infosec_harness.evals.errors import failure_diagnostic
+        from infosec_harness.evals.intake_fields import intake_field_summary
+        from infosec_harness.evals.output_retries import output_retry_summary
+        metadata = row.get("config", {}).get("effective_spec", {}).get("metadata", {})
+        protocol = (metadata.get("intake_output") or {}).get("protocol")
         row["failure_diagnostic"] = failure_diagnostic(error)
+        row["output_retry_summary"] = output_retry_summary(messages, agent=agent)
+        row["intake_field_summary"] = intake_field_summary(
+            messages, report=getattr(inputs["deps"], "report_text", None), agent=agent, protocol=protocol)
         row["failure_type"] = type(error).__name__
         row["broker_error_code"] = getattr(error, "code", None)
     finally:

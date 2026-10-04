@@ -41,6 +41,7 @@ from infosec_harness.agents.intake_claims import (
     WIRE_VERSION,
     AtomicFinding,
     ReferenceError,
+    invalid_source_references,
     reconstruct,
 )
 from infosec_harness.agents.intake_contracts import (
@@ -493,6 +494,7 @@ def _resolve_agent_model(
     return model
 
 
+INTAKE_AGGREGATE_REFERENCE_REPAIR_VERSION = "intake-aggregate-reference-repair-v1"
 INTAKE_REFERENCE_REPAIR_VERSION = "intake-reference-repair-v1"
 INTAKE_LITERAL_LINE_REPAIR_VERSION = "intake-literal-line-repair-v1"
 _INTAKE_LITERAL_LINE_REPAIR = (
@@ -533,6 +535,24 @@ def _validate_atomic_intake(ctx: Any, output: AtomicFinding) -> ExtractedFinding
         } else "invalid_reference"
         from pydantic_ai import ModelRetry
 
+        references = (
+            invalid_source_references(ctx.deps.report_text, output)
+            if rule in {"unknown_source_id", "reversed_source_range"} else ()
+        )
+        if len(references) > 1 and _targeted_reference_repair(
+            INTAKE_AGGREGATE_REFERENCE_REPAIR_VERSION
+        ):
+            # Static authored field names and closed rules only. Never repair output here.
+            failures = ", ".join(f"{field}={problem}" for field, problem in references)
+            raise ModelRetry(
+                "Extraction violates its evidence contract:\n- Source references violate "
+                f"their contract: {failures}. Fix only these source references: "
+                "end_id must be at or after start_id in report source-line order; "
+                "for one source line use end_id=null or end_id=start_id. "
+                "For unknown_source_id, cite an existing report source ID. "
+                "Keep supported claim values and confidence unchanged; do not invent support."
+            ) from None
+        # A single failure or absent aggregate marker retains the exact existing bytes.
         feedback = f"Source reference violates its contract: {rule}"
         if (rule == "reversed_source_range" and type(error.field) is str
                 and error.field in AtomicFinding.model_fields
