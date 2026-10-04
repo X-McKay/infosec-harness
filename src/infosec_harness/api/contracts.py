@@ -255,6 +255,7 @@ class BrokerStatus(BaseModel):
     checked_at: str | None = None
     stale: bool = True
     unresolved_requests: int | None = None
+    conservatively_closed_requests: int | None = None
     detail: str
 
 

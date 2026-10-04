@@ -15,7 +15,12 @@ test("unconfigured broker suppresses stale and unresolved retained observations"
       stale: true,
       unresolved_requests: 16,
     }),
-    { label: "Not enabled", stale: false, unresolved: null },
+    {
+      label: "Not enabled",
+      stale: false,
+      unresolved: null,
+      conservativelyClosed: null,
+    },
   );
 });
 test("configured broker retains measured warnings", () => {
@@ -26,7 +31,12 @@ test("configured broker retains measured warnings", () => {
       stale: true,
       unresolved_requests: 16,
     }),
-    { label: "not checked", stale: true, unresolved: 16 },
+    {
+      label: "not checked",
+      stale: true,
+      unresolved: 16,
+      conservativelyClosed: null,
+    },
   );
 });
 test("configured names never imply measured connectivity", () => {
@@ -56,4 +66,21 @@ test("recorded failed and passed connectivity remain distinct", () => {
 test("retained component pass is labelled only as component evidence", () => {
   assert.equal(componentTitle("passed"), "Component evidence passed");
   assert.equal(componentTitle("not_checked"), "Component evidence");
+});
+
+test("conservative closures remain visible separately from unresolved requests", () => {
+  const result = brokerPresentation({
+    configured: true,
+    status: "passed",
+    stale: false,
+    unresolved_requests: 2,
+    conservatively_closed_requests: 16,
+  });
+  assert.equal(result.unresolved, 2);
+  assert.equal(result.conservativelyClosed, 16);
+  assert.equal(
+    brokerPresentation({ configured: true, status: "not_checked", stale: true })
+      .conservativelyClosed,
+    null,
+  );
 });

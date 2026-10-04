@@ -1225,6 +1225,17 @@
             ],
             "title": "Unresolved Requests"
           },
+          "conservatively_closed_requests": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conservatively Closed Requests"
+          },
           "detail": {
             "type": "string",
             "title": "Detail"

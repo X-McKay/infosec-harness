@@ -67,6 +67,8 @@ async def _mutate(root_id: str, change: Callable[[dict], dict]) -> dict | None:
                 return None  # Legacy workflows have no root accounting contract.
             state = deepcopy(ledger.state)
             result = change(state)
+            if state == ledger.state:
+                return result
             updated = await session.execute(update(db.BudgetLedger).where(
                 db.BudgetLedger.root_id == root_id, db.BudgetLedger.revision == ledger.revision
             ).values(state=state, revision=ledger.revision + 1))
@@ -110,8 +112,11 @@ async def reserve(root_id: str, operation_id: str, requested: dict[str, float], 
                     or (invocation_id is not None and operation.get("invocation_id") != invocation_id)):
                 raise ValueError("Operation already reserved with different budget or agent")
             return operation
+        if any(o.get("status") == "closed_unknown" for o in operations.values()):
+            from infosec_harness.persistence.reconciliation import validate_closed_accounting
+            validate_closed_accounting(state)
         held = {key: sum(o["reserved"].get(key, 0) for o in operations.values()
-                         if o["status"] != "settled") for key in fields}
+                         if o["status"] not in {"settled", "closed_unknown"}) for key in fields}
         remaining = {key: state["limits"][key] - state["used"][key] - held[key] for key in fields}
         if any(demand[key] > remaining[key] for key in fields):
             raise UsageLimitExceeded(f"Root budget cannot reserve invocation for {agent}; remaining={remaining}")
@@ -132,7 +137,7 @@ async def settle(root_id: str, operation_id: str, observed: dict[str, float] | N
 
     def change(state: dict) -> dict:
         operation = state["operations"][operation_id]
-        if operation["status"] == "settled":
+        if operation["status"] in {"settled", "closed_unknown"}:
             return operation
         operation["record"] = record
         if operation.get("broker_owned"):

@@ -5,6 +5,7 @@ not the packaged harness runtime.
 
 | Scripts | Purpose / entry point |
 | --- | --- |
+| `broker_hold_closure.py` | Explicit frozen-manifest dry run/operator loss acceptance; full reserved-envelope charge, immutable unknown tombstones, no model/lifecycle calls; [runbook](../docs/architecture/CREDENTIAL_BROKER_RUNBOOK.md#explicit-conservative-closure-of-retained-unknown-holds) |
 | `broker_ledger_check.py`, `broker_service_check.py` | Isolated PostgreSQL, real HTTPS and optional Temporal broker qualification; sanitized reports under `.harness/reports/credential-broker/` |
 | `openshell_controller_configuration.py` | Pure comparison of saved Docker configuration for operator recovery; mount order only is canonicalized and recorded default OOM representation checked; no lifecycle actions |
 | `openshell_artifacts.py`, `openshell_guest.py` | Verified pinned artifacts and dedicated OpenShell guest runtime ownership/invariant checks; see [deployment](../deploy/openshell/README.md) |

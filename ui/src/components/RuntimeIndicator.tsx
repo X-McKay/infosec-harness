@@ -118,6 +118,19 @@ export function BrokerRuntimeMetadata() {
                 </dd>
               </div>
               <div>
+                <dt className="text-muted-foreground">
+                  Conservatively closed requests
+                </dt>
+                <dd>
+                  {runtime.broker.configured
+                    ? (broker?.conservativelyClosed ?? "Unavailable")
+                    : "Not applicable"}
+                </dd>
+                <dd className="text-xs text-muted-foreground">
+                  Outcome remains unknown; the full reserved budget was charged.
+                </dd>
+              </div>
+              <div>
                 <dt className="text-muted-foreground">Configured models</dt>
                 <dd className="break-words">
                   {modelNames(runtime.model_names)}

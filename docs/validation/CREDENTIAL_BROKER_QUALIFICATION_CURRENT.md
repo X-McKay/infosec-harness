@@ -56,3 +56,31 @@ These private artifacts are intentionally excluded from Git. Hashes bind the exa
 - Saved retention reconciliation: `full118-current-10f35e9-failed-retention-saved-reconciliation-v5.json`, SHA256 `2816ba17850ca521c289997c79b7c9cedbfa0b1a25e1f70a4258bb96e3d63461`. Its original outer failure remains preserved.
 
 All paths above are under the operator's `.harness/openshell-spike/live-qualification/`. See [component qualification](../evaluation/COMPONENT_QUALIFICATION.md) for incremental invalidation and the reviewed ledger.
+
+## Conservative hold closure implementation (2026-10-04)
+
+The new explicit operator closure path preserves every request tombstone and absent result,
+charges the entire operation reservation once, and records a versioned audit on the root.
+It requires expired/revoked ownership, exact root/request snapshots and full unknown allowlists;
+known overruns are refused. Worker settlement and repeated revocation cannot erase closure.
+The API/UI distinguishes unresolved unknown requests from conservatively closed requests;
+the latter remain unknown outcomes and never count as recovered model results.
+
+Focused persistence/operator/API security gates `passed` (184 tests), including strict
+finite accounting, shared-operation charging, concurrent CAS, idempotency, stale/foreign
+identity, overruns, tampered audits and output publication failures. Independent review
+`passed` after three confirmed defects became regressions. Repository/generated/skill checks
+and UI checks `passed` (35 UI tests and production build). Full deterministic suite `passed`
+(3,275 tests; 39 capability-dependent skips). The historical qualification regression now
+reads exact Git-saved source bytes and verifies that changed current dependencies require
+fresh measurement or explicit review; it does not relax qualification expectations.
+Live closure and fresh full native
+qualification are still `not_checked` at this implementation checkpoint; historical failures
+and measurements above remain unchanged.
+
+The additive API count was generated from its contract source. Operator accounting is a new
+explicit recovery boundary with a version-1 audit and a distinct `closed_unknown` operation
+state. Request protocol/state, model behavior/settings, thresholds, executor policy and
+Temporal workflow/activity generation identities are unchanged. Database migration and
+recorded-workflow replay changes are `not_applicable`; no replay issues an operator closure.
+Any new qualification starts from its own post-closure snapshot and current source identity.

@@ -81,7 +81,7 @@ def _active(state: dict, request: InferenceRequest) -> dict:
     if deadline is None or datetime.fromisoformat(deadline).timestamp() <= time.time():
         raise BrokerError("expired", "Root deadline is missing or expired")
     operation = state.get("operations", {}).get(binding.operation_id)
-    if (operation is None or operation.get("status") == "settled"
+    if (operation is None or operation.get("status") in {"settled", "closed_unknown"}
             or operation.get("agent") != binding.agent
             or operation.get("kind", "agent") != "agent"
             or operation.get("broker_binding") != binding.model_dump(mode="json")):
@@ -326,8 +326,12 @@ async def revoke_run(run_id: str) -> None:
                     break
                 state["broker_revoked_runs"] = sorted(set(state.get("broker_revoked_runs", [])) | {run_id})
                 for identity in matches:
-                    state["operations"][identity].update(
-                        broker_revoked=True, broker_owned=True, status="uncertain")
+                    operation = state["operations"][identity]
+                    operation.update(broker_revoked=True, broker_owned=True)
+                    if operation.get("status") != "closed_unknown":
+                        operation["status"] = "uncertain"
+                if state == root.state:
+                    break
                 won = await session.execute(update(db.BudgetLedger).where(
                     db.BudgetLedger.root_id == root_id, db.BudgetLedger.revision == root.revision
                 ).values(state=state, revision=root.revision + 1))

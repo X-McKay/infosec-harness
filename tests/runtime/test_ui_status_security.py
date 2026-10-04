@@ -165,6 +165,7 @@ async def test_db_unavailable_is_not_zero_holds(monkeypatch):
     result = await status.runtime_status()
     assert result.broker.status == "not_checked"
     assert result.broker.unresolved_requests is None
+    assert result.broker.conservatively_closed_requests is None
     safe(result.model_dump())
 
 
@@ -228,8 +229,8 @@ async def test_stale_measurement_does_not_promote_reachable_channel(monkeypatch)
         async def __aexit__(self, *args):
             return None
 
-        async def scalar(self, statement):
-            return 16
+        async def execute(self, statement):
+            return SimpleNamespace(all=lambda: [(SimpleNamespace(), None)] * 16)
 
     async def reachable():
         return True
@@ -625,8 +626,8 @@ async def test_extracted_projections_share_fail_closed_file_reader(tmp_path, mon
             return self
         async def __aexit__(self, *args):
             return None
-        async def scalar(self, statement):
-            return 16
+        async def execute(self, statement):
+            return SimpleNamespace(all=lambda: [(SimpleNamespace(), None)] * 16)
 
     async def unexpected_probe():
         pytest.fail("invalid evidence invoked a live controller probe")
@@ -642,3 +643,78 @@ async def test_extracted_projections_share_fail_closed_file_reader(tmp_path, mon
     assert broker.checked_at is None
     safe(qualification.model_dump())
     safe(broker.model_dump())
+
+
+@pytest.mark.parametrize("corruption", [None, "bare_status", "missing_marker", "changed_request", "wrong_basis"])
+async def test_audited_unknown_closures_remain_distinct_and_invalid_closures_unresolved(
+    tmp_path, monkeypatch, corruption,
+):
+    from copy import deepcopy
+
+    from infosec_harness.persistence import budgets, reconciliation
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'closure-status.sqlite'}")
+    async with engine.begin() as connection:
+        await connection.run_sync(db.Base.metadata.create_all)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    monkeypatch.setattr(db, "session", sessions)
+    limits = {"requests": 1, "tokens": 100, "cost_usd": 1}
+    state = budgets.initial_state(limits)
+    state["deadline_at"] = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+    state["broker_revoked_runs"] = ["run"]
+    binding = {"root_id": "root", "operation_id": "op", "run_id": "run"}
+    state["operations"] = {"op": {
+        "status": "uncertain", "reserved": limits, "broker_owned": True,
+        "broker_revoked": True, "run_id": "run", "broker_binding": binding,
+        "broker_allocated": limits,
+    }}
+    try:
+        async with sessions() as session:
+            root = db.BudgetLedger(root_id="root", state=state)
+            row = db.InferenceRequestRecord(
+                request_id="unknown", root_id="root", operation_id="op", lease_id="lease",
+                state="completion_unknown", request={"binding": binding}, allocation=limits,
+            )
+            session.add_all([root, row])
+            await session.commit()
+            authorization = reconciliation.ClosureRequest(
+                root_id="root", operation_id="op", expected_root_revision=root.revision,
+                expected_root_sha256=reconciliation.row_sha256(root),
+                expected_request_sha256={row.request_id: reconciliation.row_sha256(row)},
+                unknown_request_ids=[row.request_id], source_commit="a" * 40,
+                evidence_sha256={"approved_snapshot": "b" * 64}, reason="loss_accepted",
+            )
+            original_request_hash = reconciliation.row_sha256(row)
+        await reconciliation.close_unknown(authorization)
+        if corruption:
+            async with sessions() as session:
+                root = await session.get(db.BudgetLedger, "root")
+                changed = deepcopy(root.state)
+                operation = changed["operations"]["op"]
+                if corruption == "bare_status":
+                    operation.pop("unknown_reconciliation")
+                elif corruption == "missing_marker":
+                    operation["unknown_reconciliation"].pop("charged")
+                elif corruption == "wrong_basis":
+                    operation["unknown_reconciliation"]["accounting_basis"] = "observed_usage"
+                elif corruption == "changed_request":
+                    row = await session.get(db.InferenceRequestRecord, "unknown")
+                    row.lease_id = "changed"
+                root.state = changed
+                await session.commit()
+        monkeypatch.setattr(broker_observation, "get_settings", lambda: SimpleNamespace(broker_config="configured"))
+        def unavailable():
+            raise ValueError("No readiness measurement")
+        monkeypatch.setattr(broker_observation, "broker_measurement", unavailable)
+        result = await broker_observation.broker_status()
+        assert result.unresolved_requests == (1 if corruption else 0)
+        assert result.conservatively_closed_requests == (0 if corruption else 1)
+        # Closing and displaying accounting never fabricates a provider result.
+        async with sessions() as session:
+            row = await session.get(db.InferenceRequestRecord, "unknown")
+            assert row.state == "completion_unknown" and row.result is None
+            if corruption != "changed_request":
+                assert reconciliation.row_sha256(row) == original_request_hash
+        safe(result.model_dump())
+    finally:
+        await engine.dispose()

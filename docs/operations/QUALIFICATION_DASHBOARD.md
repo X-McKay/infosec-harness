@@ -43,7 +43,7 @@ For a valid observation, runtime status also makes a bounded credential-free req
 
 The runtime response exposes environment, model mode, assessment transport, API source label, database backend name, Temporal TLS/plaintext mode and bounded broker metadata. It does not expose credentials, connection strings, catalog paths, private receipt paths, raw exceptions or model payloads. Environment and mode labels describe configuration, not qualification evidence.
 
-`unresolved_requests` counts persisted `completion_unknown` requests in the configured database. An unavailable count is displayed as unavailable, not zero. These requests retain their accounting holds. Refreshing the dashboard does not resend, retry, reconcile or release them; recovery requires the existing explicit operator process and exact request provenance.
+`unresolved_requests` counts persisted `completion_unknown` requests without a valid conservative operator closure audit. `conservatively_closed_requests` separately counts audited loss acceptances; those outcomes remain unknown and their full reserved operation budgets have been charged. An unavailable count is displayed as unavailable, not zero. These requests retain their accounting holds. Refreshing the dashboard does not resend, retry, reconcile or release them; recovery requires the existing explicit operator process and exact request provenance.
 
 ## Operational UI behavior
 

@@ -331,9 +331,15 @@ tracks the production controller, executor, database, Temporal and provider gate
 The packaged broker catalog remains disabled. A deterministic or G0 prototype pass does
 not establish production-native recovery, real-provider compatibility or held-out quality.
 
-The implemented v1 defers replacement requests and accounting release: unknown completions
-retain possible spend and cannot resend automatically. Completed requests retain their
-allocation until a future trusted reconciliation capability. Explicit reviewed custom price
+Replacement requests and allocation release remain unsupported: unknown completions
+cannot resend automatically. Explicit operator loss acceptance can retire an expired,
+revoked uncertain operation by charging its full reserved envelope once. Its permanent
+completion-unknown request rows and absent results remain unchanged; this estimate is not
+observed provider usage. Strict frozen root/request hashes, exact unknown allowlists and
+referenced evidence are required; malformed or stale audits fail closed. The separate
+`closed_unknown` operation state never becomes semantic success or known accounting.
+Completed requests continue to retain their allocation. See the operator runbook for
+private, dry-run-first reconciliation. Explicit reviewed custom price
 ceilings are required; model-name price lookup alone is insufficient for broker admission.
 The input reserve applies only to independently qualified byte-tokenizer/context contracts.
 Credential revision and generated native resource labels remain separate from behavioral

@@ -214,6 +214,52 @@ the private state and reconcile using the same controller ownership. Do not manu
 all Docker containers, mutate a global Docker context, reset the managed VM/data, remove
 tombstones, or release possible spend to force cleanup.
 
+## Explicit conservative closure of retained unknown holds
+
+Use `scripts/broker_hold_closure.py` only as an operator with authenticated database access
+and exact, independently corroborated controller/lease ownership. It has no HTTP endpoint,
+model call, native lifecycle or automatic retry. Confirm every affected lease is Deleted,
+native inventory is empty, the root deadline is expired, and run/operation revocation is
+persisted. Gateway reachability or similar timestamps cannot establish exact completion.
+Preserve a private backup of the affected complete request/root rows and source/evidence
+pins before applying. An absent provider result stays absent.
+
+Freeze a version-1 JSON manifest with `source_commit`, `evidence` (named absolute-file/SHA256
+references) and `operations` (`ClosureRequest` records). Each record contains exact root and
+operation IDs, expected full root SHA256/revision, all operation request IDs and full-row
+SHA256s, the exact sorted unknown-request allowlist, source commit, the same named evidence
+hashes, and `reason: loss_accepted`. `row_sha256` in persistence reconciliation canonically
+hashes every mapped column with UTC-normalized timestamps; never hash a partial row or
+publish source-bearing request payloads. One operation per root is permitted per manifest;
+replan a further operation explicitly against the changed root. No discovery means consent.
+
+```bash
+HARNESS_ENV_FILE=/private/operator.env uv run python scripts/broker_hold_closure.py \
+  --manifest /private/closure.json --manifest-sha256 <frozen-sha256> \
+  --report .harness/reports/credential-broker/closure-dry-run.json
+# After inspecting the exact dry-run result, apply the same frozen manifest:
+HARNESS_ENV_FILE=/private/operator.env uv run python scripts/broker_hold_closure.py \
+  --manifest /private/closure.json --manifest-sha256 <frozen-sha256> --apply \
+  --report .harness/reports/credential-broker/closure-applied.json
+```
+
+The configured `HARNESS_GIT_COMMIT_SHA` must match the reviewed implementation and manifest.
+Reports use fresh private paths. Source/evidence byte drift, malformed dimensions, missing
+rows, changed rows, unexpired or unrevoked roots and nonterminal requests fail closed.
+All operations are preflighted before writing; each root update uses a transactional revision
+CAS. A later conflict stops the batch and retains which operations were already applied.
+Identical repeated authorization is idempotent; changed authorization is refused.
+
+Closure consumes the FULL operation reservation in every root dimension, without releasing
+capacity or inventing usage. `closed_unknown` remains distinct from observed settlement;
+workers cannot overwrite it and repeated revocation preserves it. Dispatch tombstones,
+request allocations, failed historical trials and model results remain unchanged. The API/UI
+reports unresolved unknown holds and conservatively closed requests separately. Invalid
+audit data remains unresolved; unavailable database reads remain unavailable. The new
+accounting state requires this implementation before any resumed reservation reader is used.
+No schema or Temporal workflow generation changes are needed; no recorded activity is replayed
+or retried to perform closure. Qualification must start from a new post-closure state snapshot.
+
 ## 5. Checks and current gate status
 
 Useful deterministic commands are:

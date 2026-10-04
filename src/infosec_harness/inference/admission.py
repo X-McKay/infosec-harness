@@ -98,7 +98,7 @@ async def bind_reservation(binding: ReservationBinding, *, configuration_digest:
             operation = state.get("operations", {}).get(binding.operation_id)
             if (operation is None or operation.get("agent") != binding.agent
                     or operation.get("kind", "agent") != "agent"
-                    or operation.get("status") == "settled"
+                    or operation.get("status") in {"settled", "closed_unknown"}
                     or state.get("agent_config_digests", {}).get(binding.agent) != configuration_digest):
                 raise BrokerError("identity", "Invocation does not match the accepted root configuration")
             encoded = binding.model_dump(mode="json")

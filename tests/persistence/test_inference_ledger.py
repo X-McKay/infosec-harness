@@ -436,3 +436,23 @@ async def test_negative_authoritative_response_usage_is_not_a_saved_result(broke
         await ledger.complete(invalid, permit=permit)
     assert exc.value.code == "invalid_response"
     assert (await ledger.get(broker_request.request_id)).result is None
+
+
+async def test_repeat_run_revocation_preserves_conservative_closure(broker_request):
+    await ledger.admit(broker_request, lease_id="lease", allocation=DEMAND)
+    await ledger.claim(broker_request.request_id, lease_id="lease")
+    await ledger.revoke_run(broker_request.binding.run_id)
+    async with db.session() as session:
+        root = await session.get(db.BudgetLedger, broker_request.binding.root_id)
+        state = deepcopy(root.state)
+        state["operations"][broker_request.binding.operation_id].update(
+            status="closed_unknown", operator_reconciliation={"accounting_basis": "reserved_upper_bound"})
+        root.state = state
+        await session.commit()
+    before = await operation(broker_request)
+    await ledger.revoke_run(broker_request.binding.run_id)
+    assert await operation(broker_request) == before
+    assert (await ledger.get(broker_request.request_id)).state == "completion_unknown"
+    with pytest.raises(BrokerError) as exc:
+        await ledger.claim(broker_request.request_id, lease_id="lease")
+    assert exc.value.code == "completion_unknown"

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Literal, TypedDict
 
 import httpx
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from infosec_harness.agents.registry import AGENT_BINDINGS
 from infosec_harness.api.contracts import BrokerStatus
@@ -24,6 +24,7 @@ from infosec_harness.api.evidence_io import (
     reject_duplicate_fields,
 )
 from infosec_harness.persistence import db
+from infosec_harness.persistence.reconciliation import is_conservatively_closed
 from infosec_harness.qualification.ledger import is_hash, read_bytes
 from infosec_harness.resources import source_checkout
 from infosec_harness.settings import get_settings
@@ -257,11 +258,14 @@ async def broker_status() -> BrokerStatus:
     if broker.configured:
         try:
             async with asyncio.timeout(3), db.session() as session:
-                broker.unresolved_requests = await session.scalar(
-                    select(func.count())
-                    .select_from(db.InferenceRequestRecord)
+                rows = (await session.execute(
+                    select(db.InferenceRequestRecord, db.BudgetLedger)
+                    .outerjoin(db.BudgetLedger, db.InferenceRequestRecord.root_id == db.BudgetLedger.root_id)
                     .where(db.InferenceRequestRecord.state == "completion_unknown")
-                )
+                )).all()
+                closed = sum(is_conservatively_closed(root, request) for request, root in rows)
+                broker.conservatively_closed_requests = closed
+                broker.unresolved_requests = len(rows) - closed
             measurement, stale = await asyncio.to_thread(broker_measurement)
             broker.checked_at = measurement["checked_at"]
             broker.stale = stale

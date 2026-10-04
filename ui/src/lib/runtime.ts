@@ -10,6 +10,7 @@ export function brokerPresentation(broker: {
   status: string;
   stale: boolean;
   unresolved_requests?: number | null;
+  conservatively_closed_requests?: number | null;
 }) {
   return {
     label: broker.configured
@@ -17,6 +18,9 @@ export function brokerPresentation(broker: {
       : "Not enabled",
     stale: broker.configured && broker.stale,
     unresolved: broker.configured ? (broker.unresolved_requests ?? null) : null,
+    conservativelyClosed: broker.configured
+      ? (broker.conservatively_closed_requests ?? null)
+      : null,
   };
 }
 

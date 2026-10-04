@@ -380,6 +380,8 @@ export interface components {
             stale: boolean;
             /** Unresolved Requests */
             unresolved_requests?: number | null;
+            /** Conservatively Closed Requests */
+            conservatively_closed_requests?: number | null;
             /** Detail */
             detail: string;
         };

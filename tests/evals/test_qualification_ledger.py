@@ -2,6 +2,7 @@ import copy
 import hashlib
 import importlib.util
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -120,19 +121,37 @@ def test_actual_sixteen_records_preserve_fifteen_historical_measurements():
         assert r["id"] == m.digest({k: v for k, v in r.items() if k != "id"})
 
 
-def test_actual_reviewed_matrix_preserves_measured_scope_and_all_failures(monkeypatch):
+def test_actual_reviewed_matrix_preserves_measured_scope_and_all_failures(tmp_path):
     ledger = json.loads((ROOT / "evals/qualification/ledger.json").read_text())
     current = json.loads((ROOT / "evals/qualification/current-449be68.json").read_text())
     reviews = json.loads((ROOT / "evals/qualification/reviews-449be68.json").read_text())
     refs = [v for row in ledger["records"] for v in row["evidence"].values()]
     if any(not Path(ref["file"]).is_file() for ref in refs):
         pytest.skip("private historical evidence is unavailable in this checkout")
-    # These private receipts describe the qualified checkout, not the caller's other Git checkout.
-    qualified_root = next(
-        parent.parent for parent in Path(refs[0]["file"]).parents if parent.name == ".harness"
-    )
-    monkeypatch.chdir(qualified_root)
-    result = m.assess(ledger, current, reviews)
+    # Evaluate the frozen candidate against its saved source bytes, never the mutable checkout.
+    # Absolute private receipts stay in place; only declared relative dependencies are materialized.
+    source_commit = current["qualification_candidate_commit"]
+    relative_files = set()
+    for groups in current["components"].values():
+        for entries in groups.values():
+            paths = list(entries.get("files", {}).values())
+            paths.extend(value["file"] for value in entries.values()
+                         if isinstance(value, dict) and set(value) == {"file"})
+            relative_files.update(path for path in paths if not Path(path).is_absolute())
+    saved_root = tmp_path / "historical-source"
+    for relative in sorted(relative_files):
+        assert ".." not in Path(relative).parts
+        try:
+            saved = subprocess.run(
+                ["git", "show", f"{source_commit}:{relative}"], cwd=ROOT,
+                capture_output=True, check=True,
+            ).stdout
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            pytest.skip("declared historical Git source bytes are unavailable in this checkout")
+        path = saved_root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(saved)
+    result = m.assess(ledger, current, reviews, root=saved_root)
     selected = [r for r in result["results"] if r["record_id"] in reviews]
     assert len(selected) == 11 and len({r["component"] for r in selected}) == 11
     assert all(
@@ -144,6 +163,22 @@ def test_actual_reviewed_matrix_preserves_measured_scope_and_all_failures(monkey
     assert len(fresh) == 1 and fresh[0]["component"] == "partial-build"
     assert fresh[0]["status"] == "passed" and fresh[0]["disposition"] == "unchanged"
     assert result["system_release"] == result["fresh_full118"] == "not_checked"
+
+    # The same old approvals cannot qualify current source changes outside their exact hashes.
+    current_result = m.assess(ledger, current, reviews, root=ROOT)
+    changed_components = {
+        component for component, inventory in current["components"].items()
+        if m.dependencies(inventory, current=True, root=ROOT)
+        != m.dependencies(inventory, current=True, root=saved_root)
+    }
+    assert changed_components
+    changed_selected = [row for row in current_result["results"]
+                        if row["record_id"] in reviews and row["component"] in changed_components]
+    assert changed_selected
+    assert all(row["status"] == "not_checked"
+               and row["disposition"] == "retest_or_review_required"
+               for row in changed_selected)
+    assert current_result["system_release"] == current_result["fresh_full118"] == "not_checked"
 
 
 def test_reproducible_group_inventory_hashes_actual_bytes_only(evidence, tmp_path):
