@@ -1,0 +1,123 @@
+{
+  "0207ede909a6e73f454a28d6020c712dba4bd2d29a6b4ecdb0e55d538f0e6f3a": {
+    "after_sha256": "c4d4d4a6e402709d56196040db558ccdffa63b6d9572207cb9e36d5a3ac7c306",
+    "before_sha256": "2f1a57842565f9a1d5439ddea76b24e4cb73b59ac88609a807d2cca0be63a45d",
+    "evidence": {
+      "file": "/Users/al/.codex/worktrees/openshell/infosec-harness/.harness/openshell-spike/live-qualification/component-qualification-equivalence-5c-10f-449-v3.json",
+      "sha256": "162729916427e675db41f00f2945502d76cd60c49587d6965b8d73c40b476cd2"
+    },
+    "reason": "Existing reviewed byte/dependency assessment and independently checked original authored gates/cardinality; historical semantic evidence only; current runtime/network integration excluded.",
+    "reviewer": "component-qualification-equivalence-5c-10f-449-v3",
+    "scope": "agent_semantics"
+  },
+  "0ec37ee2a9f94ba45d3e3e8d2c22e4fb36fe66bcec5fd6104ed18c3c21f8a68d": {
+    "after_sha256": "25dcb1810918e0048b5cc9d27baff3a22e693b85c85b7e6ff4a406d3e68eb2e2",
+    "before_sha256": "839dc524968e4ef0692c371879c448bc2be800764c91ea0296fec2a7d6aa47d4",
+    "evidence": {
+      "file": "/Users/al/.codex/worktrees/openshell/infosec-harness/.harness/openshell-spike/live-qualification/component-qualification-equivalence-5c-10f-449-v3.json",
+      "sha256": "162729916427e675db41f00f2945502d76cd60c49587d6965b8d73c40b476cd2"
+    },
+    "reason": "Existing reviewed byte/dependency assessment and independently checked original authored gates/cardinality; historical semantic evidence only; current runtime/network integration excluded.",
+    "reviewer": "component-qualification-equivalence-5c-10f-449-v3",
+    "scope": "agent_semantics"
+  },
+  "2a9ac0f1dded69c5587d74812c8a476b1e443bc491cb53f2ffb1c33c053978cd": {
+    "after_sha256": "774c28b910f81430cd17af622715935921de92c9912a2f502eca65d920800a1a",
+    "before_sha256": "b94db4b5658f00039e230a8d45e0868e8bb5e02b9f645f1d81a1055d52896667",
+    "evidence": {
+      "file": "/Users/al/.codex/worktrees/openshell/infosec-harness/.harness/openshell-spike/live-qualification/component-qualification-equivalence-5c-10f-449-v3.json",
+      "sha256": "162729916427e675db41f00f2945502d76cd60c49587d6965b8d73c40b476cd2"
+    },
+    "reason": "Existing reviewed byte/dependency assessment and independently checked original authored gates/cardinality; historical semantic evidence only; current runtime/network integration excluded.",
+    "reviewer": "component-qualification-equivalence-5c-10f-449-v3",
+    "scope": "agent_semantics"
+  },
+  "38cf1d47664257c77785b1d5283e4fa5b8b902e4b11dec9c1cac8418b013e6d6": {
+    "after_sha256": "fd747ca4db92d47fffc464073459c4cb0e4b6525eebf8b1c1410b4235143c856",
+    "before_sha256": "0068337ed5a902314e5e568c06abe398095a9f637a1b227d8ab80c8e7b736f77",
+    "evidence": {
+      "file": "/Users/al/.codex/worktrees/openshell/infosec-harness/.harness/openshell-spike/live-qualification/component-qualification-equivalence-5c-10f-449-v3.json",
+      "sha256": "162729916427e675db41f00f2945502d76cd60c49587d6965b8d73c40b476cd2"
+    },
+    "reason": "Existing reviewed byte/dependency assessment and independently checked original authored gates/cardinality; historical semantic evidence only; current runtime/network integration excluded.",
+    "reviewer": "component-qualification-equivalence-5c-10f-449-v3",
+    "scope": "agent_semantics"
+  },
+  "4689857efabe1e4c5daaa13200f8ff11ed2d101a6fe7b6da2544d8cfd60285ec": {
+    "after_sha256": "ca8759673a83723b248686e81f4c50c5d2a63e45c2894e728aa823d037666619",
+    "before_sha256": "f0ed35909527f69355717c46b55bbdf024c086681126ef63ef7f2f4298270b7b",
+    "evidence": {
+      "file": "/Users/al/.codex/worktrees/openshell/infosec-harness/.harness/openshell-spike/live-qualification/component-qualification-equivalence-5c-10f-449-v3.json",
+      "sha256": "162729916427e675db41f00f2945502d76cd60c49587d6965b8d73c40b476cd2"
+    },
+    "reason": "Existing reviewed byte/dependency assessment and independently checked original authored gates/cardinality; historical semantic evidence only; current runtime/network integration excluded.",
+    "reviewer": "component-qualification-equivalence-5c-10f-449-v3",
+    "scope": "agent_semantics"
+  },
+  "633bd5959f2c58355036a92c24163a4828975fd9e9fcef01f8fcaedcecc398c5": {
+    "after_sha256": "9c18deed40a1cd54ce60b9b1f03e4c07d9c3497de6a1380311ee185f9c256e6e",
+    "before_sha256": "ab11a723848bdbe37fcda1f585a3204970007b3f990b400375d5af1e56d34952",
+    "evidence": {
+      "file": "/Users/al/.codex/worktrees/openshell/infosec-harness/.harness/openshell-spike/live-qualification/component-qualification-equivalence-5c-10f-449-v3.json",
+      "sha256": "162729916427e675db41f00f2945502d76cd60c49587d6965b8d73c40b476cd2"
+    },
+    "reason": "Existing reviewed byte/dependency assessment and independently checked original authored gates/cardinality; historical semantic evidence only; current runtime/network integration excluded.",
+    "reviewer": "component-qualification-equivalence-5c-10f-449-v3",
+    "scope": "agent_semantics"
+  },
+  "85411cc4c3e0af40c2c99d3e7643187ed32cd1dbf1937e8ab96174b1cf61dbf7": {
+    "after_sha256": "a4b7ebd103a423547edfb8e7ec543b88146b29da10e20b5f972a5ecf33c2715d",
+    "before_sha256": "01829dbddad1cae998ec18e7e7503c7f345b54582f2f01c28f7d6e9c1b077f30",
+    "evidence": {
+      "file": "/Users/al/.codex/worktrees/openshell/infosec-harness/.harness/openshell-spike/live-qualification/component-qualification-equivalence-5c-10f-449-v3.json",
+      "sha256": "162729916427e675db41f00f2945502d76cd60c49587d6965b8d73c40b476cd2"
+    },
+    "reason": "Existing reviewed byte/dependency assessment and independently checked original authored gates/cardinality; historical semantic evidence only; current runtime/network integration excluded.",
+    "reviewer": "component-qualification-equivalence-5c-10f-449-v3",
+    "scope": "agent_semantics"
+  },
+  "946619649fef3985b8f5c0c4d732c54543e02491ae79609761df6d1a189dfd50": {
+    "after_sha256": "abb450572716adac8d563cd9b9c845c33124fe5dced923c0fdc67391362b86a5",
+    "before_sha256": "9fa3229dfffd2f9426a6138af4dda213ac7bdd79e94e862bc6bc37769f9958d0",
+    "evidence": {
+      "file": "/Users/al/.codex/worktrees/openshell/infosec-harness/.harness/openshell-spike/live-qualification/component-qualification-equivalence-5c-10f-449-v3.json",
+      "sha256": "162729916427e675db41f00f2945502d76cd60c49587d6965b8d73c40b476cd2"
+    },
+    "reason": "Existing reviewed byte/dependency assessment and independently checked original authored gates/cardinality; historical semantic evidence only; current runtime/network integration excluded.",
+    "reviewer": "component-qualification-equivalence-5c-10f-449-v3",
+    "scope": "agent_semantics"
+  },
+  "b5150b9e0d98348aaf43a70309c56d7b76ee32496b7bf7f2a7e10f11e6143d9a": {
+    "after_sha256": "ad27f21e56ba9102d02a20cb94075874aea27e2b86b4e2d6dc1efc52f4662b9f",
+    "before_sha256": "b70a7a970e641c4c24e13a23d0811dbb7176f145bc8a5d15ff827578cbaf2488",
+    "evidence": {
+      "file": "/Users/al/.codex/worktrees/openshell/infosec-harness/.harness/openshell-spike/live-qualification/component-qualification-equivalence-5c-10f-449-v3.json",
+      "sha256": "162729916427e675db41f00f2945502d76cd60c49587d6965b8d73c40b476cd2"
+    },
+    "reason": "Existing reviewed byte/dependency assessment and independently checked original authored gates/cardinality; historical semantic evidence only; current runtime/network integration excluded.",
+    "reviewer": "component-qualification-equivalence-5c-10f-449-v3",
+    "scope": "agent_semantics"
+  },
+  "bbc9c7c59ed2b078b17b2277f5437fe545afa623d14be8aced4651e621280f88": {
+    "after_sha256": "5eb5c2b48cbfc98144aba59400e83ad2f20e2e0c8a8524121761f2924cc9844d",
+    "before_sha256": "a86eb3e0d6ca3083eadb93ad5811b260ad61873c87ababa04c03fba96906a15b",
+    "evidence": {
+      "file": "/Users/al/.codex/worktrees/openshell/infosec-harness/.harness/openshell-spike/live-qualification/component-qualification-equivalence-5c-10f-449-v3.json",
+      "sha256": "162729916427e675db41f00f2945502d76cd60c49587d6965b8d73c40b476cd2"
+    },
+    "reason": "Existing reviewed byte/dependency assessment and independently checked original authored gates/cardinality; historical semantic evidence only; current runtime/network integration excluded.",
+    "reviewer": "component-qualification-equivalence-5c-10f-449-v3",
+    "scope": "agent_semantics"
+  },
+  "ef6fc1b663f0be86b0967af5bcb774751a85a058e32ff73929bef329ee502aa5": {
+    "after_sha256": "e182d449593f6dd6679379d0e05559324eed6ecf4e275dff63c1170bf6048b7c",
+    "before_sha256": "fafe4160623f7be1bd66744be0449f04a225a547131d4ad5a56f6e525c0e34e0",
+    "evidence": {
+      "file": "/Users/al/.codex/worktrees/openshell/infosec-harness/.harness/openshell-spike/live-qualification/component-qualification-equivalence-5c-10f-449-v3.json",
+      "sha256": "162729916427e675db41f00f2945502d76cd60c49587d6965b8d73c40b476cd2"
+    },
+    "reason": "Existing reviewed byte/dependency assessment and independently checked original authored gates/cardinality; historical semantic evidence only; current runtime/network integration excluded.",
+    "reviewer": "component-qualification-equivalence-5c-10f-449-v3",
+    "scope": "agent_semantics"
+  }
+}

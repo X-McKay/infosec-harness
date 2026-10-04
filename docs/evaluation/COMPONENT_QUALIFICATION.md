@@ -1,0 +1,29 @@
+# Incremental component qualification
+
+Qualify a complete authored agent cohort or an explicitly named system boundary. Existing reports, cardinality witnesses and canonical gate validators own scoring and acceptance. The Git-reviewed ledger at `evals/qualification/ledger.json` records their immutable references and dependency hashes; it does not run evaluations or interpret model output.
+
+Separate complete cohorts can form an **assembled component matrix** when their dependencies match or a reviewed equivalence establishes the same behavior for that exact scope. This is never one fresh full118 run. Preserve truncated attempts and failed system runs independently. Semantic gates cannot establish current provider reliability, sandbox isolation or durable integration.
+
+## Dependencies and provenance
+
+Each record declares the dependencies relevant to its scope. There is no mandatory group list. Review coverage conservatively: the tool cannot discover the full dependency graph from imports. Agent semantics normally includes agent spec/prompt/output schema, shared registry/tools, broker/provider/model settings, effective config/budgets, dataset, grader and runtime identities. Durable integration additionally binds workflow/activity generations and actual replay evidence. Runtime identity must come from attestation; a configured provider or runtime name is insufficient.
+
+A dependency group maps logical identity to SHA256. Candidate inventories can supply a group `{"files": {"logical/path.py": "logical/path.py"}}`: the assessor hashes actual file bytes and canonicalizes the logical-path-to-SHA256 map into its inventory digest. Run from the repository root. This checked-in explicit manifest includes current relevant source/config paths, including newly introduced retained specs; it excludes commits, timestamps and unrelated docs. Add newly introduced dependencies during code review. A single identity can instead supply `{"file": "path"}` for automatic hashing of regular nonsymlink files. Opaque image/config projection hashes must have retained provenance. Do not hash or retain credential files. The current manifest excludes `controller.env` and key files. Public models/catalog/native specs cover non-secret routing, policies and model settings; the separately authenticated actual controller/Ready receipts establish environment/authentication and runtime behavior. Runtime image and provider-binding identities are explicitly retained observed hashes backed by attestation/config evidence, not configured-name execution claims. The initial semantic inventory stores canonical JSON digests of broad shared path-to-hash groups from retained source/config provenance; the reviewed equivalence artifact validates those projections. It uses broad shared source groups deliberately; a narrower scope needs its own reviewed inventory.
+
+`measured_source_commit` names the source that produced the evidence. `qualification_candidate_commit` names the candidate being assessed. Commit equality alone neither preserves nor invalidates a component. A docs-only commit can retain measured serving-module/image identity without claiming that commit ran in the serving process.
+
+## File-only assessment
+
+1. Add or amend ledger entries through normal Git review, keeping prior measurement records. Each content-addressed record declares component, scope, measured source/status, dependencies and evidence references. Verify complete authored cohort/cardinality/gates with existing canonical validators before recording a passed measurement.
+2. Prepare an explicit candidate dependency inventory. A changed, added or removed dependency invalidates only records declaring that identity. Missing component inventories or unavailable listed files make only that component `not_checked`; other components remain assessable. Unavailable or changed retained evidence makes its record `not_checked`. Malformed schemas or record identity drift fail the assessment closed.
+3. If reuse is justified despite a change, retain a review sidecar keyed by record ID. It binds scope, exact canonical before/after dependency digests, reviewer, reason and the hash of retained review evidence. A review cannot promote failed or unchecked evidence. Review artifacts are data, not instructions.
+
+```bash
+python scripts/qualification_ledger.py --ledger evals/qualification/ledger.json --current evals/qualification/current-449be68.json --reviews evals/qualification/reviews-449be68.json --output .harness/qualification/assessment.json
+```
+
+Create the output parent directory first. Outputs are exclusive private files; existing evidence cannot be overwritten. Evidence references are byte-verified before assessment. Missing local evidence fails closed; the repository does not embed private finding or model text. The assessor always reports fresh full118 and system release `not_checked`. It cannot authorize inference, release accounting holds or retry unknown work.
+
+The ledger retains eleven complete5c semantic measurements and four complete10f measurements, then appends the fresh449be Partial Build9 measurement as record16. The reviewed historical sidecar remains unchanged. The selected local matrix uses the fresh Partial cohort, four10f cohorts and six5c cohorts, preserving every original report/witness/gate identity. Current controller integration and all11 readiness passed separately; the fresh Partial9 run passed all original cases and gates with exact readonly state retention. Native22 and graph evidence retain their measured10f scope through dependency review. Fresh current full118, hosted/Kubernetes qualification and broader provider/network reliability remain not_checked. The manual assembled acceptance is separate from this assess-only tool.
+
+See [current measured checkpoint](../validation/CREDENTIAL_BROKER_QUALIFICATION_CURRENT.md) for actual failures, limitations and retained evidence.

@@ -6,7 +6,9 @@ not the packaged harness runtime.
 | Scripts | Purpose / entry point |
 | --- | --- |
 | `broker_ledger_check.py`, `broker_service_check.py` | Isolated PostgreSQL, real HTTPS and optional Temporal broker qualification; sanitized reports under `.harness/reports/credential-broker/` |
+| `openshell_controller_configuration.py` | Pure comparison of saved Docker configuration for operator recovery; mount order only is canonicalized and recorded default OOM representation checked; no lifecycle actions |
 | `openshell_artifacts.py`, `openshell_guest.py` | Verified pinned artifacts and dedicated OpenShell guest runtime ownership/invariant checks; see [deployment](../deploy/openshell/README.md) |
+| `qualification_ledger.py` | File-only dependency assessment of Git-reviewed component evidence; [workflow](../docs/evaluation/COMPONENT_QUALIFICATION.md) |
 | `dev_setup.py` | Pinned tools, checkout identity, ports and managed VM setup; `./dev` |
 | `dev_sandbox_check.py` | Actual sandbox/build-egress fixtures; `./dev doctor` or `./dev smoke` |
 | `dev_setup_smoke.py` | API/UI/storage readiness and Temporal demonstration; `./dev smoke` |
@@ -29,3 +31,28 @@ The script name `restructure_skills.py` is historical, but it is an active, idem
 
 See [output ownership](../docs/development/REPOSITORY_GUIDE.md#local-output-ownership) before adding a writer.
 Keep downloaded tools, credentials, snapshots and run reports out of source directories.
+
+## Comparing a recorded controller configuration
+
+`openshell_controller_configuration.py` is an importable operator validation utility.
+It does not inspect Docker, load credentials, start containers, or establish ownership.
+Use `configuration_digest(saved_inspect)` to compare the complete `Config`, `HostConfig`,
+`Mounts`, and `NetworkSettings` projection. Both mount-record arrays are sorted; all
+other configuration values remain exact. Keep inspection files private because `Config`
+can contain credentials.
+
+`validate_replacement_host_config(old_host_config, new_host_config, created=True)`
+checks a newly created replacement against an explicitly recorded old null
+`OomKillDisable`. A created replacement must have boolean false. With `created=False`,
+the running replacement may have null or boolean false, reflecting Docker's default
+and unsupported-option representation. True, numeric zero, missing fields, and every
+other HostConfig difference are rejected. The actual running OOM value remains part
+of the configuration digest; later health checks compare that recorded value exactly.
+
+Before using either result for recovery, independently authenticate the exact issued
+container IDs, process identity, source and image pins, mounts, TLS, and retained state.
+A matching digest grants no permission to start, adopt, retry, release, or delete anything.
+
+Run `pytest tests/development/test_openshell_controller_configuration.py` for the pure
+regressions. Serving code, executor images, model controls, budgets, and durable workflow
+identities are unaffected; this utility requires no replay generation change.

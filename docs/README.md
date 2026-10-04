@@ -11,6 +11,7 @@ The [root README](../README.md) explains the pipeline and common commands.
 | Architecture | [SPEC.md](architecture/SPEC.md) | Design and decision history; use current code for implemented behavior |
 | Evolution contracts | [HARNESS_EVOLUTION_SPEC.md](architecture/HARNESS_EVOLUTION_SPEC.md) | Durable behavior, provenance, accounting and acceptance requirements |
 | Credential brokering | [Design specification](CREDENTIAL_BROKER_SPEC.md), [implementation and testing plan](architecture/CREDENTIAL_BROKER_IMPLEMENTATION_PLAN.md), [protocol](architecture/CREDENTIAL_BROKER_PROTOCOL.md), [operator runbook](architecture/CREDENTIAL_BROKER_RUNBOOK.md), [evidence](validation/CREDENTIAL_BROKER_IMPLEMENTATION.md), [full live evaluation](validation/CREDENTIAL_BROKER_FULL_EVAL.md) | OpenShell boundaries, per-agent profiles, delegated work, recovery and acceptance gates |
+| Component qualification | [Current checkpoint](validation/CREDENTIAL_BROKER_QUALIFICATION_CURRENT.md), [incremental evidence workflow](evaluation/COMPONENT_QUALIFICATION.md) | Dependency-based reuse, original gates and separate system failures |
 | Safety | [threat-models/triage-system.md](threat-models/triage-system.md) | Threats and runtime boundaries |
 | Governance | [PLAYBOOK_CONFORMANCE.md](architecture/PLAYBOOK_CONFORMANCE.md) | Playbook mapping and documented deviations |
 | Evaluation fixtures | [CORPUS_SOURCES.md](evaluation/CORPUS_SOURCES.md), [corpus README](../eval-corpus/README.md) | Fixture sources and paired ground truth |
