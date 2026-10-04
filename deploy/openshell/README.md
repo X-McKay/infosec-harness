@@ -94,3 +94,65 @@ Live results, retained failures and remaining rollout gates are in
 [`CREDENTIAL_BROKER_LIVE_PROVIDER.md`](../../docs/validation/CREDENTIAL_BROKER_LIVE_PROVIDER.md).
 No endpoint discovery response attests deployed tokenizer identity or upstream
 authentication. Never resend `completion_unknown` requests when changing images.
+
+
+## Parent-prepared boundary seccomp candidate
+
+`Dockerfile.sandbox-backport` and `.dev-tools/openshell-sandbox-backport.json`
+record a separate arm64 boundary build on the unchanged pinned OpenShell source.
+Patch 0003 prepares the existing seccomp BPF bytes before fork and installs those
+bytes in the child without tracing or recompilation. The BPF rules, compatibility
+filter order, mandatory no-new-privileges, Landlock baseline and child self-protection
+remain unchanged. Existing provider-readiness and startup-control patches retain
+separate provenance. This local patch is not an NVIDIA release.
+
+The confirmed source defect is tracing through the production OCSF writer mutex
+from post-fork `pre_exec`. The deterministic regression deliberately holds that
+mutex: the original path must block, while raw prepared installation and the actual
+capability-free integration must finish and retain syscall denials. This proves the
+source defect; it does not establish the cause of a historical native startup failure.
+Compilation, image loading and native startup each need their own measured evidence.
+
+The recipe runs exact unprivileged tests with non-symlink artifact selection and
+rejects missing/duplicate test names. A positive Landlock ABI >=3 query is mandatory
+because one upstream behavioral test otherwise returns without exercising enforcement.
+The GNU binary must load in both the unified image and the actual executor Python
+rootfs with network disabled, read-only filesystem, no capabilities and nonroot UID.
+No shared libraries may be added to make a failing artifact load.
+
+Supply the hash-pinned source and tool archives declared in the manifest. The local
+base tag in the recipe is an operator input: load the retained attested base and
+verify its actual ID equals the manifest's base digest before and after `--pull=false`
+build. Bare `sha256:<local image ID>` is not a portable registry reference. If the
+base is published later, use its independently verified repository@digest reference;
+never resolve an arbitrary replacement tag. The canonical recipe hash and exact
+measured private build recipe hash are recorded separately.
+
+Activation requires the same fresh immutable digest for gateway `supervisor_image`
+and `sandbox_runtime_image`, removal of `supervisor_bin`, and an owned gateway reload:
+the Docker driver caches boundary bytes when constructed. Retain the previous image,
+configuration and host boundary artifact. Reconfirm each actual lease's image, full
+contract and confinement before untrusted execution. No wire schema, retry, timeout,
+admission budget, idempotency, cancellation or durable workflow behavior changes.
+Rollback uses exact retained images/configuration and the same ownership checks;
+all uncertain requests/reservations remain held and must never be resent. Build/test
+success alone does not change rollout or qualification status.
+
+The boundary's unchanged PTY code calls `nix::pty::openpty` through locked nix0.29.0.
+Its GNU target needs `libutil.so.1`, included explicitly in the closed dependency list.
+This adds no library to either image. The upstream sandbox release staging target is
+musl; this candidate deliberately uses GNU2.28 with actual loader validation in both
+existing root filesystems, and does not claim to reproduce the official sandbox ABI.
+
+The measured private V8 recipe completed with Rust1.95 formatting, both new
+regressions, all fourteen existing isolation guards and GNU2.28 symbol checks passed.
+Its exact hash is distinct from the canonical recipe hash because the canonical
+header and patch filename differ. The retained unified image was not rebuilt for
+loader validation. Both strict loader attestations passed: the unified image loaded
+the binary, and a derived copy of the existing executor image added only that binary
+with mode0555, then ran it nonroot/read-only/network-none/capability-free. This avoids
+copying files into a read-only container; it adds no runtime libraries or source code.
+The source build commit and actual image/binary hashes are recorded in the manifest.
+The old-runtime100-startup zero-model diagnostic also passed. Neither result identifies
+the cause of the earlier intermittent startup failure. The new candidate's native
+startup and full-agent qualification remain `not_checked` until separately executed.

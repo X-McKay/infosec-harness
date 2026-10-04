@@ -415,3 +415,58 @@ def test_boundary_replay_extractor_rejects_ambiguous_or_foreign_executable(tmp_p
     else:
         with pytest.raises(AssertionError):
             exec(code, {})
+
+
+def test_boundary_backport_provenance_pins_exact_patch_inputs_and_recipe():
+    candidate = json.loads((ROOT / ".dev-tools/openshell-sandbox-backport.json").read_text())
+    recipe_path = ROOT / candidate["recipe_file"]
+    assert hashlib.sha256(recipe_path.read_bytes()).hexdigest() == candidate["recipe_sha256"]
+    recipe = recipe_path.read_text()
+    for patch in candidate["patches"]:
+        assert hashlib.sha256((ROOT / patch["file"]).read_bytes()).hexdigest() == patch["sha256"]
+    assert candidate["patches"][-1]["sha256"] == (
+        "a4bd7b26a7b8f0b0d127c83dadedf3a2d775050992e298155f95a95d843a94d6"
+    )
+    for field in ("boundary_source_before_sha256", "boundary_source_after_sha256"):
+        for path, digest in candidate[field].items():
+            assert digest + "  " + path in recipe
+    assert candidate["cargo_lock_sha256"] + "  Cargo.lock" in recipe
+    assert candidate["release_rust_toolchain"] == "1.95.0"
+    assert candidate["GNU_target"] == "aarch64-unknown-linux-gnu.2.28"
+    assert candidate["rust_builder"] in recipe
+
+
+def test_boundary_backport_requires_exact_guards_and_positive_landlock_abi():
+    candidate = json.loads((ROOT / ".dev-tools/openshell-sandbox-backport.json").read_text())
+    recipe = (ROOT / candidate["recipe_file"]).read_text()
+    assert len(candidate["required_exact_tests"]) == 16
+    for name in candidate["required_exact_tests"]:
+        assert name in recipe
+    assert 'text.splitlines().count(n+": test")==1' in recipe
+    assert '"1 test, 0 benchmarks" in text' in recipe
+    assert "assert abi>=3" in recipe
+    assert candidate["required_landlock_abi_minimum"] == 3
+    assert "setpriv --reuid=65532 --regid=65532 --clear-groups" in recipe
+    assert "cargo test --locked -p openshell-isolation-interface --lib --no-run" in recipe
+    assert "path+file:///src/crates/openshell-isolation-interface#0.0.0" in recipe
+    assert "stat.S_ISREG(os.lstat(path).st_mode)" in recipe
+    assert "os.path.realpath(path)==path" in recipe
+    assert "check=True,timeout=30" in recipe
+
+
+def test_boundary_backport_runtime_preserves_supervisor_and_excludes_loader_widening():
+    candidate = json.loads((ROOT / ".dev-tools/openshell-sandbox-backport.json").read_text())
+    recipe = (ROOT / candidate["recipe_file"]).read_text()
+    runtime = recipe.split(" AS runtime\n", 1)[1].split("FROM scratch", 1)[0]
+    assert runtime.strip() == (
+        "COPY --from=build --chmod=0555 /out/openshell-sandbox /openshell-sandbox"
+    )
+    assert "verify-glibc-symbols.sh 2.28" in recipe
+    assert "! grep -q libgcc_s" in recipe
+    assert "values <= {" in recipe
+    assert candidate["driver_activation"]["supervisor_bin"].startswith("remove override")
+    assert candidate["runtime_qualification"] in {"not_checked", "passed", "failed"}
+    if candidate["status"] == "not_built":
+        assert candidate["candidate_boundary_binary_sha256"] is None
+        assert candidate["candidate_unified_image"] is None
+        assert candidate["runtime_qualification"] == "not_checked"

@@ -1,0 +1,99 @@
+# SPDX-License-Identifier: Apache-2.0
+# NVIDIA OpenShell source: NVIDIA CORPORATION & AFFILIATES, Apache-2.0.
+# Local boundary seccomp backport on exact v0.1.2 source; no release/version edits.
+# Provenance: .dev-tools/openshell-sandbox-backport.json. Historical supervisor
+# metadata/recipes and patches 0001/0002 remain separate and unchanged.
+# Scope: linux/arm64, Rust 1.95, aarch64-unknown-linux-gnu.2.28.
+# Context: hash-pinned source archive, three patches, Zig and cargo-zigbuild archives.
+# Build --target runtime or --target artifacts; dependency compilation is a trusted
+# operator lane, never workload execution. The runtime adds only /openshell-sandbox
+# to the qualified supervisor/CA base; the supervisor binary is unchanged.
+# The checkout-local runtime FROM tag MUST resolve before/after build to exact
+# sha256:4bcdeba331c561a119e3991a03f27926dbdcdba60bf54b459cbe927000a46627.
+# Load the attested base archive and use --pull=false. A local image ID is not a
+# registry digest reference. Never substitute an unverified tag/base or add libraries.
+# Building does not establish native startup qualification or historical root cause.
+FROM rust@sha256:7a5c6db0baa0e43a98d399abde801eab592df26b7fa6314897c9c8c451ee82f8 AS build
+ENV CARGO_BUILD_JOBS=4
+WORKDIR /src
+COPY pinned-source.tar.gz /tmp/pinned-source.tar.gz
+COPY 0001-seed-startup-provider-readiness.patch /tmp/upstream.patch
+RUN echo "e39c365dbb05bd6c9a862b090e9704c767275be44fb405189c4786e10f1c15f2  /tmp/pinned-source.tar.gz" | sha256sum -c - && \
+    echo "f62b1a304969ed47eddbc808c964ee6b69259118d30c61a7b63524a6d9321c54  /tmp/upstream.patch" | sha256sum -c - && \
+    tar -xzf /tmp/pinned-source.tar.gz --strip-components=1 -C /src && \
+    echo "60f82edd8cecc81bea365e35ce20bf66112d5ead004a7d5d8ed107240872a308  crates/openshell-supervisor/src/lib.rs" | sha256sum -c - && \
+    patch --fuzz=0 -p1 < /tmp/upstream.patch && \
+    echo "ca0f491e1774687ca7d632c1e860e234f90796068401186767ed62c4022ba1bc  crates/openshell-supervisor/src/lib.rs" | sha256sum -c - && \
+    echo "ea10e2922eece4077a2c1be17cac83214aa5f79f39fd6c5cc830e1a2cf9d459a  Cargo.lock" | sha256sum -c -
+RUN rustc --version && cargo --version && \
+    cargo test --locked -p openshell-supervisor --lib provider_readiness -- --nocapture && \
+    cargo test --locked -p openshell-supervisor --lib startup_environment_seeds_provider_readiness -- --nocapture && \
+    cargo test --locked -p openshell-supervisor --lib provider_poll -- --nocapture && \
+    cargo test --locked -p openshell-supervisor --lib fail_closed_validation_failure_deactivates_previous_generation -- --nocapture && \
+    cargo test --locked -p openshell-supervisor-network --lib generation -- --nocapture && \
+    cargo test --locked -p openshell-supervisor-network --lib fail_closed_quarantine -- --nocapture && \
+    echo "ea10e2922eece4077a2c1be17cac83214aa5f79f39fd6c5cc830e1a2cf9d459a  Cargo.lock" | sha256sum -c -
+# Preserve the original provider-readiness build/test cache; qualify the
+# additional startup wait only after those unchanged checks have passed.
+COPY 0002-bound-startup-control-wait.patch /tmp/startup-control.patch
+RUN echo "50af0650f4091bce8d6e05cba4f77d9010c251cd3eac268767b73e2e4db87caa  /tmp/startup-control.patch" | sha256sum -c - && \
+    echo "1e7a0740d1dfebf4ce04aad1b1c274f9fff7d2c2e3525923cad3177c4ce26497  crates/openshell-sandbox-backend/src/runtime.rs" | sha256sum -c - && \
+    echo "1901dea2170aecfcd9e9bbf9c99c93e0a1d047e2be3f398c00d1eb5d214d8204  crates/openshell-sandbox-backend/src/runtime/tests/credential_renewal.rs" | sha256sum -c - && \
+    patch --fuzz=0 -p1 < /tmp/startup-control.patch && \
+    echo "bf713402164de46be4385e7e6011a5e60b5e35b26479495c2db1f70658ff0433  crates/openshell-sandbox-backend/src/runtime.rs" | sha256sum -c - && \
+    echo "ffed2d2ff278f459352a82427b6e703e4f4a843e06b1d2cafffabccf784378a7  crates/openshell-sandbox-backend/src/runtime/tests/credential_renewal.rs" | sha256sum -c - && \
+    echo "ea10e2922eece4077a2c1be17cac83214aa5f79f39fd6c5cc830e1a2cf9d459a  Cargo.lock" | sha256sum -c -
+RUN cargo test --locked -p openshell-sandbox-backend --lib startup_control -- --nocapture && \
+    command -v python3 && command -v setpriv && \
+    cargo test --locked -p openshell-sandbox --lib --no-run --message-format=json > /tmp/boundary-test-artifacts.json && \
+    boundary_test="$(python3 -c 'import json,os,re,stat; rows=[json.loads(line) for line in open("/tmp/boundary-test-artifacts.json")]; matches=[row for row in rows if row.get("reason")=="compiler-artifact" and row.get("package_id")=="path+file:///src/crates/openshell-sandbox#0.0.0" and row.get("target",{}).get("name")=="openshell_sandbox" and row.get("target",{}).get("kind")==["lib"] and row.get("profile",{}).get("test") is True and row.get("executable")]; assert len(matches)==1; path=matches[0]["executable"]; assert re.fullmatch("/src/target/debug/deps/openshell_sandbox-[0-9a-f]+",path); assert stat.S_ISREG(os.lstat(path).st_mode) and os.path.realpath(path)==path and os.access(path,os.X_OK); print(path)')" && \
+    (cd /tmp && setpriv --reuid=65532 --regid=65532 --clear-groups -- "$boundary_test" --exact boundary_server::linux::tests::control_restart_replays_running_lifecycle_exactly_once --nocapture) && \
+    echo "bf713402164de46be4385e7e6011a5e60b5e35b26479495c2db1f70658ff0433  crates/openshell-sandbox-backend/src/runtime.rs" | sha256sum -c - && \
+    echo "ffed2d2ff278f459352a82427b6e703e4f4a843e06b1d2cafffabccf784378a7  crates/openshell-sandbox-backend/src/runtime/tests/credential_renewal.rs" | sha256sum -c - && \
+    echo "ea10e2922eece4077a2c1be17cac83214aa5f79f39fd6c5cc830e1a2cf9d459a  Cargo.lock" | sha256sum -c -
+# Exact upstream mise.toml GNU build pins and unmodified staging helpers.
+COPY zig-aarch64-linux-0.14.1.tar.xz cargo-zigbuild-aarch64-unknown-linux-gnu.tar.xz /tmp/
+RUN echo "f7a654acc967864f7a050ddacfaa778c7504a0eca8d2b678839c21eea47c992b  /tmp/zig-aarch64-linux-0.14.1.tar.xz" | sha256sum -c - && \
+    echo "6f86a78cf8be222ac08a68a944ffd8a1ef9d455c504097f0ffbd8bcfbe434a55  /tmp/cargo-zigbuild-aarch64-unknown-linux-gnu.tar.xz" | sha256sum -c - && \
+    mkdir -p /opt/zig /opt/cargo-zigbuild && \
+    tar -xf /tmp/zig-aarch64-linux-0.14.1.tar.xz --strip-components=1 -C /opt/zig && \
+    tar -xf /tmp/cargo-zigbuild-aarch64-unknown-linux-gnu.tar.xz --strip-components=1 -C /opt/cargo-zigbuild
+ENV PATH="/opt/zig:/opt/cargo-zigbuild:${PATH}"
+ENV ZIG=/opt/zig/zig
+# Boundary-only third-patch candidate; the historical supervisor header above
+# is retained solely to preserve the approved cached prefix byte-for-byte.
+# Target runtime derives qualified4bc; no supervisor recompilation is published.
+# Private boundary-only candidate. Original cached prefix above is byte-identical.
+COPY 0003-parent-prepared-workload-seccomp.patch /tmp/parent-seccomp.patch
+RUN echo "a4bd7b26a7b8f0b0d127c83dadedf3a2d775050992e298155f95a95d843a94d6  /tmp/parent-seccomp.patch" | sha256sum -c - && \
+    echo "c0570b4bebc62704f7df14df0491c51b125851a7b1cf5f9718c68c1417ee4ba6  crates/openshell-sandbox/src/sandbox/linux/mod.rs" | sha256sum -c - && \
+    echo "eb247792f2305262ec12527f58c0c5964f8dbac54357b8e4435e9933738e9fce  crates/openshell-sandbox/src/sandbox/linux/seccomp.rs" | sha256sum -c - && \
+    patch --fuzz=0 -p1 < /tmp/parent-seccomp.patch && \
+    echo "122d7c8835fc3f5c63a6827ac312194427b555a6b1764b6dbd734198003c0618  crates/openshell-sandbox/src/sandbox/linux/mod.rs" | sha256sum -c - && \
+    echo "878a05bed59b3dcb6f2c7aeb199a27fe165927e403fd2c39805fb50f371bed19  crates/openshell-sandbox/src/sandbox/linux/seccomp.rs" | sha256sum -c - && \
+    echo "ea10e2922eece4077a2c1be17cac83214aa5f79f39fd6c5cc830e1a2cf9d459a  Cargo.lock" | sha256sum -c - && \
+    rustfmt --version && rustfmt --check --edition 2024 crates/openshell-sandbox/src/sandbox/linux/mod.rs crates/openshell-sandbox/src/sandbox/linux/seccomp.rs
+RUN command -v python3 && command -v setpriv && \
+    (cargo test --locked -p openshell-sandbox --lib --no-run --message-format=json > /tmp/boundary-test-artifacts.json || { python3 -c 'import json,sys; rows=[json.loads(line) for line in open('"'"'/tmp/boundary-test-artifacts.json'"'"')]; errors=[row["message"]["rendered"] for row in rows if isinstance(row,dict) and row.get("reason")=="compiler-message" and isinstance(row.get("message"),dict) and row["message"].get("level")=="error" and isinstance(row["message"].get("rendered"),str)]; [sys.stderr.write(error) for error in errors]; sys.stderr.write("compiler failure had no rendered error messages\n") if not errors else None'; exit 1; }) && \
+    boundary_test="$(python3 -c 'import json,os,re,stat; rows=[json.loads(line) for line in open("/tmp/boundary-test-artifacts.json")]; matches=[row for row in rows if row.get("reason")=="compiler-artifact" and row.get("package_id")=="path+file:///src/crates/openshell-sandbox#0.0.0" and row.get("target",{}).get("name")=="openshell_sandbox" and row.get("target",{}).get("kind")==["lib"] and row.get("profile",{}).get("test") is True and row.get("executable")]; assert len(matches)==1; path=matches[0]["executable"]; assert re.fullmatch("/src/target/debug/deps/openshell_sandbox-[0-9a-f]+",path); assert stat.S_ISREG(os.lstat(path).st_mode) and os.path.realpath(path)==path and os.access(path,os.X_OK); print(path)')" && \
+    python3 -c 'import subprocess,sys; p=sys.argv[1]; names=["sandbox::linux::seccomp::tests::prepared_seccomp_keeps_original_bpf_in_both_network_modes","sandbox::linux::seccomp::tests::prepared_seccomp_avoids_production_writer_deadlock_after_fork"]; [(lambda text,n: (text.splitlines().count(n+": test")==1 and "1 test, 0 benchmarks" in text) or sys.exit("missing exact regression"))(subprocess.check_output(["setpriv","--reuid=65532","--regid=65532","--clear-groups","--",p,"--list","--exact",n],text=True),n) for n in names]' "$boundary_test" && \
+    (cd /tmp && setpriv --reuid=65532 --regid=65532 --clear-groups -- "$boundary_test" --exact sandbox::linux::seccomp::tests::prepared_seccomp_keeps_original_bpf_in_both_network_modes --nocapture) && \
+    (cd /tmp && setpriv --reuid=65532 --regid=65532 --clear-groups -- "$boundary_test" --exact sandbox::linux::seccomp::tests::prepared_seccomp_avoids_production_writer_deadlock_after_fork --nocapture) && \
+    echo "ea10e2922eece4077a2c1be17cac83214aa5f79f39fd6c5cc830e1a2cf9d459a  Cargo.lock" | sha256sum -c -
+# Existing boundary guards execute after patch application as separate nonroot
+# processes. ABI>=3 is mandatory: the retained Landlock test cannot pass by skip.
+RUN setpriv --reuid=65532 --regid=65532 --clear-groups -- python3 -c 'import ctypes,platform; assert platform.machine()=="aarch64"; libc=ctypes.CDLL(None,use_errno=True); libc.syscall.restype=ctypes.c_long; abi=libc.syscall(ctypes.c_long(444),ctypes.c_void_p(),ctypes.c_size_t(0),ctypes.c_uint(1)); assert abi>=3, ("Landlock ABI unavailable",abi,ctypes.get_errno()); print("landlock_abi="+str(abi))' && \
+    boundary_test="$(python3 -c 'import json,os,re,stat; rows=[json.loads(line) for line in open("/tmp/boundary-test-artifacts.json")]; matches=[row for row in rows if row.get("reason")=="compiler-artifact" and row.get("package_id")=="path+file:///src/crates/openshell-sandbox#0.0.0" and row.get("target",{}).get("name")=="openshell_sandbox" and row.get("target",{}).get("kind")==["lib"] and row.get("profile",{}).get("test") is True and row.get("executable")]; assert len(matches)==1; path=matches[0]["executable"]; assert re.fullmatch("/src/target/debug/deps/openshell_sandbox-[0-9a-f]+",path); assert stat.S_ISREG(os.lstat(path).st_mode) and os.path.realpath(path)==path and os.access(path,os.X_OK); print(path)')" && \
+    python3 -c 'import subprocess,sys; p=sys.argv[1]; names=['"'"'sandbox::linux::seccomp::tests::unconditional_blocks_present_in_filter'"'"', '"'"'sandbox::linux::seccomp::tests::conditional_blocks_have_rules'"'"', '"'"'sandbox::linux::seccomp::tests::netlink_socket_rules_are_conditional_not_unconditional'"'"', '"'"'sandbox::linux::seccomp::tests::compatibility_syscalls_are_not_in_main_filter'"'"', '"'"'sandbox::linux::seccomp::tests::behavioral_clone3_returns_enosys'"'"', '"'"'sandbox::linux::seccomp::tests::behavioral_pidfd_open_returns_enosys'"'"', '"'"'sandbox::linux::seccomp::tests::behavioral_third_filter_install_blocked_after_startup'"'"', '"'"'sandbox::linux::seccomp::tests::behavioral_block_mode_denies_inet_and_packet_sockets'"'"', '"'"'sandbox::linux::landlock::tests::capability_free_baseline_omits_only_private_root'"'"', '"'"'sandbox::linux::landlock::tests::capability_free_baseline_rejects_private_root_redirect'"'"', '"'"'sandbox::linux::landlock::tests::capability_free_baseline_denies_alias_reads_and_path_truncation'"'"']; prefix=['"'"'setpriv'"'"', '"'"'--reuid=65532'"'"', '"'"'--regid=65532'"'"', '"'"'--clear-groups'"'"', '"'"'--'"'"']; [(lambda text,n: (text.splitlines().count(n+": test")==1 and "1 test, 0 benchmarks" in text) or sys.exit("missing exact isolation guard"))(subprocess.check_output(prefix+[p,"--list","--exact",n],text=True),n) for n in names]; [subprocess.run(prefix+[p,"--exact",n,"--nocapture"],cwd="/tmp",check=True,timeout=30) for n in names]' "$boundary_test" && \
+    (cargo test --locked -p openshell-isolation-interface --lib --no-run --message-format=json > /tmp/isolation-test-artifacts.json || { python3 -c 'import json,sys; rows=[json.loads(line) for line in open('"'"'/tmp/isolation-test-artifacts.json'"'"')]; errors=[row["message"]["rendered"] for row in rows if isinstance(row,dict) and row.get("reason")=="compiler-message" and isinstance(row.get("message"),dict) and row["message"].get("level")=="error" and isinstance(row["message"].get("rendered"),str)]; [sys.stderr.write(error) for error in errors]; sys.stderr.write("compiler failure had no rendered error messages\n") if not errors else None'; exit 1; }) && \
+    isolation_test="$(python3 -c 'import json,os,re,stat; rows=[json.loads(line) for line in open("/tmp/isolation-test-artifacts.json")]; matches=[row for row in rows if row.get("reason")=="compiler-artifact" and row.get("package_id")=="path+file:///src/crates/openshell-isolation-interface#0.0.0" and row.get("target",{}).get("name")=="openshell_isolation_interface" and row.get("target",{}).get("kind")==["lib"] and row.get("profile",{}).get("test") is True and row.get("executable")]; assert len(matches)==1; path=matches[0]["executable"]; assert re.fullmatch("/src/target/debug/deps/openshell_isolation_interface-[0-9a-f]+",path); assert stat.S_ISREG(os.lstat(path).st_mode) and os.path.realpath(path)==path and os.access(path,os.X_OK); print(path)')" && \
+    python3 -c 'import subprocess,sys; p=sys.argv[1]; names=['"'"'linux::child_seccomp::tests::rejects_zero_sandbox_tgid'"'"', '"'"'linux::child_seccomp::tests::filter_blocks_same_uid_sandbox_control'"'"', '"'"'linux::child_seccomp::tests::filter_preserves_thread_and_process_creation'"'"']; prefix=['"'"'setpriv'"'"', '"'"'--reuid=65532'"'"', '"'"'--regid=65532'"'"', '"'"'--clear-groups'"'"', '"'"'--'"'"']; [(lambda text,n: (text.splitlines().count(n+": test")==1 and "1 test, 0 benchmarks" in text) or sys.exit("missing exact isolation guard"))(subprocess.check_output(prefix+[p,"--list","--exact",n],text=True),n) for n in names]; [subprocess.run(prefix+[p,"--exact",n,"--nocapture"],cwd="/tmp",check=True,timeout=30) for n in names]' "$isolation_test" && \
+    echo "ea10e2922eece4077a2c1be17cac83214aa5f79f39fd6c5cc830e1a2cf9d459a  Cargo.lock" | sha256sum -c -
+RUN /bin/bash -euo pipefail -c 'zig version; cargo zigbuild --help >/dev/null; eval "$(tasks/scripts/setup-zig-cc-wrapper.sh aarch64-unknown-linux-gnu.2.28 aarch64-unknown-linux-gnu.2.28 /src/target/zig-gnu-wrapper/arm64)"; CARGO_INCREMENTAL=0 cargo zigbuild --locked --release --target aarch64-unknown-linux-gnu.2.28 -p openshell-sandbox --bin openshell-sandbox; tasks/scripts/verify-glibc-symbols.sh 2.28 target/aarch64-unknown-linux-gnu/release/openshell-sandbox; readelf -h target/aarch64-unknown-linux-gnu/release/openshell-sandbox | grep AArch64; readelf -d target/aarch64-unknown-linux-gnu/release/openshell-sandbox > /tmp/boundary.dynamic; grep NEEDED /tmp/boundary.dynamic; ! grep -q libgcc_s /tmp/boundary.dynamic; python3 -c '"'"'import re; values=set(re.findall(r"\(NEEDED\).*?\[(.*?)\]",open("/tmp/boundary.dynamic").read())); assert values and values <= {"libc.so.6","libm.so.6","libpthread.so.0","libdl.so.2","librt.so.1","libutil.so.1","ld-linux-aarch64.so.1"}, values'"'"''
+RUN echo "ea10e2922eece4077a2c1be17cac83214aa5f79f39fd6c5cc830e1a2cf9d459a  Cargo.lock" | sha256sum -c - && \
+    mkdir -p /out && cp target/aarch64-unknown-linux-gnu/release/openshell-sandbox /out/ && \
+    sha256sum /out/openshell-sandbox > /out/boundary.sha256 && file /out/openshell-sandbox > /out/boundary.file
+FROM ih-supervisor-startup-v11-trusted-v4:1579c05 AS runtime
+COPY --from=build --chmod=0555 /out/openshell-sandbox /openshell-sandbox
+FROM scratch AS artifacts
+COPY --from=build /out/ /
