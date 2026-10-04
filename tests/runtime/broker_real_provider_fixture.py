@@ -544,11 +544,13 @@ def output_class(agent: str):
         ContextOutput,
         InconclusiveOutput,
         PartialEnvironmentOutput,
+        PlannedEnvironmentOutput,
     )
     from infosec_harness.agents.registry import AGENT_BINDINGS
     if agent == "verdict":
         return InconclusiveOutput
-    return {"context": ContextOutput, "partial-build": PartialEnvironmentOutput}.get(agent, AGENT_BINDINGS[agent])
+    return {"env-planner": PlannedEnvironmentOutput, "context": ContextOutput,
+            "partial-build": PartialEnvironmentOutput}.get(agent, AGENT_BINDINGS[agent])
 
 
 def score_output(agent: str, output, predict, expected) -> dict:
@@ -746,8 +748,11 @@ def workflow_input(inputs: dict) -> dict:
             content.append({"kind": "cache-point", "ttl": part.ttl})
         else:
             raise ValueError("Unexpected public prompt content")
-    return {"agent": inputs["agent"], "prompt": content,
-            "deps": inputs["deps"].model_dump(mode="json")}
+    result = {"agent": inputs["agent"], "prompt": content,
+              "deps": inputs["deps"].model_dump(mode="json")}
+    if inputs["agent"] == "intake":
+        result["intake_source_guidance"] = True
+    return result
 
 
 async def ledger_snapshot(root_id: str) -> dict:

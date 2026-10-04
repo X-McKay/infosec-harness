@@ -47,7 +47,11 @@ def test_frozen_case_inputs_keep_ground_truth_and_credentials_host_only(tmp_path
     config = manifest(tmp_path)
     inputs, _predict, expected, case_digest = prepare_case(agent, config)
     public = workflow_input(inputs)
-    assert set(public) == {"agent", "prompt", "deps"}
+    expected_fields = {"agent", "prompt", "deps"}
+    if agent == "intake":
+        expected_fields.add("intake_source_guidance")
+        assert public["intake_source_guidance"] is True
+    assert set(public) == expected_fields
     assert set(inputs) == {"agent", "prompt", "deps"}
     assert len(case_digest) == 64 and expected
     assert "expected" not in public and "predict" not in public
@@ -1012,3 +1016,125 @@ async def test_review4_internal_phase_entrypoint_rejects_forbidden_dispatch(tmp_
     monkeypatch.setattr(fixture, "run_local", denied)
     with pytest.raises(ValueError, match="only a fresh Temporal"):
         await fixture.phase_main(temporal_only_manifest(tmp_path), SimpleNamespace(phase=phase))
+
+
+@pytest.mark.parametrize("agent", tuple(CASES))
+def test_native_output_matcher_covers_all_current_agent_contracts(agent):
+    from broker_real_provider_fixture import output_class
+
+    from infosec_harness.agents.outputs import (
+        ContextOutput,
+        InconclusiveOutput,
+        PartialEnvironmentOutput,
+        PlannedEnvironmentOutput,
+    )
+    from infosec_harness.domain.models import (
+        EnvironmentSpec,
+        ExtractedFinding,
+        ProbeDiagnosis,
+        ProbePlan,
+        ProbeSource,
+        RepoProfile,
+    )
+    expected = {
+        "intake": ExtractedFinding, "recon": RepoProfile,
+        "env-planner": PlannedEnvironmentOutput, "build-repair": EnvironmentSpec,
+        "partial-build": PartialEnvironmentOutput, "context": ContextOutput,
+        "probe-planner": ProbePlan, "probe-author": ProbeSource,
+        "probe-diagnosis": ProbeDiagnosis, "probe-repair": ProbeSource,
+        "verdict": InconclusiveOutput,
+    }
+    assert set(expected) == set(CASES)
+    assert output_class(agent) is expected[agent]
+
+
+def test_native_env_planner_accepts_current_required_install_output():
+    from infosec_harness.agents.outputs import PlannedEnvironmentOutput
+    from infosec_harness.evals.adapters import _ecosystem_label
+
+    output = PlannedEnvironmentOutput(base_image="python:3.12-slim", install_commands=[],
+                                      test_command="python -m pytest {test_file}")
+    result = score_output("env-planner", output, _ecosystem_label, "python/pytest")
+    assert result["output_type"] == "PlannedEnvironmentOutput"
+    assert result["semantic_score"] == "passed"
+    assert result["expected"] == result["predicted"] == "python/pytest"
+    assert result["typed_output"]["install_commands"] == []
+
+
+def test_native_env_planner_rejects_legacy_domain_type_despite_equal_fields():
+    from infosec_harness.domain.models import EnvironmentSpec
+    from infosec_harness.evals.adapters import _ecosystem_label
+
+    output = EnvironmentSpec(base_image="python:3.12-slim", install_commands=[],
+                             test_command="python -m pytest {test_file}")
+    with pytest.raises(ValueError, match="Registered output type differs"):
+        score_output("env-planner", output, _ecosystem_label, "python/pytest")
+
+
+
+def test_temporal_env_planner_reconstruction_preserves_required_install_contract():
+    from broker_real_provider_fixture import output_class
+
+    from infosec_harness.agents.outputs import PlannedEnvironmentOutput
+    from infosec_harness.evals.adapters import _ecosystem_label
+
+    serialized = {"base_image": "python:3.12-slim", "install_commands": [],
+                  "test_command": "python -m pytest {test_file}"}
+    output = output_class("env-planner").model_validate(serialized)
+    assert type(output) is PlannedEnvironmentOutput
+    assert "install_commands" in output.model_fields_set
+    assert score_output("env-planner", output, _ecosystem_label,
+                        "python/pytest")["semantic_score"] == "passed"
+    incomplete = dict(serialized)
+    del incomplete["install_commands"]
+    with pytest.raises(ValidationError) as error:
+        output_class("env-planner").model_validate(incomplete)
+    assert [(entry["loc"], entry["type"]) for entry in error.value.errors()] == [
+        (("install_commands",), "missing")]
+
+
+
+@pytest.mark.parametrize("source_guidance", [None, False, True])
+async def test_qualification_intake_input_pins_agent_and_accounting_generation(monkeypatch, source_guidance):
+    import test_broker_real_provider_temporal as worker
+
+    from infosec_harness.agents.durable import CONFIGS, INTAKE_GENERATIONS
+    from infosec_harness.workflows.accounting import RootAccounting
+
+    class AccountingObserved(Exception):
+        pass
+
+    selected = INTAKE_GENERATIONS["atomic" if source_guidance is True else "atomic_v3"]
+    observed = []
+    original_ops = worker.TemporalOps
+
+    class ObservedOps(original_ops):
+        async def run_agent(self, name, prompt, deps):
+            assert self._agent_for(name) is selected.agent
+            return await super().run_agent(name, prompt, deps)
+
+    async def observe_reserve(self, config, *, configuration_digest=None):
+        observed.append((config.digest, configuration_digest))
+        raise AccountingObserved
+
+    monkeypatch.setattr(worker, "TemporalOps", ObservedOps)
+    monkeypatch.setattr(RootAccounting, "reserve", observe_reserve)
+    inputs = {"agent": "intake", "prompt": ["synthetic input"], "deps": {"repo_path": "/snapshot"}}
+    if source_guidance is not None:
+        inputs["intake_source_guidance"] = source_guidance
+    with pytest.raises(AccountingObserved):
+        await worker.RealProviderWorkflow().run(inputs)
+    assert observed == [(selected.config.digest, selected.config.digest)]
+    assert (selected.config.digest == CONFIGS["intake"].digest) is (source_guidance is True)
+
+
+@pytest.mark.parametrize("invalid", [1, "false", None, []])
+async def test_qualification_intake_generation_rejects_nonboolean_before_accounting(monkeypatch, invalid):
+    import test_broker_real_provider_temporal as worker
+
+    def forbidden_ops(**_kwargs):
+        raise AssertionError("Invalid generation must fail before accounting construction")
+
+    monkeypatch.setattr(worker, "TemporalOps", forbidden_ops)
+    with pytest.raises(ValueError, match="Intake source guidance must be a boolean"):
+        await worker.RealProviderWorkflow().run({"intake_source_guidance": invalid})

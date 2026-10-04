@@ -17,7 +17,10 @@ class RealProviderWorkflow:
 
     @workflow.run
     async def run(self, inputs: dict) -> dict:
-        ops = TemporalOps(intake_atomic_inline=True)
+        source_guidance = inputs.get("intake_source_guidance", False)
+        if type(source_guidance) is not bool:
+            raise ValueError("Intake source guidance must be a boolean")
+        ops = TemporalOps(intake_atomic_inline=True, intake_source_guidance=source_guidance)
         try:
             deps = inputs["deps"]
             if isinstance(deps, dict):
