@@ -11,14 +11,15 @@ VERSIONS_FILE=.dev-tools/versions.env
 
 usage() {
   cat <<'EOF'
-Usage: ./dev [--profile full|offline] [start|reload|status|logs|smoke|doctor|stop]
+Usage: ./dev [--profile full|offline] [start|reload|reload-ui|status|logs|smoke|doctor|stop]
 
 The default profile provisions pinned tools and a checkout-owned Linux VM, verifies the runsc
 sandbox plus its build-egress boundary, starts the complete stack, and runs a stub assessment
 through the API and real Temporal worker. It never changes the host Docker context or daemon.
 The offline profile runs component checks and explicitly does not check Temporal or isolation.
 stop preserves this checkout's VM, volumes, findings, downloads, and generated configuration.
-reload restarts the editable API and worker after backend source changes without touching data.
+reload restarts the editable API and worker, then runs the explicit stub/runtime smoke.
+reload-ui restarts API and web, then verifies UI/API integration with GET-only checks.
 logs [service] displays and saves a bounded snapshot under .harness/logs/.
 EOF
 }
@@ -27,7 +28,7 @@ while (($#)); do
   case "$1" in
     --profile) PROFILE="${2:?--profile needs full or offline}"; shift 2 ;;
     --profile=*) PROFILE="${1#*=}"; shift ;;
-    start|reload|status|smoke|doctor|stop) COMMAND="$1"; shift ;;
+    start|reload|reload-ui|status|smoke|doctor|stop) COMMAND="$1"; shift ;;
     logs)
       COMMAND=logs
       if (($# > 1)); then SERVICE="$2"; shift 2; else shift; fi
@@ -225,6 +226,14 @@ case "$COMMAND" in
       --temporal-address "127.0.0.1:${HARNESS_TEMPORAL_PORT}" \
       --minio-url "http://127.0.0.1:${HARNESS_MINIO_PORT}/minio/health/ready"
     echo "reloaded API and worker; persisted data was preserved"
+    ;;
+  reload-ui)
+    compose restart api web
+    load_env
+    python_managed scripts/ui_deployment_smoke.py \
+      --api-url "http://127.0.0.1:${HARNESS_API_PORT}" \
+      --web-url "http://127.0.0.1:${HARNESS_WEB_PORT}"
+    echo "reloaded API and UI; GET-only deployment checks passed"
     ;;
   logs)
     save_logs

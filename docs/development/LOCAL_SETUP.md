@@ -25,7 +25,8 @@ its exact location. Platform support remains subject to the acceptance limits be
 ./dev
 ./dev status
 ./dev logs api
-./dev reload  # restart API and worker after backend edits
+./dev reload  # restart API/worker and run the explicit stub/runtime smoke
+./dev reload-ui  # restart API/web; GET-only checks without seeded findings
 ./dev stop
 ```
 
@@ -228,3 +229,5 @@ docker info --format '{{json .Runtimes}}'   # discovery only; actual execution m
 The historical live-model and podman-based runtime notes remain in
 [`LIVE_VALIDATION.md`](../validation/LIVE_VALIDATION.md) as historical evidence only. They do not describe
 the managed launcher or establish clean-host acceptance.
+
+For UI/API-only updates, `./dev reload-ui` verifies the typed runtime and qualification endpoints through both the API and the web proxy, operational collections (empty is valid), and actual served assets. It performs no finding submission, storage mutation or model request. A healthy old API cannot pass merely because `/api/health` returns 200. This command preserves the configured model profile; it does not silently switch a stub development environment to live inference. Configure live model access and operator evidence explicitly for an operational deployment.

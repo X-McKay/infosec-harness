@@ -11,6 +11,7 @@ not the packaged harness runtime.
 | `qualification_ledger.py` | File-only dependency assessment of Git-reviewed component evidence; [workflow](../docs/evaluation/COMPONENT_QUALIFICATION.md) |
 | `dev_setup.py` | Pinned tools, checkout identity, ports and managed VM setup; `./dev` |
 | `dev_sandbox_check.py` | Actual sandbox/build-egress fixtures; `./dev doctor` or `./dev smoke` |
+| `ui_deployment_smoke.py` | GET-only deployed contracts, operational views, same-origin proxy and actual UI assets; `./dev reload-ui` or explicit API/web origins; creates no findings or model requests |
 | `dev_setup_smoke.py` | API/UI/storage readiness and Temporal demonstration; `./dev smoke` |
 | `sync_dev_instructions.py` | Generate `CLAUDE.md` from `AGENTS.md`; `just generated-sync` / `generated-check` |
 | `sync_dev_skills.py` | Canonical skill digests and client copies; `just dev-skills-sync` / `dev-skills-check` |

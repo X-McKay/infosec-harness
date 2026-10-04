@@ -98,7 +98,7 @@ async def pending_submissions() -> list[tuple[str, dict]]:
     async with db.session() as session:
         batches = (await session.execute(select(db.Batch).where(
             db.Batch.status == "accepted", db.Batch.submission.is_not(None)))).scalars().all()
-        return [(b.id, b.submission) for b in batches]
+        return [(b.id, b.submission) for b in batches if isinstance(b.submission, dict)]
 
 
 async def finish_pending(batch_id: str, status: str, detail: str) -> None:
