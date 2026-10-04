@@ -250,8 +250,9 @@ def verify_native_rerun(amendment: NativeRerunAmendment) -> None:
 
 def verify_review5_configuration(manifest: RealProviderManifest) -> dict:
     """Resolve every v5 operator contract locally; never create a provider client."""
-    if not manifest.rerun or manifest.rerun.review_version not in (5, 6, 7, 8):
+    if manifest.fresh is None and (not manifest.rerun or manifest.rerun.review_version not in (5, 6, 7, 8)):
         return {}
+    review_version = 8 if manifest.fresh is not None else manifest.rerun.review_version
     import yaml
     from pydantic_ai.agent.spec import AgentSpec
 
@@ -259,11 +260,11 @@ def verify_review5_configuration(manifest: RealProviderManifest) -> dict:
     from infosec_harness.inference.compat import _apply_max_tokens_floor
     from infosec_harness.inference.profiles import BrokerConfig
 
-    nonthinking = ({"intake", "probe-diagnosis", "verdict", "build-repair"} if manifest.rerun.review_version == 7
-        else {"intake", "probe-diagnosis", "verdict"} if manifest.rerun.review_version in (6, 8) else {"intake"})
+    nonthinking = ({"intake", "probe-diagnosis", "verdict", "build-repair"} if review_version == 7
+        else {"intake", "probe-diagnosis", "verdict"} if review_version in (6, 8) else {"intake"})
     models = ModelsConfig.model_validate(yaml.safe_load(Path(manifest.broker_models_config).read_text()))
     catalog = BrokerConfig.model_validate(yaml.safe_load(Path(manifest.broker_config).read_text()))
-    reviewed_build = manifest.rerun.review_version == 8
+    reviewed_build = review_version == 8
     expected_backends = {"gateway", "gateway-intake"} | ({"gateway-build-repair"} if reviewed_build else set())
     expected_agents = {agent: {"backend": "gateway-intake"} for agent in nonthinking}
     if reviewed_build:
@@ -300,7 +301,7 @@ def verify_review5_configuration(manifest: RealProviderManifest) -> dict:
                 or profile.backend_name != backend_name):
             raise ValueError("Review5 operator thinking policy or backend differs")
         spec = AgentSpec.from_file(ROOT / "src/infosec_harness/agents" / agent / "agent.yaml")
-        if (manifest.rerun.review_version in (6, 7, 8)
+        if (review_version in (6, 7, 8)
                 and spec.model_settings.get("parallel_tool_calls") is not
                     (False if agent in {"env-planner", "build-repair", "partial-build"} else None)):
             raise ValueError("Review6 requires exactly the declared serial tool settings")
@@ -313,6 +314,8 @@ def verify_review5_configuration(manifest: RealProviderManifest) -> dict:
             merge_system_messages=backend.merge_system_messages, min_max_tokens=backend.min_max_tokens,
             strict_closed_output_tools=backend.strict_closed_output_tools, enable_thinking=backend.enable_thinking,
             thinking_token_budget=backend.thinking_token_budget if reviewed_build else None)
+        if manifest.fresh is not None and contract.digest != manifest.fresh.case_contract_sha256[agent]:
+            raise ValueError("Fresh agent contract differs from the frozen contract")
         contracts[agent] = {"backend": backend_name, "profile": profile_name,
             "enable_thinking": contract.enable_thinking, "contract_digest": contract.digest,
             **({"thinking_token_budget": contract.thinking_token_budget} if reviewed_build else {})}
@@ -373,6 +376,167 @@ def claim_phase(report_directory: Path, manifest_sha256: str, phase: str) -> Non
         os.close(descriptor)
 
 
+class EvidenceReference(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    file: str = Field(min_length=1)
+    sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+class FreshQualification(BaseModel):
+    """A separate current cohort; historical rerun generations stay immutable."""
+    model_config = ConfigDict(extra="forbid", strict=True)
+    generation: Literal["fresh-native-v1"]
+    evidence: dict[str, EvidenceReference]
+    candidate_files: dict[str, str]
+    native_config_file: str
+    case_budget_sha256: dict[str, str]
+    case_contract_sha256: dict[str, str]
+    graph_trials: Literal[3]
+
+    @model_validator(mode="after")
+    def finite_scope(self):
+        if type(self.graph_trials) is not int:
+            raise ValueError("Fresh graph scope must be exactly three")
+        if set(self.evidence) != {"source_pin", "closure_manifest", "closure_result", "closure_rows", "baseline_snapshot"}:
+            raise ValueError("Fresh qualification requires exact source and post-closure evidence")
+        for mapping in (self.candidate_files, self.case_budget_sha256, self.case_contract_sha256):
+            if any(len(value) != 64 or any(c not in "0123456789abcdef" for c in value) for value in mapping.values()):
+                raise ValueError("Fresh qualification digests must be SHA256")
+        if set(self.case_budget_sha256) != set(CASES) or set(self.case_contract_sha256) != set(CASES):
+            raise ValueError("Fresh qualification freezes every case budget and contract")
+        return self
+
+
+def fresh_git_observation() -> tuple[str, bool, set[str]]:
+    """Observe only the current checkout; never modify Git or trust pin coverage."""
+    def git(*args):
+        return subprocess.run(["git", *args], cwd=ROOT, check=True,
+            capture_output=True, text=True, timeout=10).stdout
+
+    head = git("rev-parse", "HEAD").strip()
+    clean = not git("status", "--porcelain", "--untracked-files=no")
+    tracked = set(git("ls-files", "-z").split("\0")) - {""}
+    return head, clean, tracked
+
+
+def verify_fresh_qualification(manifest) -> None:
+    """Read pinned files only; never connects to a service or releases accounting."""
+    fresh = manifest.fresh
+    if fresh is None:
+        return
+    from datetime import datetime
+
+    from infosec_harness.persistence import db, reconciliation
+
+    def read(reference):
+        path = Path(reference.file)
+        if not path.is_file() or path.is_symlink() or hashlib.sha256(path.read_bytes()).hexdigest() != reference.sha256:
+            raise ValueError("Fresh evidence changed")
+        return json.loads(path.read_bytes())
+
+    values = {name: read(reference) for name, reference in fresh.evidence.items()}
+    source = values["source_pin"]
+    if source.get("source_base_commit") != manifest.source_commit or source.get("host_git_clean") is not True:
+        raise ValueError("Fresh source provenance differs")
+    mapping = source.get("tracked_files_sha256")
+    if not isinstance(mapping, dict) or not mapping:
+        raise ValueError("Fresh source must pin all tracked files")
+    head, clean, tracked = fresh_git_observation()
+    paths = [Path(name) if Path(name).is_absolute() else ROOT / name for name in mapping]
+    root_path = ROOT.resolve()
+    if (head != manifest.source_commit or not clean or not tracked
+            or any(not path.resolve().is_relative_to(root_path) for path in paths)
+            or len(paths) != len(tracked)
+            or {path.resolve().relative_to(root_path).as_posix() for path in paths} != tracked):
+        raise ValueError("Fresh source requires exact current HEAD, clean tracked files and complete coverage")
+    for name, expected in mapping.items():
+        path = Path(name) if Path(name).is_absolute() else ROOT / name
+        if (not path.resolve().is_relative_to(ROOT.resolve()) or path.is_symlink()
+                or hashlib.sha256(path.read_bytes()).hexdigest() != expected):
+            raise ValueError("Fresh tracked source changed")
+    for name, expected in fresh.candidate_files.items():
+        path = Path(name)
+        if path.is_symlink() or hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+            raise ValueError("Fresh candidate changed")
+    result = values["closure_result"]
+    required_true = ("all_request_rows_unchanged", "all_unrelated_roots_unchanged", "full_reserved_envelopes_charged_once")
+    if (result.get("status") != "passed" or any(result.get(key) is not True for key in required_true)
+            or any(type(result.get(key)) is not int or result[key] != 0
+                   for key in ("provider_calls", "lease_mutations", "request_row_mutations", "unresolved_requests"))
+            or result.get("source_commit") != values["closure_manifest"].get("source_commit")):
+        raise ValueError("Explicit operator closure must have passed with retained uncertainty")
+    snapshot = values["baseline_snapshot"]
+    if (set(snapshot) != {"requests", "roots"} or not all(isinstance(v, dict) and v for v in snapshot.values())
+            or any(len(v) != 64 or any(c not in "0123456789abcdef" for c in v)
+                   for mapping in snapshot.values() for v in mapping.values())):
+        raise ValueError("Fresh whole-state baseline malformed")
+    export = values["closure_rows"]
+    if set(export) != {"roots", "requests"}:
+        raise ValueError("Use the original operator post-close mapped-row export")
+    roots = {}
+    for record in export["roots"]:
+        if set(record) != {column.name for column in db.BudgetLedger.__table__.columns}:
+            raise ValueError("Closure root export is incomplete")
+        root = db.BudgetLedger(**record)
+        if root.root_id in roots or reconciliation.row_sha256(root) != snapshot["roots"].get(root.root_id):
+            raise ValueError("Closure root snapshot differs")
+        roots[root.root_id] = root
+    authorizations = values["closure_manifest"].get("operations")
+    if not isinstance(authorizations, list) or not authorizations:
+        raise ValueError("Exact operator closure authorizations required")
+    authorized = [reconciliation.ClosureRequest.model_validate(value) for value in authorizations]
+    wanted = {identity for audit in authorized for identity in audit.unknown_request_ids}
+    expected_rows = {identity for audit in authorized for identity in audit.expected_request_sha256}
+    if (len({(audit.root_id, audit.operation_id) for audit in authorized}) != len(authorized)
+            or sum(len(audit.expected_request_sha256) for audit in authorized) != len(expected_rows)
+            or any(type(result.get(key)) is not int for key in ("request_rows", "budget_roots",
+                "conservatively_closed_requests", "permanent_unknown_outcomes", "exact_affected_roots"))):
+        raise ValueError("Closure operations and counts must be exact and disjoint")
+    if (set(roots) != {audit.root_id for audit in authorized}
+            or any(audit.source_commit != result["source_commit"] for audit in authorized)
+            or result.get("request_rows") != len(snapshot["requests"])
+            or result.get("budget_roots") != len(snapshot["roots"])
+            or result.get("conservatively_closed_requests") != len(wanted)
+            or result.get("permanent_unknown_outcomes") != len(wanted)
+            or result.get("exact_affected_roots") != len(roots)):
+        raise ValueError("Fresh closure verification counts and authorizations differ")
+    seen = set()
+    exported = set()
+    for record in export["requests"]:
+        if set(record) != {column.name for column in db.InferenceRequestRecord.__table__.columns}:
+            raise ValueError("Closure request export is incomplete")
+        record = dict(record)
+        for name in ("created_at", "updated_at"):
+            record[name] = datetime.fromisoformat(record[name])
+        row = db.InferenceRequestRecord(**record)
+        if row.request_id in exported or reconciliation.row_sha256(row) != snapshot["requests"].get(row.request_id):
+            raise ValueError("Closure request snapshot differs")
+        exported.add(row.request_id)
+        if row.state == "completion_unknown":
+            if not reconciliation.is_conservatively_closed(roots.get(row.root_id), row):
+                raise ValueError("Unknown outcome lacks valid conservative closure")
+            marker = roots[row.root_id].state["operations"][row.operation_id]["unknown_reconciliation"]
+            if marker["authorization"] not in authorizations:
+                raise ValueError("Closure audit differs from explicit authorization")
+            seen.add(row.request_id)
+    if exported != expected_rows or seen != wanted or not wanted:
+        raise ValueError("Fresh cohort must retain every explicitly closed unknown outcome")
+
+
+def verify_fresh_case_config(manifest, agent, config):
+    from infosec_harness.inference.protocol import digest
+
+    if digest(config["budget"]) != manifest.fresh.case_budget_sha256[agent]:
+        raise ValueError("Fresh case budget changed")
+    model = config["model"]
+    if model.get("capability_profile", {}).get("strict_closed_output_tools") is not True:
+        raise ValueError("Fresh direct and native controls require closed output tools")
+    contract = model.get("broker_contract")
+    if contract is not None and digest(contract) != manifest.fresh.case_contract_sha256[agent]:
+        raise ValueError("Fresh case executor contract changed")
+
+
+
 class RealProviderManifest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     version: int = 1
@@ -402,6 +566,7 @@ class RealProviderManifest(BaseModel):
     max_concurrency: int = 1
     root_duration_seconds: int = 7200
     graph_repo: str = "eval-corpus/python/sqli/vulnerable"
+    fresh: FreshQualification | None = Field(default=None, exclude_if=lambda value: value is None)
     amendment: CorrectedPilotAmendment | None = None
     rerun: NativeRerunAmendment | None = None
 
@@ -411,6 +576,12 @@ class RealProviderManifest(BaseModel):
                 or self.model != "Qwen3.6-35B-A3B-NVFP4" or self.cases != CASES
                 or self.max_concurrency != 1 or self.root_duration_seconds != 7200):
             raise ValueError("Real-provider pilot differs from the frozen scope")
+        if self.fresh and set(self.case_digests) != set(CASES):
+            raise ValueError("Fresh cohorts require every original frozen case digest")
+        if self.fresh and (self.amendment or self.rerun):
+            raise ValueError("Fresh cohorts cannot reuse historical amendments")
+        if self.fresh and set(self.fresh.candidate_files) != {self.direct_models_config, self.broker_models_config, self.broker_config, self.fresh.native_config_file}:
+            raise ValueError("Fresh cohort pins exactly its four candidate configurations")
         if self.amendment and self.rerun:
             raise ValueError("Historical correction and fresh rerun cannot be combined")
         temporal_only = self.rerun is not None and self.rerun.review_version == 4
@@ -571,7 +742,7 @@ COMPARISON_MODEL_FIELDS = ("effective_settings", "provider_output_floor", "trans
 
 
 def compare_baseline(agent: str, config: dict, case_digest: str, *,
-                     reviewed_strict_closed_output_tools: bool = False) -> dict:
+                     reviewed_strict_closed_output_tools: bool = False, fresh_controls: bool = False) -> dict:
     path = os.environ.get("HARNESS_REAL_PROVIDER_BASELINE")
     if not path:
         raise ValueError("Native qualification requires a completed direct baseline")
@@ -590,11 +761,14 @@ def compare_baseline(agent: str, config: dict, case_digest: str, *,
     current_strict = current_capability.pop("strict_closed_output_tools", False)
     if old_capability != current_capability:
         raise ValueError("Baseline capability profile differs")
-    if (previous_strict is not False or current_strict is not reviewed_strict_closed_output_tools
+    if ((previous_strict is not True if fresh_controls else previous_strict is not False)
+            or current_strict is not reviewed_strict_closed_output_tools
             or type(reviewed_strict_closed_output_tools) is not bool):
         raise ValueError("Only explicitly reviewed closed-output shaping may differ")
     output_change = None
-    if reviewed_strict_closed_output_tools:
+    if fresh_controls and old["budget"] != config["budget"]:
+        raise ValueError("Fresh direct/native full case budgets differ")
+    if reviewed_strict_closed_output_tools and not fresh_controls:
         if (not isinstance(config["model"].get("broker_contract"), dict)
                 or config["model"]["broker_contract"].get("strict_closed_output_tools") is not True):
             raise ValueError("Reviewed shaping requires the exact opted-in native contract")
@@ -718,6 +892,11 @@ def compare_review6_baseline(agent: str, config: dict, case_digest: str, *, revi
 
 
 def compare_manifest_baseline(manifest: RealProviderManifest, agent: str, config: dict, case_digest: str) -> dict:
+    if manifest.fresh is not None:
+        verify_fresh_case_config(manifest, agent, config)
+        result = compare_baseline(agent, config, case_digest, reviewed_strict_closed_output_tools=True, fresh_controls=True)
+        result["fresh_generation"] = manifest.fresh.generation
+        return result
     if manifest.rerun and manifest.rerun.review_version in (6, 7, 8):
         return compare_review6_baseline(agent, config, case_digest, review_version=manifest.rerun.review_version)
     if manifest.rerun and manifest.rerun.review_version in (3, 4, 5):
@@ -790,6 +969,8 @@ async def run_local_case(manifest: RealProviderManifest, phase: str, agent: str,
     messages = []
     try:
         config = resolve_agent_config(agent, load_spec(agent), source_files=inputs["deps"].source_files, durable=False)
+        if getattr(manifest, "fresh", None) is not None:
+            verify_fresh_case_config(manifest, agent, config.model_dump(mode="json"))
         if validate_config is not None:
             validate_config(config)
         row["config"] = config.model_dump(mode="json")
@@ -1027,6 +1208,7 @@ async def serve_worker(manifest: RealProviderManifest, queue: str):
 
 
 async def phase_main(manifest, args):
+    verify_fresh_qualification(manifest)
     verify_review5_configuration(manifest)
     if args.phase != "worker":
         selected_phases(manifest, args.phase)

@@ -9,7 +9,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import subprocess
 import sys
 import time
@@ -27,6 +26,7 @@ from broker_real_provider_fixture import (  # noqa: E402
     prepare_case,
     private_write,
     selected_phases,
+    verify_fresh_qualification,
     verify_native_rerun,
     verify_retained_failure,
     verify_review5_configuration,
@@ -79,6 +79,8 @@ def main() -> int:
             verify_review5_configuration(manifest)
         except ValueError as error:
             parser.error(str(error))
+    verify_fresh_qualification(manifest)
+    verify_review5_configuration(manifest)
     cases = {agent: prepare_case(agent, manifest)[3] for agent in CASES}
     if args.phase == "validate":
         print(json.dumps({"status": "passed", "scope": "manifest and frozen cases only", "case_digests": cases,

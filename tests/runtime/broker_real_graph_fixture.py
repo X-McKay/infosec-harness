@@ -27,7 +27,7 @@ def write_private(path: Path, value: dict) -> None:
         json.dump(value, stream, sort_keys=True, indent=2)
 
 
-def freeze(pilot: Path, destination: Path, phase: str, *, infrastructure_correction: str | None = None, baseline_report: Path | None = None) -> dict:
+def freeze(pilot: Path, destination: Path, phase: str, *, infrastructure_correction: str | None = None, baseline_report: Path | None = None, trial_index: int | None = None) -> dict:
     if phase not in {"direct", "native"} or destination.exists():
         raise ValueError("Choose an unused graph manifest and a declared phase")
     parent = (ROOT / ".harness/openshell-spike/live-qualification").resolve()
@@ -35,6 +35,22 @@ def freeze(pilot: Path, destination: Path, phase: str, *, infrastructure_correct
     if not destination.is_relative_to(parent):
         raise ValueError("Graph artifacts must remain checkout-owned")
     values = json.loads(pilot.read_text()) if pilot.exists() else {}
+    fresh = None
+    if values.get("fresh"):
+        from broker_real_provider_fixture import (
+            RealProviderManifest,
+            verify_fresh_qualification,
+            verify_review5_configuration,
+        )
+
+        reviewed = RealProviderManifest.model_validate_json(pilot.read_bytes())
+        verify_fresh_qualification(reviewed)
+        verify_review5_configuration(reviewed)
+        if phase != "native" or type(trial_index) is not int or trial_index not in (1, 2, 3):
+            raise ValueError("Fresh graph cohort requires one of exactly three native trials")
+        fresh = {"generation": reviewed.fresh.generation, "trial_index": trial_index, "maximum_trials": 3}
+    elif trial_index is not None:
+        raise ValueError("Historical graph scope cannot accept fresh trial indices")
     rerun = None
     if values.get("rerun"):
         from broker_real_provider_fixture import (
@@ -52,10 +68,12 @@ def freeze(pilot: Path, destination: Path, phase: str, *, infrastructure_correct
                 or sha(baseline_report.parent / "manifest.json") != rerun.original_manifest_sha256):
             raise ValueError("Native rerun graph baseline changed")
     registry = parent / (f"graph-native-rerun-{sha(pilot)}.frozen" if rerun else f"graph-{phase}-manifest.frozen")
+    if fresh:
+        registry = parent / f"graph-fresh-{sha(pilot)}-{trial_index}.frozen"
     supersedes = None
     prior = None
     if registry.exists():
-        if infrastructure_correction != "guest-visible-tmpdir" or phase != "direct":
+        if fresh or infrastructure_correction != "guest-visible-tmpdir" or phase != "direct":
             raise ValueError("This graph phase already has a frozen trial")
         previous = json.loads(registry.read_text())
         previous_manifest = Path(previous["manifest"])
@@ -116,6 +134,8 @@ def freeze(pilot: Path, destination: Path, phase: str, *, infrastructure_correct
         "duration_seconds": 7200, "concurrency": 1, "maximum_trials": 1,
         "finding": {**fixed_finding, "repo_url": str(repo)},
     }
+    if fresh:
+        manifest["fresh_cohort"] = fresh
     if rerun:
         manifest["native_rerun"] = {"pilot_sha256": sha(pilot), "baseline_report": str(baseline_report.resolve()),
                                     "baseline_report_sha256": rerun.baseline_report_sha256}
@@ -128,7 +148,7 @@ def freeze(pilot: Path, destination: Path, phase: str, *, infrastructure_correct
     return manifest
 
 
-def preflight(path: Path) -> dict:
+def preflight(path: Path, expected_sha256: str | None = None) -> dict:
     value = json.loads(path.read_text())
     if (value["version"] != 1 or value["phase"] not in {"direct", "native"}
             or value["duration_seconds"] != 7200 or value["maximum_trials"] != 1
@@ -141,6 +161,31 @@ def preflight(path: Path) -> dict:
     if value["phase"] == "native" and sha(Path(value["broker_config"])) != value["broker_sha256"]:
         raise ValueError("Broker catalog changed")
     pilot_values = json.loads(Path(value["pilot_manifest"]).read_text())
+    if pilot_values.get("fresh"):
+        from broker_real_provider_fixture import (
+            RealProviderManifest,
+            verify_fresh_qualification,
+            verify_review5_configuration,
+        )
+
+        if expected_sha256 is None or sha(path) != expected_sha256:
+            raise ValueError("Fresh graph execution requires its exact frozen manifest SHA256")
+        reviewed = RealProviderManifest.model_validate(pilot_values)
+        verify_fresh_qualification(reviewed)
+        verify_review5_configuration(reviewed)
+        cohort = value.get("fresh_cohort", {})
+        if (set(cohort) != {"generation", "trial_index", "maximum_trials"}
+                or cohort["generation"] != "fresh-native-v1" or type(cohort["trial_index"]) is not int
+                or cohort["trial_index"] not in (1, 2, 3) or type(cohort["maximum_trials"]) is not int
+                or cohort["maximum_trials"] != 3
+                or value["phase"] != "native"):
+            raise ValueError("Fresh graph finite cohort changed")
+        registry = ROOT / ".harness/openshell-spike/live-qualification" / f"graph-fresh-{value['pilot_sha256']}-{cohort['trial_index']}.frozen"
+        claim = json.loads(registry.read_text())
+        if claim != {"manifest": str(path.resolve()), "sha256": sha(path)}:
+            raise ValueError("Fresh graph registry ownership differs")
+    elif "fresh_cohort" in value:
+        raise ValueError("Unexpected fresh graph scope")
     if pilot_values.get("rerun"):
         from broker_real_provider_fixture import (
             RealProviderManifest,
@@ -305,8 +350,8 @@ async def _stop_worker(worker) -> bool:
     return worker.poll() is not None
 
 
-async def execute(path: Path) -> dict:
-    value = preflight(path)
+async def execute(path: Path, expected_sha256: str | None = None) -> dict:
+    value = preflight(path, expected_sha256)
     claim_execution(Path(value["directory"]))
     os.environ.update(environment(value))
     import httpx

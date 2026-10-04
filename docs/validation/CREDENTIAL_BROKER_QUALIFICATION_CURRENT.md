@@ -84,3 +84,42 @@ state. Request protocol/state, model behavior/settings, thresholds, executor pol
 Temporal workflow/activity generation identities are unchanged. Database migration and
 recorded-workflow replay changes are `not_applicable`; no replay issues an operator closure.
 Any new qualification starts from its own post-closure snapshot and current source identity.
+
+### Actual retained-hold closure
+
+The reviewed implementation at `877c8e8b5e05d99d96f51be3fcdfb6ca36e840b2` applied the
+frozen manifest after a successful 16-operation dry run. Read-only verification `passed`:
+zero unresolved accounting holds and 16 conservatively closed requests; every one of the
+3,713 request rows is unchanged, including its unknown state and absent result. Exactly 16
+of 963 budget roots received one full-envelope charge and immutable audit; all unrelated
+roots are unchanged. No inference, request-row mutation or lease mutation occurred. Actual
+owner checks corroborated the controller/gateway process identities, zero sandboxes, two
+providers and all 16 matching Deleted lease records before closure.
+
+The outcomes remain unknown and prior failed evaluations remain failed. Private manifest,
+backups, dry-run/application reports and before/after whole-state hashes are retained under
+`.harness/reports/credential-broker/hold-closure-877c8e8b5e05-56893e4ee5224aa3944f96e19f20fad2/`.
+The closure verification SHA256 is `48b74f5c370e3c8952546dde554795026e0dd119ea9bdc1f8259fab235877528`;
+application report SHA256 is `4d32aad9a9ef97f7705dc95bb7af8f803dd4aff9ac9f3fccc04aae011147717d`.
+A previous dry-run preflight refused a symlink-containing evidence path before any accounting
+mutation; its failed report remains retained. The successful frozen manifest uses canonical
+regular-file references. Fresh native/full semantic and hosted qualification remain
+`not_checked` until their own executions complete.
+
+
+### Fresh qualification preparation after closure
+
+The additive `fresh-native-v1` runner preserves historical generations and all original
+cases, budgets and release thresholds. It requires a clean current Git commit, hashes of
+all tracked source files, exact candidate configurations, the explicit closure manifest,
+the verified post-closure mapped rows and the whole-state baseline. A fresh direct
+11-agent baseline and native local/Temporal cohorts use the same strict output controls
+and full per-case budgets. The graph scope is three independent repetitions of the
+original SQLi fixture, with every captured Temporal history replayed; these are not three
+distinct findings. Each repetition retains the original single-trial limit and deadline.
+
+Runner validation is preparation evidence only. Actual controller ownership/source
+attestation, all-11 native readiness, the complete original 118-case semantic release
+checks, native execution/cleanup and graph/replay gates must pass before promotion.
+The original 3,713 request hashes and 963 post-closure budget-root hashes must remain
+unchanged, and new unresolved accounting outcomes stop progression without automatic retry.

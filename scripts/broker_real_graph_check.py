@@ -18,6 +18,8 @@ def main() -> int:
     parser.add_argument("mode", choices=("freeze", "execute"))
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--pilot-manifest", type=Path)
+    parser.add_argument("--manifest-sha256")
+    parser.add_argument("--trial-index", type=int, choices=(1, 2, 3))
     parser.add_argument("--baseline-report", type=Path)
     parser.add_argument("--phase", choices=("direct", "native"))
     parser.add_argument("--infrastructure-correction", choices=("guest-visible-tmpdir",))
@@ -25,10 +27,10 @@ def main() -> int:
     if args.mode == "freeze":
         if args.pilot_manifest is None or args.phase is None:
             parser.error("Freeze requires pilot manifest and phase")
-        freeze(args.pilot_manifest, args.manifest, args.phase, infrastructure_correction=args.infrastructure_correction, baseline_report=args.baseline_report)
+        freeze(args.pilot_manifest, args.manifest, args.phase, infrastructure_correction=args.infrastructure_correction, baseline_report=args.baseline_report, trial_index=args.trial_index)
         print("FROZEN_PRODUCTION_GRAPH_MANIFEST_READY")
         return 0
-    result = asyncio.run(execute(args.manifest))
+    result = asyncio.run(execute(args.manifest, args.manifest_sha256))
     print(json.dumps(result, sort_keys=True))
     return 0 if all(result.get(key) == "passed" for key in ("graph", "replay", "workflow_cleanup", "worker_cleanup")) else 1
 
