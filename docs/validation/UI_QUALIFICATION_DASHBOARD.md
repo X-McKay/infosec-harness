@@ -106,3 +106,35 @@ API schemas, agent execution, model settings, sandbox permissions and durable wo
 identities are unchanged. Runtime behavior/provenance version changes and replay/recovery
 migration are `not_applicable`. Fresh full-model and hosted/Kubernetes qualification are
 `not_checked` by this UI-only cleanup; existing qualification evidence is not promoted.
+
+## API evidence organization cleanup (2026-10-04)
+
+`api/status.py` now contains thin endpoint composition. Evidence byte/reference/bundle
+reading lives in `api/evidence_io.py`; qualification projection, broker observations,
+and model connectivity receipts live in their respective scoped modules. Internal
+receipt annotations describe the structures without coercion or replacing the existing
+runtime validation. Tests patch the new owning modules rather than compatibility aliases.
+
+Independent review compared the extracted validation bodies with the prior implementation
+and confirmed unchanged behavior after renaming and annotations. Exact fields, strict
+integer checks, duplicate-key rejection, regular bounded file reads, source/configuration
+hash binding, expiry, source inventory and native contract checks remain intact. Unsigned
+controller probes retain their cache identity, 30-second cache, three-second bounds,
+1,024-byte response cap, verified TLS, disabled environment proxy/redirects and absence of
+client credentials. A failed database read still leaves unresolved requests unavailable;
+stale readiness cannot be promoted by a reachable channel. Exceptions remain sanitized.
+
+Focused security/connectivity gates `passed` (61 tests), including two real-file regressions
+that feed ambiguous nested JSON or changed referenced bytes through both extracted
+projections and ensure no controller probe is attempted. Full deterministic suite `passed`
+(3,151 tests; 39 capability-dependent skips). Repository, generated contract/instruction/skill
+and UI checks `passed` (34 UI tests and production build). Real GET-only endpoint validation
+against retained data `passed`: both response contracts, all 11 component projections and
+16 unresolved holds were preserved, and active-profile qualification remained `not_checked`.
+Exact before/after snapshots of stored findings, budgets and unresolved requests matched.
+The temporary validation API was stopped; no model request or broker recovery operation ran.
+
+Public API schemas and agent/model/executor/workflow behavior are unchanged. Behavior or
+provenance version changes, database migration and durable replay/recovery migration are
+`not_applicable`. Fresh full-model and hosted/Kubernetes qualification remain `not_checked`
+by this organization-only change. No existing qualification evidence is promoted.
