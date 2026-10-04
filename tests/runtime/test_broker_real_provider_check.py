@@ -99,6 +99,7 @@ def test_semantic_failure_keeps_original_expected_and_typed_output(tmp_path):
 
 
 async def test_temporal_connect_failure_reaps_its_real_owned_worker(tmp_path, monkeypatch):
+    import os
     import subprocess
     import sys
 
@@ -109,8 +110,10 @@ async def test_temporal_connect_failure_reaps_its_real_owned_worker(tmp_path, mo
     children = []
 
     def start_owned_child(*_args, **kwargs):
+        assert not kwargs.get("start_new_session", False)
         child = original_popen([sys.executable, "-c", "import time; time.sleep(30)"],
-            stdout=kwargs["stdout"], stderr=kwargs["stderr"], start_new_session=True)
+            stdout=kwargs["stdout"], stderr=kwargs["stderr"])
+        assert os.getpgid(child.pid) == os.getpgrp()
         children.append(child)
         return child
 
@@ -571,6 +574,10 @@ def test_outer_sigint_checkpoints_failed_report_and_reaps_owned_phase(tmp_path, 
             return self.child.wait(timeout=timeout)
         def poll(self):
             return self.child.poll()
+        def terminate(self):
+            return self.child.terminate()
+        def kill(self):
+            return self.child.kill()
     def start(*_args, **_kwargs):
         child = real_popen([sys.executable, '-c', 'import time; time.sleep(60)'], start_new_session=True)
         children.append(child)

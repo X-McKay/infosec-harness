@@ -10,7 +10,6 @@ import argparse
 import hashlib
 import json
 import os
-import signal
 import subprocess
 import sys
 import time
@@ -125,19 +124,19 @@ def main() -> int:
             try:
                 process = subprocess.Popen([sys.executable, str(ROOT / "tests/runtime/broker_real_provider_fixture.py"),
                     phase, "--manifest", str(frozen_path), "--report", str(phase_path)],
-                    cwd=ROOT, env=values, stdout=log, stderr=log, start_new_session=True)
+                    cwd=ROOT, env=values, stdout=log, stderr=log)
                 return_code = process.wait(timeout=max(1, deadline - time.monotonic()))
                 phase_report = json.loads(phase_path.read_text()) if phase_path.exists() else {"status": "failed"}
                 report["phases"].append({"phase": phase, "exit_code": return_code,
                     "status": phase_report.get("status", "failed"), "report": str(phase_path)})
             except (subprocess.TimeoutExpired, KeyboardInterrupt) as error:
                 with suppress(ProcessLookupError):
-                    os.killpg(process.pid, signal.SIGTERM)
+                    process.terminate()
                 try:
                     process.wait(timeout=20)
                 except subprocess.TimeoutExpired:
                     with suppress(ProcessLookupError):
-                        os.killpg(process.pid, signal.SIGKILL)
+                        process.kill()
                     process.wait(timeout=5)
                 report["phases"].append({"phase": phase, "status": "failed",
                     "failure_type": "QualificationInterrupted" if isinstance(error, KeyboardInterrupt) else "RootDeadlineExceeded",

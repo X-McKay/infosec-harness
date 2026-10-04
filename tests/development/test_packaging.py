@@ -81,6 +81,18 @@ def test_retained_intake_spec_ships_without_serialization_drift(wheel):
         ).read_bytes()
 
 
+
+@pytest.mark.parametrize("resource", [
+    "infosec_harness/agents/build-repair/agent-v1.0.5.yaml",
+    "infosec_harness/agents/partial-build/agent-v1.1.3.yaml",
+])
+def test_retained_build_settings_spec_ships_without_serialization_drift(wheel, resource):
+    with zipfile.ZipFile(wheel) as archive:
+        assert archive.read(resource) == (
+            package_root() / resource.removeprefix("infosec_harness/")
+        ).read_bytes()
+
+
 def test_the_approved_model_catalogue_ships_in_the_wheel(wheel):
     """Model policy is governance data, so it travels with the code it governs rather than
     being something a deployment is trusted to place correctly."""

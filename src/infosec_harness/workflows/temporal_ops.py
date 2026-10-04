@@ -37,6 +37,8 @@ with workflow.unsafe.imports_passed_through():
         LEGACY_ENV_PLANNER_CONFIG,
         LEGACY_OUTPUT_AGENTS,
         MODELS,
+        RETAINED_BUILD_AGENTS,
+        RETAINED_BUILD_CONFIGS,
     )
     from infosec_harness.agents.intake_generations import IntakeGeneration, IntakeGenerationName
     from infosec_harness.agents.registry import ResolvedAgentConfig
@@ -67,6 +69,9 @@ class TemporalOps:
         self._legacy_output_agents = LEGACY_OUTPUT_AGENTS
         self._legacy_env_planner_config = LEGACY_ENV_PLANNER_CONFIG
         self._env_planner_output_v2: bool | None = None
+        self._serial_build_settings: bool | None = None
+        self._retained_build_agents = RETAINED_BUILD_AGENTS
+        self._retained_build_configs = RETAINED_BUILD_CONFIGS
         self._configs = CONFIGS
         self._models = MODELS
         # Precomputed on the host: reading a spec inside a workflow would be I/O. The immutable
@@ -185,7 +190,18 @@ class TemporalOps:
             self._env_planner_output_v2 = workflow.patched("env-planner-output-v2")
         return self._env_planner_output_v2
 
+    def _build_settings_are_current(self, name: str) -> bool:
+        if name not in self._retained_build_configs:
+            return True
+        if self._serial_build_settings is None:
+            self._serial_build_settings = workflow.patched("build-serial-tool-settings-v1")
+        if not self._serial_build_settings and not workflow.unsafe.is_replaying():
+            raise RuntimeError("Historical build settings cannot execute an unrecorded live frontier")
+        return self._serial_build_settings
+
     def _config_for(self, name: str) -> ResolvedAgentConfig:
+        if not self._build_settings_are_current(name):
+            return self._retained_build_configs[name]
         if name == "env-planner" and not self._env_planner_is_current():
             return self._legacy_env_planner_config
         return (
@@ -220,6 +236,8 @@ class TemporalOps:
                     "retry the triage as a new workflow"
                 )
             return self._legacy_output_agents[name]
+        if not self._build_settings_are_current(name):
+            return self._retained_build_agents[name]
         return self._agents[name]
 
     async def new_nonce(self) -> str:

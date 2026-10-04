@@ -119,7 +119,7 @@ def test_old_build_keeps_pre_guard_validator_generation():
 
 
 def test_build_has_independent_patch_even_if_old_shared_patch_was_true(monkeypatch):
-    from infosec_harness.agents.durable import AGENTS, LEGACY_OUTPUT_AGENTS
+    from infosec_harness.agents.durable import LEGACY_OUTPUT_AGENTS, RETAINED_BUILD_AGENTS
     from infosec_harness.workflows import temporal_ops
     from infosec_harness.workflows.temporal_ops import TemporalOps
 
@@ -128,7 +128,9 @@ def test_build_has_independent_patch_even_if_old_shared_patch_was_true(monkeypat
     monkeypatch.setattr(temporal_ops.workflow.unsafe, "is_replaying", lambda: True)
     ops = TemporalOps()
     assert ops._agent_for("build-repair") is LEGACY_OUTPUT_AGENTS["build-repair"]
-    assert ops._agent_for("partial-build") is AGENTS["partial-build"]
+    assert ops._agent_for("partial-build") is RETAINED_BUILD_AGENTS["partial-build"]
+    assert "parallel_tool_calls" not in ops._agent_for("partial-build").model_settings
+    assert "parallel_tool_calls" not in ops._agent_for("build-repair").model_settings
 
 
 async def test_old_build_live_frontier_stops_before_accounting(monkeypatch):

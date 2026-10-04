@@ -10,6 +10,7 @@ from infosec_harness.agents.durable import (
     AGENTS,
     INTAKE_GENERATIONS,
     LEGACY_OUTPUT_AGENTS,
+    RETAINED_BUILD_AGENTS,
 )
 from infosec_harness.agents.intake_claims import AtomicFinding
 from infosec_harness.agents.outputs import (
@@ -27,11 +28,38 @@ _REVISED = {"partial-build", "context", "verdict", "build-repair", "intake", "en
 
 def test_both_output_contract_generations_are_registered_with_distinct_identities() -> None:
     assert set(LEGACY_OUTPUT_AGENTS) == _REVISED
-    assert len(AGENT_LIST) == len(AGENTS) + len(_REVISED) + 2
+    assert set(RETAINED_BUILD_AGENTS) == {"build-repair", "partial-build"}
+    assert len(AGENT_LIST) == len(AGENTS) + len(_REVISED) + len(RETAINED_BUILD_AGENTS) + 2
     assert len({agent.name for agent in AGENT_LIST}) == len(AGENT_LIST)
     for name in _REVISED:
         assert LEGACY_OUTPUT_AGENTS[name].name == name
-        assert AGENTS[name].name == ("intake-output-v4" if name == "intake" else f"{name}-output-v2")
+        assert AGENTS[name].name == (
+            f"{name}-serial-tools-v1" if name in RETAINED_BUILD_AGENTS else
+            "intake-output-v4" if name == "intake" else f"{name}-output-v2")
+    for name, retained in RETAINED_BUILD_AGENTS.items():
+        assert retained.name == f"{name}-output-v2"
+        assert "parallel_tool_calls" not in retained.model_settings
+        assert "parallel_tool_calls" not in LEGACY_OUTPUT_AGENTS[name].model_settings
+        assert AGENTS[name].model_settings["parallel_tool_calls"] is False
+
+
+def test_all_generation_activity_names_are_unique_in_the_pinned_sdk() -> None:
+    from pydantic_ai.durable_exec.temporal import TemporalDurability
+    from temporalio import activity
+
+    registered = {}
+    for agent in AGENT_LIST:
+        capability = TemporalDurability.from_agent(agent)
+        assert capability is not None
+        names = [activity._Definition.from_callable(fn).name
+                 for fn in capability.temporal_activities]
+        assert names, agent.name
+        registered[agent.name] = names
+    names = [name for generation in registered.values() for name in generation]
+    assert len(names) == len(set(names)), "generation activities must not overwrite one another"
+    for name in RETAINED_BUILD_AGENTS:
+        for identity in (name, f"{name}-output-v2", f"{name}-serial-tools-v1"):
+            assert f"agent__{identity}__model_request" in registered[identity]
 
 
 @pytest.mark.parametrize(

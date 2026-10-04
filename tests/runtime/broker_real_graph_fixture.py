@@ -5,7 +5,6 @@ import asyncio
 import hashlib
 import json
 import os
-import signal
 import subprocess
 import sys
 import time
@@ -120,8 +119,8 @@ def freeze(pilot: Path, destination: Path, phase: str, *, infrastructure_correct
     if rerun:
         manifest["native_rerun"] = {"pilot_sha256": sha(pilot), "baseline_report": str(baseline_report.resolve()),
                                     "baseline_report_sha256": rerun.baseline_report_sha256}
-        if rerun.review_version == 5:
-            manifest["native_rerun"].update(review_version=5, intake_enable_thinking=False)
+        if rerun.review_version in (5, 8):
+            manifest["native_rerun"].update(review_version=rerun.review_version, intake_enable_thinking=False)
     if supersedes is not None:
         manifest["supersedes_infrastructure_failure"] = supersedes
     write_private(destination, manifest)
@@ -159,8 +158,8 @@ def preflight(path: Path) -> dict:
                 or sha(baseline) != rerun.baseline_report_sha256
                 or sha(baseline.parent / "manifest.json") != rerun.original_manifest_sha256):
             raise ValueError("Native graph rerun provenance changed")
-        if (rerun.review_version == 5 and
-                (link.get("review_version") != 5 or link.get("intake_enable_thinking") is not False)):
+        if (rerun.review_version in (5, 8) and
+                (link.get("review_version") != rerun.review_version or link.get("intake_enable_thinking") is not False)):
             raise ValueError("Native graph must pin reviewed intake reasoning policy")
     elif "native_rerun" in value:
         raise ValueError("Unexpected native rerun link")
@@ -285,6 +284,27 @@ def claim_execution(directory: Path) -> None:
     os.close(descriptor)
 
 
+def _start_worker(log):
+    # The external qualification watchdog owns one exclusive process group.
+    # Keep the worker and its descendants in that group so a hard CLI deadline
+    # cannot leave a detached worker able to schedule more activities.
+    return subprocess.Popen([sys.executable, "-m", "infosec_harness.workflows.worker"],
+        cwd=ROOT, env=dict(os.environ), stdout=log, stderr=log)
+
+
+async def _stop_worker(worker) -> bool:
+    # Signal the exact retained child, never the shared outer watchdog group.
+    with suppress(ProcessLookupError):
+        worker.terminate()
+    try:
+        await asyncio.to_thread(worker.wait, timeout=10)
+    except subprocess.TimeoutExpired:
+        with suppress(ProcessLookupError):
+            worker.kill()
+        await asyncio.to_thread(worker.wait, timeout=10)
+    return worker.poll() is not None
+
+
 async def execute(path: Path) -> dict:
     value = preflight(path)
     claim_execution(Path(value["directory"]))
@@ -305,8 +325,7 @@ async def execute(path: Path) -> dict:
     started = time.monotonic()
     try:
         with (directory / "worker.log").open("ab") as log:
-            worker = subprocess.Popen([sys.executable, "-m", "infosec_harness.workflows.worker"],
-                cwd=ROOT, env=dict(os.environ), stdout=log, stderr=log, start_new_session=True)
+            worker = _start_worker(log)
         client = await connect()
         batch = await _submit([FindingInput.model_validate(value["finding"])], "frozen-real-graph-" + value["phase"], "temporal")
         report["batch_id"] = batch
@@ -359,14 +378,7 @@ async def execute(path: Path) -> dict:
                     clean = False
             report["workflow_cleanup"] = "passed" if clean else "failed"
         if worker is not None:
-            with suppress(ProcessLookupError):
-                os.killpg(worker.pid, signal.SIGTERM)
-            try:
-                await asyncio.to_thread(worker.wait, timeout=10)
-            except subprocess.TimeoutExpired:
-                os.killpg(worker.pid, signal.SIGKILL)
-                await asyncio.to_thread(worker.wait, timeout=10)
-            report["worker_cleanup"] = "passed" if worker.poll() is not None else "failed"
+            report["worker_cleanup"] = "passed" if await _stop_worker(worker) else "failed"
         report["elapsed_seconds"] = time.monotonic() - started
         write_private(directory / "report.json", report)
     return report

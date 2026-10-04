@@ -23,7 +23,7 @@ def test_env_independent_marker_selects_matching_agent_and_spec_once(monkeypatch
     calls = []
     def patched(marker):
         calls.append(marker)
-        return marker == "agent-output-contracts-v2" or (marker == "env-planner-output-v2" and enabled)
+        return marker in {"agent-output-contracts-v2", "build-serial-tool-settings-v1"} or (marker == "env-planner-output-v2" and enabled)
     monkeypatch.setattr(temporal_ops.workflow, "patched", patched)
     monkeypatch.setattr(temporal_ops.workflow.unsafe, "is_replaying", lambda: True)
     ops = TemporalOps()

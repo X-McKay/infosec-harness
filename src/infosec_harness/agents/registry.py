@@ -686,7 +686,8 @@ def durable_agents() -> dict[str, Agent[AgentDeps, Any]]:
     return {
         name: build_agent(
             name,
-            execution_name=(ATOMIC_EXECUTION_NAME if name == "intake" else
+            execution_name=(f"{name}-serial-tools-v1" if name in {"build-repair", "partial-build"} else
+                            ATOMIC_EXECUTION_NAME if name == "intake" else
                             f"{name}-output-v2" if name in revised else None),
         )
         for name in AGENT_BINDINGS
@@ -707,7 +708,9 @@ def legacy_output_agents() -> dict[str, Agent[AgentDeps, Any]]:
     return {
         name: build_agent(
             name, legacy_output_contract=True,
-            spec_override=retained_intake_spec() if name == "intake" else None,
+            spec_override=(AgentSpec.from_file(package_root() / f"agents/{name}/agent-v{version}.yaml")
+                           if (version := {"build-repair": "1.0.5", "partial-build": "1.1.3"}.get(name))
+                           else retained_intake_spec() if name == "intake" else None),
             replay_only_model=(name in {"intake", "env-planner"}),
         )
         for name in ("partial-build", "context", "verdict", "build-repair", "intake", "env-planner")
