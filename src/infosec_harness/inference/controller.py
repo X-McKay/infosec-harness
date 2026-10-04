@@ -249,7 +249,8 @@ class Controller:
         if outcome["state"] == "completed" and outcome["result"] is not None:
             return outcome["result"]
         if outcome["state"] == "completion_unknown":
-            raise BrokerError("completion_unknown") from None
+            diagnostic = error.diagnostic if isinstance(error, BrokerError) else None
+            raise BrokerError("completion_unknown", diagnostic=diagnostic) from None
         if isinstance(error, BrokerError):
             raise error
         raise BrokerError("unavailable") from None

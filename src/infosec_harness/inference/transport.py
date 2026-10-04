@@ -20,7 +20,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from infosec_harness.agents.intake_schema import intake_openai_profile
 from infosec_harness.inference.auth import AUTH_HEADER, sign_request
 from infosec_harness.inference.codec import decode_response, encode_payload
-from infosec_harness.inference.diagnostics import report_transport_failure
+from infosec_harness.inference.diagnostics import report_remote_diagnostic, report_transport_failure
 from infosec_harness.inference.http_service import parse_body
 from infosec_harness.inference.protocol import (
     BrokerError,
@@ -99,7 +99,12 @@ def _response_error(status: int, body: bytes) -> BrokerError:
     code = value.get("error") if isinstance(value, dict) else None
     if status != 200:
         code = code if code in _ERROR_CODES else "unavailable"
-        return TransientBrokerError(code) if code in {"unavailable", "pending"} else BrokerError(code)
+        diagnostic = report_remote_diagnostic(value.get("diagnostic")) if isinstance(value, dict) else None
+        if code in {"unavailable", "pending"}:
+            error = TransientBrokerError(code)
+            error.diagnostic = diagnostic
+            return error
+        return BrokerError(code, diagnostic=diagnostic)
     return BrokerError("invalid_response")
 
 

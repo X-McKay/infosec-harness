@@ -997,3 +997,21 @@ async def test_detach_timeout_delete_ack_with_remaining_container_cannot_ack_del
     assert actions == ["detach", "delete"]
     assert lease.status == adapter.store.load()[0].status == "revoked"
     assert state["provider"] is True
+
+
+async def test_remote_diagnostic_survives_completion_unknown_reconciliation(tmp_path):
+    core, request, lease, events, rows = controller_fixture(tmp_path)
+    diagnostic = {"boundary": "provider_request", "category": "wall_timeout"}
+
+    async def interrupted_channel(*args, **kwargs):
+        await core.ledger.claim(request.request_id, lease_id=lease.lease_id)
+        raise BrokerError("completion_unknown", diagnostic=diagnostic)
+
+    core.channel = SimpleNamespace(post=interrupted_channel)
+    with pytest.raises(BrokerError) as error:
+        await core.infer(request)
+    assert error.value.code == "completion_unknown"
+    assert error.value.diagnostic == diagnostic
+    assert rows[request.request_id].state == "completion_unknown"
+    assert lease.status == "deleted"
+    assert events.count("recover") == events.count("revoke") == 1

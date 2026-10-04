@@ -465,3 +465,25 @@ async def test_transient_retry_reuses_the_exact_request_and_visibility_payload()
             await model.request(messages, contract.model_settings, params)
     assert len(requests) == 2 and requests[0] == requests[1]
     assert requests[0].payload.parameters["deferred_capability_ids"] == ["a", "b"]
+
+
+def test_remote_error_diagnostics_are_sanitized_and_transient_type_is_preserved(caplog):
+    from infosec_harness.inference.protocol import TransientBrokerError
+    from infosec_harness.inference.transport import _response_error
+
+    diagnostic = {"boundary": "provider_request", "category": "wall_timeout"}
+    error = _response_error(409, canonical_bytes({"error": "completion_unknown", "diagnostic": diagnostic}))
+    assert type(error) is BrokerError and error.diagnostic == diagnostic
+    assert "provider_request" in caplog.text and "wall_timeout" in caplog.text
+
+    caplog.clear()
+    secret = "https://secret.invalid/path?token=do-not-log"
+    malformed = {**diagnostic, "detail": secret}
+    error = _response_error(503, canonical_bytes({"error": "unavailable", "diagnostic": malformed,
+                                                 "message": secret}))
+    assert type(error) is TransientBrokerError
+    assert error.code == "unavailable" and error.diagnostic is None
+    assert secret not in caplog.text
+
+    error = _response_error(503, canonical_bytes({"error": "unavailable", "diagnostic": diagnostic}))
+    assert type(error) is TransientBrokerError and error.diagnostic == diagnostic
