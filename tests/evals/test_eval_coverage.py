@@ -6,7 +6,7 @@ agent-playbook 07-evaluation makes this a release blocker rather than a report:
     coverage, failed hard gates, or absent control evidence blocks release. Passing average
     quality cannot compensate for an uncovered material risk.
 
-These checks are static -- files only, no model -- so a scenario added to an assessment, or a
+These checks are static -- files only, no model -- so a scenario added to the library, or a
 case whose tag is a typo, fails the ordinary test run rather than surfacing at release time.
 """
 import pytest
@@ -46,8 +46,8 @@ def test_no_case_tags_a_scenario_its_assessment_does_not_declare(agent):
     cov = coverage_for(agent)
     declared = sorted(s.id for s in scenarios_for(agent))
     assert not cov.unknown_scenarios, (
-        f"{agent}: cases tag {cov.unknown_scenarios}, which the risk assessment does not "
-        f"declare. It declares {declared}."
+        f"{agent}: cases tag {cov.unknown_scenarios}, which agents/risk-scenarios.yaml does not "
+        f"attribute to it. It attributes {declared}."
     )
 
 

@@ -86,11 +86,20 @@ class Verdict(StrEnum):
     """The named skill's guidance governs."""
 
 
-# The fixed phrases `scripts/restructure_skills.py` renders for each verdict. Parsing them back
-# out of the published file is deliberate: the generator refuses prose that does not carry its
-# own verdict, so these two forms are the only way a relation can reach a reader, and reading
-# the file is how this module judges what the reader was actually told.
+# The fixed phrases a precedence bullet must carry, in bold, to declare its verdict. They are
+# parsed out of the published file because the file is what an agent is handed: a rule that
+# exists anywhere else is a rule no model has been told.
 _VERDICT_PHRASES = {"this skill wins": Verdict.WINS, "that skill wins": Verdict.YIELDS}
+
+# The sections the skill standard requires around a skill's own procedure. Everything under any
+# other heading is the procedure.
+STANDARD_SECTIONS = (
+    "Use this skill when",
+    "Do not use this skill when",
+    "When another skill also applies",
+    "Safety constraints",
+    "Completion criteria",
+)
 _RELATION = re.compile(
     r"^`([a-z0-9-]+)`.*?\*\*(" + "|".join(_VERDICT_PHRASES) + r")\*\*", re.I | re.S
 )
@@ -142,12 +151,7 @@ class SkillDoc:
 
     @property
     def relations(self) -> list[Relation]:
-        """The precedence this skill declares over another, parsed from what it publishes.
-
-        Read out of the rendered ``SKILL.md`` rather than out of ``scripts/skill_specs.py``:
-        the file is what an agent is handed, so a rule that exists only in the generator is a
-        rule no model has been told.
-        """
+        """The precedence this skill declares over another, parsed from what it publishes."""
         out: list[Relation] = []
         for bullet in _bullets(_section(self.body, "When another skill also applies")):
             match = _RELATION.match(bullet)
@@ -180,16 +184,8 @@ class SkillDoc:
 
     @property
     def procedure(self) -> str:
-        """The skill's own content: everything outside the generated regions and the title."""
-        text = self.body
-        for begin, end in (
-            ("<!-- generated: activation criteria", "<!-- /generated: activation criteria -->"),
-            ("<!-- generated: constraints", "<!-- /generated: constraints -->"),
-        ):
-            while begin in text and end in text:
-                head, rest = text.split(begin, 1)
-                text = head + rest.split(end, 1)[1]
-        return "\n".join(ln for ln in text.splitlines() if not ln.strip().startswith("# "))
+        """The skill's own content: everything outside the standard sections and the title."""
+        return procedure_text(self.body)
 
     @property
     def carries_a_recipe(self) -> bool:
@@ -201,14 +197,24 @@ class SkillDoc:
 
 
 def _section(body: str, heading: str) -> str:
-    """The text under ``## <heading>``, ending at the next heading or generated marker."""
+    """The text under ``## <heading>``, ending at the next ``## `` heading."""
     marker = f"## {heading}"
     if marker not in body:
         return ""
-    rest = body.split(marker, 1)[1]
-    for terminator in ("\n## ", "\n<!-- "):
-        rest = rest.split(terminator, 1)[0]
-    return rest.strip()
+    return body.split(marker, 1)[1].split("\n## ", 1)[0].strip()
+
+
+def procedure_text(body: str) -> str:
+    """Everything in a skill body outside the standard sections and the title line."""
+    kept: list[str] = []
+    skipping = False
+    for line in body.splitlines():
+        if line.startswith("## "):
+            skipping = line[3:].strip() in STANDARD_SECTIONS
+        if skipping or line.startswith("# "):
+            continue
+        kept.append(line)
+    return "\n".join(kept).strip()
 
 
 def _bullets(section: str) -> list[str]:

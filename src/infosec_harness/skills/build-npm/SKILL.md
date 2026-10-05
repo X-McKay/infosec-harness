@@ -10,8 +10,6 @@ metadata:
 
 # Building Node targets
 
-<!-- generated: activation criteria (scripts/restructure_skills.py) -->
-
 ## Use this skill when
 
 - You are producing or repairing an EnvironmentSpec for a Node project.
@@ -21,7 +19,7 @@ metadata:
 
 - The repository is not a Node project.
 
-<!-- /generated: activation criteria -->
+## Procedure
 
 - **Base image:** `node:22-slim` (match `engines.node` when pinned).
 - **Install (use the lockfile's tool):**
@@ -68,8 +66,6 @@ metadata:
   auth tokens as BuildKit secrets.
 - **Partial builds:** install and test within one workspace package dir.
 
-<!-- generated: constraints (scripts/restructure_skills.py) -->
-
 ## Safety constraints
 
 - Install as the non-root sandbox user with `HOME=/work/home`; never `sudo` or run as root.
@@ -87,4 +83,3 @@ metadata:
 - `test_command` invokes the runner the repository's own `test` script invokes, with the selector that runner accepts: `--runTestsByPath` is jest's and vitest rejects it outright. `npx` cannot rescue a runner the project does not declare — the probe container is offline, so it exits with `npx canceled due to missing packages` and no test output at all.
 - A TypeScript probe runs under a runner that compiles TypeScript: vitest or `npx tsx --test` need no configuration, while jest needs `--preset ts-jest` *and* `@types/jest` installed, because ts-jest type-checks the probe and stops on `TS2582: Cannot find name 'test'`.
 
-<!-- /generated: constraints -->

@@ -10,8 +10,6 @@ metadata:
 
 # Probes in JavaScript and TypeScript (Jest, Vitest, Mocha, `node --test`)
 
-<!-- generated: activation criteria (scripts/restructure_skills.py) -->
-
 ## Use this skill when
 
 - You are writing or repairing a probe and the repository's test framework is Jest, Vitest, Mocha, or node's built-in runner (`node --test`).
@@ -21,7 +19,7 @@ metadata:
 - The repository uses a different framework; load that `test-*` skill.
 - You have not yet read `probe-oracle-protocol`; read it first.
 
-<!-- /generated: activation criteria -->
+## Procedure
 
 - Place the file at the planned path (e.g. `__tests__/harness_probe_<id>.test.js`) so it can
   import the code under test; use the repo's TS setup if needed.
@@ -98,8 +96,6 @@ every *other* test in the file, so a probe placed after one never runs and the r
 0. If a module the probe needs is absent, let the `require` throw: the error naming the missing
 module is an *environment* signal that build repair can act on.
 
-<!-- generated: constraints (scripts/restructure_skills.py) -->
-
 ## Safety constraints
 
 - The test must run to completion and print its markers whether or not the exploit condition holds. Never let an assertion failure be the signal.
@@ -115,4 +111,3 @@ module is an *environment* signal that build repair can act on.
 - The probe declares its test function the way its own runner provides it: a bare `test(...)` under jest, `import { test } from 'vitest'` under vitest, `it(...)` under mocha, and `require('node:test')` under node's built-in runner. A bare `test(...)` is a global under jest alone, so the wrong shape is a `ReferenceError` before the sink is ever reached.
 - An ESM specifier keeps the file extension (`../src/render.js`, not `../src/render`): node's own resolver does no extension guessing, so the extensionless form fails with `ERR_MODULE_NOT_FOUND` under `node --test`.
 
-<!-- /generated: constraints -->

@@ -18,9 +18,10 @@ from __future__ import annotations
 import re
 
 import pytest
+import yaml
 
+from infosec_harness.evals.skill_documents import procedure_text
 from infosec_harness.resources import skills_dir
-from infosec_harness.settings import REPO_ROOT
 
 SKILLS = skills_dir()
 PROTOCOL = SKILLS / "probe-oracle-protocol" / "SKILL.md"
@@ -65,8 +66,12 @@ def test_cwe_89_prefers_an_oracle_that_does_not_replace_the_sink():
 
 
 # --- The skill standard's required structure (agent-playbook §4) -------------------------
+#
+# Every SKILL.md is hand-maintained and self-contained: its frontmatter carries the name,
+# description, owner and version, and its body carries the standard sections around its own
+# procedure. These tests are what hold that shape, now that nothing regenerates it.
 
-REQUIRED_SECTIONS = ("## Use this skill when", "## Do not use this skill when",
+REQUIRED_SECTIONS = ("## Use this skill when", "## Do not use this skill when", "## Procedure",
                      "## Safety constraints", "## Completion criteria")
 
 
@@ -74,11 +79,16 @@ def _all_skills() -> list:
     return sorted(SKILLS.glob("*/SKILL.md"))
 
 
+def _frontmatter_and_body(skill) -> tuple[dict, str]:
+    _, frontmatter, body = skill.read_text().split("---\n", 2)
+    return (yaml.safe_load(frontmatter) or {}), body
+
+
 @pytest.mark.parametrize("skill", _all_skills(), ids=lambda p: p.parent.name)
 def test_every_skill_states_when_to_use_it_and_when_not_to(skill):
     text = skill.read_text()
     for section in REQUIRED_SECTIONS:
-        assert section in text, f"{skill.parent.name} is missing '{section}'"
+        assert text.count(section) == 1, f"{skill.parent.name}: '{section}' must appear exactly once"
 
 
 @pytest.mark.parametrize("skill", _all_skills(), ids=lambda p: p.parent.name)
@@ -89,10 +99,8 @@ def test_every_description_says_when_the_skill_applies(skill):
     from 19% to 100% (docs/validation/LIVE_VALIDATION.md), so this is a behavioural requirement and not
     only a conformance one.
     """
-    import yaml
-
-    _, frontmatter, _ = skill.read_text().split("---\n", 2)
-    description = (yaml.safe_load(frontmatter) or {}).get("description", "")
+    frontmatter, _ = _frontmatter_and_body(skill)
+    description = frontmatter.get("description", "")
     assert re.search(r"\buse\b|\bwhen\b", description, re.I), (
         f"{skill.parent.name}: description does not say when it applies: {description!r}"
     )
@@ -100,55 +108,27 @@ def test_every_description_says_when_the_skill_applies(skill):
 
 @pytest.mark.parametrize("skill", _all_skills(), ids=lambda p: p.parent.name)
 def test_every_skill_has_an_owner_and_a_semantic_version(skill):
-    import yaml
-
-    _, frontmatter, _ = skill.read_text().split("---\n", 2)
-    metadata = (yaml.safe_load(frontmatter) or {}).get("metadata") or {}
+    frontmatter, _ = _frontmatter_and_body(skill)
+    assert frontmatter.get("name") == skill.parent.name
+    metadata = frontmatter.get("metadata") or {}
     assert metadata.get("owner"), skill.parent.name
     assert re.fullmatch(r"\d+\.\d+\.\d+", str(metadata.get("version", ""))), skill.parent.name
 
 
 @pytest.mark.parametrize("skill", _all_skills(), ids=lambda p: p.parent.name)
 def test_negative_criteria_point_somewhere_real(skill):
-    """'Use X instead' is only useful if X exists.
-
-    The section ends at the generated region's closing marker, not at the next `## ` heading:
-    a skill whose procedure has no heading of its own would otherwise have its whole body read
-    as negative criteria, and any backticked `test-`/`build-` word in it (`test-compile`) read
-    as a skill that does not exist.
-    """
+    """'Use X instead' is only useful if X exists."""
     text = skill.read_text()
-    section = text.split("## Do not use this skill when", 1)[1]
-    section = section.split("<!-- /generated: activation criteria -->", 1)[0]
-    section = section.split("\n## ", 1)[0]
-    referenced = set(re.findall(r"`((?:cwe|lang|build|test|probe)-[a-z0-9-]+)`", section))
+    section = text.split("## Do not use this skill when", 1)[1].split("\n## ", 1)[0]
+    referenced = set(re.findall(r"`((?:cwe|lang|build|test|probe|partial)-[a-z0-9-]+)`", section))
     on_disk = {p.parent.name for p in _all_skills()}
     assert referenced <= on_disk, (
         f"{skill.parent.name} redirects to skills that do not exist: {sorted(referenced - on_disk)}"
     )
 
 
-def test_the_structure_is_regenerable():
-    import subprocess
-    import sys
-
-    before = {p: p.read_text() for p in _all_skills()}
-    subprocess.run([sys.executable, str(REPO_ROOT / "scripts" / "restructure_skills.py")],
-                   check=True, capture_output=True, cwd=REPO_ROOT)
-    assert {p: p.read_text() for p in _all_skills()} == before, (
-        "skills are out of date with scripts/skill_specs.py — run "
-        "`uv run python scripts/restructure_skills.py`"
-    )
-
-
-# --- The generated structure must not eat the skill's content ----------------------------
-
-GENERATED_MARKERS = ("<!-- generated: activation criteria",
-                     "<!-- generated: constraints")
-
-
 @pytest.mark.parametrize("skill", _all_skills(), ids=lambda p: p.parent.name)
-def test_a_skill_has_a_procedure_and_not_only_generated_sections(skill):
+def test_a_skill_has_a_procedure_and_not_only_the_standard_sections(skill):
     """Structure is added around the content, never instead of it.
 
     An earlier generator inferred its regions from heading positions, and on a second run it
@@ -156,28 +136,12 @@ def test_a_skill_has_a_procedure_and_not_only_generated_sections(skill):
     of them to some degree, and the build-*, lang-* and test-* skills entirely. Nothing
     failed: the tests checked that the required sections were present, which they were.
     """
-    text = skill.read_text()
-    body = text.split("---\n", 2)[2]
-    # Strip the generated regions and the title; whatever remains is the skill's own content.
-    for begin, end in (("<!-- generated: activation criteria", "<!-- /generated: activation criteria -->"),
-                       ("<!-- generated: constraints", "<!-- /generated: constraints -->")):
-        while begin in body and end in body:
-            head, rest = body.split(begin, 1)
-            body = head + rest.split(end, 1)[1]
-    remaining = [ln for ln in body.splitlines()
-                 if ln.strip() and not ln.strip().startswith("# ")]
+    _, body = _frontmatter_and_body(skill)
+    remaining = [ln for ln in procedure_text(body).splitlines() if ln.strip()]
     assert len(remaining) >= 4, (
-        f"{skill.parent.name} has almost no content of its own outside the generated "
+        f"{skill.parent.name} has almost no content of its own outside the standard "
         f"sections ({len(remaining)} lines) — the procedure was probably eaten"
     )
-
-
-@pytest.mark.parametrize("skill", _all_skills(), ids=lambda p: p.parent.name)
-def test_generated_regions_are_delimited_exactly_once(skill):
-    """Unbalanced markers mean the next run will strip the wrong span."""
-    text = skill.read_text()
-    for marker in GENERATED_MARKERS:
-        assert text.count(marker) == 1, f"{skill.parent.name}: {marker!r} appears != once"
 
 
 def test_python_build_and_test_skills_still_mandate_unbuffered_output():

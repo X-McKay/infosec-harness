@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
 from typing import Any, Literal
 
-import yaml
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.messages import UserContent
 
@@ -120,24 +118,6 @@ def atomic_intake_spec() -> AgentSpec:
     }
     data["metadata"] = metadata
     return AgentSpec.from_dict(data)
-
-
-def write_current_spec(path: Path | None = None) -> None:
-    """Generate the current spec while preserving raw YAML capability shorthand."""
-    source = package_root() / "agents" / "intake" / "agent-v1.0.2.yaml"
-    raw = yaml.safe_load(source.read_text())
-    spec = atomic_intake_spec().model_dump(by_alias=True, exclude_none=True, mode="json")
-    raw["instructions"] = spec["instructions"]
-    raw.setdefault("model_settings", {})["temperature"] = 0.0
-    metadata = raw.setdefault("metadata", {})
-    atomic_metadata = spec["metadata"]
-    metadata["version"] = CURRENT_INTAKE_VERSION
-    metadata["budgets"] = atomic_metadata["budgets"]
-    metadata["intake_output"] = atomic_metadata["intake_output"]
-    metadata["output_validation"] = atomic_metadata["output_validation"]
-    target = path or (package_root() / "agents" / "intake" / "agent.yaml")
-    rendered = yaml.safe_dump(raw, sort_keys=False, allow_unicode=True, width=100)
-    target.write_text("# yaml-language-server: $schema=../agent_schema.json\n" + rendered)
 
 
 def render_intake_prompt(

@@ -113,12 +113,11 @@ in [IMPLEMENTATION_VALIDATION.md](../validation/IMPLEMENTATION_VALIDATION.md). A
 is not proof that these gates passed. The offline profile and browser fixture review do not
 substitute for real execution evidence.
 
-### Generated development skills
+### Development skills
 
-Author development skills under `dev-skills/`. `just generated-sync` copies them to both
-`.agents/skills/` (Codex discovery) and `.claude/skills/` (Claude discovery); `just generated-check`
-and CI verify drift without rewriting files. The packaged runtime skills under
-`src/infosec_harness/skills/` are a separate source of truth.
+Development skills live under `.claude/skills/` (Claude discovery); `.agents/skills` is a
+symlink to the same directory for Codex discovery, so there is one copy to edit. The packaged
+runtime skills under `src/infosec_harness/skills/` are a separate source of truth.
 
 For code navigation and output ownership, see [REPOSITORY_GUIDE.md](REPOSITORY_GUIDE.md).
 

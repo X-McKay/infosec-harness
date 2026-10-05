@@ -7,7 +7,6 @@ metadata:
   compatibility: Codex and Claude repository development clients
   source_revision: repository-layout-v1
   playbook_revision: 9e7fc03f2e1253be3e2adea10663ddf429646cea
-  content_digest: sha256:7aa93bb289abac086974965fdc93c3c60507e1486dcd3648b31eaf9945892de3
 ---
 
 ## Use this skill when
@@ -29,8 +28,8 @@ metadata:
   `tests/evals/` and `tests/development/`, with shared fixtures in `tests/conftest.py`.
 - Agent overlays live in `evals/experiments/overlays/`; typed calibration plans live in
   `evals/experiments/calibration/`. Local logs and report exports belong under `.harness/`.
-- Author development skills here in `dev-skills/`; synchronize client copies with
-  `just dev-skills-sync` and verify them with `just dev-skills-check`.
+- Development skills live in `.claude/skills/`; `.agents/skills` is a symlink to the same
+  files for Codex. Edit them in place.
 
 ## Procedure
 

@@ -13,7 +13,8 @@ The [root README](../README.md) explains the pipeline and common commands.
 | Credential brokering | [Design specification](CREDENTIAL_BROKER_SPEC.md), [implementation and testing plan](architecture/CREDENTIAL_BROKER_IMPLEMENTATION_PLAN.md), [protocol](architecture/CREDENTIAL_BROKER_PROTOCOL.md), [operator runbook](architecture/CREDENTIAL_BROKER_RUNBOOK.md), [evidence](validation/CREDENTIAL_BROKER_IMPLEMENTATION.md), [full live evaluation](validation/CREDENTIAL_BROKER_FULL_EVAL.md) | OpenShell boundaries, per-agent profiles, delegated work, recovery and acceptance gates |
 | UI qualification and deployment | [Dashboard operations](operations/QUALIFICATION_DASHBOARD.md), [validation](validation/UI_QUALIFICATION_DASHBOARD.md) | Typed read-only evidence, truthful populations, deployment smoke and normal lifecycle checks |
 | Component qualification | [Current checkpoint](validation/CREDENTIAL_BROKER_QUALIFICATION_CURRENT.md), [incremental evidence workflow](evaluation/COMPONENT_QUALIFICATION.md) | Dependency-based reuse, original gates and separate system failures |
-| Safety | [threat-models/triage-system.md](threat-models/triage-system.md) | Threats and runtime boundaries |
+| Safety | [threat-models/triage-system.md](threat-models/triage-system.md) | Threats, runtime boundaries and the risk assessment |
+| Composition | [TRIAGE_SYSTEM.md](architecture/TRIAGE_SYSTEM.md) | Agent roles, topology, termination and data flow |
 | Governance | [PLAYBOOK_CONFORMANCE.md](architecture/PLAYBOOK_CONFORMANCE.md) | Playbook mapping and documented deviations |
 | Evaluation fixtures | [CORPUS_SOURCES.md](evaluation/CORPUS_SOURCES.md), [corpus README](../eval-corpus/README.md) | Fixture sources and paired ground truth |
 | Acceptance evidence | [IMPLEMENTATION_VALIDATION.md](validation/IMPLEMENTATION_VALIDATION.md) | Implemented checks and remaining acceptance gaps |
@@ -24,5 +25,7 @@ The [root README](../README.md) explains the pipeline and common commands.
 | Development handoff | [HANDOFF.md](development/HANDOFF.md) | Latest imported qualification checkpoint; historical runs retain their original provenance |
 | Local release validation | [local-release-validation.md](validation/local-release-validation.md) | Combined develop validation, managed runtime and push evidence |
 
-`risk-assessments/` contains generated agent assessments. `validation/` contains deliberately
-reviewed evidence; transient local reports belong under `.harness/reports/`.
+The risk assessment is part of [threat-models/triage-system.md](threat-models/triage-system.md);
+its scored scenarios live with the code in `src/infosec_harness/agents/risk-scenarios.yaml`.
+`validation/` contains deliberately reviewed evidence; transient local reports belong under
+`.harness/reports/`.

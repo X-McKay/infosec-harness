@@ -12,7 +12,7 @@ version: "1"
 # `other/other`.
 #
 # Every case declares a `category` (agent-playbook 07-evaluation) and, where it exercises one,
-# the risk-scenario IDs from docs/risk-assessments/env-planner.yaml.
+# the risk-scenario IDs from agents/risk-scenarios.yaml.
 #
 # The label is coarse on purpose, and the `regression` cases below lean on that being only half
 # the check. `validate_environment_spec` is an output validator on this agent, so a spec that

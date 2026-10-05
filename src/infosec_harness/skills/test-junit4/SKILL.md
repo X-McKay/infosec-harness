@@ -9,8 +9,6 @@ metadata:
 
 # Probes in JUnit 4
 
-<!-- generated: activation criteria (scripts/restructure_skills.py) -->
-
 ## Use this skill when
 
 - You are writing or repairing a probe and the repository's test framework is JUnit 4 — its tests import `org.junit.Test`, or extend `junit.framework.TestCase`, and its build declares `junit:junit`.
@@ -26,7 +24,7 @@ metadata:
 
 - `test-junit5` also fires on the repositories that have *both* `junit:junit` and `junit-jupiter` on the test classpath — a migration part-done, which is common — and each skill's negative criteria send the reader to the other. **That skill wins** whenever jupiter is present at all, and the reason is measured: with `junit-jupiter` on the classpath Surefire 3.2.5 selects the JUnit Platform provider, and a JUnit-4-annotated probe then reports `Tests run: 0` and still exits 0 — a correct probe recorded as having reached nothing. It runs again only if `junit-vintage-engine` is also present, so use this skill when jupiter is absent (or vintage is present and the code under test is JUnit 4).
 
-<!-- /generated: activation criteria -->
+## Procedure
 
 JVM runners select a test by **class**, not by file path, so the probe's identity has to line
 up in three places at once. Get these right before writing the body:
@@ -129,8 +127,6 @@ end normally either way. `@Test(expected = ...)` is the same mistake in JUnit 4 
 makes the *absence* of an exception a failure, so the probe's outcome is carried by a pass/fail
 rather than by a marker.
 
-<!-- generated: constraints (scripts/restructure_skills.py) -->
-
 ## Safety constraints
 
 - The test must run to completion and print its markers whether or not the exploit condition holds. Never let an assertion failure be the signal.
@@ -147,4 +143,3 @@ rather than by a marker.
 - The probe's class and its `@Test` method are both `public`. JUnit 4 does not run a package-private method: the JUnit4Provider reports `initializationError` ("No runnable methods"), prints no markers, and exits nonzero, which reads downstream as a defective probe.
 - The probe compiles at the level the project declares: no `var` below Java 10, no multi-catch below Java 7. A JUnit 4 project is usually old enough for this to bite.
 
-<!-- /generated: constraints -->

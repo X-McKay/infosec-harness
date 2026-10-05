@@ -9,8 +9,6 @@ metadata:
 
 # Java repositories
 
-<!-- generated: activation criteria (scripts/restructure_skills.py) -->
-
 ## Use this skill when
 
 - The repository's primary language is Java or Kotlin on the JVM.
@@ -21,7 +19,7 @@ metadata:
 - The repository is primarily another language.
 - You are planning the build itself — use `build-maven` or `build-gradle`.
 
-<!-- /generated: activation criteria -->
+## Procedure
 
 - **Manifests:** `pom.xml` (Maven), `build.gradle`/`build.gradle.kts` (Gradle). Multi-module
   builds list `<modules>` / `include`.
@@ -34,8 +32,6 @@ metadata:
   `new File(dir, name)`, `ObjectInputStream.readObject`, `DocumentBuilderFactory`,
   `RestTemplate`/`HttpClient` with dynamic URLs, unescaped JSP/Thymeleaf output.
 
-<!-- generated: constraints (scripts/restructure_skills.py) -->
-
 ## Safety constraints
 
 - Reading only. This skill grants no ability to modify the repository.
@@ -45,4 +41,3 @@ metadata:
 
 - You can name the build system, the source and test roots, and the package layout.
 
-<!-- /generated: constraints -->

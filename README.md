@@ -40,9 +40,9 @@ design and decision log.
 ## Find your way around
 
 - [Documentation index](docs/README.md): setup, architecture, safety, evaluation and evidence.
-- [Repository guide](docs/development/REPOSITORY_GUIDE.md): module map, local output locations, generated
-  sources, cleanup rules and proposed directory changes.
-- [Developer scripts](scripts/README.md): setup tools, generators and measurements.
+- [Repository guide](docs/development/REPOSITORY_GUIDE.md): module map, local output locations, sources
+  of truth, cleanup rules and directory conventions.
+- [Developer scripts](scripts/README.md): setup, validation and measurement tools.
 - [UI](ui/README.md), [deployment](deploy/README.md),
   [eval inputs](evals/README.md) and [fixture corpus](eval-corpus/README.md).
 
@@ -171,7 +171,8 @@ the repository root and is absent from a deployment.
 ```
 src/infosec_harness/
   agents/<name>/agent.yaml  # the 11 agent specs (+ evals/dataset.yaml, evals/release-policy.yaml)
-  skills/                   # SKILL.md libraries: probe-oracle-protocol, cwe-*, lang-*, build-*, test-*
+  agents/risk-scenarios.yaml  # the scored harm scenarios, their controls, and which agents carry each
+  skills/                   # self-contained SKILL.md files: probe-oracle-protocol, cwe-*, lang-*, build-*, test-*
   config/models.yaml        # the approved-model catalogue — governance data, so it ships with the code
   tools/          # per-toolset tool.yaml: effect, retry safety, timeout, output bound
   resources.py    # where the above are, whether this runs from a checkout or a wheel
@@ -187,13 +188,13 @@ src/infosec_harness/
   evals/          # adapters, corpus runner, reports, provenance and calibration
   api/ cli.py     # FastAPI service and Typer CLI
 
-systems/triage-system/     # System Spec + delegation / data-flow / termination policies
-docs/risk-assessments/     # one per agent + the system; generated from scripts/risk_scenarios.py
+docs/architecture/TRIAGE_SYSTEM.md   # how the agents compose: roles, topology, termination, data flow
+docs/threat-models/triage-system.md  # trust boundaries and the risk assessment
 eval-corpus/               # paired vulnerable/fixed fixture repositories
 evals/                     # accepted baselines, calibration plans and agent overlays
-dev-skills/                # canonical development skills; client copies are generated
+.claude/skills/            # development skills (.agents/skills is a symlink for Codex)
 .harness/                  # ignored local state, workspace, reports and log snapshots
-scripts/                   # generators for the governance artifacts, and the conformance check
+scripts/                   # setup, validation and measurement tools, and the conformance check
 tests/                     # agents, runtime, persistence, evals and development checks
 ui/                        # React + shadcn triage UI (client generated from the API's OpenAPI)
 deploy/                    # compose support (postgres init, otel collector)

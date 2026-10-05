@@ -354,18 +354,18 @@ def enumeration_problems(skill: SkillDoc) -> list[str]:
 
 # --- Body substance ------------------------------------------------------------------------
 
-# A generator that inferred its regions from heading positions once deleted the body of all 24
-# skills, and every structural test still passed because the required sections were present.
-# A floor on the skill's *own* content is the cheap insurance against that repeating.
+# A generator that once rendered the standard sections deleted the body of all 24 skills, and
+# every structural test still passed because the required sections were present. A floor on
+# the skill's *own* content is the cheap insurance against an edit repeating that.
 MIN_PROCEDURE_TOKENS = 60
 
 
 def body_substance_problems(skill: SkillDoc) -> list[str]:
-    """The skill must still have content of its own outside the generated sections."""
+    """The skill must still have content of its own outside the standard sections."""
     tokens = estimate_text_tokens(skill.procedure)
     if tokens < MIN_PROCEDURE_TOKENS:
         return [
-            f"has only ~{tokens} tokens of content outside its generated sections (floor "
+            f"has only ~{tokens} tokens of content outside its standard sections (floor "
             f"{MIN_PROCEDURE_TOKENS}). The structure is added around a procedure, never instead "
             "of one; a skill this thin has probably had its body eaten"
         ]

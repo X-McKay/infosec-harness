@@ -291,7 +291,7 @@ These are required future tests with independent security expectations, not exis
 
 Report median and p95 added latency, executor startup time, resource use, ledger overhead, and additional billed requests against the direct baseline. Set rollout performance limits before inspecting candidate results; retain existing quality thresholds. Performance acceptance does not waive any security or durability gate.
 
-Implementation validation MUST run focused transport and recovery tests, `just check`, `just test`, `just generated-check`, and `just dev-skills-check`. Run the appropriate live setup and sandbox smoke fixtures for the checkout-owned stack. Offline mode MUST label OpenShell enforcement, real provider access, and actual isolation `not_checked`.
+Implementation validation MUST run focused transport and recovery tests, `just check`, `just test`, and `just generated-check`. Run the appropriate live setup and sandbox smoke fixtures for the checkout-owned stack. Offline mode MUST label OpenShell enforcement, real provider access, and actual isolation `not_checked`.
 
 ## Rollout and rollback
 

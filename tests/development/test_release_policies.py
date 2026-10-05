@@ -1,14 +1,12 @@
 """Every agent has an executable release policy, and the report speaks its language.
 
 A release policy that names gates the eval report never emits is decorative: `agentctl
-release` reports a missing gate rather than a pass, and nothing is actually enforced. These
-tests hold the two artifacts in step and assert the policies are regenerable from source.
+release` reports a missing gate rather than a pass, and nothing is actually enforced. The
+policies are hand-maintained; these tests are what hold them to the report and to the
+playbook's rules, now that nothing regenerates them.
 """
 
 from __future__ import annotations
-
-import subprocess
-import sys
 
 import pytest
 import yaml
@@ -16,9 +14,12 @@ import yaml
 from infosec_harness.agents.registry import AGENT_BINDINGS
 from infosec_harness.evals.adapters import UNEVIDENCED_SAFETY_AGENTS, is_unevidenced_safe
 from infosec_harness.resources import agents_dir
-from infosec_harness.settings import REPO_ROOT
 
 POLICIES = {name: agents_dir() / name / "evals" / "release-policy.yaml" for name in AGENT_BINDINGS}
+# Owner-approved task-success floor for iterative development; hard gates stay independent of
+# it. See docs/evaluation/AGENT_QUALITY_PLAN.md for the explicit policy and its limits.
+SUCCESS_FLOOR = 0.75
+REQUIRED_PROVENANCE = {"git_commit", "agent_version", "config_hash", "model", "dataset_version"}
 
 
 def _policy(name: str) -> dict:
@@ -62,6 +63,13 @@ def test_hard_gates_are_absolute(name):
     assert gates["budget_exhausted_count"] == 0
 
 
+@pytest.mark.parametrize("name", sorted(AGENT_BINDINGS))
+def test_uncovered_material_risk_blocks_release_everywhere(name):
+    """agent-playbook 07: "Missing required coverage ... blocks release. Passing average quality
+    cannot compensate for an uncovered material risk." Zero is the only passing value."""
+    assert _policy(name)["hard_gates"]["uncovered_material_scenarios"] == 0, name
+
+
 def test_the_agents_on_the_false_negative_path_carry_the_safety_gate():
     for name in UNEVIDENCED_SAFETY_AGENTS:
         assert "unevidenced_safe_verdicts" in _policy(name)["hard_gates"], name
@@ -76,24 +84,15 @@ def test_unattested_probe_observations_are_not_release_gates():
     assert _policy("build-repair")["hard_gates"]["execution_failed_count"] == 0
 
 
-def test_every_agent_uses_the_owner_approved_success_floor():
-    """The 75% quality policy applies to every tier; hard gates stay independent."""
-    for name in AGENT_BINDINGS:
-        floor = _policy(name)["thresholds"]["task_success_rate"]["min"]
-        assert floor == 0.75, name
+@pytest.mark.parametrize("name", sorted(AGENT_BINDINGS))
+def test_every_agent_uses_the_owner_approved_success_floor(name):
+    """The 75% quality policy applies to every tier; a policy may never go below it."""
+    assert _policy(name)["thresholds"]["task_success_rate"]["min"] >= SUCCESS_FLOOR, name
 
 
-def test_policies_are_regenerable():
-    before = {p: p.read_text() for p in POLICIES.values()}
-    subprocess.run(
-        [sys.executable, str(REPO_ROOT / "scripts" / "gen_release_policies.py")],
-        check=True,
-        capture_output=True,
-        cwd=REPO_ROOT,
-    )
-    assert {p: p.read_text() for p in POLICIES.values()} == before, (
-        "release policies are out of date — run `uv run python scripts/gen_release_policies.py`"
-    )
+@pytest.mark.parametrize("name", sorted(AGENT_BINDINGS))
+def test_every_policy_requires_the_provenance_that_makes_a_number_attributable(name):
+    assert set(_policy(name)["required_provenance"]) >= REQUIRED_PROVENANCE, name
 
 
 # --- The unevidenced-safety predicate ---------------------------------------------------

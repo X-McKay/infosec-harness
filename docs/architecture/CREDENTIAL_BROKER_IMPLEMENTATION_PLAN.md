@@ -196,7 +196,6 @@ HARNESS_MODEL_MODE=stub uv run pytest tests/agents/test_model_backends.py tests/
 just check
 just test
 just generated-check
-just dev-skills-check
 ./dev doctor
 ./dev smoke
 ```

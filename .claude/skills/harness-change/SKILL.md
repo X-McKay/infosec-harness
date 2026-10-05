@@ -7,7 +7,6 @@ metadata:
   compatibility: Codex and Claude repository development clients
   source_revision: repository-layout-v1
   playbook_revision: 9e7fc03f2e1253be3e2adea10663ddf429646cea
-  content_digest: sha256:65439c5525c49cad6d96762a82eb4e0cf17390de500f3b854f00ce04b802ba70
 ---
 
 ## Use this skill when
@@ -17,7 +16,7 @@ metadata:
 
 ## Do not use this skill when
 
-- The change is documentation-only, a generated-file refresh, or an isolated eval experiment. Use the narrow workflow for that request.
+- The change is documentation-only or an isolated eval experiment. Use the narrow workflow for that request.
 
 ## Repository navigation
 
@@ -28,8 +27,8 @@ metadata:
   `tests/evals/` and `tests/development/`, with shared fixtures in `tests/conftest.py`.
 - Agent overlays live in `evals/experiments/overlays/`; typed calibration plans live in
   `evals/experiments/calibration/`. Local logs and report exports belong under `.harness/`.
-- Author development skills here in `dev-skills/`; synchronize client copies with
-  `just dev-skills-sync` and verify them with `just dev-skills-check`.
+- Development skills live in `.claude/skills/`; `.agents/skills` is a symlink to the same
+  files for Codex. Edit them in place.
 
 ## Procedure
 
@@ -42,7 +41,7 @@ metadata:
 ## Safety constraints
 
 - Never weaken expected outcomes, thresholds, isolation, or validation to make a candidate pass.
-- Change generated files only through their declared source and run `just generated-check` and `just dev-skills-check` before handoff.
+- Agent specs, skills, release policies and the risk scenario library are hand-maintained package data; the OpenAPI document and agent JSON schema are the only generated files. Run `just generated-check` before handoff.
 - Do not claim a real runner, provider, or sandbox was verified from a configured name alone.
 - Durable changes require an explicit retry, idempotency, cancellation, and replay assessment.
 

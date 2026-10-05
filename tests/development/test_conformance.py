@@ -48,13 +48,14 @@ def test_checkout_is_resolved_before_entering_the_mirror(tmp_path, selection):
                             text=True, check=False, timeout=30)
     assert result.returncode == 0, result.stdout + result.stderr
     calls = [json.loads(line) for line in log.read_text().splitlines()]
-    assert len(calls) == 4
+    # Only the agent and skill validators run: the rendered risk assessments and System Spec
+    # the other two read are not materialized in this repository.
+    assert len(calls) == 2
     assert all(Path(call["project"]) == project and Path(call["project"]).is_absolute()
                for call in calls)
     assert all(Path(call["cwd"]) != caller and "harness-conformance-" in call["cwd"]
                for call in calls)
     assert [call["args"][6:-2][:2] for call in calls] == [
-        ["validate", "--root"], ["skills", "validate"], ["risk", "validate"],
-        ["system", "validate"],
+        ["validate", "--root"], ["skills", "validate"],
     ]
-    assert result.stdout.count("PASS") == 4
+    assert result.stdout.count("PASS") == 2

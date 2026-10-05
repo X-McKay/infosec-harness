@@ -5,7 +5,6 @@
 | `qualification/` | Reviewed component measurement references, scoped dependency hashes and exact equivalence reviews |
 | `baselines/` | Explicitly accepted, committed agent/model results; [recording rules](baselines/README.md) |
 | `experiments/calibration/` | Typed calibration plans, currently `verdict-tool-budget.yaml` |
-| `systems/triage-system/` | Generated system release policy |
 | `experiments/overlays/` | Historical agent spec overlays; preserve recorded negative results |
 | `../eval-corpus/` | Paired fixture repositories and ground truth |
 | `../src/infosec_harness/agents/<name>/evals/` | Packaged per-agent datasets and release policies |

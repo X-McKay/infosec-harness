@@ -9,8 +9,6 @@ metadata:
 
 # Building Maven targets
 
-<!-- generated: activation criteria (scripts/restructure_skills.py) -->
-
 ## Use this skill when
 
 - You are producing or repairing an EnvironmentSpec for a Maven project.
@@ -25,7 +23,7 @@ metadata:
 
 - `build-gradle` also fires on the repositories that carry both a `pom.xml` and a `build.gradle` — a Gradle build kept beside a published pom, or a migration half done — and each skill's negative criteria send the reader to the other, so on their own the two deadlock. **This skill wins** when the module holding the finding's sink is the one Maven builds, meaning its sources sit under a directory some `pom.xml` declares; otherwise defer to `build-gradle`. The tie has to be broken because the two recipes differ in the flag that lets a probe's markers out (`-Dmaven.test.redirectTestOutputToFile=false` here, Gradle's `-i` there), so a spec assembled from the wrong recipe runs a correct probe and records nothing.
 
-<!-- /generated: activation criteria -->
+## Procedure
 
 - **Read the project's test framework first. It changes the install commands, not just the probe.**
   Guess wrong and the *warm-up* fails to compile, so no image is built at all. Every row executed
@@ -152,8 +150,6 @@ metadata:
 - **Partial builds:** `mvn -B -Dmaven.repo.local=/opt/home/.m2/repository -pl <module> -am
   -DskipTests test-compile`, then `-pl <module>` on the test command (see partial-build).
 
-<!-- generated: constraints (scripts/restructure_skills.py) -->
-
 ## Safety constraints
 
 - Install as the non-root sandbox user with `HOME=/work/home`; never `sudo` or run as root.
@@ -172,4 +168,3 @@ metadata:
 - The base image's JDK still accepts the language level the project declares. Measured with Zulu 8/11/17/21: JDK 11 refuses `-source 5`, JDK 17 refuses 6, JDK 21 refuses 7 — so Java 5 needs temurin-8, Java 6 temurin-11, Java 7 temurin-17.
 - An install command warms Surefire's provider by *running* a test written in the repository's own framework — a throwaway class run under the pinned goal with `-Dtest=` and then deleted — and not merely by invoking the plugin with `-DfailIfNoTests=false`. Surefire resolves the provider at test-execution time, so a warm-up that runs no test fetches the plugin and none of the provider and the offline probe fails on `surefire-junit4:jar:… (absent)`; and a warm-up written in the *wrong* framework does not compile at all, so the image is never built.
 
-<!-- /generated: constraints -->

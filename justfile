@@ -9,22 +9,10 @@ check:
     uv run python -m compileall -q src
     HARNESS_MODEL_MODE=stub uv run harness agents validate
 
-# The development-client copies are generated from the canonical sources. These checks never
-# rewrite the checkout, so CI and reviewers can distinguish drift from a deliberate sync.
-dev-skills-check:
-    uv run python scripts/sync_dev_skills.py check
-
-dev-skills-sync:
-    uv run python scripts/sync_dev_skills.py sync
-
+# The only generated artifact: the OpenAPI document the UI client is built from. Checked
+# without rewriting the checkout; `just openapi` regenerates it.
 generated-check:
     HARNESS_MODEL_MODE=stub uv run python scripts/check_api_schema.py
-    uv run python scripts/sync_dev_instructions.py check
-    uv run python scripts/sync_dev_skills.py check
-
-generated-sync:
-    uv run python scripts/sync_dev_instructions.py sync
-    uv run python scripts/sync_dev_skills.py sync
 
 test:
     HARNESS_MODEL_MODE=stub uv run pytest
@@ -45,13 +33,6 @@ measure:
 # `just conformance AGENTCTL=/path/to/playbooks` to use a checkout.
 conformance agentctl="":
     uv run python scripts/conformance.py {{ if agentctl != "" { "--agentctl " + agentctl } else { "" } }}
-
-# Regenerate every derived governance artifact from its source of truth.
-governance:
-    uv run python scripts/gen_risk_assessments.py
-    uv run python scripts/gen_release_policies.py
-    uv run python scripts/gen_system_spec.py
-    uv run python scripts/restructure_skills.py
 
 # Regenerate the agent-spec JSON schema and the web OpenAPI client.
 agents-schema:

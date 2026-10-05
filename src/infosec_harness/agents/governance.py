@@ -1,10 +1,11 @@
 """The governance metadata contract, validated when an agent is constructed.
 
 The agent playbook (§3, "Factory responsibilities") requires construction to fail when an
-owner, execution class, risk tier, risk assessment, model policy, budget, skill, or toolset
-is missing or invalid — a spec that cannot be governed must not become a running agent. It
-also requires the spec's risk tier to match the tier recorded in its risk assessment, so
-the two artifacts cannot drift apart silently.
+owner, execution class, risk tier, model policy, budget, skill, or toolset is missing or
+invalid — a spec that cannot be governed must not become a running agent. It also requires
+the spec's risk tier to match the tier its risk scenarios establish. The scenarios live in
+``agents/risk-scenarios.yaml`` and the tier is derived from them here, at construction, so
+the two cannot drift apart silently and nothing has to be regenerated to keep them in step.
 
 Everything here is pure and deterministic, so the same checks run at worker startup, in
 `harness agents validate`, and in tests without a model or a network.
@@ -23,7 +24,7 @@ SEMVER = re.compile(r"^\d+\.\d+\.\d+(?:[-+].+)?$")
 
 REQUIRED_FIELDS = (
     "contract_version", "version", "owner", "execution_class", "risk_tier",
-    "risk_assessment", "data_classification", "model_policy", "evaluation_policy", "budgets",
+    "data_classification", "model_policy", "evaluation_policy", "budgets",
     "enabled_skills", "enabled_toolsets",
 )
 
@@ -35,18 +36,10 @@ class GovernanceError(ValueError):
 def _resolve_reference(value: str) -> Path | None:
     """Locate a path a spec's metadata references, or ``None`` when nothing here can see it.
 
-    Two bases are legitimate, and which one holds a given reference is a packaging decision
-    rather than something the spec should have to spell out:
-
-    * ``agents/<name>/evals/release-policy.yaml`` ships in the wheel beside the spec it gates,
-      so it resolves under the package root.
-    * ``docs/risk-assessments/<name>.yaml`` is a reviewable project file that is deliberately
-      not packaged, so it resolves only in a source checkout.
-
-    ``None`` means "this deployment cannot check that", which is different from "missing". On
-    an installed wheel the docs tree is absent by design; treating that as a governance
-    violation would make every agent unconstructible in production for a reason that is purely
-    an artifact of where reviewers keep their files.
+    ``agents/<name>/evals/release-policy.yaml`` ships in the wheel beside the spec it gates, so
+    it resolves under the package root; a source checkout is tried second so a reference to a
+    reviewable project file can be checked too. ``None`` means "this deployment cannot check
+    that", which is different from "missing".
     """
     from infosec_harness.resources import package_root, source_checkout
 
@@ -86,9 +79,28 @@ def violations(agent_name: str, metadata: dict[str, Any] | None, *,
 
     problems.extend(_budget_violations(agent_name, meta))
     problems.extend(_policy_violations(meta))
+    problems.extend(risk_violations(agent_name, meta))
     if check_referenced_files:
         problems.extend(_reference_violations(agent_name, meta))
     return problems
+
+
+def risk_violations(agent_name: str, meta: dict[str, Any]) -> list[str]:
+    """The spec's risk tier must equal the tier its scenarios establish (§3, §13).
+
+    An agent absent from the scenario library has no assessed risk at all, which is the
+    strongest reason not to construct it.
+    """
+    from infosec_harness.agents.risk import library
+
+    lib = library()
+    if agent_name not in lib.agents:
+        return [f"{agent_name!r} is not in agents/risk-scenarios.yaml, so its risk is unassessed"]
+    established = lib.governance_tier(agent_name)
+    if meta["risk_tier"] != established:
+        return [f"metadata.risk_tier is {meta['risk_tier']!r} but the scenarios in "
+                f"agents/risk-scenarios.yaml establish {established!r}"]
+    return []
 
 
 def _budget_violations(agent_name: str, meta: dict[str, Any]) -> list[str]:
@@ -116,13 +128,12 @@ def _policy_violations(meta: dict[str, Any]) -> list[str]:
 
 
 def _reference_violations(agent_name: str, meta: dict[str, Any]) -> list[str]:
-    """A risk assessment or eval policy that is only a path is not evidence of anything."""
-    problems = []
-    for field in ("risk_assessment", "evaluation_policy"):
-        path = _resolve_reference(str(meta[field]))
-        if path is not None and not path.exists():
-            problems.append(f"metadata.{field} points at {meta[field]!r}, which does not exist")
-    return problems
+    """An eval policy that is only a path is not evidence of anything."""
+    path = _resolve_reference(str(meta["evaluation_policy"]))
+    if path is not None and not path.exists():
+        return [f"metadata.evaluation_policy points at {meta['evaluation_policy']!r}, which "
+                f"does not exist"]
+    return []
 
 
 def assert_governed(agent_name: str, metadata: dict[str, Any] | None, *,
@@ -132,28 +143,3 @@ def assert_governed(agent_name: str, metadata: dict[str, Any] | None, *,
         raise GovernanceError(
             f"Agent {agent_name!r} cannot be constructed:\n- " + "\n- ".join(problems)
         )
-
-
-def tier_matches_assessment(agent_name: str, metadata: dict[str, Any]) -> list[str]:
-    """The spec's risk tier must equal the governance tier its assessment records."""
-    import yaml
-
-    path = _resolve_reference(str(metadata["risk_assessment"]))
-    if path is None:
-        return [f"risk assessment {metadata['risk_assessment']!r} cannot be read here: risk "
-                f"assessments are project files and are not packaged, so this check needs a "
-                f"source checkout"]
-    if not path.exists():
-        return [f"risk assessment {metadata['risk_assessment']!r} does not exist"]
-    assessment = yaml.safe_load(path.read_text()) or {}
-    classification = assessment.get("classification") or {}
-    declared = classification.get("governance_tier")
-    if declared is None:
-        return [f"risk assessment {path.name} records no classification.governance_tier"]
-    if declared != metadata["risk_tier"]:
-        return [f"metadata.risk_tier is {metadata['risk_tier']!r} but "
-                f"{path.name} records governance_tier {declared!r}"]
-    subject = (assessment.get("assessment") or {}).get("agent")
-    if subject not in (None, agent_name):
-        return [f"risk assessment {path.name} is for {subject!r}, not {agent_name!r}"]
-    return []

@@ -7,14 +7,15 @@ configured runtime or provider name as execution evidence.
 
 ## Boundaries and sources of truth
 
-- Runtime behavior lives under `src/infosec_harness/`; packaged runtime skills under
-  `src/infosec_harness/skills/` are separate from development skills.
-- Development skills are authored under `dev-skills/` and copied to `.agents/skills/` and
-  `.claude/skills/`. Run `just dev-skills-check` after changes; edit only the canonical source.
-- `AGENTS.md` is the shared repository instruction source. `CLAUDE.md` is generated from it by
-  `just generated-sync`; do not maintain divergent copies.
-- Generated governance, schemas, and client artifacts must be changed through their declared
-  source and checked for drift.
+- Everything an agent needs in order to run is hand-maintained package data under
+  `src/infosec_harness/`: each agent's spec, eval dataset and release policy under
+  `agents/<name>/`, the risk scenario library at `agents/risk-scenarios.yaml`, the runtime
+  skills under `skills/<name>/SKILL.md`, and the model catalogue under `config/`. Edit these
+  files directly; nothing regenerates them, and tests hold their invariants.
+- Development skills live in `.claude/skills/`; `.agents/skills` is a symlink to the same files
+  for Codex. `AGENTS.md` is the shared instruction source and `CLAUDE.md` imports it.
+- The only generated files are the OpenAPI document (`just openapi`, checked by
+  `just generated-check`) and the agent JSON schema (`just agents-schema`, checked by tests).
 
 ## Canonical commands
 
@@ -24,8 +25,7 @@ configured runtime or provider name as execution evidence.
 ./dev doctor | status | logs | smoke | stop
 just check                    # lint, compile, and agent validation
 just test                     # deterministic test suite
-just generated-check          # generated artifacts without rewriting the checkout
-just dev-skills-check         # canonical development-skill drift check
+just generated-check          # OpenAPI drift, without rewriting the checkout
 just ui-check                # format check and production UI build
 ```
 

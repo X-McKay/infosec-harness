@@ -19,10 +19,10 @@
 | `ui/` | Frontend source, generated API types and build configuration |
 | `tests/` | Regression cases grouped into agents, runtime, persistence, evals and development |
 | `eval-corpus/` | Paired fixture repositories, ground truth and harvested case metadata |
-| `evals/` | Accepted baselines, system release policy and calibration inputs |
+| `evals/` | Accepted baselines and calibration inputs |
 | `evals/experiments/overlays/`, `calibration/` | Historical agent overlays and typed calibration plans |
-| `systems/`, `docs/` | Reviewable system contracts, governance and developer documentation |
-| `scripts/`, `dev-skills/` | Developer tools and canonical development skills |
+| `docs/` | Architecture, threat model and risk assessment, evaluation and developer documentation |
+| `scripts/`, `.claude/skills/` | Developer tools and development skills (`.agents/skills` is a symlink) |
 | `deploy/` | Compose infrastructure configuration, proxy and Kubernetes manifests |
 
 Runtime data stays inside the Python package so installed wheels work from unrelated working
@@ -80,20 +80,21 @@ workspace while active or retained runs reference snapshots, images, recipes or 
 Container log rotation does not rotate exported snapshots. `just down-reset` is the explicitly
 destructive manual compose command; it is not the managed launcher's cleanup operation.
 
-## Generated sources
+## Sources of truth
+
+Agent specs, eval datasets, release policies, the risk scenario library
+(`src/infosec_harness/agents/risk-scenarios.yaml`) and the runtime skills are hand-maintained
+package data. Edit them in place; tests hold their invariants (`tests/agents/test_risk_scenarios.py`,
+`tests/development/test_release_policies.py`, `tests/agents/test_skills_consistency.py`,
+`tests/evals/test_eval_coverage.py`). `CLAUDE.md` imports `AGENTS.md`, and `.agents/skills` is a
+symlink to `.claude/skills`, so neither has a copy to drift.
+
+Two artifacts are generated, because their consumers are outside Python:
 
 | Generated artifact | Source / regeneration | Drift check |
 | --- | --- | --- |
-| `CLAUDE.md` | `AGENTS.md`; `just generated-sync` | `just generated-check` |
-| `.agents/skills/`, `.claude/skills/` | `dev-skills/`; `just dev-skills-sync` | `just dev-skills-check` |
-| Risk assessments | `scripts/risk_scenarios.py`; `just governance` | Relevant governance tests |
-| Release policies and system spec | Governance generators in `scripts/`; `just governance` | Relevant release/system tests |
-| Generated runtime skill regions | `scripts/skill_specs.py`; `just governance` | Skill consistency tests |
-| Agent JSON schema | Agent spec schema; `just agents-schema` | Agent schema and packaging tests |
-| `ui/openapi.json`, `ui/src/api/schema.d.ts` | FastAPI contracts; `just openapi` | `just generated-check` for OpenAPI; CI regenerates client and checks diff |
-
-Read the [script catalogue](../../scripts/README.md) before running generators. `just generated-sync`
-only syncs instructions and development skills; it does not regenerate every artifact above.
+| `src/infosec_harness/agents/agent_schema.json` (editor schema for `agent.yaml`) | the capability allowlist; `just agents-schema` | `tests/agents/test_agents.py` |
+| `ui/openapi.json`, `ui/src/api/schema.d.ts` | FastAPI contracts; `just openapi` | `just generated-check` for OpenAPI; CI regenerates the client and checks the diff |
 
 ## Directory conventions
 
@@ -105,8 +106,8 @@ Agent spec overlays live in `evals/experiments/overlays/`; typed calibration pla
 `evals/experiments/calibration/`. Preserve negative experiment results alongside their inputs.
 
 Documents are grouped under `docs/development/`, `docs/architecture/`, `docs/evaluation/` and
-`docs/validation/`, with `docs/README.md` as the entry point. Generated risk assessments and
-threat models retain their contracted locations. Imported qualification plans and reviews live under `docs/evaluation/`; fixes and retained
+`docs/validation/`, with `docs/README.md` as the entry point. The threat model and risk
+assessment live under `docs/threat-models/`. Imported qualification plans and reviews live under `docs/evaluation/`; fixes and retained
 qualification reports live under `docs/validation/`. `docs/development/HANDOFF.md` preserves the
 imported development checkpoint. The separately authored credential-broker proposal at
 `docs/CREDENTIAL_BROKER_SPEC.md` is left in place to preserve concurrent work.

@@ -74,7 +74,7 @@ IDS = [s.name for s in SKILLS]
 # --- Known defects ---------------------------------------------------------------------------
 #
 # Real findings this suite made that could not be fixed from here: the fix belongs in
-# skills/*/SKILL.md or scripts/skill_specs.py, outside this change's boundary. They are recorded
+# skills/*/SKILL.md, outside this change's boundary. They are recorded
 # as strict xfails rather than skipped, quietly allowlisted, or softened into a warning: strict
 # means that the moment somebody applies the fix, the xfail itself fails and forces its own
 # removal. A defect parked this way cannot rot into a permanent exemption.

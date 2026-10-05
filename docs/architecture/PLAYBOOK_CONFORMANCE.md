@@ -9,19 +9,18 @@ just conformance                                  # needs agentctl on PATH
 just conformance /path/to/playbooks      # or a checkout of that repo
 ```
 
-Historical validator output (not a current-tree acceptance result):
+Historical validator output (not a current-tree acceptance result, and from when the rendered
+risk assessments and System Spec still existed):
 
 ```
 PASS agents   errors=0 waived=11 warnings=22
 PASS skills   errors=0 waived= 0 warnings= 0
-PASS risk     errors=0 waived= 0 warnings=22
-PASS system   errors=0 waived=11 warnings=24
 ```
 
 `scripts/conformance.py` mirrors the repository into the layout `agentctl` discovers and runs
-its four validators against the real YAML. The warnings are the ones that should be there: the
-risk assessments are drafts with open questions, and a draft cannot satisfy production
-readiness until a named owner accepts it.
+the agent and skill validators against the real YAML. The `risk` and `system` validators are
+not run: the per-agent risk-assessment documents and the System Spec they read were generated
+renderings of data that lives elsewhere, and they are no longer materialized (see below).
 
 ## Where the artifacts live
 
@@ -31,17 +30,24 @@ ships in the wheel; everything reviewers read *about* the system stays at the re
 | Artifact | Path | Ships? | Source of truth |
 | --- | --- | --- | --- |
 | Agent Specs | `src/infosec_harness/agents/<name>/agent.yaml` | yes | hand-authored |
-| Skills | `src/infosec_harness/skills/<name>/SKILL.md` | yes | `scripts/skill_specs.py` → `restructure_skills.py` |
+| Skills | `src/infosec_harness/skills/<name>/SKILL.md` | yes | hand-authored, self-contained |
 | Model catalogue | `src/infosec_harness/config/models.yaml` | yes | hand-authored |
 | Tool policies | `src/infosec_harness/tools/<toolset>/tool.yaml` | yes | hand-authored |
 | Eval datasets | `src/infosec_harness/agents/<name>/evals/dataset.yaml` | yes | hand-authored |
-| Release policies | `src/infosec_harness/agents/<name>/evals/release-policy.yaml` | yes | `scripts/gen_release_policies.py` |
-| Risk assessments | `docs/risk-assessments/` | no | `scripts/risk_scenarios.py` → `gen_risk_assessments.py` |
-| System Spec | `systems/triage-system/` | no | `scripts/gen_system_spec.py` |
-| Threat model | `docs/threat-models/triage-system.md` | no | hand-authored |
+| Release policies | `src/infosec_harness/agents/<name>/evals/release-policy.yaml` | yes | hand-authored |
+| Risk scenarios and controls | `src/infosec_harness/agents/risk-scenarios.yaml` | yes | hand-authored |
+| Risk assessment and threat model | `docs/threat-models/triage-system.md` | no | hand-authored |
+| System composition | `docs/architecture/TRIAGE_SYSTEM.md` | no | hand-authored |
 
-`just governance` regenerates everything derived. Tests assert the committed files match, so
-the generators cannot drift from what is reviewed.
+Nothing is generated from anything else. The playbook's per-agent risk-assessment YAML and
+System Spec were rendered from the scenario library and the agent specs; the rendering was
+removed because every value in it was either derived (and therefore drift waiting to happen)
+or prose that belongs in a document. What the runtime needs from the assessment -- each
+agent's scenarios and the tier they establish -- it reads from the library directly, at
+construction (`agents/governance.py`, `agents/risk.py`), and the release gate on scenario
+coverage reads the same file (`evals/coverage.py`). The playbook rules those documents
+encoded are held by tests instead: `tests/agents/test_risk_scenarios.py`,
+`tests/development/test_release_policies.py` and `tests/evals/test_eval_coverage.py`.
 
 ## Deliberate deviations
 
@@ -154,9 +160,8 @@ code; promoting a file to a package before it needs to be one adds a directory, 
 
 ## Implemented development and provenance structure
 
-Canonical development skills live under `dev-skills/`; `.agents/skills/` and `.claude/skills/`
-are generated discovery copies. `just dev-skills-check` prevents drift. These are distinct from
-packaged runtime skills.
+Development skills live under `.claude/skills/`; `.agents/skills` is a symlink to the same
+files for Codex. These are distinct from packaged runtime skills.
 
 `graph/manifests.py` builds persisted harness, repository, environment and capability manifests.
 They carry versioned runtime/policy digests and resolved agent configuration; the implementation
@@ -192,8 +197,9 @@ finding, so the failure is contained; it is still a failure.
 ## What conformance does and does not establish
 
 It establishes that the contracts are complete and internally consistent: every agent has an
-owner, a governance tier that matches its risk assessment, an execution class its tools
-justify, a per-run budget that is enforced, an eval dataset, and an executable release gate.
+owner, a governance tier that matches the risk scenarios it carries, an execution class its
+tools justify, a per-run budget that is enforced, an eval dataset, and an executable release
+gate.
 
 Conformance does not establish actual runtime isolation or release readiness. Current and
 historical execution evidence, remaining clean-host acceptance gaps, and real versus mocked

@@ -9,8 +9,6 @@ metadata:
 
 # Building Gradle targets
 
-<!-- generated: activation criteria (scripts/restructure_skills.py) -->
-
 ## Use this skill when
 
 - You are producing or repairing an EnvironmentSpec for a Gradle project.
@@ -25,7 +23,7 @@ metadata:
 
 - `build-maven` also fires on the repositories that carry both a `build.gradle` and a `pom.xml`, and each skill's negative criteria send the reader to the other, so on their own the two deadlock. **That skill wins** when the module holding the finding's sink is the one Maven builds; use this skill when Gradle owns that module — it has a `build.gradle` of its own, or a root `settings.gradle` includes it. Deciding matters because the flag that lets a probe's markers out is different on each side (`-i` here, `-Dmaven.test.redirectTestOutputToFile=false` there), so a spec built from the wrong recipe runs a correct probe and records nothing.
 
-<!-- /generated: activation criteria -->
+## Procedure
 
 - **Base image:** `gradle:8-jdk21` or an Eclipse Temurin image plus the repo's `./gradlew`.
 - **JDK version: read `sourceCompatibility`, `targetCompatibility` or
@@ -66,8 +64,6 @@ metadata:
   supply credentials via BuildKit secrets.
 - **Partial builds:** target a subproject: `./gradlew --rerun-tasks -i :<subproject>:test --tests '<fqcn>'`.
 
-<!-- generated: constraints (scripts/restructure_skills.py) -->
-
 ## Safety constraints
 
 - Install as the non-root sandbox user with `HOME=/work/home`; never `sudo` or run as root.
@@ -85,4 +81,3 @@ metadata:
 - `test_command` makes the run unconditional (`--rerun-tasks`, or `cleanTest test`). Gradle's `test` task is incremental, so with unchanged inputs it is reported `UP-TO-DATE`: no test runs, no marker is printed, and the build still exits 0. Measured on Gradle 8.14.3, where the first run printed all three markers and the next two printed none.
 - The probe is written in the framework `build.gradle` declares, not the one on the classpath: Gradle runs JUnit 4 unless the build says `test { useJUnitPlatform() }`, and a mismatch fails with `No tests found for given includes` (measured). Unlike Surefire, Gradle does not auto-detect, and you may not edit the build file.
 
-<!-- /generated: constraints -->

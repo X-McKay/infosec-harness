@@ -9,8 +9,6 @@ metadata:
 
 # Partial builds
 
-<!-- generated: activation criteria (scripts/restructure_skills.py) -->
-
 ## Use this skill when
 
 - The full build has failed its repair budget and a narrower scope is the remaining option.
@@ -21,7 +19,7 @@ metadata:
 - The full build has not yet exhausted its repairs — repair it instead.
 - The failure is in the sink's own module or its real dependencies: narrowing there would stub out the code under test.
 
-<!-- /generated: activation criteria -->
+## Procedure
 
 When a full build cannot be made to work within budget, build only the smallest unit that
 contains the file under investigation and can run one unit test. Set `scope: partial` and
@@ -46,8 +44,6 @@ data path must remain real. Record why the unit was chosen in `rationale`. A par
 environment still produces real probe evidence; the verdict is tagged so evals can compare
 partial vs full accuracy.
 
-<!-- generated: constraints (scripts/restructure_skills.py) -->
-
 ## Safety constraints
 
 - Install as the non-root sandbox user with `HOME=/work/home`; never `sudo` or run as root.
@@ -63,4 +59,3 @@ partial vs full accuracy.
 - No install command swallows its own failure (`|| true`, `|| :`, `; true`). A dependency install that reports success when it failed surfaces only at probe time, where probe repair cannot fix it and build repair never sees it.
 - `scope` is `partial` and `module_path` names the unit that was built.
 
-<!-- /generated: constraints -->
