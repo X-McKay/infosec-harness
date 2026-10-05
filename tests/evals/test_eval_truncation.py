@@ -15,27 +15,23 @@ import json
 import httpx
 import openai
 import pytest
-import yaml
 from pydantic import BaseModel
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from sqlalchemy import func, select
 
+from infosec_harness.evals.dataset import load_dataset
+from infosec_harness.evals.reporting import IncomparableExperiments, compare_experiments
 from infosec_harness.evals.run import (
-    IncomparableExperiments,
     TruncatedExperiment,
     _bounded_typed_output,
-    _usage_metrics,
-    compare_experiments,
     run_experiment,
 )
-from infosec_harness.settings import get_settings
 
 AGENT = "probe-diagnosis"
 
 
 def _dataset_cases() -> list[dict]:
-    path = get_settings().agents_dir / AGENT / "evals" / "dataset.yaml"
-    return yaml.safe_load(path.read_text())["cases"]
+    return list(load_dataset(AGENT).cases)
 
 
 class _FlakyAgent:
@@ -91,7 +87,7 @@ async def _case_rows(exp_id: str):
             .order_by(db.EvalCaseResult.id))).scalars().all()
 
 
-async def test_transport_failure_keeps_the_scored_cases_and_fails_the_run(monkeypatch):
+async def test_transport_failure_keeps_the_scored_cases_and_fails_the_run(monkeypatch, capsys):
     planned = len(_dataset_cases()) * 2
     _break_endpoint_after(monkeypatch, 3)
 
@@ -99,9 +95,12 @@ async def test_transport_failure_keeps_the_scored_cases_and_fails_the_run(monkey
         await run_experiment(AGENT, repeat=2)
 
     exp_id = excinfo.value.experiment_id
-    # A failure, not a quiet partial success: non-zero exit, and the message names the count.
-    assert excinfo.value.code and "TRUNCATED" in str(excinfo.value.code)
-    assert f"3/{planned}" in str(excinfo.value.code)
+    # A failure, not a quiet partial success, and the message names the count.
+    assert "TRUNCATED" in str(excinfo.value)
+    assert f"3/{planned}" in str(excinfo.value)
+    # The persisted record is sanitized; the operator still gets the real traceback locally.
+    stderr = capsys.readouterr().err
+    assert "Traceback" in stderr and "APIConnectionError" in stderr
 
     exp = await _experiment(exp_id)
     assert exp is not None, "the partial experiment must be persisted, not discarded"
@@ -132,7 +131,7 @@ async def test_agent_deadline_is_a_failed_budget_gate_and_remaining_cases_run(mo
     from types import SimpleNamespace
 
     from infosec_harness.agents import registry
-    from infosec_harness.evals import invocation
+    from infosec_harness.evals import run
 
     real_build = registry.build_agent
     deadlines = []
@@ -144,9 +143,10 @@ async def test_agent_deadline_is_a_failed_budget_gate_and_remaining_cases_run(mo
         deadlines.append(deadline)
         return deadline
 
-    # Patch only this module's asyncio reference, retaining the production
+    # Patch only the runner's asyncio reference, retaining the production
     # run_with_timeout implementation and its expired-vs-inner-timeout check.
-    monkeypatch.setattr(invocation, "asyncio", SimpleNamespace(timeout=capture_deadline))
+    monkeypatch.setattr(run, "asyncio", SimpleNamespace(
+        timeout=capture_deadline, CancelledError=asyncio.CancelledError))
 
     class SlowFirstInvocation:
         def __init__(self, inner):
@@ -177,7 +177,6 @@ async def test_agent_deadline_is_a_failed_budget_gate_and_remaining_cases_run(mo
     assert metrics["status"] == "complete"
     assert metrics["n"] == metrics["n_planned"] == len(_dataset_cases())
     assert metrics["budget_exhausted_count"] == 1
-    assert metrics["unexpected_budget_stops"] == 1
     assert metrics["usage_unknown"] == 1
     assert metrics["attempts"][0]["error_type"] == "AgentRunTimeout"
     assert metrics["attempts"][0]["outcome"] == "budget_exhausted"
@@ -222,18 +221,6 @@ async def test_complete_run_is_marked_complete_and_fully_covered():
     assert exp.metrics["status"] == "complete"
     assert exp.metrics["n"] == exp.metrics["n_planned"] == len(_dataset_cases())
     assert "truncated" not in exp.metrics
-
-
-def test_complete_observed_zero_usage_remains_numeric_zero():
-    unknown = _usage_metrics([], 0, 0)
-    assert unknown["avg_tokens"] is None
-    assert unknown["cache_hit_ratio"] is None
-    assert unknown["usage_observations"]["attempt_coverage_rate"] is None
-
-    metrics = _usage_metrics([{"usage_status": "observed"}], 0, 0)
-    assert metrics["avg_tokens"] == 0.0
-    assert metrics["cache_hit_ratio"] == 0.0
-    assert metrics["usage_observations"]["attempt_coverage_rate"] == 1.0
 
 
 async def test_complete_case_retains_bounded_typed_output_without_the_prompt():
@@ -345,16 +332,15 @@ async def test_compare_flags_a_truncated_side(monkeypatch, capsys):
     assert not any(baseline in line for line in warnings)
 
 
-async def test_truncated_default_export_never_creates_a_release_report(tmp_path, monkeypatch):
+async def test_truncated_run_never_creates_a_report_in_its_report_dir(tmp_path, monkeypatch):
     from infosec_harness.agents import registry
 
-    monkeypatch.setattr(get_settings(), "reports_dir", tmp_path)
     original = registry.build_agent
     monkeypatch.setattr(registry, "build_agent",
                         lambda *args, **kwargs: _FlakyAgent(original(*args, **kwargs), 1))
-    with pytest.raises(TruncatedExperiment) as caught:
-        await run_experiment(AGENT)
-    assert not (tmp_path / "evals" / f"{caught.value.experiment_id}.json").exists()
+    with pytest.raises(TruncatedExperiment):
+        await run_experiment(AGENT, report_dir=tmp_path)
+    assert list(tmp_path.iterdir()) == []
 
 
 async def test_broker_budget_is_a_failed_gate_and_next_cases_run_without_sdk_retry(monkeypatch, tmp_path):
@@ -362,7 +348,7 @@ async def test_broker_budget_is_a_failed_gate_and_next_cases_run_without_sdk_ret
     from pydantic_ai.models.function import FunctionModel
 
     from infosec_harness.agents import registry
-    from infosec_harness.inference.protocol import BrokerError
+    from infosec_harness.inference.wire.protocol import BrokerError
 
     real_build = registry.build_agent
     invocations, sdk_calls = [], []
@@ -385,7 +371,7 @@ async def test_broker_budget_is_a_failed_gate_and_next_cases_run_without_sdk_ret
     assert metrics['status'] == 'complete'
     assert metrics['n'] == metrics['n_planned'] == len(_dataset_cases())
     assert len(invocations) == len(_dataset_cases()) and len(sdk_calls) == 1
-    assert metrics['budget_exhausted_count'] == metrics['unexpected_budget_stops'] == 1
+    assert metrics['budget_exhausted_count'] == 1
     assert metrics['attempts'][0]['outcome'] == 'budget_exhausted'
     assert metrics['attempts'][0]['error_type'] == 'BrokerError'
     assert metrics['attempts'][0]['broker_error_code'] == 'budget'
@@ -394,7 +380,9 @@ async def test_broker_budget_is_a_failed_gate_and_next_cases_run_without_sdk_ret
     rows = await _case_rows(experiment.id)
     assert len(rows) == len(_dataset_cases()) and rows[0].passed is False
     assert rows[0].scores['predicted'] == 'budget_exhausted'
-    assert json.loads(report.read_text())['hard_gates']['budget_exhausted_count'] == 1
+    written = json.loads(report.read_text())
+    assert written['hard_gates']['budget_exhausted_count'] == 1
+    assert written['gate_evaluation']['status'] == 'failed'
     assert 'SECRET' not in json.dumps(metrics)
 
 
@@ -402,7 +390,7 @@ async def test_broker_budget_is_a_failed_gate_and_next_cases_run_without_sdk_ret
     type('SpoofedCode', (str,), {})('budget')])
 async def test_other_broker_failures_remain_truncated_with_redacted_diagnostics(monkeypatch, tmp_path, code):
     from infosec_harness.agents import registry
-    from infosec_harness.inference.protocol import BrokerError
+    from infosec_harness.inference.wire.protocol import BrokerError
 
     calls = []
     class FailedBroker:

@@ -20,9 +20,9 @@ Two roots, and the distinction is the whole point:
   -- its spec, the skills it may load, the approved-model catalogue. These ship in the wheel
   and are resolved through ``importlib.resources``.
 * **Project files** (:func:`source_checkout`) are the things reviewers and CI read *about* the
-  system -- risk assessments, threat models, the eval corpus, the system spec. They stay at
-  the repository root where the playbook puts them, and are simply absent from a deployment.
-  Callers that need them must cope with ``None`` rather than assume a checkout.
+  system -- the threat model, the eval corpus, the docs. They stay at the repository root and
+  are simply absent from a deployment. Callers that need them must cope with ``None`` rather
+  than assume a checkout.
 """
 from __future__ import annotations
 
@@ -69,12 +69,3 @@ def models_config() -> Path:
     """The approved-model catalogue. Governance data, so it ships with the code it governs."""
     return package_root() / "config" / "models.yaml"
 
-
-def project_file(*parts: str) -> Path | None:
-    """A repository file that is deliberately not packaged, or ``None`` off a checkout.
-
-    Used for risk assessments, threat models and the eval corpus: reviewable artifacts that a
-    running deployment has no business reading.
-    """
-    root = source_checkout()
-    return root.joinpath(*parts) if root else None

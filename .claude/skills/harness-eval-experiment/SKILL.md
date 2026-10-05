@@ -3,11 +3,10 @@ name: harness-eval-experiment
 description: Run a controlled InfoSec Harness experiment that changes prompts, models, tools, skills, or orchestration behavior.
 metadata:
   owner: harness-maintainers
-  version: 1.0.1
+  version: 1.0.3
   compatibility: Codex and Claude repository development clients
   source_revision: repository-layout-v1
   playbook_revision: 9e7fc03f2e1253be3e2adea10663ddf429646cea
-  content_digest: sha256:7aa93bb289abac086974965fdc93c3c60507e1486dcd3648b31eaf9945892de3
 ---
 
 ## Use this skill when
@@ -24,18 +23,32 @@ metadata:
 
 - Start with `docs/README.md` and `docs/development/REPOSITORY_GUIDE.md`.
 - Runtime implementation and packaged runtime skills stay under `src/infosec_harness/`.
-- Frontend source is `ui/`; use `just ui-check` for formatting, tests and the production build.
+- Frontend source is `ui/`; use `just ui-check` for formatting, API type drift, tests and the production build.
 - Tests are grouped under `tests/agents/`, `tests/runtime/`, `tests/persistence/`,
-  `tests/evals/` and `tests/development/`, with shared fixtures in `tests/conftest.py`.
+  `tests/evals/`, `tests/development/` and `tests/qualification/` (broker qualification
+  runners), with shared fixtures and gating markers in `tests/conftest.py`.
+- In `src/infosec_harness/`: orchestration shared by the in-process and durable paths is
+  `graph/pipeline.py` and `graph/workloads.py`; durable submission is `workflows/submission.py`
+  and stub-only local runs `workflows/local_run.py`; release gates are evaluated only by
+  `evals/gates.py` from each agent's `release-policy.yaml`, and datasets load through
+  `evals/dataset.py`; broker qualification runners are `qualification/broker/` and read-only
+  service checks `operations/`.
+- Workflow and activity arguments are typed in `workflows/payloads.py`. The sandbox's public
+  surface is `sandbox/docker.py` (runtime gate and execution) over `errors`, `markers`, `output`,
+  `image`, `engine`, `boundary`, `controls` and `evidence`. The credential broker is
+  `inference/`, one subpackage per role: `wire`, `catalog`, `executor`, `worker`, `controller`,
+  `native`.
+- Dated evidence goes to `docs/evidence/<yyyy-mm-dd>-<topic>/`; accepted agent results to
+  `evals/baselines/`.
 - Agent overlays live in `evals/experiments/overlays/`; typed calibration plans live in
   `evals/experiments/calibration/`. Local logs and report exports belong under `.harness/`.
-- Author development skills here in `dev-skills/`; synchronize client copies with
-  `just dev-skills-sync` and verify them with `just dev-skills-check`.
+- Development skills live in `.claude/skills/`; `.agents/skills` is a symlink to the same
+  files for Codex. Edit them in place.
 
 ## Procedure
 
 1. Write a hypothesis, frozen baseline identity, requested change, dataset version, slices, and explicit experiment budget.
-2. Run the offline fast path first: `just check`, the focused tests, and `HARNESS_MODEL_MODE=stub uv run harness eval run <agent>` as applicable.
+2. Run the offline fast path first: `just check`, the focused tests, and `HARNESS_MODEL_MODE=stub uv run harness eval run <agent>...` (or `just eval` for every agent) as applicable.
 3. Compare controlled trials with the same cases, effective limits, environment, and scoring rules. Preserve failed attempts and unknown cost; do not treat stub quality as live-model evidence.
 4. Inspect slice regressions, safety violations, held-out cases, and provenance. Explain failures before changing the candidate.
 5. Produce a report with baseline/candidate identities, distributions, uncertainty, limitations, and a promotion recommendation or a clear no-improvement result.

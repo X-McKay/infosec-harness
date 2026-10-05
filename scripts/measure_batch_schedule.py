@@ -22,6 +22,7 @@ from unittest import mock
 from infosec_harness.domain.models import (
     BuildResult,
     EnvironmentSpec,
+    Finding,
     FindingInput,
     FindingSourceKind,
     PreparedEnvironment,
@@ -57,9 +58,7 @@ def _prepared(path: str) -> PreparedEnvironment:
 
 
 def _outcome(f: FindingInput) -> TriageRunOutput:
-    from infosec_harness.intake import adapters
-
-    finding = adapters.to_finding(f)
+    finding = Finding.from_input(f)
     return TriageRunOutput(
         finding=finding, prepared_status="ready",
         result=TriageResult(fingerprint=finding.fingerprint,

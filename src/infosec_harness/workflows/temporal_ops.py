@@ -2,7 +2,8 @@
 
 Agent calls go to the durable agents (their model/tool calls become activities via
 TemporalDurability); deterministic side effects go to activities. Bookkeeping uses
-precomputed, cached maps so nothing here does disk or config I/O inside the workflow.
+precomputed, cached maps so nothing here does disk or config I/O inside the workflow. Outcome
+accounting is :mod:`infosec_harness.graph.pipeline`'s, shared with ``LocalOps``.
 """
 
 from __future__ import annotations
@@ -10,333 +11,168 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import timedelta
-from typing import Any
 
 from pydantic_ai.messages import UserContent
 from temporalio import workflow
-from temporalio.common import RetryPolicy
 
 from infosec_harness.agents.deps import AgentDeps
 from infosec_harness.domain.models import (
+    AgentOutcome,
     BuildResult,
     EnvironmentSpec,
+    Finding,
     ProbeExecution,
     ProbeSource,
     RepoSnapshot,
     SmokeResult,
     StackFingerprint,
 )
-from infosec_harness.graph.ops import AgentOutcome
 
 with workflow.unsafe.imports_passed_through():
-    from infosec_harness.agents import models as model_factory
-    from infosec_harness.agents.durable import (
-        AGENTS,
-        CONFIGS,
-        INTAKE_GENERATIONS,
-        LEGACY_ENV_PLANNER_CONFIG,
-        LEGACY_OUTPUT_AGENTS,
-        MODELS,
-        RETAINED_BUILD_AGENTS,
-        RETAINED_BUILD_CONFIGS,
-    )
-    from infosec_harness.agents.intake_generations import IntakeGeneration, IntakeGenerationName
-    from infosec_harness.agents.registry import ResolvedAgentConfig
-    from infosec_harness.evals.trajectory import count_repeated_calls, inspect_messages
+    # Imported here, on the host, so nothing below imports or reads configuration in-workflow.
+    import pydantic_ai.usage  # noqa: F401 - used by graph.pipeline.partial_outcome
+
+    import infosec_harness.agents.models  # noqa: F401 - used by graph.pipeline
+    import infosec_harness.agents.stubs  # noqa: F401 - resolved lazily by stub-mode model resolution
+    import infosec_harness.agents.trajectory  # noqa: F401 - used by graph.pipeline
+    import infosec_harness.inference.wire.protocol  # noqa: F401 - used for broker bindings
+    import infosec_harness.inference.worker.provenance  # noqa: F401 - used by graph.pipeline
+    from infosec_harness.agents.durable import AGENTS, CONFIGS
+    from infosec_harness.graph.pipeline import run_recorded
     from infosec_harness.workflows import activities
     from infosec_harness.workflows.accounting import RootAccounting
+    from infosec_harness.workflows.activity_options import HEARTBEAT, RETRY, SHORT
+    from infosec_harness.workflows.payloads import (
+        BuildArgs,
+        CloseBrokerRunArgs,
+        ProbeArgs,
+        RecordRecipeArgs,
+        ResolveLocationArgs,
+        SmokeArgs,
+    )
 
 
-# Temporal's default retry policy is *unlimited* attempts. A deterministic programming
-# error in one of these activities (a bad signature, a validation failure) would then retry
-# forever and the workflow would hang rather than fail — silently holding a worker slot.
-# Bound the attempts and never retry the error classes that cannot succeed on a retry.
-_NON_RETRYABLE = ["TypeError", "ValueError", "AttributeError", "KeyError", "ValidationError"]
-_RETRY = RetryPolicy(maximum_attempts=3, non_retryable_error_types=_NON_RETRYABLE)
+def _workflow_clock() -> float:
+    """Deterministic workflow time, in seconds, for agent-call latency."""
+    return workflow.now().timestamp()
 
 
 class TemporalOps:
-    """Bound to one workflow execution; created inside the workflow's run method."""
+    """Bound to one workflow execution; created inside the workflow's run method.
 
-    def __init__(self, *, intake_atomic_inline: bool = False,
-                 intake_source_guidance: bool = False) -> None:
-        self._intake_atomic_inline = intake_atomic_inline
-        self._intake_source_guidance = intake_source_guidance
-        self._intake_generations = INTAKE_GENERATIONS
-        self._accounting = RootAccounting()
+    ``root_id`` and ``fingerprint`` say which batch budget and which finding this workflow's
+    operations are accounted to; both come from the workflow's own arguments.
+    """
+
+    def __init__(self, *, root_id: str, fingerprint: str) -> None:
+        self._accounting = RootAccounting(root_id=root_id, fingerprint=fingerprint)
         self._broker_identity: tuple[str, str] | None = None
+        # Built and resolved on the host: reading a spec inside a workflow would be I/O. The
+        # immutable config retains its declared budget and applies repository-size scaling.
         self._agents = AGENTS
-        self._legacy_output_agents = LEGACY_OUTPUT_AGENTS
-        self._legacy_env_planner_config = LEGACY_ENV_PLANNER_CONFIG
-        self._env_planner_output_v2: bool | None = None
-        self._serial_build_settings: bool | None = None
-        self._retained_build_agents = RETAINED_BUILD_AGENTS
-        self._retained_build_configs = RETAINED_BUILD_CONFIGS
         self._configs = CONFIGS
-        self._models = MODELS
-        # Precomputed on the host: reading a spec inside a workflow would be I/O. The immutable
-        # config retains its declared budget and applies repository-size scaling replay-safely.
+
+    async def resolve_location(self, finding: Finding, repo_path: str) -> Finding | None:
+        return await workflow.execute_activity(activities.resolve_location_activity,
+            ResolveLocationArgs(finding=finding, repo_path=repo_path), **SHORT)
 
     async def run_agent(
-        self, name: str, prompt: Sequence[UserContent], deps: AgentDeps
+        self, name: str, prompt: Sequence[UserContent], deps: AgentDeps, *,
+        record: list[AgentOutcome] | None = None,
     ) -> AgentOutcome:
-        # Resolve the replay generation before any accounting activity. If an old execution
-        # has reached a live frontier without a recorded model request, fail without mutating
-        # budget state or issuing current behavior under historical provenance.
-        self._agent_for(name)
-        selected_config = self._config_for(name)
-        config = selected_config.for_source_files(deps.source_files)
-        identity = await self._accounting.reserve(
-            config, configuration_digest=selected_config.digest
-        )
-        if (getattr(config.model, "broker_contract", None) is not None
-                and workflow.patched("credential-broker-invocation-v1")):
-            if identity is None:
-                raise RuntimeError("Brokered durable execution requires a persisted root reservation")
+        base_config = self._configs[name]
+        config = base_config.for_source_files(deps.source_files)
+        identity = await self._accounting.reserve(config, configuration_digest=base_config.digest)
+        if config.model.broker_contract is not None:
             self._broker_identity = (workflow.info().run_id, identity[0])
-            from infosec_harness.inference.protocol import ExecutorContract, ReservationBinding
+            from infosec_harness.inference.wire.protocol import InvocationRequest
             # Host-resolved contract and a side-effecting activity; replay only reads its result.
-            request = {
-                "mode": "temporal", "root_id": identity[0], "run_id": workflow.info().run_id,
-                "invocation_id": identity[1], "operation_id": identity[1], "agent": name,
-                "configuration_digest": selected_config.digest,
-                "contract": config.model.broker_contract.model_dump(mode="json"),
-            }
+            request = InvocationRequest(
+                mode="temporal", root_id=identity[0], run_id=workflow.info().run_id,
+                invocation_id=identity[1], operation_id=identity[1], agent=name,
+                configuration_digest=base_config.digest,
+                contract=config.model.broker_contract,
+            )
             binding = await workflow.execute_activity(activities.issue_broker_invocation_activity,
-                request, start_to_close_timeout=timedelta(seconds=45), retry_policy=_RETRY)
-            deps = deps.model_copy(update={
-                "broker_binding": ReservationBinding.model_validate(binding),
-                "broker_contract": ExecutorContract.model_validate(request["contract"]),
-            })
+                request, start_to_close_timeout=timedelta(seconds=45), retry_policy=RETRY)
+            deps = deps.model_copy(update={"broker_binding": binding,
+                                           "broker_contract": request.contract})
+        recorded = [] if record is None else record
+        before = len(recorded)
         try:
-            outcome = await self._run_agent(name, prompt, deps)
+            outcome = await run_recorded(self._agents[name], name, prompt, deps, config,
+                                         recorded, clock=_workflow_clock)
         except (Exception, asyncio.CancelledError) as exc:
-            await self._accounting.settle(identity, None, type(exc).__name__)
+            # run_recorded appends the failed call's partial outcome when it has one.
+            partial = recorded[before] if len(recorded) > before else None
+            await self._accounting.settle(identity, None, type(exc).__name__, partial=partial)
             raise
         await self._accounting.settle(identity, outcome)
         return outcome
 
-    async def _run_agent(
-        self, name: str, prompt: Sequence[UserContent], deps: AgentDeps
-    ) -> AgentOutcome:
-        # Keep this three-argument seam stable for failure injection and recovery tests.
-        # run_agent already performed the fail-closed check before accounting; selecting
-        # again is pure and returns the same workflow-patched generation.
-        agent = self._agent_for(name)
-        started = workflow.now()
-        effective_config = self._config_for(name).for_source_files(deps.source_files)
-        result = await agent.run(
-            list(prompt), deps=deps, usage_limits=effective_config.budget.to_usage_limits()
-        )
-        usage = result.usage
-        model_name = (
-            self._intake_for(check_frontier=False).model_name
-            if name == "intake"
-            else self._models[name]
-        )
-        cost, estimated = model_factory.estimate_cost(model_name, usage)
-        tools_called, skills_loaded = inspect_messages(messages := result.all_messages())
-        repeated = count_repeated_calls(messages)
-        recorded_config = effective_config.model_dump(mode="json")
-        if effective_config.model.broker_contract is not None:
-            from infosec_harness.inference.provenance import runtime_evidence
-            recorded_config["inference_runtime"] = runtime_evidence(messages)
-        return AgentOutcome(
-            output=result.output,
-            agent=name,
-            model_name=model_name,
-            config_hash=effective_config.digest,
-            effective_config=recorded_config,
-            input_tokens=usage.input_tokens,
-            output_tokens=usage.output_tokens,
-            cache_read_tokens=usage.cache_read_tokens or 0,
-            cache_write_tokens=usage.cache_write_tokens or 0,
-            cost_usd=cost,
-            cost_estimated=estimated,
-            latency_s=(workflow.now() - started).total_seconds(),
-            tools_called=tools_called,
-            skills_loaded=skills_loaded,
-            requests=usage.requests or 0,
-            tool_calls=usage.tool_calls,
-            repeated_tool_calls=repeated,
-        )
-
     async def close(self) -> None:
         if self._broker_identity is None:
             return  # No owned reservation or lease exists merely because config names a broker.
-        if not workflow.patched("credential-broker-invocation-v1"):
-            return  # Historical replay cannot issue a new cleanup activity.
         run_id, root_id = self._broker_identity
         await asyncio.shield(workflow.execute_activity(activities.close_broker_run_activity,
-            {"run_id": run_id, "root_id": root_id},
-            start_to_close_timeout=timedelta(seconds=120), retry_policy=_RETRY))
-
-    def _intake_for(self, *, check_frontier: bool = True) -> IntakeGeneration:
-        if self._intake_atomic_inline:
-            return self._intake_generations["atomic" if self._intake_source_guidance else "atomic_v3"]
-        key: IntakeGenerationName = "quoted" if workflow.patched("intake-evidence-v1") else "bare"
-        if check_frontier and not workflow.unsafe.is_replaying():
-            raise RuntimeError(
-                "legacy intake execution has no recorded model activity; "
-                "retry the triage as a new workflow"
-            )
-        return self._intake_generations[key]
-
-    def intake_prompt(self, task: str, payload: dict[str, Any]) -> list[UserContent]:
-        return self._intake_for().render_prompt(task, payload)
-
-    def _env_planner_is_current(self) -> bool:
-        if self._env_planner_output_v2 is None:
-            self._env_planner_output_v2 = workflow.patched("env-planner-output-v2")
-        return self._env_planner_output_v2
-
-    def _build_settings_are_current(self, name: str) -> bool:
-        if name not in self._retained_build_configs:
-            return True
-        if self._serial_build_settings is None:
-            self._serial_build_settings = workflow.patched("build-serial-tool-settings-v1")
-        if not self._serial_build_settings and not workflow.unsafe.is_replaying():
-            raise RuntimeError("Historical build settings cannot execute an unrecorded live frontier")
-        return self._serial_build_settings
-
-    def _config_for(self, name: str) -> ResolvedAgentConfig:
-        if not self._build_settings_are_current(name):
-            return self._retained_build_configs[name]
-        if name == "env-planner" and not self._env_planner_is_current():
-            return self._legacy_env_planner_config
-        return (
-            self._intake_for(check_frontier=False).config
-            if name == "intake"
-            else self._configs[name]
-        )
-
-    def _agent_for(self, name: str):
-        """Select the output-contract generation as a replay-recorded workflow decision."""
-        # Old histories contain `final_result` payloads parsed by the original contracts.
-        # Record one workflow patch decision before scheduling the model activity, then keep
-        # each history on the matching Temporal activity identity forever.
-        if name == "intake":
-            return self._intake_for().agent
-        patch = {
-            "build-repair": "build-repair-install-source-v1",
-            "intake": "intake-evidence-v1",
-        }.get(name, "agent-output-contracts-v2")
-        current = True
-        if name in self._legacy_output_agents:
-            current = (self._env_planner_is_current() if name == "env-planner"
-                       else workflow.patched(patch))
-        if not current:
-            # Env-planner also retains its specification and resolved config generation.
-            # Other legacy agents retain only the parser/activity identity, not the old
-            # prompt/config. Neither case permits fresh behavior under historical provenance:
-            # recorded or pending activities replay, but an unrecorded live frontier fails.
-            if not workflow.unsafe.is_replaying():
-                raise RuntimeError(
-                    f"legacy {name} execution has no recorded model activity; "
-                    "retry the triage as a new workflow"
-                )
-            return self._legacy_output_agents[name]
-        if not self._build_settings_are_current(name):
-            return self._retained_build_agents[name]
-        return self._agents[name]
+            CloseBrokerRunArgs(run_id=run_id, root_id=root_id),
+            start_to_close_timeout=timedelta(seconds=120), retry_policy=RETRY))
 
     async def new_nonce(self) -> str:
         return await workflow.execute_activity(
             activities.new_nonce_activity,
-            start_to_close_timeout=timedelta(seconds=10),
-            retry_policy=_RETRY,
-        )
+            start_to_close_timeout=timedelta(seconds=10), retry_policy=RETRY)
 
     async def build_environment(self, snapshot: RepoSnapshot, spec: EnvironmentSpec) -> BuildResult:
         return await self._execute_workload(
-            activities.build_environment_activity,
-            {"snapshot": snapshot.model_dump(), "spec": spec.model_dump()},
-            start_to_close_timeout=timedelta(minutes=40),
-            retry_policy=_RETRY,
-        )
+            activities.build_environment_activity, BuildArgs(snapshot=snapshot, spec=spec),
+            start_to_close_timeout=timedelta(minutes=40))
 
     async def smoke_test(
         self, image_tag: str, test_command: str = "", *, language: str = "", module_path: str = ""
     ) -> SmokeResult:
         return await self._execute_workload(
             activities.smoke_test_activity,
-            {
-                "image_tag": image_tag,
-                "test_command": test_command,
-                "language": language,
-                "module_path": module_path,
-            },
+            SmokeArgs(image_tag=image_tag, test_command=test_command, language=language,
+                      module_path=module_path),
             # Longer than the runner check alone: this also compiles and runs a canary test
             # inside the image, which on a JVM project means a Maven invocation.
-            start_to_close_timeout=timedelta(minutes=8),
-            retry_policy=_RETRY,
-        )
+            start_to_close_timeout=timedelta(minutes=8))
 
     async def lookup_recipe(self, stack: StackFingerprint) -> EnvironmentSpec | None:
         return await workflow.execute_activity(
-            activities.lookup_recipe_activity,
-            stack,
-            start_to_close_timeout=timedelta(seconds=30),
-            retry_policy=_RETRY,
-        )
+            activities.lookup_recipe_activity, stack,
+            start_to_close_timeout=timedelta(seconds=30), retry_policy=RETRY)
 
     async def record_recipe(
         self, stack: StackFingerprint, spec: EnvironmentSpec, *, worked: bool
     ) -> None:
         await workflow.execute_activity(
             activities.record_recipe_activity,
-            {
-                "stack": stack.model_dump(mode="json"),
-                "spec": spec.model_dump(mode="json"),
-                "worked": worked,
-            },
-            start_to_close_timeout=timedelta(seconds=30),
-            retry_policy=_RETRY,
-        )
+            RecordRecipeArgs(stack=stack, spec=spec, worked=worked),
+            start_to_close_timeout=timedelta(seconds=30), retry_policy=RETRY)
 
     async def execute_probe(
         self, image_tag: str, probe: ProbeSource, spec: EnvironmentSpec, nonce: str, attempt: int
     ) -> ProbeExecution:
         return await self._execute_workload(
             activities.execute_probe_activity,
-            {
-                "image_tag": image_tag,
-                "probe": probe.model_dump(),
-                "spec": spec.model_dump(),
-                "nonce": nonce,
-                "attempt": attempt,
-            },
-            start_to_close_timeout=timedelta(minutes=10),
-            retry_policy=_RETRY,
-        )
+            ProbeArgs(image_tag=image_tag, probe=probe, spec=spec, nonce=nonce, attempt=attempt),
+            start_to_close_timeout=timedelta(minutes=10))
 
-    async def _execute_workload[T](
-        self,
-        activity: Callable[[dict], Awaitable[T]],
-        args: dict,
-        *,
+    async def _execute_workload[A, T](
+        self, activity: Callable[[A], Awaitable[T]], args: A, *,
         start_to_close_timeout: timedelta,
-        retry_policy: RetryPolicy,
     ) -> T:
         """Reserve the full retry envelope before any sandbox workload is dispatched."""
         identity = await self._accounting.reserve_execution(
             activity.__name__,
-            start_to_close_timeout.total_seconds() * (retry_policy.maximum_attempts or 1),
+            start_to_close_timeout.total_seconds() * (RETRY.maximum_attempts or 1),
         )
-        options = {}
-        if workflow.patched("workload-heartbeat-v1"):
-            options = {
-                "heartbeat_timeout": timedelta(seconds=30),
-                "cancellation_type": workflow.ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
-            }
         try:
             result = await workflow.execute_activity(
-                activity,
-                args,
-                start_to_close_timeout=start_to_close_timeout,
-                retry_policy=retry_policy,
-                **options,
-            )
+                activity, args, start_to_close_timeout=start_to_close_timeout,
+                retry_policy=RETRY, **HEARTBEAT)
         except (Exception, asyncio.CancelledError) as exc:
             await self._accounting.settle(identity, None, type(exc).__name__)
             raise

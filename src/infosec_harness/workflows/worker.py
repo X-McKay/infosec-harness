@@ -18,14 +18,12 @@ from infosec_harness.workflows.activities import ALL_ACTIVITIES
 from infosec_harness.workflows.workflows import (
     ComponentPreparationWorkflow,
     FindingTriageWorkflow,
-    RepoPreparationWorkflow,
     TriageBatchWorkflow,
 )
 
 # TriageBatchWorkflow.__pydantic_ai_agents__ carries the durable agents; PydanticAIPlugin
 # registers their model/tool activities on the worker (once, worker-global).
-WORKFLOWS = [TriageBatchWorkflow, RepoPreparationWorkflow, ComponentPreparationWorkflow,
-             FindingTriageWorkflow]
+WORKFLOWS = [TriageBatchWorkflow, ComponentPreparationWorkflow, FindingTriageWorkflow]
 
 
 async def connect() -> Client:
@@ -53,9 +51,9 @@ async def run_worker() -> None:
     # emits workflow/activity spans, and the model/tool activities run in this process.
     if telemetry.configure("worker"):
         logger.info("Tracing enabled for worker")
-    from infosec_harness.sandbox import docker
+    from infosec_harness.sandbox.boundary import ensure_builder
     try:
-        await docker.ensure_builder()
+        await ensure_builder()
     except Exception:  # noqa: BLE001 - retain worker access to status/recovery activities
         logger.exception("Sandbox builder unavailable; environment builds will fail closed until runtime setup succeeds")
     client = await connect()

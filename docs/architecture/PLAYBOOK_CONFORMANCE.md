@@ -9,19 +9,10 @@ just conformance                                  # needs agentctl on PATH
 just conformance /path/to/playbooks      # or a checkout of that repo
 ```
 
-Historical validator output (not a current-tree acceptance result):
-
-```
-PASS agents   errors=0 waived=11 warnings=22
-PASS skills   errors=0 waived= 0 warnings= 0
-PASS risk     errors=0 waived= 0 warnings=22
-PASS system   errors=0 waived=11 warnings=24
-```
-
 `scripts/conformance.py` mirrors the repository into the layout `agentctl` discovers and runs
-its four validators against the real YAML. The warnings are the ones that should be there: the
-risk assessments are drafts with open questions, and a draft cannot satisfy production
-readiness until a named owner accepts it.
+the agent and skill validators against the real YAML. The playbook's `risk` and `system`
+validators are not run: they read per-agent risk-assessment and System Spec documents, and this
+repository keeps that content in the scenario library and the documents below instead.
 
 ## Where the artifacts live
 
@@ -31,17 +22,34 @@ ships in the wheel; everything reviewers read *about* the system stays at the re
 | Artifact | Path | Ships? | Source of truth |
 | --- | --- | --- | --- |
 | Agent Specs | `src/infosec_harness/agents/<name>/agent.yaml` | yes | hand-authored |
-| Skills | `src/infosec_harness/skills/<name>/SKILL.md` | yes | `scripts/skill_specs.py` → `restructure_skills.py` |
+| Skills | `src/infosec_harness/skills/<name>/SKILL.md` | yes | hand-authored, self-contained |
 | Model catalogue | `src/infosec_harness/config/models.yaml` | yes | hand-authored |
 | Tool policies | `src/infosec_harness/tools/<toolset>/tool.yaml` | yes | hand-authored |
 | Eval datasets | `src/infosec_harness/agents/<name>/evals/dataset.yaml` | yes | hand-authored |
-| Release policies | `src/infosec_harness/agents/<name>/evals/release-policy.yaml` | yes | `scripts/gen_release_policies.py` |
-| Risk assessments | `docs/risk-assessments/` | no | `scripts/risk_scenarios.py` → `gen_risk_assessments.py` |
-| System Spec | `systems/triage-system/` | no | `scripts/gen_system_spec.py` |
-| Threat model | `docs/threat-models/triage-system.md` | no | hand-authored |
+| Release policies | `src/infosec_harness/agents/<name>/evals/release-policy.yaml` | yes | hand-authored |
+| Risk scenarios and controls | `src/infosec_harness/agents/risk-scenarios.yaml` | yes | hand-authored |
+| Risk assessment and threat model | `docs/threat-models/triage-system.md` | no | hand-authored |
+| System composition | `docs/architecture/TRIAGE_SYSTEM.md` | no | hand-authored |
 
-`just governance` regenerates everything derived. Tests assert the committed files match, so
-the generators cannot drift from what is reviewed.
+Every artifact above is edited directly. What the runtime needs from the risk assessment --
+each agent's scenarios and the tier they establish -- it reads from the library at construction
+(`src/infosec_harness/agents/governance.py`, `src/infosec_harness/agents/risk.py`), and the
+release gate on scenario coverage reads the same file
+(`src/infosec_harness/evals/coverage.py`). The playbook rules a per-agent assessment document
+would encode are held by tests: `tests/agents/test_risk_scenarios.py`,
+`tests/development/test_release_policies.py` and `tests/evals/test_eval_coverage.py`.
+
+## Release gates
+
+Release gates are defined only in each agent's
+`src/infosec_harness/agents/<name>/evals/release-policy.yaml`: hard gates (the
+metric must equal the limit) and thresholds (`min`/`max`). `src/infosec_harness/evals/gates.py`
+is the one evaluator; the release report, calibration admissibility and the
+unevidenced-safety gate all read the policy through it. A metric that is missing or not a number
+makes its check `not_checked`, never `passed`, and a gate that could not have failed for a run
+is reported in the report's `inert_checks`. Budget behavior is gated by
+`budget_exhausted_count`; the task-success floor is 0.75 for every agent, an explicit owner
+decision recorded in [release evidence](../evaluation/RELEASE_EVIDENCE.md).
 
 ## Deliberate deviations
 
@@ -69,6 +77,18 @@ pydantic-ai's own Agent Spec schema accepts an integer *or* an `AgentRetries` ma
 distinction the framework supports and the retry-bound calculation relies on. Worth raising
 upstream.
 
+**No per-agent risk-assessment document** (waived, `AGENT008`/`AGENT035`, 11 agents). The
+playbook expects `metadata.risk_assessment` to name a document. Here the assessment is the
+packaged scenario library (`agents/risk-scenarios.yaml`): governance derives each agent's tier
+from it and refuses to construct a spec that declares another, which is stricter than a
+document a validator opens and nothing enforces. The narrative assessment is in the
+[threat model](../threat-models/triage-system.md).
+
+**Tool policies carry only enforced fields** (waived, `TOOL003`/`TOOL009`/`TOOL011`/`TOOL012`).
+`owner`, `authorization_scopes` and `data_classification` were declared in every `tool.yaml`
+and read by nothing, which made them claims no check could fail. The remaining fields (effect,
+retry safety, timeout, output bound, tools) are read and enforced by `agents/capabilities.py`.
+
 **A shared threat model.** Each agent's spec points at
 `docs/threat-models/triage-system.md` rather than a per-agent document, because the trust
 boundaries are system-level: the same untrusted repository reaches all of them, and the same
@@ -84,7 +104,7 @@ Two stores, because they answer different questions and a single one does neithe
 | `evals/baselines/<agent>/<tier>.json` | the accepted result per agent per model | committed, reviewed | the commit it was measured at |
 
 The database is where runs go: incremental, queryable, and written after every case so a run
-killed halfway keeps what it scored. The offline demo uses `.harness/demo.db`; managed services use PostgreSQL. Neither store is
+killed halfway keeps what it scored. Local commands use `.harness/local.db`; managed services use PostgreSQL. Neither store is
 reviewed in Git or distributed with a clone. So the handful of numbers that matter later are
 promoted into the repository, one file per agent per model, reviewed in a pull request like any
 other change and readable without the database that produced them.
@@ -98,8 +118,11 @@ Three of those are worth their own note.
 **`git_dirty`.** `git rev-parse HEAD` answers the same SHA whether or not the tree matches it,
 so a run over uncommitted edits used to be filed against a commit that never contained the code
 it measured, with nothing downstream able to tell. `harness eval baseline save` refuses such a
-run outright, as it refuses a truncated one: a baseline that quietly lies is worse than no
-baseline, because it becomes the thing every later comparison is read against.
+run outright, as it refuses a run with no commit, one not recorded as complete (truncated,
+running, or with no status), one over less than the full dataset (a calibration, held-out or
+`--dataset` split), and a stub-model run: a baseline that quietly lies is worse than no
+baseline, because it becomes the thing every later comparison is read against. The rules are
+listed with the files in [`evals/baselines/README.md`](../../evals/baselines/README.md).
 
 **The model, as columns rather than only inside `config_hash`.** The hash fingerprints the
 model but cannot be grouped by, filtered on, or read, so "how did `verdict` do on opus" was not
@@ -114,7 +137,7 @@ rather than letting the column be read straight.
 ```bash
 harness eval run verdict -m sonnet -m opus -m haiku   # one dataset, three models, one table
 harness eval compare --agent verdict                  # the same, asked after the fact
-harness eval baseline save exp-<id>                   # promote an accepted result
+harness eval baseline save --latest verdict           # promote the newest accepted result
 ```
 
 ## Where the structure still differs from the reference architecture
@@ -147,57 +170,47 @@ can run against the wheel), evaluators in `src/infosec_harness/evals/`, fixtures
 checks use shared root fixtures. The directory conventions are recorded in
 [REPOSITORY_GUIDE.md](../development/REPOSITORY_GUIDE.md#directory-conventions).
 
-**No `activities/`, `runtime/`, `observability/` or `policy/` packages.** Activities are one
-module (`workflows/activities.py`), observability is `telemetry.py`, and policy is split
+**No `activities/`, `runtime/`, `observability/` or `policy/` packages.** Activities are two
+modules (`workflows/activities.py` and the durable-record writes in
+`workflows/persistence_activities.py`), observability is `telemetry.py`, and policy is split
 between `tools/policies.py` and `agents/governance.py`. Each is currently a file's worth of
 code; promoting a file to a package before it needs to be one adds a directory, not structure.
 
 ## Implemented development and provenance structure
 
-Canonical development skills live under `dev-skills/`; `.agents/skills/` and `.claude/skills/`
-are generated discovery copies. `just dev-skills-check` prevents drift. These are distinct from
-packaged runtime skills.
+Development skills live under `.claude/skills/`; `.agents/skills` is a symlink to the same
+files for Codex. These are distinct from packaged runtime skills.
 
-`graph/manifests.py` builds persisted harness, repository, environment and capability manifests.
-They carry versioned runtime/policy digests and resolved agent configuration; the implementation
-and `tests/runtime/test_snapshot_integrity.py` establish the current fields. The manifest is persisted
+`src/infosec_harness/graph/manifests.py` builds persisted harness, repository, environment and capability manifests.
+The persisting worker adds the manifest `schema_version` and its packaged-source identity; the
+implementation and `tests/runtime/test_snapshot_integrity.py` establish the current fields. The manifest is persisted
 with triage output rather than represented solely by an opaque configuration hash.
 
 Completed agent evals automatically export reports under `.harness/reports/evals/`; these
 transient reports are separate from committed accepted baselines.
 
+Operator qualification runners for the credential broker live in
+`src/infosec_harness/qualification/broker/` with their offline regressions in
+`tests/qualification/`. Serving code never imports them; they run from a checkout as
+`python -m infosec_harness.qualification.broker.<module>`.
+
 ## Historical live release-gate measurements
 
-The earlier live validation recorded the following results with budgets enforced (`harness eval run <agent> --report`,
-then `agentctl release check`):
-
-| agent | task success | schema validity | budget breaches | unevidenced safety | gate |
-| --- | --- | --- | --- | --- | --- |
-| `context` | 100% (7/7) | 1.0 | 0 | 0 | **pass** |
-| `probe-diagnosis` | 100% (7/7) | 1.0 | 0 | 0 | **pass** |
-| `verdict` | 67% (2/3) | 0.67 | 0 | 0 | **fail** |
-
-Two things worth reading off that table.
-
-No measured run hit its budget; this sample alone does not validate runaway-execution braking. And `unevidenced_safe_verdicts` is 0 everywhere: no agent
-claimed safety on evidence that could not support it.
-
-The historical `verdict` result failed its own gate. Its `inconclusive_env` case omitted the
-contract-required `inconclusive_reason` about a third of the time, exhausts its retries, and
-returns no valid output — the residual issue recorded in `LIVE_VALIDATION.md`. The gate catching
-it is the point: this is a real defect being blocked, not a threshold set to flatter. In
-production the graph fallback turns it into an `inconclusive` verdict rather than a lost
-finding, so the failure is contained; it is still a failure.
+The first live release-gate measurements, including a `verdict` gate failure that the gate
+correctly blocked, are recorded in
+[the live-model validation evidence](../evidence/2026-09-25-live-model-validation/LIVE_VALIDATION.md).
+They predate the current policies and are not current results.
 
 ## What conformance does and does not establish
 
 It establishes that the contracts are complete and internally consistent: every agent has an
-owner, a governance tier that matches its risk assessment, an execution class its tools
-justify, a per-run budget that is enforced, an eval dataset, and an executable release gate.
+owner, a governance tier that matches the risk scenarios it carries, an execution class its
+tools justify, a per-run budget that is enforced, an eval dataset, and an executable release
+gate.
 
-Conformance does not establish actual runtime isolation or release readiness. Current and
-historical execution evidence, remaining clean-host acceptance gaps, and real versus mocked
-checks are distinguished in [IMPLEMENTATION_VALIDATION.md](../validation/IMPLEMENTATION_VALIDATION.md).
+Conformance does not establish actual runtime isolation or release readiness. Execution
+evidence, clean-host acceptance gaps, and real versus mocked checks are recorded per run under
+[`docs/evidence/`](../evidence/README.md).
 Re-run runtime fixtures for the deployment being assessed; names and manifests alone are not
 execution evidence.
 

@@ -24,14 +24,15 @@ from pathlib import Path
 from typing import Protocol
 
 from infosec_harness.domain.models import EnvironmentSpec, StackFingerprint
-from infosec_harness.sandbox.docker import default_workspace
+from infosec_harness.persistence.paths import workspace_dir
+from infosec_harness.settings import get_settings
 
 
 def stack_key(stack: StackFingerprint) -> str:
     """A stable identity for a kind of repository, not a particular one.
 
     Only shape goes in. File *counts* are excluded, since two Maven projects of different sizes
-    want the same recipe, and so are `test_dirs` and `registries`, which vary per project. What
+    want the same recipe, and so is `test_dirs`, which varies per project. What
     remains -- the dominant language, the build systems, the test frameworks, the declared Java
     level, and the manifest filenames -- is exactly what determines how a repo is built and
     tested.
@@ -40,9 +41,8 @@ def stack_key(stack: StackFingerprint) -> str:
     of mismatch are hard build failures: sharing one recipe between a Java 7 and a Java 17 project
     hands one of them a JDK whose javac refuses its language level.
     """
-    top = max(stack.languages, key=lambda k: (stack.languages[k], k)) if stack.languages else ""
     parts = [
-        f"lang={top}",
+        f"lang={stack.top_language}",
         "build=" + ",".join(sorted(stack.build_systems)),
         "test=" + ",".join(sorted(stack.test_frameworks)),
         f"java={stack.java_release if stack.java_release is not None else ''}",
@@ -80,14 +80,8 @@ class FilesystemRecipeStore:
     """
 
     def __init__(self, root: Path | None = None) -> None:
-        # HARNESS_RECIPE_CACHE_DIR exists so a caller can isolate the cache. Evals and tests
-        # must: a recipe surviving between runs makes them irreproducible, since run N+1 skips
-        # the planner that run N exercised and is therefore measuring something else. That is
-        # not hypothetical -- it is how this environment variable came to exist.
-        import os
-
-        self.root = root or Path(
-            os.environ.get("HARNESS_RECIPE_CACHE_DIR") or default_workspace() / "recipes")
+        # `settings.recipe_cache_dir` exists so a caller can isolate the cache; see Settings.
+        self.root = root or get_settings().recipe_cache_dir or workspace_dir() / "recipes"
         self.root.mkdir(parents=True, exist_ok=True)
 
     def _path(self, key: str) -> Path:
@@ -119,10 +113,9 @@ class FilesystemRecipeStore:
         self._path(key).unlink(missing_ok=True)
 
 
-def get_recipe_store() -> RecipeStore:
-    from infosec_harness.settings import get_settings
-
-    if not get_settings().recipe_cache_enabled:
+def get_recipe_store(enabled: bool | None = None) -> RecipeStore:
+    """The one recipe-cache switch: ``enabled`` overrides ``settings.recipe_cache_enabled``."""
+    if not (get_settings().recipe_cache_enabled if enabled is None else enabled):
         return NullRecipeStore()
     return FilesystemRecipeStore()
 
@@ -134,3 +127,22 @@ def is_cacheable(spec: EnvironmentSpec) -> bool:
     against a different repo of the same stack would build the wrong directory, or nothing.
     """
     return spec.scope == "full" and not spec.module_path
+
+
+def lookup_recipe(stack: StackFingerprint, store: RecipeStore | None = None) -> EnvironmentSpec | None:
+    return (store or get_recipe_store()).lookup(stack_key(stack))
+
+
+def record_recipe_outcome(stack: StackFingerprint, spec: EnvironmentSpec, *, worked: bool,
+                          store: RecipeStore | None = None) -> None:
+    """Keep a spec that built and smoke-tested, drop one that did not.
+
+    Eviction on first failure is the whole safety story: a stale recipe costs exactly one build
+    attempt, once, and then stops existing. A spec that worked but cannot generalise to another
+    repository (a partial build) is neither kept nor evicted.
+    """
+    store, key = store or get_recipe_store(), stack_key(stack)
+    if worked and is_cacheable(spec):
+        store.record(key, spec)
+    elif not worked:
+        store.forget(key)

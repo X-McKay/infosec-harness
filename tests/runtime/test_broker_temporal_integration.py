@@ -1,4 +1,7 @@
-"""Layer D: real checkout Temporal, broker HTTPS and own PostgreSQL; native shim only."""
+"""Layer D: real checkout Temporal, broker HTTPS and own PostgreSQL; native shim only.
+
+Run only by ``scripts/broker_service_check.py --temporal``, which supplies the service manifest.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -15,68 +18,32 @@ import pytest
 from temporalio import workflow
 
 with workflow.unsafe.imports_passed_through():
-    from datetime import timedelta
-
-    from broker_service_fixture import AGENTS, ROOT, environment
     from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
     from temporalio.client import Client
-    from temporalio.worker import Replayer, Worker
-    from temporalio.workflow import ActivityConfig
+    from temporalio.worker import Replayer
     from test_broker_service_integration import services  # noqa: F401
 
     from infosec_harness.agents import registry
-    from infosec_harness.agents.deps import AgentDeps
-    # Qualification shortens only model activity timeout to observe a killed worker
-    # retry promptly; retry policy and real registered model/tool construction remain.
-    if os.environ.get("HARNESS_BROKER_SERVICE_MANIFEST"):
-        registry.MODEL_ACTIVITY = ActivityConfig(start_to_close_timeout=timedelta(seconds=20),
-                                                 retry_policy=registry.ACTIVITY_RETRY)
-    from infosec_harness.agents.durable import AGENT_LIST, CONFIGS
     from infosec_harness.persistence import budgets, db
-    from infosec_harness.workflows.activities import ALL_ACTIVITIES
-    from infosec_harness.workflows.temporal_ops import TemporalOps
+    from infosec_harness.qualification.broker.service import (
+        AGENTS,
+        ROOT,
+        environment,
+        use_service_activity_timeout,
+    )
 
+    if os.environ.get("HARNESS_BROKER_SERVICE_MANIFEST"):
+        use_service_activity_timeout()
+    from infosec_harness.qualification.broker.service_workflow import BrokerQualificationWorkflow
 
-@workflow.defn(name="BrokerServiceQualificationWorkflow")
-class BrokerQualificationWorkflow:
-    __pydantic_ai_agents__ = AGENT_LIST
-
-    @workflow.run
-    async def run(self, args: dict) -> dict:
-        ops = TemporalOps(intake_atomic_inline=bool(args.get("all_agents")))
-        try:
-            if args.get("all_agents"):
-                outputs = {}
-                for name in AGENTS:
-                    result = await ops.run_agent(name, [
-                        f"<broker-qualification-agent>{name}</broker-qualification-agent>\n"
-                        "Qualification contains no concrete weakness evidence."
-                    ], AgentDeps(repo_path=args["repo"], report_text="No concrete weakness evidence."))
-                    outputs[name] = {"output": result.output.model_dump(mode="json"),
-                        "output_type": type(result.output).__name__, "requests": result.requests,
-                        "input_tokens": result.input_tokens, "output_tokens": result.output_tokens}
-                return outputs
-            result = await ops.run_agent("context", ["Inspect sample.py; return unknown reachability."],
-                AgentDeps(repo_path=args["repo"]))
-            return {"summary": result.output.summary, "requests": result.requests,
-                    "tools": result.tools_called}
-        finally:
-            await ops.close()
-
-
-async def serve_worker(manifest: dict) -> None:
-    client = await Client.connect(manifest["temporal_address"], plugins=[PydanticAIPlugin()])
-    worker = Worker(client, task_queue=manifest["task_queue"], workflows=[BrokerQualificationWorkflow],
-                    activities=ALL_ACTIVITIES)
-    (Path(manifest["directory"]) / "temporal-worker-ready").write_text(str(os.getpid()))
-    await worker.run()
+pytestmark = pytest.mark.requires_service("HARNESS_BROKER_SERVICE_MANIFEST")
 
 
 def start_worker(manifest: dict, *, direct_stub=False):
     with (Path(manifest["directory"]) / "temporal-worker.log").open("ab") as log:
-        process = subprocess.Popen([sys.executable, str(ROOT / "tests" / "runtime" / "broker_service_fixture.py"),
+        process = subprocess.Popen([sys.executable, "-m", "infosec_harness.qualification.broker.service",
             "temporal-worker", "--manifest", manifest["manifest"],
-            *(["--direct-stub"] if direct_stub else [])], env=environment(manifest),
+            *(["--direct-stub"] if direct_stub else [])], cwd=ROOT, env=environment(manifest),
             stdout=log, stderr=log, start_new_session=True)
     with (Path(manifest["directory"]) / "pids.jsonl").open("a") as output:
         output.write(json.dumps({"pid": process.pid, "role": "temporal-worker"}) + "\n")
@@ -84,20 +51,24 @@ def start_worker(manifest: dict, *, direct_stub=False):
 
 
 async def stop_worker(process):
+    if process.poll() is not None:
+        return
     with suppress(ProcessLookupError):
         os.killpg(process.pid, signal.SIGTERM)
     try:
         await asyncio.to_thread(process.wait, 10)
     except subprocess.TimeoutExpired:
-        os.killpg(process.pid, signal.SIGKILL)
+        with suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
         await asyncio.to_thread(process.wait, 5)
 
 
-async def seed_root(root_id, *, accepted=True):
+async def seed_root(root_id):
+    from infosec_harness.agents.durable import CONFIGS
+
     state = budgets.initial_state({"requests": 10000, "tokens": 100_000_000, "cost_usd": 1000.0,
         "tool_calls": 10000, "agent_runs": 100, "execution_seconds": 10_000_000}, elapsed_seconds=240)
-    if accepted:
-        state["agent_config_digests"] = {name: config.digest for name, config in CONFIGS.items()}
+    state["agent_config_digests"] = {name: config.digest for name, config in CONFIGS.items()}
     async with db.session() as session:
         session.add(db.BudgetLedger(root_id=root_id, state=state))
         await session.commit()
@@ -119,7 +90,7 @@ async def test_real_temporal_worker_restart_saved_activity_and_zero_io_replay(se
     handle = None
     try:
         client = await Client.connect(values["temporal_address"], plugins=[PydanticAIPlugin()])
-        handle = await client.start_workflow(BrokerQualificationWorkflow.run, {"repo": values["repo"]},
+        handle = await client.start_workflow(BrokerQualificationWorkflow.run, {"repo": values["repo"], "root_id": root_id},
             id="batch:" + root_id, task_queue=values["task_queue"])
         for _ in range(600):
             if first.poll() is not None:
@@ -158,8 +129,8 @@ async def test_real_temporal_worker_restart_saved_activity_and_zero_io_replay(se
         attempts = [event.activity_task_started_event_attributes.attempt for event in history.events
                     if event.HasField("activity_task_started_event_attributes")]
         assert max(attempts) >= 2
-        from infosec_harness.inference import invocations
-        from infosec_harness.inference.transport import BrokerModel
+        from infosec_harness.inference.worker import invocations
+        from infosec_harness.inference.worker.transport import BrokerModel
         async def forbidden(*_args, **_kwargs):
             pytest.fail("Replay invoked runtime broker I/O")
         monkeypatch.setattr(invocations, "request_invocation", forbidden)
@@ -183,15 +154,14 @@ async def test_real_temporal_worker_restart_saved_activity_and_zero_io_replay(se
 async def test_real_direct_stub_history_replays_under_broker_config_without_io(services, monkeypatch):
     """Record a direct SDK history on a separate stub worker, then replay broker code."""
     root_id = "brokerqualification-direct-" + uuid.uuid4().hex
-    # An older root without accepted-config metadata is the supported legacy contract.
-    await seed_root(root_id, accepted=False)
+    await seed_root(root_id)
     before = len(services.events())
     process = start_worker(services.values, direct_stub=True)
     handle = None
     try:
         client = await Client.connect(services.values["temporal_address"], plugins=[PydanticAIPlugin()])
         handle = await client.start_workflow(BrokerQualificationWorkflow.run,
-            {"repo": services.values["repo"]}, id="batch:" + root_id,
+            {"repo": services.values["repo"], "root_id": root_id}, id="batch:" + root_id,
             task_queue=services.values["task_queue"])
         result = await asyncio.wait_for(handle.result(), 60)
         assert result["summary"] == "stub context"
@@ -200,8 +170,8 @@ async def test_real_direct_stub_history_replays_under_broker_config_without_io(s
         markers = [event.marker_recorded_event_attributes for event in history.events
                    if event.HasField("marker_recorded_event_attributes")]
         assert not any("credential-broker-invocation-v1" in str(value) for value in markers)
-        from infosec_harness.inference import invocations
-        from infosec_harness.inference.transport import BrokerModel
+        from infosec_harness.inference.worker import invocations
+        from infosec_harness.inference.worker.transport import BrokerModel
         async def forbidden(*_args, **_kwargs):
             pytest.fail("Replay invoked runtime broker I/O")
         monkeypatch.setattr(invocations, "request_invocation", forbidden)
@@ -217,60 +187,12 @@ async def test_real_direct_stub_history_replays_under_broker_config_without_io(s
         await stop_worker(process)
 
 
-async def test_prechange_baseline_runtime_history_replays_with_broker_without_io(services, monkeypatch):
-    values = services.values
-    root_id = "brokerqualification-baseline-" + uuid.uuid4().hex
-    await seed_root(root_id, accepted=False)
-    before = len(services.events())
-    child_env = environment(values)
-    child_env["HARNESS_MODEL_MODE"] = "stub"
-    child_env["PYTHONPATH"] = os.pathsep.join((str(Path(values["baseline_source"]) / "src"), values["baseline_source"]))
-    for key in ("HARNESS_MODELS_CONFIG", "HARNESS_MODEL_BACKEND", "HARNESS_BROKER_CONFIG"):
-        child_env.pop(key, None)
-    with (Path(values["directory"]) / "baseline-worker.log").open("ab") as log:
-        process = subprocess.Popen([sys.executable, "-c",
-            "import asyncio,sys; from broker_baseline_fixture import main; asyncio.run(main(sys.argv[1]))",
-            values["manifest"]], cwd=values["baseline_source"], env=child_env,
-            stdout=log, stderr=log, start_new_session=True)
-    with (Path(values["directory"]) / "pids.jsonl").open("a") as output:
-        output.write(json.dumps({"pid": process.pid, "role": "temporal-worker"}) + "\n")
-    handle = None
-    try:
-        client = await Client.connect(values["temporal_address"], plugins=[PydanticAIPlugin()])
-        handle = await client.start_workflow(BrokerQualificationWorkflow.run,
-            {"repo": values["repo"]}, id="batch:" + root_id, task_queue=values["task_queue"])
-        result = await asyncio.wait_for(handle.result(), 60)
-        assert result["summary"] == "stub context"
-        provenance = json.loads((Path(values["directory"]) / "baseline-worker-provenance.json").read_text())
-        assert provenance["runtime_from_archive"] is True
-        assert provenance["source_revision"] == values["baseline_revision"]
-        history = await handle.fetch_history()
-        await stop_worker(process)
-        markers = [event.marker_recorded_event_attributes for event in history.events
-                   if event.HasField("marker_recorded_event_attributes")]
-        assert not any("credential-broker-invocation-v1" in str(value) for value in markers)
-        from infosec_harness.inference import invocations
-        from infosec_harness.inference.transport import BrokerModel
-        async def forbidden(*_args, **_kwargs):
-            pytest.fail("Pre-change history replay invoked runtime broker I/O")
-        monkeypatch.setattr(invocations, "request_invocation", forbidden)
-        monkeypatch.setattr(BrokerModel, "request", forbidden)
-        await Replayer(workflows=[BrokerQualificationWorkflow], plugins=[PydanticAIPlugin()]).replay_workflow(history)
-        assert len(services.events()) == before
-        services.record("prechange_baseline_history_broker_config_replay", before,
-            source_revision=values["baseline_revision"], pinned_sdk=values["baseline_sdk"],
-            runtime_from_archive=True, history_events=len(history.events), replay_provider_dispatches=0)
-    finally:
-        if handle is not None:
-            with suppress(Exception):
-                await handle.cancel()
-        await stop_worker(process)
-
-
 async def test_real_temporal_all_registered_agents_execute_and_replay_without_io(services, monkeypatch):
     from sqlalchemy import select
 
-    assert set(AGENTS) == set(registry.AGENT_BINDINGS) == set(CONFIGS)
+    from infosec_harness.agents.durable import CONFIGS
+
+    assert set(AGENTS) == set(registry.BINDINGS) == set(CONFIGS)
     root_id = "brokerqualification-all-" + uuid.uuid4().hex
     await seed_root(root_id)
     before = len(services.events())
@@ -285,7 +207,7 @@ async def test_real_temporal_all_registered_agents_execute_and_replay_without_io
     try:
         client = await Client.connect(services.values["temporal_address"], plugins=[PydanticAIPlugin()])
         handle = await client.start_workflow(BrokerQualificationWorkflow.run,
-            {"repo": services.values["repo"], "all_agents": True}, id="batch:" + root_id,
+            {"repo": services.values["repo"], "root_id": root_id, "all_agents": True}, id="batch:" + root_id,
             task_queue=services.values["task_queue"])
         result = await asyncio.wait_for(handle.result(), 150)
         assert set(result) == set(expected_types)
@@ -319,8 +241,8 @@ async def test_real_temporal_all_registered_agents_execute_and_replay_without_io
             assert {record.request["binding"]["agent"] for record in records} == set(AGENTS)
         history = await handle.fetch_history()
         await stop_worker(process)
-        from infosec_harness.inference import invocations
-        from infosec_harness.inference.transport import BrokerModel
+        from infosec_harness.inference.worker import invocations
+        from infosec_harness.inference.worker.transport import BrokerModel
 
         async def forbidden(*_args, **_kwargs):
             pytest.fail("All-agent history replay invoked runtime broker I/O")

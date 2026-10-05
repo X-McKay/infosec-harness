@@ -1,9 +1,7 @@
 """Readiness uses SELECT-only persistence and actual recent queue observations."""
 
-import importlib.util
 import json
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -12,13 +10,8 @@ from google.protobuf.timestamp_pb2 import Timestamp
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from infosec_harness.operations import readiness
 from infosec_harness.settings import Settings
-
-SPEC = importlib.util.spec_from_file_location(
-    "runtime_readiness", Path(__file__).resolve().parents[2] / "scripts/runtime_readiness.py"
-)
-readiness = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(readiness)
 
 
 def settings(tmp_path, **kwargs):
@@ -40,7 +33,7 @@ async def test_missing_database_never_created(tmp_path, filename):
 
 
 @pytest.mark.parametrize(
-    "revision, expected", [("0005", "passed"), ("0004", "failed"), (None, "failed")]
+    "revision, expected", [("0006", "passed"), ("0005", "failed"), (None, "failed")]
 )
 async def test_database_revision_and_contents_unchanged(tmp_path, revision, expected):
     config = settings(tmp_path)

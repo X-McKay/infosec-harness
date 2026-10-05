@@ -5,14 +5,23 @@ from copy import deepcopy
 import pytest
 import yaml
 
-from infosec_harness.inference.profiles import (
-    REGISTERED_AGENTS,
+from infosec_harness.agents.models import BackendConfig
+from infosec_harness.agents.registry import BINDINGS
+from infosec_harness.inference.catalog.profiles import (
     BrokerConfig,
     ExecutorProfile,
     InvocationBounds,
     load_broker_config,
 )
 from infosec_harness.resources import package_root
+
+AGENTS = tuple(BINDINGS)
+
+
+def backend(endpoint: str = "https://provider.example/v1", **adaptations) -> BackendConfig:
+    """The operator backend a contract is resolved against."""
+    return BackendConfig(kind="openai_compatible", transport="brokered", base_url=endpoint,
+                         **adaptations)
 
 
 def _bounds() -> dict:
@@ -42,7 +51,7 @@ def _profile(**overrides) -> dict:
 
 
 def _config(**overrides) -> dict:
-    names = list(REGISTERED_AGENTS)
+    names = list(AGENTS)
     value = {
         "version": 1,
         "enabled": True,
@@ -61,10 +70,10 @@ def _config(**overrides) -> dict:
 
 
 def test_packaged_catalog_is_disabled_and_maps_every_agent() -> None:
-    catalog = load_broker_config()
+    catalog = load_broker_config(agents=AGENTS)
     assert catalog.enabled is False
-    assert set(catalog.agent_profiles) == set(REGISTERED_AGENTS)
-    assert set(catalog.agent_limits) == set(REGISTERED_AGENTS)
+    assert set(catalog.agent_profiles) == set(AGENTS)
+    assert set(catalog.agent_limits) == set(AGENTS)
     assert set(catalog.agent_profiles.values()) == {"inference-only"}
     assert catalog.profiles["inference-only"].endpoint is None
     assert catalog.profiles["inference-only"].approved_policy is None
@@ -72,13 +81,13 @@ def test_packaged_catalog_is_disabled_and_maps_every_agent() -> None:
 
 def test_resolve_contract_uses_fixed_profile_and_exact_effective_settings() -> None:
     catalog = BrokerConfig.model_validate(_config())
-    for agent in REGISTERED_AGENTS:
+    for agent in AGENTS:
         contract = catalog.resolve_contract(
             agent,
             "gateway",
             "model-v1",
             {"max_tokens": 2048, "temperature": 0.2},
-            backend_endpoint="https://provider.example/v1",
+            backend=backend(),
             atomic_intake=agent == "intake",
         )
         assert contract.endpoint == "https://provider.example/v1"
@@ -131,19 +140,23 @@ def test_contract_resolution_rejects_endpoint_adaptation_and_output_limit_drift(
     common = ("intake", "gateway", "model-v1", {"max_tokens": 2048})
     with pytest.raises(ValueError):
         catalog.resolve_contract(
-            *common, backend_endpoint="https://other.example/v1", atomic_intake=True
+            *common, backend=backend("https://other.example/v1"), atomic_intake=True
         )
     with pytest.raises(ValueError):
+        catalog.resolve_contract(*common, backend=backend(), atomic_intake=False)
+    with pytest.raises(ValueError):
         catalog.resolve_contract(
-            *common, backend_endpoint="https://provider.example/v1", atomic_intake=False
+            *common, backend=backend(merge_system_messages=False), atomic_intake=True
         )
+    with pytest.raises(ValueError):
+        catalog.resolve_contract(*common, backend=backend(min_max_tokens=16), atomic_intake=True)
     with pytest.raises(ValueError):
         catalog.resolve_contract(
             "recon",
             "gateway",
             "model-v1",
             {"max_tokens": 10001},
-            backend_endpoint="https://provider.example/v1",
+            backend=backend(),
         )
 
 
@@ -182,11 +195,7 @@ def test_generated_provider_label_rotation_keeps_contract_identity_but_permissio
             _config(profiles={"inference-only": _profile(approved_policy=policy)})
         )
         return catalog.resolve_contract(
-            "recon",
-            "gateway",
-            "model-v1",
-            {"max_tokens": 2048},
-            backend_endpoint="https://provider.example/v1",
+            "recon", "gateway", "model-v1", {"max_tokens": 2048}, backend=backend()
         )
 
     assert contract_for(policy_a).digest == contract_for(policy_b).digest
@@ -247,6 +256,22 @@ def test_operator_yaml_loads_tuple_shape_then_rejects_required_inspection(
 
     if inspection:
         with pytest.raises(ValueError, match="invalid"):
-            load_broker_config(path)
+            load_broker_config(path, agents=AGENTS)
     else:
-        assert load_broker_config(path).profiles["inference-only"].inspection == ()
+        assert load_broker_config(path, agents=AGENTS).profiles["inference-only"].inspection == ()
+
+
+@pytest.mark.parametrize("change", ["missing", "extra"])
+def test_catalog_must_cover_exactly_the_registered_agents(tmp_path, change) -> None:
+    """An internally consistent catalog still fails if it differs from the registry."""
+    value = _config()
+    for mapping in (value["agent_profiles"], value["agent_limits"]):
+        if change == "missing":
+            del mapping["verdict"]
+        else:
+            mapping["surprise"] = deepcopy(mapping["recon"])
+    BrokerConfig.model_validate(value)  # Consistent on its own.
+    path = tmp_path / "broker.yaml"
+    path.write_text(yaml.safe_dump(value), encoding="utf-8")
+    with pytest.raises(ValueError, match="invalid"):
+        load_broker_config(path, agents=AGENTS)

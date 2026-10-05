@@ -14,8 +14,8 @@ from test_broker_executor import request_fixture
 
 from infosec_harness.agents.intake_claims import AtomicFinding
 from infosec_harness.domain.models import EnvironmentSpec
-from infosec_harness.inference.codec import decode_payload, encode_payload
-from infosec_harness.inference.compat import input_wire
+from infosec_harness.inference.executor.rendering import input_wire
+from infosec_harness.inference.wire.codec import decode_payload, encode_payload
 
 
 @pytest.mark.parametrize('strict', [None, False, True])
@@ -130,11 +130,11 @@ async def test_opt_in_changes_only_closed_output_tools_and_preserves_original_pa
 
 
 def test_flag_off_keeps_historical_contract_profile_and_capability_identity():
-    from test_broker_profiles import _config
+    from test_broker_profiles import _config, backend
 
     from infosec_harness.agents.models import BackendConfig, CapabilityProfile
-    from infosec_harness.inference.profiles import BrokerConfig
-    from infosec_harness.inference.protocol import digest
+    from infosec_harness.inference.catalog.profiles import BrokerConfig
+    from infosec_harness.inference.wire.protocol import digest
 
     request, _ = request_fixture()
     for value in (request.contract, CapabilityProfile(), BackendConfig(kind='openai_compatible')):
@@ -152,9 +152,9 @@ def test_flag_off_keeps_historical_contract_profile_and_capability_identity():
     cfg['profiles']['inference-only']['strict_closed_output_tools'] = True
     catalog = BrokerConfig.model_validate(cfg)
     with pytest.raises(ValueError, match='Strict output adaptation'):
-        catalog.resolve_contract('recon', 'gateway', 'model', {'max_tokens': 16}, backend_endpoint='https://provider.example/v1')
+        catalog.resolve_contract('recon', 'gateway', 'model', {'max_tokens': 16}, backend=backend())
     contract = catalog.resolve_contract('recon', 'gateway', 'model', {'max_tokens': 16},
-        backend_endpoint='https://provider.example/v1', strict_closed_output_tools=True)
+        backend=backend(strict_closed_output_tools=True))
     assert contract.strict_closed_output_tools and contract.profile_digest != old_profile.profile_digest
 
 
@@ -164,8 +164,8 @@ async def test_actual_sdk_executor_wire_matches_admission_opt_in_and_never_resen
 
     import httpx2
 
-    from infosec_harness.inference.executor import OpenAIInference
-    from infosec_harness.inference.protocol import digest
+    from infosec_harness.inference.executor.service import OpenAIInference
+    from infosec_harness.inference.wire.protocol import digest
 
     request, _ = request_fixture()
     contract = request.contract.model_copy(update={'atomic_intake': True, 'strict_closed_output_tools': True})
@@ -201,7 +201,7 @@ async def test_mock_sdk_strict_output_keeps_bounded_local_validation_repair_and_
 
     from infosec_harness.agents.intake_claims import reconstruct
     from infosec_harness.agents.intake_schema import intake_openai_profile
-    from infosec_harness.inference.compat import _CompatOpenAIChatModel
+    from infosec_harness.inference.executor.compat import CompatOpenAIChatModel
 
     calls = []
     def respond(native_request):
@@ -220,7 +220,7 @@ async def test_mock_sdk_strict_output_keeps_bounded_local_validation_repair_and_
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(respond)) as transport:
         client = AsyncOpenAI(base_url='https://provider.invalid/v1', api_key='offline', max_retries=0, http_client=transport)
         provider = OpenAIProvider(openai_client=client)
-        model = _CompatOpenAIChatModel('test-model', provider=provider,
+        model = CompatOpenAIChatModel('test-model', provider=provider,
             profile=intake_openai_profile(provider.model_profile('test-model')), strict_closed_output_tools=True)
         agent = Agent(model, output_type=AtomicFinding, retries=1 if repair else 0)
         if repair:
@@ -238,14 +238,14 @@ async def test_mock_sdk_strict_output_keeps_bounded_local_validation_repair_and_
 
 
 def test_opt_in_rejects_unqualified_sdk_profile_and_bounded_schema_expansion():
-    from infosec_harness.inference.compat import _strict_closed_outputs
-    from infosec_harness.inference.protocol import BrokerError
+    from infosec_harness.inference.executor.compat import strict_closed_outputs
+    from infosec_harness.inference.wire.protocol import BrokerError
 
     closed = {'type': 'object', 'properties': {'answer': {'type': 'string'}}, 'additionalProperties': False}
     params = ModelRequestParameters(output_mode='tool', output_tools=[ToolDefinition(name='final_result',
         parameters_json_schema=closed, kind='output')])
     with pytest.raises(BrokerError, match='does not support strict'):
-        _strict_closed_outputs(params, {'openai_supports_strict_tool_definition': False})
+        strict_closed_outputs(params, {'openai_supports_strict_tool_definition': False})
     defs = {'leaf': closed}
     for i in range(20):
         child = 'leaf' if i == 0 else f'level{i - 1}'
@@ -255,7 +255,7 @@ def test_opt_in_rejects_unqualified_sdk_profile_and_bounded_schema_expansion():
     params = ModelRequestParameters(output_mode='tool', output_tools=[ToolDefinition(name='final_result',
         parameters_json_schema=exploding, kind='output')])
     with pytest.raises(BrokerError, match='bound'):
-        _strict_closed_outputs(params, {})
+        strict_closed_outputs(params, {})
     assert params.output_tools[0].strict is None
 
 
@@ -309,7 +309,7 @@ async def test_direct_model_factory_matches_executor_admission_strict_wire(monke
     monkeypatch.setattr(models, 'load_models_config', lambda: cfg)
     monkeypatch.setattr(openai, 'AsyncOpenAI', client)
     try:
-        model = models._build_live('strict-output-factory-offline', contract.model, intake_atomic=True)
+        model = models._build_live('strict-output-factory-offline', contract.model, False, True)
         await model.request(messages, contract.model_settings, params)
     finally:
         models._build_live.cache_clear()

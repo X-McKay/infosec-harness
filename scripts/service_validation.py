@@ -59,8 +59,8 @@ def private_json(path: Path, value: dict):
         Path(temporary).unlink(missing_ok=True)
 
 
-def managed_check(script, args, timeout):
-    """Exec into the running worker; Compose never restarts or changes its environment."""
+def managed_check(subcommand, args, timeout):
+    """Exec `harness ops <subcommand>` in the running worker; Compose never restarts it."""
     project = os.environ.get("COMPOSE_PROJECT_NAME", "")
     if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", project):
         raise ValueError("managed project unavailable")
@@ -81,8 +81,9 @@ def managed_check(script, args, timeout):
         "exec",
         "-T",
         "worker",
-        "python",
-        "/app/scripts/" + script,
+        "harness",
+        "ops",
+        subcommand,
         *args,
     ]
     result = subprocess.run(
@@ -206,7 +207,7 @@ async def validate(args):
         if args.managed_worker:
             runtime = await asyncio.to_thread(
                 managed_check,
-                "runtime_readiness.py",
+                "readiness",
                 [
                     "--timeout",
                     str(args.timeout),
@@ -216,7 +217,7 @@ async def validate(args):
                 args.timeout * 4,
             )
         else:
-            from runtime_readiness import check_runtime
+            from infosec_harness.operations.readiness import check_runtime
 
             runtime = await check_runtime(
                 timeout=args.timeout, worker_hostname=args.worker_hostname
@@ -302,12 +303,12 @@ async def validate(args):
                 if args.managed_worker:
                     model = await asyncio.to_thread(
                         managed_check,
-                        "model_connectivity.py",
+                        "model-connectivity",
                         ["--model", "--timeout", str(args.model_timeout)],
                         args.model_timeout,
                     )
                 else:
-                    from model_connectivity import check_model
+                    from infosec_harness.operations.model_connectivity import check_model
 
                     model = await check_model(timeout=args.model_timeout)
                 state = model["status"]

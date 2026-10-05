@@ -1,275 +1,200 @@
 # Local setup
 
-The supported entry point is `./dev`. It is safe to run repeatedly and keeps compose resources
-scoped to the absolute checkout path, which allows multiple worktrees to run without sharing
-volumes or fixed host ports. The default profile is intentionally strict: it requires an actual
-`runsc` execution probe before starting the stack. A runtime name in Docker's inventory alone is
-not accepted as isolation evidence.
+The supported entry point is `./dev`. It is safe to run repeatedly and scopes compose resources
+to the absolute checkout path, so several worktrees can run side by side without sharing volumes
+or fixed host ports. The default profile is strict: it requires an actual `runsc` execution probe
+before starting the stack. A runtime name in Docker's inventory is not isolation evidence.
 
-## Quickstart
+## Host requirements
 
-The managed reference targets are Apple Silicon macOS and Debian/Ubuntu x86-64 Linux.
-The launcher downloads checksum-verified mise and Lima, installs pinned Python/uv/Node/just,
-and provisions a checkout-owned Linux VM with Docker and runsc. macOS uses VZ; Linux uses
-QEMU/KVM and may request sudo to install missing QEMU packages. Hardware virtualization,
-network access for initial downloads, and roughly 8 GiB of available VM memory are required.
-Host Docker is unnecessary, and host Docker contexts, daemon settings and shell profiles are
-not changed. Other Linux distributions need their QEMU prerequisite installed separately.
+The managed reference targets are Apple Silicon macOS (VZ) and Debian/Ubuntu x86-64 Linux
+(QEMU/KVM; missing QEMU packages may prompt for sudo). Hardware virtualization, network access
+for the first downloads and roughly 8 GiB of free VM memory are required. Host Docker is not
+needed, and host Docker contexts, daemon settings, shell profiles and global tools are never
+changed. Other Linux distributions need their QEMU prerequisite installed separately.
 
-Versions and download hashes live in [`.dev-tools/versions.env`](../../.dev-tools/versions.env),
-`.mise.toml`, and `deploy/dev-runtime/lima.yaml`. Managed tools, downloads and configuration live
-beneath the ignored `.harness/` directory. VM state uses a short per-checkout directory under
-`~/.cache/ih/` because macOS limits UNIX socket path lengths. `.harness/runtime-home` records
-its exact location. Platform support remains subject to the acceptance limits below.
-```bash
-./dev
-./dev status
-./dev validate  # read-only checks against the running stack
-./dev logs api
-./dev reload  # restart API/worker and run the explicit stub/runtime smoke
-./dev reload-ui  # restart API/web; GET-only checks without seeded findings
-./dev stop
-```
+Tool versions and download hashes (Python, uv, Node, just and the Temporal CLI) live in
+`.mise.toml`; `.dev-tools/versions.env` pins only mise and Lima, which are needed before mise
+exists; the VM image is pinned in `deploy/dev-runtime/lima.yaml`. Managed tools, downloads and
+generated configuration live under the ignored `.harness/` directory. VM state uses a short
+per-checkout directory under `~/.cache/ih/` because macOS limits UNIX socket path lengths;
+`.harness/runtime-home` records its exact location.
 
-The generated `.harness/dev.env` records the per-checkout compose identity and loopback ports.
-Existing project identity, ports, and local service credentials are preserved. This file
-contains generated PostgreSQL/RustFS S3 credentials, is mode 0600, and is ignored by Git. The first run
-may download dependencies and images; a warm run reuses them. If startup is interrupted, rerun
-`./dev`; inspect `./dev status` and `./dev logs <service>` for bounded failure details. Log snapshots are saved under `.harness/logs/`;
-managed container logs rotate at 10 MiB with three files per service. `stop`
-preserves local findings and volumes. No destructive reset is part of the launcher.
-
-The full compose profile uses `docker-compose.dev.yml`: API and worker source are mounted
-read-only and installed editable inside the image, while the web container runs Vite against the
-mounted `ui/` tree. Backend edits take effect after `./dev reload` restarts the API/worker processes; frontend edits use
-Vite's normal hot reload. The packaged nginx image remains available through the base compose
-file for deployment-oriented checks.
-
-`./dev smoke` repeats API/web/storage readiness, actual sandbox fixtures, and the completed
-demo query against Temporal visibility. History and visibility use separate PostgreSQL
-databases (`temporal` and `temporal_visibility`), so their independent schema version tables
-cannot suppress visibility migrations. Existing volumes are preserved; Temporal auto-setup
-creates the missing visibility database on an upgraded local stack. It does not infer model
-quality from stub inference. `./dev doctor` reports host/runtime readiness without starting
-services. Provider credentials are optional and are never required by the default profile.
-
-### Read-only service validation
-
-Run `./dev validate` against an already running managed stack. It checks the configured
-database and migration head, recent workflow/activity pollers for the running worker,
-API/worker source and model profile consistency, API contracts, actual UI assets and the
-same-origin proxy. It does not install tools, start services, migrate schemas, seed findings,
-submit workflows or recover broker requests. Run normal setup separately if services are absent.
-
-Inference requires an explicit flag:
+## Commands
 
 ```bash
-./dev validate --model
-./dev validate --model --model-timeout 120 \
-  --connectivity-receipt .harness/local-model/connectivity.json
-./dev validate --expected-source-commit "$(git rev-parse HEAD)"
+./dev [--profile full|offline] [COMMAND]
+./dev                   # start: tools, VM, sandbox fixtures, stack, stub assessment
+./dev check | test      # just check / just test with the pinned tools
+./dev status            # compose service status (offline: pinned tools present)
+./dev logs [SERVICE]    # bounded log snapshot, also saved under .harness/logs/
+./dev smoke             # re-run readiness, sandbox fixtures and the stub assessment
+./dev doctor            # pinned tools, VM and sandbox fixtures, without starting services
+./dev validate          # read-only checks against the running stack (below)
+./dev reload            # restart the editable API and worker, then the stub/runtime smoke
+./dev reload-ui         # restart API and web, then GET-only integration checks
+./dev stop [--vm]       # stop the stack; --vm also stops the VM
+./dev reset [--yes]     # delete this checkout's VM, volumes, findings and generated config
+./dev gc [--delete]     # list (or delete) VM homes whose checkout no longer exists
 ```
 
-The model check uses the configured live verdict backend and PydanticAI structured output,
-with one request and no retry. It supports direct OpenAI-compatible profiles; stub, brokered
-and unsupported provider profiles remain `not_checked` without making a request. Brokered
-inference requires the separately admitted qualification path. A successful connectivity call
-is not an agent evaluation or full qualification. Provider errors are sanitized and unknown
-request counts stay unknown.
+`./dev stop` preserves the VM, volumes, findings, downloads and generated configuration.
+`./dev reset` is the only command that deletes them; it asks for confirmation unless `--yes`
+is given and keeps pinned tools and reports.
 
-Reports are private, atomically published JSON under `.harness/reports/service-validation/`;
-`--report` selects another path. Exit codes are 0 (`passed`), 1 (`failed`) and 2 (`not_checked`).
-The optional connectivity receipt is published only after a successful exact-profile request;
-it binds source, configuration hashes, mode, transport and time using the existing UI receipt
-contract. Configure `HARNESS_MODEL_CONNECTION_OBSERVATION` on the API to read that file.
-A failed check preserves an earlier receipt; inspect the new report for the current result.
-The API independently rejects stale or mismatched receipts. No receipt is published implicitly.
+`.harness/dev.env` records the checkout's compose identity, loopback ports and generated
+PostgreSQL and S3 credentials (mode 0600, ignored by Git). Existing values are preserved across
+runs. If startup is interrupted, rerun `./dev` and inspect `./dev status` and
+`./dev logs <service>`. Managed container logs rotate at 10 MiB with three files per service.
 
-`--timeout` bounds individual service operations (default 30 seconds, range 1–60);
-`--model-timeout` bounds inference (default 90 seconds, range 1–300). Explicit report and
-receipt paths must be distinct regular-file locations without symlink components.
-`./dev --profile offline validate` contacts no services and reports every gate `not_checked`.
-These checks do not qualify sandbox execution, artifact roundtrips, durable workflow/replay,
-agent accuracy, or hosted deployment. Use the corresponding qualification gates for those.
+The full profile mounts the checkout read-only into the API and worker (installed editable) and
+runs Vite against `ui/`. Backend edits take effect after `./dev reload`; frontend edits hot
+reload. The stack runs PostgreSQL 16, Temporal and its UI, RustFS as the S3-compatible artifact store
+(the compose service is still named `minio`), an OpenTelemetry collector with Jaeger, the
+worker, the API (OpenAPI docs at `/docs`) and the web app. Temporal history and visibility use
+separate PostgreSQL databases. Every image is pinned by digest. The dev profile sets
+`HARNESS_LOCAL_REPO_ROOTS` to the eval corpus and the launcher's smoke fixture, so assessments
+can use those local repositories; any other local `repo_url` is refused.
 
-### Offline component profile
+`./dev reload-ui` checks the typed runtime status, configuration (every agent present) and
+operational batch, run-page, experiment and metrics reads through both the API and the web proxy
+(empty is valid), and the served assets. Its report counts agents under `agents`. It submits
+nothing, writes nothing and makes no model request, and it waits up to 60 seconds for transient
+startup failures. Restarting the API runs its normal startup, so accepted submissions may resume.
+For explicit release identity checks run `scripts/ui_deployment_smoke.py` with
+`--expected-source-commit`, `--expected-model-mode` and `--expected-transport`.
 
-When virtualization or the required runtime is unavailable:
+### Offline profile
 
 ```bash
 ./dev --profile offline
 ```
 
-This installs the locked Python dependencies and runs agent validation with stub inference. It
-does not check the real API, Temporal, web, persistence integration, or sandbox boundary. Keep
-that distinction in evidence reports. Do not set `HARNESS_ALLOW_INSECURE_RUNTIME=true` to turn a
-failed full profile into a green isolation result; that override is for explicitly labeled local
-development only.
+Installs the pinned tools and locked dependencies, then runs `just check` and `just test` with
+stub models. The API, Temporal service, web, persistence integration and sandbox boundary are
+`not_checked`; keep that distinction in any evidence. Do not set
+`HARNESS_ALLOW_INSECURE_RUNTIME=true` to turn a failed full profile into a passing isolation
+result: the override exists for explicitly labelled local development only.
 
-### Current onboarding evidence limits
+### Read-only service validation
 
-Clean-host macOS/Linux acceptance, real build/probe isolation, and warm restart are tracked
-in [IMPLEMENTATION_VALIDATION.md](../validation/IMPLEMENTATION_VALIDATION.md). A managed VM configuration
-is not proof that these gates passed. The offline profile and browser fixture review do not
-substitute for real execution evidence.
-
-### Generated development skills
-
-Author development skills under `dev-skills/`. `just generated-sync` copies them to both
-`.agents/skills/` (Codex discovery) and `.claude/skills/` (Claude discovery); `just generated-check`
-and CI verify drift without rewriting files. The packaged runtime skills under
-`src/infosec_harness/skills/` are a separate source of truth.
-
-For code navigation and output ownership, see [REPOSITORY_GUIDE.md](REPOSITORY_GUIDE.md).
-
-## Manual setup prerequisites
-
-The following sections are optional manual/operator paths; `./dev` manages the reference
-development environment. Real operational submissions require Temporal. `harness submit
---local` is restricted to stub demonstrations; controlled component evals may run locally.
-
-- Python 3.12 and [`uv`](https://docs.astral.sh/uv/)
-- `just` (task runner) — optional but assumed below
-- Docker (for the full stack and for real sandboxed builds/probes)
-- Node 22 + npm (only for the web app)
-- gVisor (`runsc`) for real probe isolation — see [Sandbox](#sandbox-gvisor). The managed
-  launcher provisions and verifies it; without it, builds/probes fail closed.
-
-## 1. Offline smoke (no credentials, no Docker)
-
-Proves the code, agent specs, and the whole pipeline with deterministic stub models.
+`./dev validate` checks the configured database and migration head, recent workflow and activity
+pollers for the running worker, API and worker source and model-profile consistency, API
+contracts, the UI assets and the same-origin proxy. It does not start services, migrate,
+submit findings or recover broker requests. The same checks are available to operators as
+`harness ops readiness` (database, schema head and Temporal pollers; `--worker-hostname`,
+`--timeout`) and `harness ops model-connectivity --model` (one structured-output request).
 
 ```bash
-just bootstrap          # uv sync --all-extras
-just check              # ruff + compile + validate all 11 agent specs
-just test               # full test suite (stub models, SQLite)
-just demo               # run the pipeline in-process on examples/findings.sample.json
+./dev validate --model                       # add one explicit inference request
+./dev validate --model --connectivity-receipt .harness/local-model/connectivity.json
+./dev validate --expected-source-commit "$(git rev-parse HEAD)"
 ```
 
-`just test` should be all green. The Temporal integration test
-(`tests/runtime/test_workflow_integration.py`) needs the `temporal` CLI on PATH and skips without it:
+The model check makes one request with no retry, as the verdict agent, against the live backend.
+Stub, brokered and unsupported profiles stay `not_checked` without a request. A successful call
+is connectivity, not an agent evaluation. Reports are private, atomically written JSON under
+`.harness/reports/service-validation/` (`--report` selects another path); exit codes are 0
+(`passed`), 1 (`failed`) and 2 (`not_checked`). The optional receipt is written only after a
+successful exact-profile request; the API reads it from `HARNESS_MODEL_CONNECTION_OBSERVATION`
+(see [qualification dashboard](../operations/QUALIFICATION_DASHBOARD.md)). `--timeout` bounds
+each service operation (default 30 s, 1-60) and `--model-timeout` the request (default 90 s,
+1-300). `./dev --profile offline validate` contacts nothing and reports every gate `not_checked`.
 
-```bash
-uv run pytest tests/runtime/test_workflow_integration.py
-```
+## Live models
 
-## 2. Historical live-model validation
-
-The following endpoint instructions and report are historical validation material, not a current
-onboarding or acceptance path. They do not establish that a live model has been tested on the
-managed launcher.
-
-The harness supports configured OpenAI-compatible chat-completions profiles. For testing use **`llm.almckay.io`**, which
-needs **no API key**. Select the OpenAI-spec ("gateway") backend and turn on live mode:
+Stub inference is the default everywhere. To use a real model, configure a model gateway
+endpoint or Bedrock explicitly; nothing in the packaged catalogue points at a usable endpoint.
 
 ```bash
 export HARNESS_MODEL_MODE=live
-export HARNESS_MODEL_BACKEND=gateway     # src/infosec_harness/config/models.yaml -> backends.gateway
-# base_url is already set to https://llm.almckay.io/v1 in src/infosec_harness/config/models.yaml.
-# No HARNESS_OPENAI_API_KEY needed for this endpoint.
+export HARNESS_MODEL_BACKEND=gateway                 # an OpenAI-compatible endpoint
+export HARNESS_MODEL_BASE_URL=https://gateway.example.internal/v1
+export HARNESS_OPENAI_API_KEY=...                    # if the gateway requires one
 ```
 
-Then score the seeded corpus end to end (with the gVisor sandbox on, or `--no-sandbox` to
-skip building/probing and exercise only the model-driven agents):
+[Model endpoints](../operations/MODEL_ENDPOINTS.md) covers mapping model tiers to the ids the
+endpoint serves, checking it, and reasoning-budget options. For Bedrock, run
+`aws sso login --profile infosec-harness-sso` and set `HARNESS_MODEL_BACKEND=bedrock`; confirm
+the model ids and region in `src/infosec_harness/config/models.yaml` match your account.
+
+Real assessments always run through Temporal. `harness submit --local` and the API's
+`mode: local` run stub models only (`--local` selects them when `HARNESS_MODEL_MODE` is unset
+and refuses an explicit `live`). Agent evals (`harness eval run`, whose `--model` names a
+catalogue tier), the release qualification (`harness eval release`) and the corpus runner
+(`harness eval corpus`, with `--no-sandbox` to skip building and probing) may call a live model
+directly.
+
+With no `HARNESS_DATABASE_URL` from the environment, `.env` or `HARNESS_ENV_FILE`, the commands
+that run on a developer's machine (every `harness eval` command, `harness submit --local`,
+`harness runs` and `harness report`) use `.harness/local.db` in the checkout and say so once on
+stderr. The worker, the API and `harness migrate` keep the deployment default, so a service with
+no database configured fails to connect rather than writing to a scratch file.
+
+## Without the launcher
+
+`./dev` manages the reference environment; these are manual paths for component work.
 
 ```bash
-uv run harness eval corpus                 # real verdicts + tool/skill evocation
-uv run harness eval corpus --no-sandbox    # agents only, no Docker needed
-# or a single agent's dataset:
-uv run harness eval run verdict
-uv run harness eval run probe-diagnosis
+just bootstrap      # uv sync --locked
+just check          # ruff over src, tests and scripts; compile; validate every agent spec
+just test           # deterministic suite, stub models, per-process SQLite
+just eval           # every agent's eval dataset on stub models (what CI runs)
+uv run harness submit examples/findings.sample.json --local   # the pipeline in-process
 ```
 
-Results from this run, and the problems it exposed, are written up in
-[`LIVE_VALIDATION.md`](../validation/LIVE_VALIDATION.md).
+`just` and `uv` here must be the pinned versions: run them through
+`.harness/bin/mise exec -- just <recipe>` once `./dev` has installed the tools. Tests marked
+`requires_temporal` (for example `tests/runtime/test_workflow_integration.py`) start the pinned
+Temporal CLI dev server and skip without it; `HARNESS_TEST_REQUIRE_TEMPORAL=1` makes that a
+failure. The suite refuses an ambient `HARNESS_MODEL_MODE` other than `stub` or an ambient
+database URL unless `HARNESS_TEST_ALLOW_LIVE=1` or `HARNESS_TEST_DATABASE_URL` is set.
 
-The historical report records model-dependent measurements that stub mode cannot provide,
-including per-class accuracy and trajectory tool/skill evocation. Treat those measurements as
-historical and descriptive; they are not current managed-runtime acceptance evidence.
+The base `docker-compose.yml` is an advanced manual path. It does not reuse the managed VM,
+generated credentials or allocated ports, and it is not the verified setup.
 
-> If a model tier resolves to a name the endpoint doesn't serve, edit `model_catalog` in
-> `src/infosec_harness/config/models.yaml` (the `gateway:` column) to the model ids `llm.almckay.io` exposes,
-> then re-run. The OTel trace UI and finding detail expose operational metadata; prompts and
-> completions are excluded from trace exports.
+## Database migrations
 
-### Bedrock instead (optional)
+The run store is versioned with Alembic; the revisions ship in
+`src/infosec_harness/persistence/migrations/`. Schema bootstrap (API startup, `harness submit`
+and eval runs) creates an empty database at head, accepts one already at head, and refuses
+anything else with the command that fixes it. The API container runs `harness migrate` before
+it serves.
 
 ```bash
-aws sso login --profile infosec-harness-sso
-export HARNESS_MODEL_MODE=live HARNESS_MODEL_BACKEND=bedrock
+uv run harness migrate            # upgrade HARNESS_DATABASE_URL to head
+uv run harness migrate --local    # the same, against the local database .harness/local.db
+uv run alembic current            # which revision a database is at
+uv run alembic upgrade head --sql # print the SQL for a DBA-applied change
 ```
 
-Confirm the Bedrock model ids/region in `src/infosec_harness/config/models.yaml` match what your account has
-enabled (add a `us.`/`global.` inference-profile prefix if required).
+`harness migrate` on an empty database builds the same schema that bootstrap creates, so there
+is no separate create command; bootstrap never alters an existing table. A database with tables
+but no Alembic version row is refused
+rather than guessed at. Changing a model in `src/infosec_harness/persistence/db.py` means adding
+a revision (`uv run alembic revision --autogenerate -m "..."`) and reviewing it: a `NOT NULL`
+column needs a server default. `tests/persistence/test_migrations.py` fails if the revisions and
+the models disagree.
 
-## 3. Full stack
+## Sandbox
 
-```bash
-./dev
-```
+Untrusted build steps and probes run under gVisor; trusted infrastructure containers use
+Docker's `runc`. `ensure_runtime_available` refuses any configured runtime other than `runsc`,
+and `Settings` refuses one at startup, unless `HARNESS_ALLOW_INSECURE_RUNTIME=true`. Builds use
+a buildx builder (`harness-gvisor`, created by the worker) on an internal network whose only
+egress is the operator's allowlisting proxy (`deploy/squid-allowlist.conf`); the generated
+`HARNESS_BUILD_EGRESS_HOST_IP` and matching `HARNESS_BUILD_EGRESS_PROXY` must stay numeric,
+because runsc cannot use Docker's embedded DNS on an internal bridge. Probes and the sandbox
+shell tool have no network. Kubernetes manifests for an isolated probe namespace are under
+`deploy/k8s/`.
 
-The managed profile brings up Postgres, Temporal and its UI, RustFS (an S3-compatible service addressed as `minio` inside
-compose), an OpenTelemetry collector, Jaeger, the worker, the API (docs at `/docs`), and the web
-app. Read the allocated loopback URLs from launcher output or `.harness/dev.env`. It
-generates PostgreSQL and S3 credentials in `.harness/dev.env`; default inference is stub.
-Use `./dev status`, `./dev logs <service>`, `./dev smoke`, and `./dev stop` for lifecycle
-operations. The base `docker-compose.yml` remains an advanced manual path and is not equivalent
-to the verified managed setup.
+For a manual setup, install `runsc`, register it as a Docker runtime and make it the daemon's
+default runtime (buildx build steps inherit the default). The worker parses `docker info` JSON and
+requires both; that is discovery only, and an actual execution must also pass.
 
 ## Package dependency compatibility
 
-Use the checked-in lockfile for checkout development (`uv sync --locked`). Installed wheels
-support `temporalio>=1.33,<1.34`: Temporal 1.34 added an `EventGroup` field to `ActivityConfig`
-that the current PydanticAI integration cannot turn into a Pydantic schema. Fresh wheel tests
-reproduced the failure with PydanticAI 2.52 / Temporal 1.34 and constructed all 11 agents after
-changing only Temporal to 1.33. The lockfile keeps its existing dependency versions; only the
-supported-range metadata changed. Revisit this bound with isolated wheel construction and real
-Temporal replay checks before admitting another version.
-
-## 4. Database migrations
-
-The API container runs `harness migrate` before it serves, so a `docker compose up` after a
-schema change is enough. Outside compose:
-
-```bash
-uv run harness migrate            # against HARNESS_DATABASE_URL; adopts a pre-alembic database
-just migrate                      # the same, against the local .harness/demo.db
-uv run alembic current            # which revision a database is at
-uv run alembic upgrade head --sql # print the SQL instead of running it (for a DBA-applied change)
-```
-
-A database created by `harness init-db` (or `just demo`) before this existed has tables but no
-`alembic_version` row. `harness migrate` recognises that shape, stamps it at revision `0001` —
-which is exactly what the old `init-db` built — and upgrades from there. A brand-new database
-is stamped at head by `init-db` itself, so either entry point leaves it in a state the other
-understands. If a local `.harness/demo.db` fails with *no such column*, run `just migrate`.
-
-## Sandbox (gVisor) {#sandbox-gvisor}
-
-Untrusted BuildKit build steps and probes run under gVisor. Trusted infrastructure containers
-use Docker's `runc`. The managed launcher provisions `runsc` and verifies an actual execution
-probe before starting the full profile. Its build egress network uses a static numeric proxy
-address because the runsc network stack cannot use Docker's embedded DNS on the internal bridge.
-The generated `HARNESS_BUILD_EGRESS_HOST_IP` and matching `HARNESS_BUILD_EGRESS_PROXY` must stay
-numeric and aligned.
-
-For an advanced manual setup, install `runsc` and register it as a Docker runtime (see the
-gVisor docs), then confirm:
-
-```bash
-docker info --format '{{json .Runtimes}}'   # discovery only; actual execution must also pass
-```
-
-- Builds and probes **fail closed** if `runsc` is missing.
-- The build step uses a buildx builder (`harness-gvisor`, created automatically by the
-  worker) so untrusted install scripts are gVisor-contained; build egress is pinned to the
-  registry allowlist via the `egress-proxy` service in compose.
-- Kubernetes manifests for the isolated probe namespace are under `deploy/k8s/`.
-
-The historical live-model and podman-based runtime notes remain in
-[`LIVE_VALIDATION.md`](../validation/LIVE_VALIDATION.md) as historical evidence only. They do not describe
-the managed launcher or establish clean-host acceptance.
-
-For UI/API-only updates, `./dev reload-ui` verifies the typed runtime and qualification endpoints through both the API and the web proxy, operational collections (empty is valid), and actual served assets. The GET-only verification performs no finding submission, storage mutation or model request. Restarting the API uses its normal migration/bootstrap and pending-submission reconciliation lifecycle, so existing accepted submissions may resume. A healthy old API cannot pass merely because `/api/health` returns 200. This command preserves the configured model profile; it does not silently switch a stub development environment to live inference. Configure live model access and operator evidence explicitly for an operational deployment.
-
-The UI reload waits up to 60 seconds for transient service-startup connection failures, disconnects, and HTTP 502/503 responses. Missing routes, invalid typed responses and mismatched expected identities still fail. Use `scripts/ui_deployment_smoke.py` directly with `--expected-source-commit`, `--expected-model-mode` and `--expected-transport` for explicit release identity checks. Private operator overrides used to mount evidence and stamp source identity must remain in the Compose configuration when recreating services; `reload-ui` restarts existing containers and preserves their configuration.
+Use the lockfile for checkout development (`uv sync --locked`). Installed wheels support
+`temporalio>=1.33,<1.34`: Temporal 1.34 added an `ActivityConfig` field that the current
+PydanticAI integration cannot turn into a Pydantic schema. Revisit the bound with isolated wheel
+construction and real Temporal replay checks before admitting another version.

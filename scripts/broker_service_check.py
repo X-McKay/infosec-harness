@@ -18,23 +18,22 @@ from pathlib import Path
 from urllib.parse import quote
 
 import asyncpg
+from broker_ledger_check import read_environment
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tests" / "runtime"))
-from broker_ledger_check import read_environment  # noqa: E402
-from broker_service_fixture import (  # noqa: E402
+from infosec_harness.qualification.broker.service import (
     AGENTS,
-    baseline_recorder,
     environment,
     free_port,
     generate_pki,
-    private_json,
+    private_write,
     settings_files,
     wait_port,
 )
 
+ROOT = Path(__file__).resolve().parent.parent
 
-async def run(env_file: Path, *, temporal: bool, baseline_ref: str) -> int:
+
+async def run(env_file: Path, *, temporal: bool) -> int:
     run_id = uuid.uuid4().hex
     database = "brokerservice_" + run_id
     directory = Path(tempfile.mkdtemp(prefix="broker-service-", dir="/private/tmp"))
@@ -69,16 +68,12 @@ async def run(env_file: Path, *, temporal: bool, baseline_ref: str) -> int:
             "repo": str(repo), "worker_key": secrets.token_hex(32), "canary": secrets.token_hex(32),
             "database_url": f"postgresql+asyncpg://harness:{quote(password, safe='')}@127.0.0.1:{port}/{database}",
             "temporal_address": "127.0.0.1:7365", "task_queue": "brokerqualification-" + run_id}
-        if temporal:
-            manifest.update(baseline_recorder(directory, baseline_ref))
-            report["baseline_revision"] = manifest["baseline_revision"]
-            report["baseline_sdk"] = manifest["baseline_sdk"]
-        private_json(manifest_path, manifest)
+        private_write(manifest_path, manifest)
         sensitive = [password, quote(password, safe=""), manifest["worker_key"], manifest["canary"], manifest["database_url"]]
         runtime_environment = environment(manifest)
         for role, listener in (("provider", provider_port), ("controller", controller_port)):
             with open(directory / f"{role}.log", "ab") as log:
-                process = subprocess.Popen([sys.executable, str(ROOT / "tests" / "runtime" / "broker_service_fixture.py"),
+                process = subprocess.Popen([sys.executable, "-m", "infosec_harness.qualification.broker.service",
                     role, "--manifest", str(manifest_path)], cwd=ROOT, env=runtime_environment,
                     stdout=log, stderr=log, start_new_session=True)
             processes.append(process)
@@ -110,8 +105,7 @@ async def run(env_file: Path, *, temporal: bool, baseline_ref: str) -> int:
         if temporal:
             qualified = complete and required_b.issubset(names) and {
                 "temporal_worker_kill_saved_result_retry_replay", "temporal_all_registered_agents_replay",
-                "direct_stub_history_broker_config_replay",
-                "prechange_baseline_history_broker_config_replay"}.issubset(names)
+                "direct_stub_history_broker_config_replay"}.issubset(names)
             report["layer_d_services"] = "passed" if qualified else "failed"
             report["layer_d"] = "partial" if qualified else "failed"
         conflicts = directory / "conflict-fields.jsonl"
@@ -189,9 +183,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env-file", type=Path, default=ROOT / ".harness" / "dev.env")
     parser.add_argument("--temporal", action="store_true")
-    parser.add_argument("--baseline-ref", default="develop")
     arguments = parser.parse_args()
-    return asyncio.run(run(arguments.env_file, temporal=arguments.temporal, baseline_ref=arguments.baseline_ref))
+    return asyncio.run(run(arguments.env_file, temporal=arguments.temporal))
 
 
 if __name__ == "__main__":

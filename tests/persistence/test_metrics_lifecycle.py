@@ -20,8 +20,9 @@ async def test_acceptance_events_and_unknown_metrics_are_idempotent():
     await db.create_all()
     findings = [FindingInput(title=f"Finding {i}", repo_url="/repo", file_path=f"a{i}.py")
                 for i in range(205)]
-    await lifecycle.accept_batch("metric-many", findings + findings[:1], "many", {"findings": []})
-    await lifecycle.accept_batch("metric-many", findings, "many", {})
+    await lifecycle.accept_batch("metric-many", findings + findings[:1], "many", None,
+                                 agent_config_digests={})
+    await lifecycle.accept_batch("metric-many", findings, "many", None, agent_config_digests={})
     summary = await store.batch_summary("metric-many")
     assert summary["finding_count"] == 205
     rows = await store.list_runs(batch_id="metric-many", limit=300)
@@ -53,7 +54,7 @@ async def test_page_counts_do_not_depend_on_limit():
     from infosec_harness.api.app import app
     await db.create_all()
     findings = [FindingInput(title=f"Page {i}", repo_url="/page", file_path=f"p{i}.py") for i in range(3)]
-    await lifecycle.accept_batch("page-only", findings, "page", {})
+    await lifecycle.accept_batch("page-only", findings, "page", None, agent_config_digests={})
     async with AsyncClient(transport=ASGITransport(app), base_url="http://test") as client:
         result = (await client.get("/api/run-page", params={"batch_id": "page-only", "limit": 2})).json()
         assert result["total"] == 3
@@ -66,7 +67,7 @@ async def test_concurrent_progress_delivery_preserves_terminal_status():
 
     await db.create_all()
     finding = FindingInput(title="Event race", repo_url="/race", file_path="a.py")
-    await lifecycle.accept_batch("race", [finding], "race", {})
+    await lifecycle.accept_batch("race", [finding], "race", None, agent_config_digests={})
     row = (await store.list_runs(batch_id="race"))[0]
     await asyncio.gather(*(lifecycle.record_progress("race", row["fingerprint"], "preparing", "same")
                            for _ in range(3)))
@@ -83,7 +84,7 @@ async def test_terminal_progress_recovers_after_concurrent_earlier_transition(mo
 
     await db.create_all()
     finding = FindingInput(title="Ordered event race", repo_url="/race", file_path="a.py")
-    await lifecycle.accept_batch("ordered-race", [finding], "race", {})
+    await lifecycle.accept_batch("ordered-race", [finding], "race", None, agent_config_digests={})
     row = (await store.list_runs(batch_id="ordered-race"))[0]
 
     real_session = db.session
@@ -140,8 +141,8 @@ async def test_terminal_progress_recovers_after_concurrent_earlier_transition(mo
 @pytest.mark.parametrize("first", ["cancelled", "failed"])
 async def test_first_terminal_batch_status_wins(first):
     await db.create_all()
-    await store.create_batch(f"first-terminal-{first}", source_kind="generic_json",
-                             label="terminal", count=0)
+    await lifecycle.accept_batch(f"first-terminal-{first}", [], "terminal", None,
+                                 agent_config_digests={})
     await store.finish_batch(f"first-terminal-{first}", first)
     await store.finish_batch(f"first-terminal-{first}", "complete")
     await store.finish_batch(f"first-terminal-{first}", "failed" if first == "cancelled" else "cancelled")
@@ -153,7 +154,7 @@ async def test_first_terminal_batch_status_wins(first):
 async def test_missing_outputs_cannot_be_marked_complete():
     await db.create_all()
     finding = FindingInput(title="Missing output", repo_url="/missing", file_path="a.py")
-    await lifecycle.accept_batch("missing-output", [finding], "missing", {})
+    await lifecycle.accept_batch("missing-output", [finding], "missing", None, agent_config_digests={})
     await lifecycle.finish_pending("missing-output", "complete", "")
     summary = await store.batch_summary("missing-output")
     assert summary["status"] == "failed"
@@ -167,7 +168,7 @@ async def test_histogram_drill_down_uses_matching_population_and_bin_edges():
 
     await db.create_all()
     findings = [FindingInput(title=f"Bin {i}", repo_url="/bins", file_path=f"{i}.py") for i in range(4)]
-    await lifecycle.accept_batch("bins", findings, "bins", {})
+    await lifecycle.accept_batch("bins", findings, "bins", None, agent_config_digests={})
     rows = await store.list_runs(batch_id="bins")
     async with db.session() as session:
         for row, value in zip(rows, [0, 10, 20, None], strict=True):

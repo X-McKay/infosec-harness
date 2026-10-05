@@ -1,26 +1,26 @@
 """Validation orchestration requires explicit inference and preserves output boundaries."""
 
-import importlib
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from conftest import load_script
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture
-def validation(monkeypatch):
-    monkeypatch.syspath_prepend(str(ROOT / "scripts"))
-    return importlib.import_module("service_validation")
+def validation():
+    return load_script("service_validation")
 
 
 @pytest.fixture
 def deployment(validation, monkeypatch):
-    runtime = importlib.import_module("runtime_readiness")
-    model = importlib.import_module("model_connectivity")
+    from infosec_harness.operations import model_connectivity as model
+    from infosec_harness.operations import readiness as runtime
+
     profile = {
         "source_commit": "a" * 40,
         "mode": "live",
@@ -234,14 +234,15 @@ def test_managed_exec_preserves_running_environment_and_rejects_contradictory_su
 
     monkeypatch.setattr(validation.subprocess, "run", execute)
     with pytest.raises(ValueError):
-        validation.managed_check("model_connectivity.py", ["--model"], 90)
+        validation.managed_check("model-connectivity", ["--model"], 90)
     command = commands[0]
     assert command[command.index("exec") :] == [
         "exec",
         "-T",
         "worker",
-        "python",
-        "/app/scripts/model_connectivity.py",
+        "harness",
+        "ops",
+        "model-connectivity",
         "--model",
     ]
     assert not any(item in command for item in ("up", "restart", "--env", "-e"))

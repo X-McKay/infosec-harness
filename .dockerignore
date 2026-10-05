@@ -8,3 +8,6 @@ ui/dist
 .pytest_cache
 research
 docs
+# The backend image needs nothing from deploy/ except an optional proxy CA (see Dockerfile).
+deploy/*
+!deploy/extra-ca.crt

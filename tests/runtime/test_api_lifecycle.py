@@ -4,13 +4,22 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import null, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from infosec_harness.persistence import db, lifecycle
-from infosec_harness.workflows import runner
+from infosec_harness.domain.models import FindingInput
+from infosec_harness.persistence import db, lifecycle, store
+from infosec_harness.persistence.run_telemetry import RunTelemetry
+from infosec_harness.workflows import submission as runner
+from infosec_harness.workflows.payloads import BatchArgs
+
+
+def _start(identity: str) -> dict:
+    return BatchArgs(batch_id=identity, findings=[FindingInput(title=identity, repo_url="/r")],
+                     per_repo_concurrency=4).model_dump(mode="json")
 
 
 @pytest.fixture
@@ -28,8 +37,8 @@ async def lifecycle_database(tmp_path, monkeypatch):
 
 async def seed_submission_states(sessions):
     rows = [
-        ("accepted-operational", "accepted", {"token": "operational"}, "operational"),
-        ("accepted-demo", "accepted", {"token": "demo"}, "demo"),
+        ("accepted-operational", "accepted", _start("accepted-operational"), "operational"),
+        ("accepted-demo", "accepted", _start("accepted-demo"), "demo"),
         ("accepted-empty", "accepted", {}, "operational"),
         ("accepted-no-payload", "accepted", None, "operational"),
         ("accepted-sql-null", "accepted", None, "operational"),
@@ -54,14 +63,14 @@ async def seed_submission_states(sessions):
             )
             session.add(
                 db.TriageRun(
-                    id=identity,
+                    id=store.run_id(identity, identity),
                     batch_id=identity,
                     fingerprint=identity,
                     repo_url="/test/repo",
                     revision="test",
                     title=identity,
                     status="pending" if state == "accepted" else state,
-                    telemetry={"population": population},
+                    telemetry=RunTelemetry.accepted(population, datetime.now(UTC)).stored(),
                 )
             )
         await session.commit()
@@ -86,7 +95,7 @@ async def test_pending_submissions_uses_exact_status_and_nonnull_payload(lifecyc
 async def test_reconcile_only_submission_candidates_never_resumes_unknown_holds(
     lifecycle_database, monkeypatch
 ):
-    from infosec_harness.inference import controller, ledger
+    from infosec_harness.inference.controller import service as controller
     from infosec_harness.workflows import worker
 
     rows = await seed_submission_states(lifecycle_database)
@@ -131,8 +140,8 @@ async def test_reconcile_only_submission_candidates_never_resumes_unknown_holds(
     before = await retained_bytes()
     started, cancelled = [], []
 
-    async def capture_start(identity, payload):
-        started.append((identity, payload))
+    async def capture_start(args):
+        started.append((args.batch_id, args.model_dump(mode="json")))
 
     async def capture_cancel(identity):
         cancelled.append(identity)
@@ -143,21 +152,25 @@ async def test_reconcile_only_submission_candidates_never_resumes_unknown_holds(
     monkeypatch.setattr(runner, "start_accepted_batch", capture_start)
     monkeypatch.setattr(runner, "cancel_durable_batch", capture_cancel)
     monkeypatch.setattr(worker, "connect", forbidden)
-    monkeypatch.setattr(controller.Controller, "recover", forbidden)
-    monkeypatch.setattr(controller.Controller, "infer", forbidden)
-    monkeypatch.setattr(controller.Controller, "revoke_run", forbidden)
-    monkeypatch.setattr(ledger, "recover", forbidden)
+    monkeypatch.setattr(controller.Controller, "infer", forbidden, raising=False)
+    monkeypatch.setattr(controller.Controller, "revoke_run", forbidden, raising=False)
     await runner.reconcile_submissions()
+    # Only a payload that validates as the workflow input is started; an invalid one fails its
+    # batch instead of being retried forever.
     assert dict(started) == {
         identity: payload
         for identity, state, payload, _ in rows
-        if state == "accepted" and isinstance(payload, dict)
+        if state == "accepted" and isinstance(payload, dict) and payload
     }
+    async with lifecycle_database() as session:
+        assert (await session.get(db.Batch, "accepted-empty")).status == "failed"
+        run = await session.get(db.TriageRun, store.run_id("accepted-empty", "accepted-empty"))
+        assert run.status == "failed"
     assert set(cancelled) == {
         identity for identity, state, _, _ in rows if state == "cancellation_requested"
     }
     assert len(cancelled) == 2
-    assert len(started) == 3
+    assert len(started) == 2
     assert before == await retained_bytes()
     assert all(
         not identity.endswith(("-complete", "-failed", "-cancelled", "-running"))

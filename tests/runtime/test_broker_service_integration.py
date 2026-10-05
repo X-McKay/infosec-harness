@@ -1,4 +1,7 @@
-"""Explicit layer B: real HTTPS processes, real Postgres, mocked native lifecycle only."""
+"""Explicit layer B: real HTTPS processes, real Postgres, mocked native lifecycle only.
+
+Run only by ``scripts/broker_service_check.py``, which supplies the service manifest.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -14,14 +17,16 @@ import pytest
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
 
-from infosec_harness.inference.auth import AUTH_HEADER, sign_request
-from infosec_harness.inference.protocol import (
+from infosec_harness.inference.wire.auth import AUTH_HEADER, sign_request
+from infosec_harness.inference.wire.protocol import (
     BrokerError,
     InvocationRequest,
     canonical_bytes,
     digest,
 )
 from infosec_harness.persistence import db
+
+pytestmark = pytest.mark.requires_service("HARNESS_BROKER_SERVICE_MANIFEST")
 
 
 class Services:
@@ -51,8 +56,8 @@ class Services:
 
     async def model(self, identity="model:0"):
         from infosec_harness.agents.registry import load_spec, resolve_agent_config
-        from infosec_harness.inference.invocations import request_invocation
-        from infosec_harness.inference.transport import BrokerModel
+        from infosec_harness.inference.worker.invocations import request_invocation
+        from infosec_harness.inference.worker.transport import BrokerModel
         config = resolve_agent_config("context", load_spec("context"), durable=False)
         run_id = str(uuid.uuid4())
         binding = await request_invocation(InvocationRequest(mode="local", root_id=digest({"local_run": run_id}),
@@ -188,7 +193,7 @@ async def test_secret_detector_has_positive_control_and_logs_ledger_are_clean(se
 async def test_actual_eval_issuance_registered_agent_closes_its_owned_root(services):
     from infosec_harness.agents.deps import AgentDeps
     from infosec_harness.agents.registry import build_agent, load_spec, resolve_agent_config
-    from infosec_harness.inference.invocations import eval_invocation
+    from infosec_harness.inference.worker.invocations import eval_invocation
     spec = load_spec("context")
     config = resolve_agent_config("context", spec, durable=True)
     agent = build_agent("context", durable=False, production_transport=True)
@@ -225,7 +230,7 @@ async def test_every_registered_agent_executes_actual_broker_transport(services,
         InconclusiveOutput,
         PartialEnvironmentOutput,
     )
-    from infosec_harness.agents.registry import AGENT_BINDINGS
+    from infosec_harness.agents.registry import BINDINGS
     from infosec_harness.domain.models import (
         EnvironmentSpec,
         ExtractedFinding,
@@ -235,7 +240,7 @@ async def test_every_registered_agent_executes_actual_broker_transport(services,
         RepoProfile,
     )
     from infosec_harness.graph.ops import LocalOps
-    from infosec_harness.inference.protocol import digest
+    from infosec_harness.inference.wire.protocol import digest
 
     expected_types = {
         "intake": ExtractedFinding, "recon": RepoProfile, "env-planner": EnvironmentSpec,
@@ -243,7 +248,7 @@ async def test_every_registered_agent_executes_actual_broker_transport(services,
         "context": ContextOutput, "probe-planner": ProbePlan, "probe-author": ProbeSource,
         "probe-diagnosis": ProbeDiagnosis, "probe-repair": ProbeSource, "verdict": InconclusiveOutput,
     }
-    assert set(expected_types) == set(AGENT_BINDINGS)
+    assert set(expected_types) == set(BINDINGS)
     before = len(services.events())
     ops = LocalOps(sandbox=False, recipe_cache=False)
     try:
@@ -298,11 +303,10 @@ async def test_every_registered_agent_executes_actual_broker_transport(services,
 async def test_local_prepare_and_triage_graph_uses_actual_broker_for_each_agent(services, tmp_path):
     from sqlalchemy import select
 
-    from infosec_harness.domain.models import FindingInput, ProbeExecution, RepoSnapshot
+    from infosec_harness.domain.models import Finding, FindingInput, ProbeExecution, RepoSnapshot
     from infosec_harness.graph.ops import LocalOps
     from infosec_harness.graph.prepare import run_prepare
     from infosec_harness.graph.triage import TRIAGE_GRAPH, PreFilter, TriageDeps, TriageState
-    from infosec_harness.intake.adapters import to_finding
     from infosec_harness.repo.detect import detect_stack
 
     class QualificationOps(LocalOps):
@@ -327,7 +331,7 @@ async def test_local_prepare_and_triage_graph_uses_actual_broker_for_each_agent(
         prepared = await run_prepare(ops, RepoSnapshot(repo_url=repo, revision="HEAD", path=repo,
             content_hash="a" * 64), detect_stack(repo))
         assert prepared.prepared.status == "ready"
-        finding = to_finding(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
+        finding = Finding.from_input(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
             start_line=2, cwe="CWE-89", severity="high"))
         state = TriageState(finding=finding, prepared=prepared.prepared)
         result = await TRIAGE_GRAPH.run(state=state, deps=TriageDeps(ops=ops), inputs=PreFilter())

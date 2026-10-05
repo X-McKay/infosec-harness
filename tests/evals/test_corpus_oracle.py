@@ -32,13 +32,8 @@ from xml.sax import SAXException
 
 import pytest
 
-from infosec_harness.sandbox.docker import (
-    ORACLE_PREFIX,
-    PRECONDITION_PREFIX,
-    SINK_RETURNED_PREFIX,
-    oracle_signals,
-    sink_returned,
-)
+from infosec_harness.sandbox.markers import ORACLE_PREFIX, PRECONDITION_PREFIX, SINK_RETURNED_PREFIX
+from infosec_harness.sandbox.output import oracle_signals, sink_returned
 from infosec_harness.settings import REPO_ROOT
 
 CORPUS = REPO_ROOT / "eval-corpus" / "python"

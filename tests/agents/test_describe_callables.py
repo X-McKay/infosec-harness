@@ -16,6 +16,7 @@ import pytest
 from pydantic_ai import ModelRetry
 
 from infosec_harness.agents import capabilities as caps
+from infosec_harness.agents import symbol_inspection
 from infosec_harness.agents.deps import AgentDeps
 
 CORPUS = Path(__file__).resolve().parents[2] / "eval-corpus"
@@ -25,7 +26,7 @@ def _describe(case: str, path: str) -> str:
     root = CORPUS / case
     assert root.is_dir(), f"corpus case {case} is missing"
     ctx = SimpleNamespace(deps=AgentDeps(repo_path=str(root)))
-    return caps.describe_callables(ctx, path)
+    return symbol_inspection.describe_callables(ctx, path)
 
 
 def _block(report: str, symbol: str) -> str:
@@ -63,7 +64,7 @@ def test_a_javascript_default_export_is_not_destructured(tmp_path):
     """The inverse error: `module.exports = fn` must not be reported as a named export."""
     (tmp_path / "solo.js").write_text("function only(a) { return a; }\nmodule.exports = only;\n")
     ctx = SimpleNamespace(deps=AgentDeps(repo_path=str(tmp_path)))
-    block = _block(caps.describe_callables(ctx, "solo.js"), "only")
+    block = _block(symbol_inspection.describe_callables(ctx, "solo.js"), "only")
     assert "export=default" in block
     assert 'const only = require("./solo");' in block
     assert "{ only }" not in block
@@ -86,7 +87,7 @@ def test_typescript_is_described_rather_than_refused(tmp_path, name):
         '  return "<div>" + text + "</div>";\n}\n'
     )
     ctx = SimpleNamespace(deps=AgentDeps(repo_path=str(tmp_path)))
-    report = caps.describe_callables(ctx, name)
+    report = symbol_inspection.describe_callables(ctx, name)
     block = _block(report, "renderComment")
     assert "export=named" in block
     # Extensionless: `./render.ts` is what ts-jest and tsc's own resolver reject.
@@ -104,7 +105,7 @@ def test_an_esm_specifier_keeps_its_extension(tmp_path):
         'export function renderComment(t) { return "<div>" + t + "</div>"; }\n'
     )
     ctx = SimpleNamespace(deps=AgentDeps(repo_path=str(tmp_path)))
-    report = caps.describe_callables(ctx, "src/render.js")
+    report = symbol_inspection.describe_callables(ctx, "src/render.js")
     assert 'import { renderComment } from "./src/render.js";' in report
     assert 'from "./src/render"' not in report.replace('from "./src/render.js"', "")
     assert "ERR_MODULE_NOT_FOUND" in report
@@ -117,14 +118,14 @@ def test_a_commonjs_require_specifier_stays_extensionless(tmp_path):
         "function countLines(p) { return p; }\nmodule.exports = { countLines };\n"
     )
     ctx = SimpleNamespace(deps=AgentDeps(repo_path=str(tmp_path)))
-    report = caps.describe_callables(ctx, "cmd.js")
+    report = symbol_inspection.describe_callables(ctx, "cmd.js")
     assert 'const { countLines } = require("./cmd");' in report
 
 
 def test_an_mjs_module_keeps_the_mjs_extension(tmp_path):
     (tmp_path / "render.mjs").write_text("export function render(t) { return t; }\n")
     ctx = SimpleNamespace(deps=AgentDeps(repo_path=str(tmp_path)))
-    assert 'from "./render.mjs"' in caps.describe_callables(ctx, "render.mjs")
+    assert 'from "./render.mjs"' in symbol_inspection.describe_callables(ctx, "render.mjs")
 
 
 # --- one file per corpus language --------------------------------------------------------
@@ -150,7 +151,7 @@ def test_python_reports_a_method_as_needing_an_instance(tmp_path):
         "        return open(self.base + name).read()\n"
     )
     ctx = SimpleNamespace(deps=AgentDeps(repo_path=str(tmp_path)))
-    report = caps.describe_callables(ctx, "svc.py")
+    report = symbol_inspection.describe_callables(ctx, "svc.py")
     assert "kind=class" in _block(report, "Svc")
     method = _block(report, "Svc.read")
     assert "kind=method" in method
@@ -192,7 +193,7 @@ def test_perl_distinguishes_export_from_export_ok_from_neither(tmp_path):
         "sub hidden { my ($w) = @_; return $w; }\n1;\n"
     )
     ctx = SimpleNamespace(deps=AgentDeps(repo_path=str(tmp_path)))
-    report = caps.describe_callables(ctx, "Ex.pm")
+    report = symbol_inspection.describe_callables(ctx, "Ex.pm")
     assert "use Ex;  ->  always(...)" in _block(report, "Ex::always")
     maybe = _block(report, "Ex::maybe")
     assert "use Ex qw(maybe);" in maybe and "does not import it" in maybe
@@ -218,7 +219,7 @@ def test_every_language_states_what_is_certain_and_what_is_inferred():
 def test_a_file_with_no_callables_says_so_rather_than_inventing_one(tmp_path):
     (tmp_path / "consts.py").write_text('BASE = "/tmp"\nLIMIT = 5\n')
     ctx = SimpleNamespace(deps=AgentDeps(repo_path=str(tmp_path)))
-    report = caps.describe_callables(ctx, "consts.py")
+    report = symbol_inspection.describe_callables(ctx, "consts.py")
     assert "symbols found: 0" in report
     assert "no callable symbols found" in report
     assert "reach:" not in report
@@ -227,7 +228,7 @@ def test_a_file_with_no_callables_says_so_rather_than_inventing_one(tmp_path):
 def test_unparseable_python_reports_nothing_instead_of_guessing(tmp_path):
     (tmp_path / "broken.py").write_text("def f(:\n    pass\n")
     ctx = SimpleNamespace(deps=AgentDeps(repo_path=str(tmp_path)))
-    report = caps.describe_callables(ctx, "broken.py")
+    report = symbol_inspection.describe_callables(ctx, "broken.py")
     assert "symbols found: 0" in report
     assert "`ast` refused this file" in report
     assert "reach:" not in report
@@ -300,7 +301,7 @@ def test_a_directory_with_no_source_in_it_points_at_list_files(tmp_path):
     (tmp_path / "docs" / "notes.txt").write_text("nothing callable here\n")
     ctx = SimpleNamespace(deps=AgentDeps(repo_path=str(tmp_path)))
     with pytest.raises(ModelRetry) as excinfo:
-        caps.describe_callables(ctx, "docs")
+        symbol_inspection.describe_callables(ctx, "docs")
     message = str(excinfo.value)
     assert "list_files('docs')" in message, message
     assert "read_file" in message
@@ -324,7 +325,7 @@ def test_an_unsupported_extension_names_the_source_with_the_same_stem(tmp_path):
     (tmp_path / "UserDao.txt").write_text("notes about UserDao\n")
     ctx = SimpleNamespace(deps=AgentDeps(repo_path=str(tmp_path)))
     with pytest.raises(ModelRetry) as excinfo:
-        caps.describe_callables(ctx, "UserDao.txt")
+        symbol_inspection.describe_callables(ctx, "UserDao.txt")
     message = str(excinfo.value)
     assert "no supported extension" in message
     assert "read_file('UserDao.txt')" in message
@@ -360,11 +361,11 @@ def test_output_stays_inside_the_declared_toolset_bound(tmp_path):
     )
     (tmp_path / "huge.py").write_text(body)
     ctx = SimpleNamespace(deps=AgentDeps(repo_path=str(tmp_path)))
-    report = caps.describe_callables(ctx, "huge.py")
+    report = symbol_inspection.describe_callables(ctx, "huge.py")
     from infosec_harness.tools.policies import load_policies
 
     assert len(report.encode()) <= load_policies()["repo-read-only"].max_output_bytes
-    assert f"showing the first {caps.MAX_SYMBOLS}" in report
+    assert f"showing the first {symbol_inspection.MAX_SYMBOLS}" in report
 
 
 # --- registration ------------------------------------------------------------------------
@@ -395,3 +396,19 @@ def test_the_agents_that_need_it_are_told_to_use_it_imperatively(agent):
     tool = "describe_callables" if agent == "context" else "inspect_target"
     assert tool in text, f"{agent} is not told the tool exists"
     assert f"Call `{tool}`" in text or f"call `{tool}`" in text
+
+
+def test_a_file_larger_than_the_read_cap_is_described_from_its_first_bytes_only(
+        tmp_path, monkeypatch):
+    """Regression: describe_callables read the whole file with `read_text()`, bypassing
+    MAX_FILE_BYTES, so a multi-gigabyte file was loaded into the worker to describe it."""
+    from infosec_harness.agents import repo_tools
+
+    monkeypatch.setattr(repo_tools, "MAX_FILE_BYTES", 64)
+    monkeypatch.setattr(symbol_inspection, "MAX_FILE_BYTES", 64)
+    (tmp_path / "big.py").write_text("def early(a):\n    pass\n" + "x = 1\n" * 50
+                                     + "def late(b):\n    pass\n")
+    ctx = SimpleNamespace(deps=AgentDeps(repo_path=str(tmp_path)))
+    report = symbol_inspection.describe_callables(ctx, "big.py")
+    assert "early" in report and "late" not in report
+    assert "larger than 64 bytes" in report

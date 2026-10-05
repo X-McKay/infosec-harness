@@ -13,36 +13,20 @@ from typing import Any
 from pydantic_ai import ModelRetry, RunContext
 
 from infosec_harness.agents.deps import AgentDeps
-
-# Stable re-exports: prompts, stubs, evals, and downstream callers historically imported
-# these names from validators. The implementation lives in a focused versioned adapter contract.
-from infosec_harness.agents.ecosystem_contract import (  # noqa: F401
-    ADAPTER_CONTRACT_VERSION,
-    BUILD_HOME,
-    GRADLE_TEST_COMMAND,
-    JEST_TEST_COMMAND,
-    MAVEN_TEST_COMMAND,
-    MAVEN_WARMUP_COMMAND,
-    MAVEN_WARMUP_COMMANDS,
-    PYTEST_TEST_COMMAND,
-    RUNTIME_HOME,
-    VITEST_TEST_COMMAND,
-    _pathish_selector_violation,
-    _short_flag,
-    declared_java_release,
+from infosec_harness.agents.ecosystem_contract import (
     environment_spec_violations,
-    image_jdk_major,
     install_path_violations,
     jdk_compatibility_violations,
     js_runner_choice_violations,
-    maven_image_for_release,
     offline_warmup_violations,
     repo_java_release,
     repo_js_runners,
     repo_jvm_test_framework,
-    warmup_framework,
 )
-from infosec_harness.agents.intake_evidence import extraction_evidence_violations
+from infosec_harness.agents.intake_evidence import (
+    evidence_retry_message,
+    extraction_evidence_diagnostics,
+)
 from infosec_harness.domain.models import (
     DiagnosisKind,
     EnvironmentSpec,
@@ -54,14 +38,23 @@ from infosec_harness.domain.models import (
     VerdictLabel,
 )
 from infosec_harness.sandbox.install_sources import unapproved_install_sources
+from infosec_harness.sandbox.markers import (
+    FILE_ORACLE_NAME_PREFIX,
+    ORACLE_PREFIX,
+    PRECONDITION_PREFIX,
+    SINK_RETURNED_PREFIX,
+)
+
+# A deterministic output contract: returns the (possibly converted) output or raises ModelRetry.
+OutputValidator = Callable[[RunContext[AgentDeps], Any], Any]
 
 
 def validate_intake_evidence(
     ctx: RunContext[AgentDeps], output: ExtractedFinding
 ) -> ExtractedFinding:
-    problems = extraction_evidence_violations(ctx.deps.report_text, output.model_dump(mode="json"))
+    problems = extraction_evidence_diagnostics(ctx.deps.report_text, output.model_dump(mode="json"))
     if problems:
-        raise ModelRetry("Extraction violates its evidence contract:\n- " + "\n- ".join(problems))
+        raise ModelRetry(evidence_retry_message(problems))
     return output
 
 
@@ -117,11 +110,19 @@ def _repo_path(ctx: RunContext[AgentDeps] | None) -> str | None:
     return getattr(getattr(ctx, "deps", None), "repo_path", None)
 
 
+# With no recorded controller facts nothing corroborates a claim, so only inconclusive is
+# admissible: the same reduction ``outputs.allowed_verdict_labels`` applies to the offered tools.
+NO_FACTS_VIOLATION = (
+    "No controller evidence was recorded for this finding; only inconclusive is allowed."
+)
+
+
 def validate_verdict(ctx: RunContext[AgentDeps], output: Verdict) -> Verdict:
     facts = ctx.deps.facts
     if facts is None:
-        return output
-    problems = verdict_violations(output, facts)
+        problems = [] if output.label == VerdictLabel.inconclusive else [NO_FACTS_VIOLATION]
+    else:
+        problems = verdict_violations(output, facts)
     if problems:
         raise ModelRetry("Verdict violates the evidence contract:\n- " + "\n- ".join(problems))
     return output
@@ -219,23 +220,23 @@ def validate_probe(ctx: RunContext[AgentDeps], output: ProbeSource) -> ProbeSour
     missing = [
         name
         for name, marker in (
-            ("precondition", "HARNESS_PRECONDITION::"),
-            ("sink-returned", "HARNESS_SINK_RETURNED::"),
+            ("precondition", PRECONDITION_PREFIX),
+            ("sink-returned", SINK_RETURNED_PREFIX),
         )
         if marker not in output.content
     ]
     if missing:
         raise ModelRetry(
             f"The probe is missing the {' and '.join(missing)} marker(s). Print "
-            "HARNESS_PRECONDITION::<nonce> immediately before the sink call and "
-            "HARNESS_SINK_RETURNED::<nonce> immediately after it returns; without the second, a "
+            f"{PRECONDITION_PREFIX}<nonce> immediately before the sink call and "
+            f"{SINK_RETURNED_PREFIX}<nonce> immediately after it returns; without the second, a "
             "probe that throws on the way in is indistinguishable from one the code resisted. "
             "See the probe-oracle-protocol skill."
         )
-    if not any(m in output.content for m in ("HARNESS_ORACLE::", "harness_canary_")):
+    if not any(m in output.content for m in (ORACLE_PREFIX, FILE_ORACLE_NAME_PREFIX)):
         raise ModelRetry(
             "The probe must emit an oracle signal when the exploit condition holds: "
-            "print HARNESS_ORACLE::<nonce>, or create the canary file the plan's "
+            f"print {ORACLE_PREFIX}<nonce>, or create the canary file the plan's "
             "canary_file oracle names."
         )
     repo_path = _repo_path(ctx)
@@ -371,35 +372,18 @@ def _skipping_probe_violations(output: ProbeSource) -> list[str]:
     return problems
 
 
-MAVEN_WARMUP_REPAIR_VERSION = "maven-warmup-repair-v1"
-
-
-def _targeted_maven_warmup_repair() -> bool:
-    """Keep historical workflow retry bytes; new histories use field-targeted feedback."""
-    from temporalio import workflow
-
-    return not workflow.in_workflow() or workflow.patched(MAVEN_WARMUP_REPAIR_VERSION)
-
-
 def validate_environment_spec(
     ctx: RunContext[AgentDeps], output: EnvironmentSpec
 ) -> EnvironmentSpec:
     repo_path = _repo_path(ctx)
     framework = repo_jvm_test_framework(repo_path)
-    warmup_problems = offline_warmup_violations(output, framework)
-    targeted_warmup_problems = offline_warmup_violations(
-        output, framework, targeted_feedback=True
-    )
-    if (targeted_warmup_problems != warmup_problems
-            and _targeted_maven_warmup_repair()):
-        warmup_problems = targeted_warmup_problems
     problems = (
         environment_spec_violations(output)
         + install_path_violations(output)
         # Repo-aware, unlike the two above: the binding constraints are what the project
         # declares -- its test framework and its language level -- which no amount of
         # inspecting the spec alone can reveal.
-        + warmup_problems
+        + offline_warmup_violations(output, framework)
         + jdk_compatibility_violations(output.base_image, repo_java_release(repo_path))
         + js_runner_choice_violations(output.test_command or "", repo_js_runners(repo_path))
     )
@@ -457,13 +441,3 @@ def validate_partial_build_scope(
             "The partial-build scope contract is incomplete:\n- " + "\n- ".join(problems)
         )
     return output
-
-
-OUTPUT_VALIDATORS: dict[str, tuple[Callable[[RunContext[AgentDeps], Any], Any], ...]] = {
-    "verdict": (validate_verdict,),
-    "probe-author": (validate_probe,),
-    "probe-repair": (validate_probe,),
-    "env-planner": (validate_environment_spec,),
-    "build-repair": (validate_environment_spec,),
-    "partial-build": (validate_environment_spec, validate_partial_build_scope),
-}

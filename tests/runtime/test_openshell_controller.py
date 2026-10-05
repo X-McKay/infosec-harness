@@ -10,14 +10,20 @@ import pytest
 from pydantic_ai.messages import ModelResponse, TextPart
 from test_broker_executor import request_fixture
 
-from infosec_harness.inference.admission import ReservationPolicy
-from infosec_harness.inference.auth import AUTH_HEADER, sign_request
-from infosec_harness.inference.codec import encode_response
-from infosec_harness.inference.controller import Controller
-from infosec_harness.inference.ledger import StoredDisposition
-from infosec_harness.inference.openshell import Lease, LeaseStore, NativeSpec, OpenShellAdapter
-from infosec_harness.inference.policy import policy_digest
-from infosec_harness.inference.protocol import (
+from infosec_harness.inference.catalog.policy import policy_digest
+from infosec_harness.inference.controller.admission import ReservationPolicy
+from infosec_harness.inference.controller.ledger import StoredDisposition
+from infosec_harness.inference.controller.service import Controller
+from infosec_harness.inference.native.openshell import (
+    Lease,
+    LeaseStore,
+    NativeSpec,
+    OpenShellAdapter,
+    OwnedLeases,
+)
+from infosec_harness.inference.wire.auth import AUTH_HEADER, sign_request
+from infosec_harness.inference.wire.codec import encode_response
+from infosec_harness.inference.wire.protocol import (
     BrokerError,
     DispatchPermit,
     InferenceResult,
@@ -89,21 +95,28 @@ def controller_fixture(tmp_path):
 
     async def verify(lease):
         events.append("verify")
-        return {"native_id": "native-id"}
+        return {"native_id": lease.native_id, "policy_digest": lease.contract.policy_digest,
+                "executor_image": lease.contract.executor_image,
+                "supervisor_image": lease.contract.supervisor_image,
+                "profile": lease.contract.profile, "credential_revision": lease.credential_revision}
 
     async def revoke(lease):
         events.append("revoke")
         lease.status = "deleted"
 
-    adapter = SimpleNamespace(
-        leases={"lease": lease},
-        deployment="deployment",
-        lock=asyncio.Lock(),
-        ensure=ensure,
-        verify=verify,
-        revoke=revoke,
-        service_url=lambda lease: "https://gateway.test/s/ih-name/infer/v1/infer",
-    )
+    class Adapter(OwnedLeases):
+        deployment = "deployment"
+
+        def __init__(self):
+            self.leases = {"lease": lease}
+            self.lock = asyncio.Lock()
+            self.store = LeaseStore(tmp_path / "fixture-leases")
+            self.ensure, self.verify, self.revoke = ensure, verify, revoke
+
+        def service_url(self, _lease):
+            return "https://gateway.test/s/ih-name/infer/v1/infer"
+
+    adapter = Adapter()
     ledger = SimpleNamespace(get=get, admit=admit, claim=claim, complete=complete, recover=recover,
                              fail_before_dispatch=fail_before_dispatch)
     policy = ReservationPolicy("verdict", "test", request.contract.digest, "config", 10000, 16, 0)
@@ -254,6 +267,7 @@ def native_fixture(tmp_path):
         native_id="observed-id",
         status="ready",
         ledger_native_id="ledger-observed-id",
+        ledger_profile="ledger-profile",
     )
     detail = {
         "id": lease.native_id,
@@ -283,6 +297,27 @@ def native_fixture(tmp_path):
         "Config": {"Labels": {"openshell.ai/isolation-role": "supervisor"}},
     }
     calls = []
+    attached = [
+        {"name": contract.provider_binding, "type": "provider-profile", "id": "provider-observed-id"},
+        {"name": f"ih-ledger-{lease.lease_id}", "type": "ledger-profile", "id": "ledger-observed-id"},
+    ]
+    providers = [
+        {
+            "name": contract.provider_binding,
+            "id": "provider-observed-id",
+            "type": "provider-profile",
+            "workspace": "default",
+            "resource_version": 1,
+        },
+        {
+            "name": "ih-ledger-" + lease.lease_id,
+            "id": lease.ledger_native_id,
+            "type": "ledger-profile",
+            "workspace": "default",
+            "resource_version": 1,
+            "credential_keys": ["IH_LEDGER_TOKEN"],
+        },
+    ]
 
     class CLI:
         gateway = "https://gateway.test"
@@ -311,10 +346,7 @@ def native_fixture(tmp_path):
             if args[:3] == ["sandbox", "provider", "list"]:
                 return json.dumps(
                     {
-                        "providers": [
-                            {"name": contract.provider_binding, "type": "provider-profile"},
-                            {"name": f"ih-ledger-{lease.lease_id}", "type": "ledger-profile"},
-                        ],
+                        "providers": attached,
                         "next_page_token": "",
                     }
                 )
@@ -323,28 +355,7 @@ def native_fixture(tmp_path):
                     provider_profile if args[3] == "provider-profile" else ledger_profile
                 )
             if args[:2] == ["provider", "list"]:
-                return json.dumps(
-                    {
-                        "providers": [
-                            {
-                                "name": contract.provider_binding,
-                                "id": "provider-observed-id",
-                                "type": "provider-profile",
-                                "workspace": "default",
-                                "resource_version": 1,
-                            },
-                            {
-                                "name": "ih-ledger-" + lease.lease_id,
-                                "id": lease.ledger_native_id,
-                                "type": "ledger-profile",
-                                "workspace": "default",
-                                "resource_version": 1,
-                                "credential_keys": ["IH_LEDGER_TOKEN"],
-                            },
-                        ],
-                        "next_page_token": "",
-                    }
-                )
+                return json.dumps({"providers": providers, "next_page_token": ""})
             if args[:2] == ["sandbox", "exec"]:
                 return json.dumps({"uid": 65532, "nnp": "1", "seccomp": "2"})
             raise AssertionError(args)
@@ -357,6 +368,7 @@ def native_fixture(tmp_path):
     adapter = OpenShellAdapter(
         CLI(), store=store, deployment="deployment", specs={contract.digest: spec}
     )
+    adapter.fixture = SimpleNamespace(attached=attached, providers=providers)
     return adapter, adapter.leases[lease.lease_id], detail, workload, supervisor, calls
 
 
@@ -411,6 +423,39 @@ async def test_native_mismatch_is_fail_closed(tmp_path, fault):
         workload["Config"]["User"] = "0:0"
     with pytest.raises(BrokerError):
         await adapter.verify(lease)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fault", ["provider_id", "ledger_id", "missing_id", "extra", "duplicate"])
+async def test_attachment_is_verified_by_native_id_not_name(tmp_path, fault):
+    """A provider attached under the expected name and type but another identity is unverified."""
+    adapter, lease, *_ = native_fixture(tmp_path)
+    attached = adapter.fixture.attached
+    if fault == "provider_id":
+        attached[0]["id"] = "foreign-provider-id"
+    if fault == "ledger_id":
+        attached[1]["id"] = "foreign-ledger-id"
+    if fault == "missing_id":
+        del attached[0]["id"]
+    if fault == "extra":
+        attached.append({"name": "other", "type": "provider-profile", "id": "other-id"})
+    if fault == "duplicate":
+        attached.append(dict(attached[0]))
+    with pytest.raises(BrokerError, match="policy"):
+        await adapter.verify(lease)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("index,category", [(0, "provider_identity"), (1, "ledger_provider_identity")])
+async def test_duplicate_provider_name_is_ambiguous_even_when_one_record_matches(
+        tmp_path, caplog, index, category):
+    """The first matching name must never be selected from a duplicated inventory."""
+    adapter, lease, *_ = native_fixture(tmp_path)
+    providers = adapter.fixture.providers
+    providers.append({**providers[index], "id": "shadow-id"})
+    with pytest.raises(BrokerError, match="identity"):
+        await adapter.verify(lease)
+    assert f"IH_NATIVE_IDENTITY_FAILURE boundary=native_verify category={category}" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -489,8 +534,8 @@ async def test_run_close_authenticates_owner_then_fences_before_native_cleanup(t
             raise BrokerError("identity")
         events.append("owner")
 
-    async def fence(run_id):
-        assert store.is_run_revoked(run_id)
+    async def fence(run_id, *, root_id):
+        assert store.is_run_revoked(run_id) and root_id == "root"
         events.append("fence")
 
     core.ledger.validate_run_owner = owner
@@ -626,7 +671,12 @@ async def test_partial_owned_cleanup_is_retryable_without_early_deleted_ack(tmp_
     assert actions.count(failure) == 2
     assert lease.status == "deleted"
     assert not state["sandbox"] and not state["provider"]
-    assert adapter.store.load()[0].status == "deleted"
+    # A deleted lease's secret record is retired to a secret-free archive entry.
+    assert adapter.store.load() == [] and adapter.is_deleted(lease.lease_id)
+    archived = (adapter.store.archive / f"{lease.lease_id}.json").read_text()
+    assert lease.ledger_key not in archived and lease.ingress_key_hex not in archived
+    await adapter.revoke(lease)  # Idempotent after retirement.
+    assert actions.count(failure) == 2
 
 
 async def test_detach_timeout_destroys_owned_sandbox_and_verifies_final_absence(tmp_path, caplog):
@@ -634,7 +684,7 @@ async def test_detach_timeout_destroys_owned_sandbox_and_verifies_final_absence(
     await adapter.revoke(lease)
     assert actions == ["detach", "delete", "provider"]
     assert "IH_NATIVE_CLEANUP_FAILURE stage=provider_detach category=unavailable action=destroy_owned_sandbox" in caplog.text
-    assert lease.status == adapter.store.load()[0].status == "deleted"
+    assert lease.status == "deleted" and adapter.store.load() == []
     assert not state["sandbox"] and not state["provider"]
 
 
@@ -689,7 +739,7 @@ async def test_close_during_preflight_cannot_publish_or_create_an_executor(tmp_p
         assert args == ["--version"]
         return "openshell 0.1.2"
 
-    async def fence(run):
+    async def fence(run, *, root_id):
         assert adapter.store.is_run_revoked(run)
 
     adapter.cli.preflight, adapter.cli.run = preflight, version
@@ -698,7 +748,7 @@ async def test_close_during_preflight_cannot_publish_or_create_an_executor(tmp_p
     )
     create = asyncio.create_task(adapter.ensure(lease.run_id, lease.contract))
     await entered.wait()
-    close = asyncio.create_task(core.revoke_run(lease.run_id))
+    close = asyncio.create_task(core.revoke_run(lease.run_id, "root"))
     await asyncio.sleep(0)
     assert adapter.store.is_run_revoked(lease.run_id)
     assert not close.done()
@@ -710,7 +760,7 @@ async def test_close_during_preflight_cannot_publish_or_create_an_executor(tmp_p
 
 
 async def test_controller_wall_timeout_fences_claimed_request_without_redispatch(tmp_path, monkeypatch):
-    from infosec_harness.inference import controller as module
+    from infosec_harness.inference.controller import service as module
 
     core, request, lease, events, rows = controller_fixture(tmp_path)
     async def interrupted(_):
@@ -748,7 +798,7 @@ async def test_controller_cancellation_retains_unknown_and_revokes_owner(tmp_pat
 
 @pytest.mark.parametrize("cancel", [False, True])
 async def test_interrupted_accepted_request_fences_delayed_claim_before_cleanup(tmp_path, monkeypatch, cancel):
-    from infosec_harness.inference import controller as module
+    from infosec_harness.inference.controller import service as module
 
     core, request, lease, events, rows = controller_fixture(tmp_path)
     admitted, cleanup_started, release_cleanup = asyncio.Event(), asyncio.Event(), asyncio.Event()
@@ -778,7 +828,7 @@ async def test_interrupted_accepted_request_fences_delayed_claim_before_cleanup(
 
 
 async def test_preclaim_fence_racing_claim_retains_unknown_before_cleanup(tmp_path, monkeypatch):
-    from infosec_harness.inference import controller as module
+    from infosec_harness.inference.controller import service as module
 
     core, request, lease, events, rows = controller_fixture(tmp_path)
     original = core.ledger.fail_before_dispatch
@@ -804,7 +854,7 @@ async def test_preclaim_fence_racing_claim_retains_unknown_before_cleanup(tmp_pa
 async def test_reconciliation_cutoff_does_not_join_slow_cancel_cleanup_or_accumulate_duplicates(tmp_path, monkeypatch):
     import time
 
-    from infosec_harness.inference import controller as module
+    from infosec_harness.inference.controller import service as module
 
     core, request, lease, events, rows = controller_fixture(tmp_path)
     cleanup_release, cleanup_cancelled = asyncio.Event(), asyncio.Event()
@@ -846,7 +896,7 @@ async def test_reconciliation_cutoff_does_not_join_slow_cancel_cleanup_or_accumu
 
 
 async def test_preclaim_fence_racing_saved_completion_returns_exact_result(tmp_path, monkeypatch):
-    from infosec_harness.inference import controller as module
+    from infosec_harness.inference.controller import service as module
 
     core, request, lease, events, rows = controller_fixture(tmp_path)
     result = InferenceResult(request_id=request.request_id,
@@ -896,7 +946,7 @@ async def test_uncommitted_native_success_ack_fences_delayed_claim(tmp_path):
 
 
 async def test_outer_wall_during_mapped_channel_cleanup_does_not_leak_child_cancellation(tmp_path, monkeypatch):
-    from infosec_harness.inference import controller as module
+    from infosec_harness.inference.controller import service as module
 
     core, request, lease, events, rows = controller_fixture(tmp_path)
     cleanup_started = asyncio.Event()
@@ -983,7 +1033,7 @@ async def test_foreign_native_ownership_never_detaches_or_deletes(tmp_path, faul
 
 
 async def test_detach_timeout_delete_ack_with_remaining_container_cannot_ack_deleted(tmp_path, monkeypatch):
-    from infosec_harness.inference import openshell as module
+    from infosec_harness.inference.native import openshell as module
 
     adapter, lease, state, actions = owned_cleanup_fixture(tmp_path, "detach")
     async def containers(identity):
@@ -1015,3 +1065,234 @@ async def test_remote_diagnostic_survives_completion_unknown_reconciliation(tmp_
     assert rows[request.request_id].state == "completion_unknown"
     assert lease.status == "deleted"
     assert events.count("recover") == events.count("revoke") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["extra", "duplicate_workload", "missing_supervisor"])
+async def test_native_readiness_requires_exactly_one_workload_and_supervisor(tmp_path, change):
+    adapter, lease, _, workload, supervisor, _ = native_fixture(tmp_path)
+    observed = {
+        "extra": [workload, supervisor, {**workload, "Config": {"Labels": {}}}],
+        "duplicate_workload": [workload, workload, supervisor],
+        "missing_supervisor": [workload],
+    }[change]
+
+    async def containers(_identity):
+        return observed
+
+    adapter.cli.containers = containers
+    with pytest.raises(BrokerError, match="policy"):
+        await adapter.verify(lease)
+
+
+@pytest.mark.asyncio
+async def test_malformed_native_output_fails_closed_without_raw_parse_errors(tmp_path):
+    adapter, lease, _, _, _, _ = native_fixture(tmp_path)
+
+    async def garbage(args, **kwargs):
+        return "not-json" if args[:2] == ["sandbox", "list"] else "[]"
+
+    adapter.cli.run = garbage
+    with pytest.raises(BrokerError, match="policy"):
+        await adapter.revoke(lease)
+    assert lease.status == "ready"
+
+
+@pytest.mark.asyncio
+async def test_revoke_uses_persisted_inputs_after_operator_spec_removal(tmp_path):
+    adapter, lease, state, actions = owned_cleanup_fixture(tmp_path, failure=None)
+    adapter.specs = {}
+    await adapter.revoke(lease)
+    assert lease.status == "deleted" and actions == ["detach", "delete", "provider"]
+    assert not state["provider"]
+
+
+def test_lease_state_machine_rejects_regressions(tmp_path):
+    adapter, lease, *_ = native_fixture(tmp_path)
+    with pytest.raises(BrokerError, match="identity"):
+        adapter._transition(lease, "creating")
+    adapter._transition(lease, "revoked")
+    with pytest.raises(BrokerError, match="identity"):
+        adapter._transition(lease, "ready")
+    assert LeaseStore(adapter.store.directory).load()[0].status == "revoked"
+
+
+@pytest.mark.asyncio
+async def test_ready_lease_reverification_does_not_hold_the_global_lock(tmp_path):
+    adapter, lease, *_ = native_fixture(tmp_path)
+    entered, release = asyncio.Event(), asyncio.Event()
+    original = adapter.verify
+
+    async def slow_verify(target):
+        entered.set()
+        await release.wait()
+        return await original(target)
+
+    adapter.verify = slow_verify
+    task = asyncio.create_task(adapter.ensure(lease.run_id, lease.contract))
+    await entered.wait()
+    assert not adapter.lock.locked()  # Other runs may provision or close meanwhile.
+    release.set()
+    assert await task is lease
+
+
+@pytest.mark.asyncio
+async def test_startup_reconciliation_drives_recovered_leases_toward_deletion(tmp_path, caplog):
+    adapter, lease, state, actions = owned_cleanup_fixture(tmp_path, failure=None)
+    open_ready = replace(lease, lease_id="22345678-1234-1234-1234-123456789abc", status="ready",
+                         run_id="open-run")
+    interrupted = replace(lease, lease_id="32345678-1234-1234-1234-123456789abc",
+                          status="creating", native_id="", ledger_native_id="")
+    for record in (lease, open_ready, interrupted):
+        adapter.store.save(record)
+    restarted = OpenShellAdapter(adapter.cli, store=LeaseStore(adapter.store.directory),
+                                 deployment=adapter.deployment, specs=adapter.specs)
+    await restarted.reconcile_recovered()
+    assert lease.lease_id not in restarted.leases and restarted.is_deleted(lease.lease_id)
+    assert restarted.leases[open_ready.lease_id].status == "ready"
+    # Interrupted creation with verified absence of every owned resource is retired.
+    assert restarted.is_deleted(interrupted.lease_id)
+    assert "IH_NATIVE_RECONCILIATION_FAILURE" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_startup_reconciliation_never_adopts_uncorroborated_creation(tmp_path, caplog):
+    adapter, lease, *_ = native_fixture(tmp_path)
+    interrupted = replace(lease, lease_id="42345678-1234-1234-1234-123456789abc",
+                          status="creating", native_id="", ledger_native_id="")
+    adapter.store.save(interrupted)
+    calls = []
+
+    async def run(args, **kwargs):
+        calls.append(args)
+        if args[:2] == ["sandbox", "list"]:
+            # A selector match exists, but its creation receipt was never persisted.
+            return json.dumps({"next_page_token": "", "sandboxes": [
+                {"id": "unknown", "name": interrupted.name, "labels": interrupted.labels()}]})
+        raise AssertionError(args)
+
+    adapter.cli.run = run
+    restarted = OpenShellAdapter(adapter.cli, store=LeaseStore(adapter.store.directory),
+                                 deployment=adapter.deployment, specs=adapter.specs)
+    await restarted.reconcile_recovered()
+    assert restarted.leases[interrupted.lease_id].status == "quarantined"
+    assert all(args[:2] == ["sandbox", "list"] for args in calls)
+    assert "IH_NATIVE_RECONCILIATION_FAILURE state=quarantined category=identity" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_startup_reconciliation_revokes_ready_lease_of_a_closed_run(tmp_path):
+    adapter, lease, _, actions = owned_cleanup_fixture(tmp_path, failure=None)
+    lease.status = "ready"
+    adapter.store.save(lease)
+    adapter.store.revoke_run(lease.run_id)
+    restarted = OpenShellAdapter(adapter.cli, store=LeaseStore(adapter.store.directory),
+                                 deployment=adapter.deployment, specs=adapter.specs)
+    await restarted.reconcile_recovered()
+    assert restarted.is_deleted(lease.lease_id) and "delete" in actions
+
+
+@pytest.mark.asyncio
+async def test_ledger_database_fault_is_unavailable_but_bad_request_is_identity(tmp_path):
+    core, request, lease, _, rows = controller_fixture(tmp_path)
+
+    async def broken(_identity):
+        raise OSError("database host secret")
+
+    core.ledger.get = broken
+    core.adapter.leases[lease.lease_id].ledger_key = "ledger-token"
+    headers = {"Authorization": "Bearer ledger-token"}
+    body = canonical_bytes({"request": request.model_dump(mode="json"), "lease_id": "lease"})
+    with pytest.raises(BrokerError) as error:
+        await core.handle("/v1/ledger/claim", body, headers)
+    assert error.value.code == "unavailable" and "secret" not in str(error.value)
+    with pytest.raises(BrokerError) as error:
+        await core.handle("/v1/ledger/claim", canonical_bytes({"lease_id": "lease"}), headers)
+    assert error.value.code == "identity"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("token", ["lédger-token", "ledger-token\udcff", "\u0000"])
+async def test_non_ascii_bearer_is_an_auth_failure_not_a_server_fault(tmp_path, token):
+    """A malformed ledger credential is classified as auth before any comparison or ledger read."""
+    core, request, lease, events, _ = controller_fixture(tmp_path)
+    body = canonical_bytes({"request": request.model_dump(mode="json"), "lease_id": lease.lease_id})
+    with pytest.raises(BrokerError) as error:
+        await core.handle("/v1/ledger/claim", body, {"Authorization": "Bearer " + token})
+    assert error.value.code in {"auth"}
+    assert events == []
+
+
+@pytest.mark.asyncio
+async def test_new_request_renders_and_authorizes_once(tmp_path, monkeypatch):
+    """Admission is rendered once per request and its allocation is the one admitted."""
+    from infosec_harness.inference.controller import service as module
+
+    core, request, lease, events, rows = controller_fixture(tmp_path)
+    calls = []
+    original = module.authorize
+
+    async def counted(*args):
+        calls.append(args[0].request_id)
+        return await original(*args)
+
+    async def committed(*_args, **_kwargs):
+        rows[request.request_id] = replace(rows[request.request_id], state="completed",
+            result=InferenceResult(request_id=request.request_id,
+                response=encode_response(ModelResponse(parts=[TextPart("ok")]))))
+        return {}
+
+    monkeypatch.setattr(module, "authorize", counted)
+    core.channel = SimpleNamespace(post=committed)
+    assert (await core.infer(request)).request_id == request.request_id
+    assert calls == [request.request_id]
+    assert rows[request.request_id].allocation["requests"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state,code", [("dispatch_intent", "pending"),
+                                        ("completion_unknown", "completion_unknown"),
+                                        ("failed_before_dispatch", "expired")])
+async def test_infer_and_results_share_one_saved_disposition_mapping(tmp_path, state, code):
+    core, request, lease, events, rows = controller_fixture(tmp_path)
+    rows[request.request_id] = StoredDisposition(request, lease.lease_id, state, None, {})
+    with pytest.raises(BrokerError) as inferred:
+        await core.infer(request)
+    body = canonical_bytes(request.model_dump(mode="json"))
+    headers = {AUTH_HEADER: sign_request(b"a" * 32, "POST", "/v1/results", body, 130)}
+    with pytest.raises(BrokerError) as read:
+        await core.handle("/v1/results", body, headers)
+    assert inferred.value.code == read.value.code == code
+    assert "ensure" not in events and "admit" not in events
+
+
+def test_production_controller_factory_imports_and_fails_closed_without_operator_file(
+        tmp_path, monkeypatch):
+    """The controller CLI resolves its factory by import path; it never starts unconfigured."""
+    import importlib
+
+    module, attribute = "infosec_harness.inference.controller.deployment", "controller_factory"
+    factory = getattr(importlib.import_module(module), attribute)
+    for value in (None, "relative.yaml", str(tmp_path / "absent.yaml")):
+        if value is None:
+            monkeypatch.delenv("HARNESS_BROKER_NATIVE_CONFIG", raising=False)
+        else:
+            monkeypatch.setenv("HARNESS_BROKER_NATIVE_CONFIG", value)
+        with pytest.raises(BrokerError, match="policy"):
+            factory()
+
+
+def test_contract_inventory_covers_every_registered_agent(monkeypatch, capsys):
+    import sys
+
+    from infosec_harness.agents.registry import BINDINGS
+    from infosec_harness.inference.controller import deployment
+
+    monkeypatch.setattr(sys, "argv", ["deployment", "--print-contracts"])
+    deployment.main()
+    printed = json.loads(capsys.readouterr().out)
+    assert set(printed) == set(BINDINGS)
+    assert all(row["transport"] in {"direct", "brokered"} for row in printed.values())
+    monkeypatch.setattr(sys, "argv", ["deployment"])
+    with pytest.raises(SystemExit):
+        deployment.main()

@@ -1,54 +1,33 @@
+import type { UseQueryResult } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { QueryState } from "@/components/QueryState";
-import type { ExperimentCase, ExperimentDetail } from "@/api/client";
-import { money, seconds, timestamp } from "@/lib/format";
+import type { ExperimentDetail, ExperimentSummary } from "@/api/client";
+import { money, percent, seconds, timestamp } from "@/lib/format";
+import { asRecord, type JsonRecord } from "@/lib/json";
 import { CaseTable, ResourceDistribution, Scatter } from "./ExperimentCharts";
 
 import {
   comparisonPoints,
   gateObservations,
-  metricNumber,
   qualityFraction,
-  record,
-  text,
-  type Experiment,
-  type Metrics,
 } from "@/lib/evaluation";
-
-// Retain the report's exports for existing consumers; interpretation lives in
-// the React-independent evaluation module.
-export {
-  gateObservations,
-  metricNumber,
-  numeric,
-  record,
-  text,
-} from "@/lib/evaluation";
-export type { Experiment, Gate, Metrics } from "@/lib/evaluation";
-export type { ExperimentCase, ExperimentDetail };
 
 export function ExperimentContent({
   experiments,
   selected,
   setSelectedId,
-  detail,
   detailQuery,
 }: {
-  experiments: Experiment[];
-  selected?: Experiment;
+  experiments: ExperimentSummary[];
+  selected?: ExperimentSummary;
   setSelectedId: (id: string) => void;
-  detail?: ExperimentDetail;
-  detailQuery: {
-    isError: boolean;
-    error: unknown;
-    refetch: () => Promise<unknown>;
-  };
+  detailQuery: UseQueryResult<ExperimentDetail>;
 }) {
+  const detail = detailQuery.data;
   const points = comparisonPoints(experiments, selected);
-  const confusion = record(
-    (detail?.metrics || selected?.metrics || {}).confusion,
-  );
+  // Full metrics come with the selected experiment's detail, not with the list.
+  const confusion = asRecord(detail?.metrics.confusion);
   return (
     <>
       <ExperimentTable
@@ -88,11 +67,7 @@ export function ExperimentContent({
             {selected && <GateSummary experiment={selected} />}
             {detailQuery.isError && (
               <QueryState
-                error={
-                  detailQuery.error instanceof Error
-                    ? detailQuery.error
-                    : new Error("Experiment detail unavailable")
-                }
+                error={detailQuery.error}
                 retry={() => void detailQuery.refetch()}
               />
             )}
@@ -117,8 +92,8 @@ function ExperimentTable({
   selected,
   onSelect,
 }: {
-  experiments: Experiment[];
-  selected?: Experiment;
+  experiments: ExperimentSummary[];
+  selected?: ExperimentSummary;
   onSelect: (id: string) => void;
 }) {
   return (
@@ -168,36 +143,28 @@ function ExperimentRow({
   selected,
   onSelect,
 }: {
-  experiment: Experiment;
+  experiment: ExperimentSummary;
   selected: boolean;
   onSelect: (id: string) => void;
 }) {
-  const accuracy = metricNumber(
-    experiment.metrics,
-    "accuracy",
-    "accuracy_mean",
-  );
-  const cost = metricNumber(
-    experiment.metrics,
-    "cost_usd_per_case",
-    "mean_cost_usd",
-  );
-  const latency = metricNumber(
-    experiment.metrics,
-    "p95_latency_s",
-    "latency_p95_s",
-  );
+  // The row is a mouse convenience; the button is the accessible control.
   return (
     <tr
       className={`cursor-pointer ${selected ? "bg-muted/60" : ""}`}
       onClick={() => onSelect(experiment.id)}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") onSelect(experiment.id);
-      }}
-      tabIndex={0}
     >
       <td>
-        <p className="font-medium">{experiment.agent}</p>
+        <button
+          type="button"
+          className="text-left font-medium hover:underline"
+          aria-pressed={selected}
+          onClick={(event) => {
+            event.stopPropagation();
+            onSelect(experiment.id);
+          }}
+        >
+          {experiment.agent}
+        </button>
         <p className="text-xs text-muted-foreground">
           {experiment.dataset}@{experiment.dataset_version}
         </p>
@@ -215,18 +182,14 @@ function ExperimentRow({
           : "Unavailable"}
       </td>
       <td>
-        <Badge variant="outline">
-          {text(experiment.metrics.status) || "unknown"}
-        </Badge>
+        <Badge variant="outline">{experiment.status ?? "unknown"}</Badge>
       </td>
-      <td className="text-right">
-        {accuracy == null ? "Unavailable" : `${(accuracy * 100).toFixed(1)}%`}
+      <td className="text-right">{percent(experiment.task_success_rate)}</td>
+      <td className="text-right font-mono text-xs">
+        {money(experiment.average_cost_usd)}
       </td>
       <td className="text-right font-mono text-xs">
-        {cost == null ? "Unavailable" : money(cost)}
-      </td>
-      <td className="text-right font-mono text-xs">
-        {latency == null ? "Unavailable" : seconds(latency)}
+        {seconds(experiment.p95_latency_s)}
       </td>
     </tr>
   );
@@ -235,8 +198,8 @@ function SelectedMetrics({
   experiment,
   confusion,
 }: {
-  experiment: Experiment;
-  confusion: Metrics;
+  experiment: ExperimentSummary;
+  confusion: JsonRecord;
 }) {
   return (
     <div className="grid gap-5 lg:grid-cols-2">
@@ -247,41 +210,20 @@ function SelectedMetrics({
         <CardContent className="grid grid-cols-2 gap-4">
           <Metric
             label="Accuracy"
-            value={metricNumber(
-              experiment.metrics,
-              "accuracy",
-              "accuracy_mean",
-            )}
-            suffix="%"
-            multiplier={100}
-            detail={qualityFraction(experiment.metrics)}
+            value={percent(experiment.task_success_rate)}
+            detail={qualityFraction(experiment)}
           />
           <Metric
             label="Cost / case"
-            value={metricNumber(
-              experiment.metrics,
-              "cost_usd_per_case",
-              "mean_cost_usd",
-            )}
-            format={money}
+            value={money(experiment.average_cost_usd)}
           />
           <Metric
             label="p50 latency"
-            value={metricNumber(
-              experiment.metrics,
-              "p50_latency_s",
-              "latency_p50_s",
-            )}
-            format={seconds}
+            value={seconds(experiment.p50_latency_s)}
           />
           <Metric
             label="p95 latency"
-            value={metricNumber(
-              experiment.metrics,
-              "p95_latency_s",
-              "latency_p95_s",
-            )}
-            format={seconds}
+            value={seconds(experiment.p95_latency_s)}
           />
         </CardContent>
       </Card>
@@ -319,7 +261,7 @@ function SelectedMetrics({
     </div>
   );
 }
-function GateSummary({ experiment }: { experiment: Experiment }) {
+function GateSummary({ experiment }: { experiment: ExperimentSummary }) {
   return (
     <section aria-labelledby="gate-observations" className="space-y-3">
       <div>
@@ -355,7 +297,7 @@ function GateSummary({ experiment }: { experiment: Experiment }) {
     </section>
   );
 }
-function ProvenanceNotice({ experiment }: { experiment: Experiment }) {
+function ProvenanceNotice({ experiment }: { experiment: ExperimentSummary }) {
   const isStub =
     experiment.backend === "stub" || experiment.model_name?.startsWith("stub:");
   return isStub ? (
@@ -366,7 +308,7 @@ function ProvenanceNotice({ experiment }: { experiment: Experiment }) {
     </p>
   ) : null;
 }
-function Metadata({ experiment }: { experiment: Experiment }) {
+function Metadata({ experiment }: { experiment: ExperimentSummary }) {
   return (
     <dl className="grid grid-cols-2 gap-4 text-sm">
       <div>
@@ -405,28 +347,16 @@ function Metadata({ experiment }: { experiment: Experiment }) {
 function Metric({
   label,
   value,
-  format,
-  suffix,
-  multiplier = 1,
   detail,
 }: {
   label: string;
-  value: number | null;
-  format?: (value: number | null) => string;
-  suffix?: string;
-  multiplier?: number;
+  value: string;
   detail?: string;
 }) {
-  const shown =
-    value == null
-      ? "Unavailable"
-      : format
-        ? format(value)
-        : `${(value * multiplier).toFixed(1)}${suffix || ""}`;
   return (
     <div>
       <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="mt-1 font-medium tabular-nums">{shown}</p>
+      <p className="mt-1 font-medium tabular-nums">{value}</p>
       {detail && <p className="mt-1 text-xs text-muted-foreground">{detail}</p>}
     </div>
   );

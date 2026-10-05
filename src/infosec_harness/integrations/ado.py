@@ -8,6 +8,8 @@ state, fields, or tags. Behind a feature flag; uses a PAT scoped to Work Items (
 from __future__ import annotations
 
 import base64
+from html import escape
+from urllib.parse import quote, urlsplit
 
 import httpx
 
@@ -59,21 +61,39 @@ async def fetch_work_items(ids: list[int]) -> list[dict]:
         return resp.json().get("value", [])
 
 
+def _finding_link(ui_base_url: str, fingerprint: str) -> str | None:
+    """The UI link, or None when the configured base is not an http(s) URL.
+
+    The base is operator configuration; the fingerprint is path-quoted so no finding-derived
+    byte can leave its path segment. The result still goes through ``escape`` at the attribute.
+    """
+    base = ui_base_url.rstrip("/")
+    parts = urlsplit(base)
+    if parts.scheme.lower() not in ("http", "https") or not parts.netloc:
+        return None
+    return f"{base}/findings/{quote(fingerprint, safe='')}"
+
+
 def render_comment(out: TriageRunOutput, ui_base_url: str) -> str:
+    """The comment HTML. Every interpolated value is escaped: finding and verdict text is
+    untrusted (reporter- and model-authored) and ADO renders this field as HTML."""
     v = out.result.verdict
     emoji = {"potentially_exploitable": "🔴", "likely_not_exploitable": "🟢",
              "inconclusive": "🟡"}.get(v.label.value, "")
-    link = f"{ui_base_url}/findings/{out.finding.fingerprint}"
+    label = escape(v.label.value.replace("_", " "))
     lines = [
-        f"<b>{emoji} InfoSec triage: {v.label.value.replace('_', ' ')}</b>",
-        f"Priority <b>{out.result.priority.value}</b> · confidence {v.confidence:.0%}"
-        + (f" · env {out.result.environment_scope}" if out.result.environment_scope != "none" else ""),
-        f"<i>{v.rationale}</i>",
+        f"<b>{emoji} InfoSec triage: {label}</b>",
+        f"Priority <b>{escape(out.result.priority.value)}</b> · confidence {v.confidence:.0%}"
+        + (f" · env {escape(out.result.environment_scope)}"
+           if out.result.environment_scope != "none" else ""),
+        f"<i>{escape(v.rationale)}</i>",
     ]
     if v.evidence:
         ev = "; ".join(f"{e.file_path}:{e.start_line}" for e in v.evidence[:3])
-        lines.append(f"Evidence: {ev}")
-    lines.append(f'<a href="{link}">View in InfoSec Harness</a>')
+        lines.append(f"Evidence: {escape(ev)}")
+    link = _finding_link(ui_base_url, out.finding.fingerprint)
+    if link is not None:
+        lines.append(f'<a href="{escape(link, quote=True)}">View in InfoSec Harness</a>')
     lines.append("<sub>Automated triage — a human review is recommended before action.</sub>")
     return "<br>".join(lines)
 

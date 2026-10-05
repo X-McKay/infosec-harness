@@ -7,8 +7,9 @@ from unittest.mock import AsyncMock
 import pytest
 
 from infosec_harness.agents.deps import AgentDeps
-from infosec_harness.inference.protocol import ExecutorContract, ReservationBinding
+from infosec_harness.inference.wire.protocol import ExecutorContract, ReservationBinding
 from infosec_harness.workflows import accounting, temporal_ops
+from infosec_harness.workflows.payloads import CloseBrokerRunArgs, ReserveArgs
 
 
 def contract():
@@ -35,7 +36,6 @@ def workflow_info(attempt=1):
 
 async def test_new_broker_operation_identity_survives_attempts_but_distinguishes_invocations(monkeypatch):
     calls = []
-    monkeypatch.setattr(accounting.workflow, "patched", lambda name: True)
 
     async def execute(activity, args, **kwargs):
         calls.append(args)
@@ -44,19 +44,22 @@ async def test_new_broker_operation_identity_survives_attempts_but_distinguishes
     identities = []
     for attempt in (1, 2):
         monkeypatch.setattr(accounting.workflow, "info", lambda attempt=attempt: workflow_info(attempt))
-        identities.append(await accounting.RootAccounting().reserve(config(), configuration_digest="accepted-config"))
+        identities.append(await accounting.RootAccounting(
+            root_id="batch:root", fingerprint="fingerprint").reserve(config(), configuration_digest="accepted-config"))
     assert identities[0] == identities[1]
     assert identities[0][1] == "triage:fingerprint:batch:root:execution-1:0:context"
-    reserved = [args for args in calls if "requested" in args]
-    assert all(args["run_id"] == "execution-1" and args["invocation_id"] == identities[0][1] for args in reserved)
-    instance = accounting.RootAccounting()
+    reserved = [args for args in calls if isinstance(args, ReserveArgs)]
+    assert reserved and all(args.run_id == "execution-1"
+                            and args.invocation_id == identities[0][1] for args in reserved)
+    instance = accounting.RootAccounting(root_id="batch:root", fingerprint="fingerprint")
     first = await instance.reserve(config(), configuration_digest="accepted-config")
     second = await instance.reserve(config(), configuration_digest="accepted-config")
     assert first != second
 
 
-async def test_historical_direct_accounting_keeps_original_identity_and_command_shape(monkeypatch):
-    monkeypatch.setattr(accounting.workflow, "patched", lambda name: name != "credential-broker-invocation-v1")
+async def test_direct_accounting_identity_is_workflow_scoped_and_carries_no_broker_fields(
+    monkeypatch,
+):
     monkeypatch.setattr(accounting.workflow, "info", workflow_info)
     calls = []
 
@@ -64,36 +67,22 @@ async def test_historical_direct_accounting_keeps_original_identity_and_command_
         calls.append(args)
         return {"status": "reserved"}
     monkeypatch.setattr(accounting.workflow, "execute_activity", execute)
-    identity = await accounting.RootAccounting().reserve(config(broker=False), configuration_digest="accepted-config")
+    identity = await accounting.RootAccounting(
+        root_id="batch:root", fingerprint="fingerprint",
+    ).reserve(config(broker=False), configuration_digest="accepted-config")
     assert identity[1] == "triage:fingerprint:batch:root:0:context"
-    assert "run_id" not in calls[0] and "invocation_id" not in calls[0]
-
-
-async def test_completed_direct_history_replays_under_brokered_deployment_without_switching(monkeypatch):
-    monkeypatch.setattr(accounting.workflow, "patched", lambda name: name != "credential-broker-invocation-v1")
-    monkeypatch.setattr(accounting.workflow, "info", workflow_info)
-    monkeypatch.setattr(accounting.workflow.unsafe, "is_replaying", lambda: True)
-    calls = []
-
-    async def execute(activity, args, **kwargs):
-        calls.append((activity, args))
-        return {"status": "reserved"}
-    monkeypatch.setattr(accounting.workflow, "execute_activity", execute)
-    identity = await accounting.RootAccounting().reserve(config(), configuration_digest="accepted-config")
-    assert identity[1] == "triage:fingerprint:batch:root:0:context"
-    assert all("run_id" not in args and "invocation_id" not in args for _, args in calls)
+    assert calls[0].run_id is None and calls[0].invocation_id is None
 
 
 async def test_new_temporal_binding_is_an_activity_and_not_runtime_io_in_workflow(monkeypatch):
     selected = config()
-    ops = temporal_ops.TemporalOps()
-    monkeypatch.setattr(ops, "_agent_for", lambda name: object())
-    monkeypatch.setattr(ops, "_config_for", lambda name: selected)
+    ops = temporal_ops.TemporalOps(root_id="root", fingerprint="fingerprint")
+    ops._agents = {"context": object()}
+    ops._configs = {"context": selected}
     ops._accounting.reserve = AsyncMock(return_value=("root", "operation"))
     ops._accounting.settle = AsyncMock()
     monkeypatch.setattr(temporal_ops.workflow, "info", workflow_info)
-    monkeypatch.setattr(temporal_ops.workflow, "patched", lambda name: True)
-    from infosec_harness.inference import invocations
+    from infosec_harness.inference.worker import invocations
     monkeypatch.setattr(invocations, "request_invocation", lambda *args: pytest.fail("Workflow runtime I/O"))
     scheduled = []
     binding = ReservationBinding(root_id="root", run_id="execution-1", invocation_id="operation",
@@ -102,36 +91,36 @@ async def test_new_temporal_binding_is_an_activity_and_not_runtime_io_in_workflo
 
     async def activity(fn, args, **kwargs):
         scheduled.append((fn, args))
-        return binding.model_dump(mode="json")
+        return binding  # the data converter returns the activity's declared type
     monkeypatch.setattr(temporal_ops.workflow, "execute_activity", activity)
 
-    async def run(name, prompt, deps):
+    async def run(agent, name, prompt, deps, config, record, **kwargs):
         assert deps.broker_binding == binding
         assert deps.broker_contract == selected.model.broker_contract
         return "outcome"
-    monkeypatch.setattr(ops, "_run_agent", run)
+    monkeypatch.setattr(temporal_ops, "run_recorded", run)
     original = AgentDeps(repo_path="/tmp/repository")
     assert await ops.run_agent("context", ["prompt"], original) == "outcome"
     assert original.broker_binding is None
     assert len(scheduled) == 1
-    assert scheduled[0][1]["run_id"] == "execution-1"
-    assert scheduled[0][1]["invocation_id"] == "operation"
+    assert scheduled[0][1].run_id == "execution-1"
+    assert scheduled[0][1].invocation_id == "operation"
 
 
 async def test_direct_temporal_branch_does_not_schedule_broker_activity(monkeypatch):
     selected = config(broker=False)
-    ops = temporal_ops.TemporalOps()
-    monkeypatch.setattr(ops, "_agent_for", lambda name: object())
-    monkeypatch.setattr(ops, "_config_for", lambda name: selected)
+    ops = temporal_ops.TemporalOps(root_id="root", fingerprint="fingerprint")
+    ops._agents = {"context": object()}
+    ops._configs = {"context": selected}
     ops._accounting.reserve = AsyncMock(return_value=("root", "operation"))
     ops._accounting.settle = AsyncMock()
     monkeypatch.setattr(temporal_ops.workflow, "execute_activity", AsyncMock(side_effect=AssertionError("Unexpected broker activity")))
-    monkeypatch.setattr(ops, "_run_agent", AsyncMock(return_value="outcome"))
+    monkeypatch.setattr(temporal_ops, "run_recorded", AsyncMock(return_value="outcome"))
     assert await ops.run_agent("context", ["prompt"], AgentDeps(repo_path="/tmp/repository")) == "outcome"
 
 
 async def test_close_before_first_reservation_performs_no_controller_activity(monkeypatch):
-    ops = temporal_ops.TemporalOps()
+    ops = temporal_ops.TemporalOps(root_id="root", fingerprint="fingerprint")
     ops._configs = {"context": config()}
     monkeypatch.setattr(temporal_ops.workflow, "execute_activity",
                         lambda *args, **kwargs: pytest.fail("No run ownership was established"))
@@ -139,7 +128,7 @@ async def test_close_before_first_reservation_performs_no_controller_activity(mo
 
 
 async def test_close_uses_the_established_run_root_ownership(monkeypatch):
-    ops = temporal_ops.TemporalOps()
+    ops = temporal_ops.TemporalOps(root_id="root", fingerprint="fingerprint")
     ops._broker_identity = ("execution-1", "root")
     monkeypatch.setattr(temporal_ops.workflow, "patched", lambda name: True)
     calls = []
@@ -148,7 +137,7 @@ async def test_close_uses_the_established_run_root_ownership(monkeypatch):
     monkeypatch.setattr(temporal_ops.workflow, "execute_activity", execute)
     await ops.close()
     assert calls == [(temporal_ops.activities.close_broker_run_activity,
-                      {"run_id": "execution-1", "root_id": "root"})]
+                      CloseBrokerRunArgs(run_id="execution-1", root_id="root"))]
 
 
 @pytest.mark.parametrize("code,retryable", [("unavailable", True), ("pending", True),
@@ -156,8 +145,8 @@ async def test_close_uses_the_established_run_root_ownership(monkeypatch):
 async def test_issuance_activity_retries_only_safe_dispositions(monkeypatch, code, retryable):
     from temporalio.exceptions import ApplicationError
 
-    from infosec_harness.inference import invocations
-    from infosec_harness.inference.protocol import BrokerError, InvocationRequest
+    from infosec_harness.inference.wire.protocol import BrokerError, InvocationRequest
+    from infosec_harness.inference.worker import invocations
     async def unavailable(*args):
         raise BrokerError(code)
     monkeypatch.setattr(invocations, "request_invocation", unavailable)
@@ -165,5 +154,28 @@ async def test_issuance_activity_retries_only_safe_dispositions(monkeypatch, cod
         invocation_id="operation", operation_id="operation", agent="context",
         configuration_digest="config", contract=contract())
     with pytest.raises(ApplicationError) as failure:
-        await temporal_ops.activities.issue_broker_invocation_activity(request.model_dump(mode="json"))
+        await temporal_ops.activities.issue_broker_invocation_activity(request)
     assert failure.value.non_retryable is (not retryable)
+
+
+async def test_a_failed_call_settles_with_its_partial_usage_not_unavailable(monkeypatch):
+    """A failed agent call that completed requests keeps them in the settlement record, as a
+    lower bound: never an observation that would release the reservation."""
+    from infosec_harness.domain.models import AgentOutcome
+    from infosec_harness.workflows.payloads import SettleArgs
+
+    calls = []
+
+    async def execute(activity, args, **kwargs):
+        calls.append(args)
+    monkeypatch.setattr(accounting.workflow, "execute_activity", execute)
+    instance = accounting.RootAccounting(root_id="batch:root", fingerprint="fingerprint")
+    partial = AgentOutcome(output=None, agent="context", requests=2, input_tokens=40,
+                           failure="ModelHTTPError")
+    await instance.settle(("batch:root", "op"), None, "ModelHTTPError", partial=partial)
+    await instance.settle(("batch:root", "op2"), None, "TimeoutError")
+    settled = [args for args in calls if isinstance(args, SettleArgs)]
+    assert settled[0].observed is None
+    assert settled[0].record["usage"] == "partial_lower_bound"
+    assert (settled[0].record["requests"], settled[0].record["input_tokens"]) == (2, 40)
+    assert settled[1].record == {"failure": "TimeoutError", "usage": "unavailable"}

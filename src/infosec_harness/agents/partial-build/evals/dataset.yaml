@@ -12,7 +12,7 @@ version: "1"
 # package dir, one module directory's own dependencies).
 #
 # Every case declares a `category` (agent-playbook 07-evaluation) and, where it exercises one,
-# the risk-scenario IDs from docs/risk-assessments/partial-build.yaml.
+# the risk-scenario IDs from agents/risk-scenarios.yaml.
 #
 # Two things the label cannot see, and which the cases below stand on instead:
 #
@@ -167,7 +167,7 @@ cases:
                         target_callable: run}
     expected: partial
 
-  # --- Regression: a defect measured in a live run (docs/validation/LIVE_VALIDATION.md) ----------------
+  # --- Regression: a defect measured in a live run (docs/evidence/2026-09-25-live-model-validation/LIVE_VALIDATION.md) ----------------
   - name: a-narrowed-maven-spec-must-keep-the-two-path-flags
     category: regression
     # The measured defect was a Maven spec that omitted `-Dmaven.repo.local`, and it is a

@@ -3,7 +3,7 @@
 The same API, CLI and worker use environment configuration for service connections. Local
 `./dev` remains a checkout-owned, pinned stack with real sandbox checks; it does not switch
 itself to hosted infrastructure. Use separate process/deployment configuration for hosted
-services. No state or data migration tooling is introduced.
+services. There is no state or data migration tooling.
 
 ## Selecting configuration
 
@@ -31,10 +31,12 @@ Temporal credentials; workers do not need native controller/provider authority.
 | --- | --- | --- |
 | Temporal | Address and namespace; TLS off for the isolated local stack | Address, namespace and queue; `HARNESS_TEMPORAL_TLS=true`; API key or mounted mTLS pair |
 | PostgreSQL | Existing `HARNESS_DATABASE_URL` | Same asyncpg URL plus `HARNESS_DATABASE_TLS=true`; optional CA and client certificate/key |
-| Artifacts | Auto filesystem, or MinIO endpoint | Explicit `HARNESS_ARTIFACT_BACKEND=s3`; AWS default endpoint/credential chain or an HTTPS S3-compatible endpoint |
+| Artifacts | Auto filesystem, or the managed RustFS S3 endpoint | Explicit `HARNESS_ARTIFACT_BACKEND=s3`; AWS default endpoint/credential chain or an HTTPS S3-compatible endpoint |
 | Telemetry | Optional local HTTP collector | HTTPS collector with optional authenticated headers, CA and mTLS |
-| Models/broker | Existing model/catalog configuration | Existing configured endpoints and HTTPS controller catalog; no location-dependent fallback |
+| Models/broker | Stub by default; an explicit gateway endpoint or Bedrock ([model endpoints](../operations/MODEL_ENDPOINTS.md)) | Explicitly configured endpoints and HTTPS controller catalog; no location-dependent fallback |
 | Sandbox executor | Managed verified runsc/build-egress | Independently qualified Docker/runsc executor; Kubernetes worker placement does not replace it |
+| Local repositories | `HARNESS_LOCAL_REPO_ROOTS` set by `./dev` to the eval corpus; the dev worker container approves `/app/eval-corpus` and `/app/deploy/dev-runtime/fixture` | Usually empty: only remote HTTPS repositories are accepted |
+| Broker measurement | unset | `HARNESS_BROKER_OBSERVATION` points at the broker measurement JSON the Qualification view verifies; unset reports `not_checked` |
 
 Temporal authentication uses `HARNESS_TEMPORAL_API_KEY` or
 `HARNESS_TEMPORAL_API_KEY_FILE`; a missing/empty key file fails. API keys require TLS.
@@ -64,6 +66,39 @@ Authenticated telemetry uses JSON `HARNESS_OTEL_EXPORTER_OTLP_HEADERS` plus opti
 `HARNESS_OTEL_EXPORTER_OTLP_CLIENT_KEY`. Headers/client authentication require HTTPS. Prompt,
 completion and binary content remain excluded from instrumentation.
 
+## API exposure
+
+The API has no authentication of its own and sends no CORS headers (the wildcard CORS middleware
+was removed, so a browser on another origin cannot call it). Serve the UI and the API
+from one origin: the web image's nginx proxies `/api/` to the API, and the Vite development
+server does the same. Expose the API only behind an authenticated internal gateway; the
+Kubernetes template gives it a ClusterIP service and no Ingress.
+
+`POST /api/batches` accepts `mode: temporal` (the default) or `mode: local`. Local mode runs
+in-process with stub models only and is refused otherwise; real assessments always go through
+Temporal. At startup the API bootstraps an empty database at the migration head and refuses a
+database at any other revision: run `harness migrate` first.
+
+Read endpoints take `population=operational` or `population=demo`; any other value, including
+the retired `legacy`, is a 422. An omitted population is unfiltered, except that
+`GET /api/metrics` defaults to `operational`. Runs are listed only through the paginated
+`GET /api/run-page`. `GET /api/experiments` is paginated (`offset`, `limit` 1-100, default 50)
+and returns slim summaries; `GET /api/experiments/{id}` returns one experiment's metrics and
+cases.
+
+## Deploying a new execution generation
+
+Temporal workflow types and durable agent identities carry the execution generation from
+`EXECUTION_GENERATION` in `src/infosec_harness/agents/registry.py` (currently `v7`:
+`TriageBatch-v7`, `ComponentPreparation-v7`, `FindingTriage-v7`, and agent identities such as
+`verdict-v7`). Workers register only the current generation, and histories recorded by an
+earlier generation are not replayable by design. `v7` changed what histories record: workflow
+and activity arguments are the typed models in `src/infosec_harness/workflows/payloads.py`, and
+every activity's timeout and retry policy comes from
+`src/infosec_harness/workflows/activity_options.py`. Before deploying a worker with a new
+generation, let in-flight batches finish or terminate them, then resubmit any that were cut
+short as new batches. Workflow ids are opaque (`batch:<batch-id>`); do not parse them.
+
 ## Kubernetes and testing
 
 Use the [control-plane operator template](../../deploy/k8s/README.md#control-plane-with-hosted-services).
@@ -76,7 +111,6 @@ validation, shared connector arguments, actual SQLite schema initialization, S3 
 and deployment trust boundaries. The full deterministic suite covers existing durable recovery
 and replay. A deployment still needs actual hosted TLS/auth connections, database writes,
 object roundtrip, Temporal workflow/replay, and executor qualification in its own environment.
-No hosted endpoints or Kubernetes cluster were modified during these tests.
 
 ## Checking an existing environment
 

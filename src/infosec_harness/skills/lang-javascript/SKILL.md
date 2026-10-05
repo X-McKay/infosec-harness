@@ -9,8 +9,6 @@ metadata:
 
 # JavaScript / TypeScript repositories
 
-<!-- generated: activation criteria (scripts/restructure_skills.py) -->
-
 ## Use this skill when
 
 - The repository's primary language is JavaScript or TypeScript.
@@ -21,7 +19,7 @@ metadata:
 - The repository is primarily another language.
 - You are planning the build itself — use `build-npm`.
 
-<!-- /generated: activation criteria -->
+## Procedure
 
 - **Manifests:** `package.json` (`dependencies`, `scripts`, `workspaces`). Lockfiles:
   `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`. TS: `tsconfig.json`.
@@ -32,8 +30,6 @@ metadata:
 - **Sinks to note:** `child_process.exec`, `eval`/`new Function`, `fs` with dynamic paths,
   `innerHTML`/`dangerouslySetInnerHTML`, string-built SQL, `fetch`/`axios` with dynamic URLs.
 
-<!-- generated: constraints (scripts/restructure_skills.py) -->
-
 ## Safety constraints
 
 - Reading only. This skill grants no ability to modify the repository.
@@ -43,4 +39,3 @@ metadata:
 
 - You can name the manifest, the module system, the entry points, and where tests live.
 
-<!-- /generated: constraints -->

@@ -34,9 +34,8 @@ def owning_component(stack: StackFingerprint, file_path: str | None) -> Componen
 def component_stack(stack: StackFingerprint, component: ComponentProfile) -> StackFingerprint:
     """Narrow repository discovery to the component that will be prepared.
 
-    Registry requests remain repository policy inputs. Language,
-    manifest, build-system, framework, and test-directory signals become component-local so a
-    Python service cannot borrow the Node frontend's environment recipe.
+    Language, manifest, build-system, framework, and test-directory signals become
+    component-local so a Python service cannot borrow the Node frontend's environment recipe.
     """
     root = PurePosixPath(component.root)
     test_dirs: list[str] = []
@@ -51,7 +50,6 @@ def component_stack(stack: StackFingerprint, component: ComponentProfile) -> Sta
         manifests=sorted({PurePosixPath(path).name for path in component.manifest_paths}),
         build_systems=component.build_systems,
         test_frameworks=component.test_frameworks,
-        registries=stack.registries,
         test_dirs=sorted(test_dirs),
         java_release=(component.java_release if component.java_release is not None else stack.java_release)
                      if "java" in component.languages else None,

@@ -34,7 +34,10 @@ import pytest
 from infosec_harness.resources import package_root, source_checkout
 
 REPO = source_checkout()
-pytestmark = pytest.mark.skipif(REPO is None, reason="needs a source checkout to build from")
+pytestmark = [
+    pytest.mark.network,
+    pytest.mark.skipif(REPO is None, reason="needs a source checkout to build from"),
+]
 
 
 @pytest.fixture(scope="session")
@@ -73,30 +76,23 @@ def test_every_skill_ships_in_the_wheel(wheel):
     assert packaged == on_disk, f"skills missing from the wheel: {sorted(on_disk - packaged)}"
 
 
-def test_retained_intake_spec_ships_without_serialization_drift(wheel):
-    resource = "infosec_harness/agents/intake/agent-v1.0.2.yaml"
-    with zipfile.ZipFile(wheel) as archive:
-        assert archive.read(resource) == (
-            package_root() / "agents/intake/agent-v1.0.2.yaml"
-        ).read_bytes()
-
-
-
-@pytest.mark.parametrize("resource", [
-    "infosec_harness/agents/build-repair/agent-v1.0.5.yaml",
-    "infosec_harness/agents/partial-build/agent-v1.1.3.yaml",
-])
-def test_retained_build_settings_spec_ships_without_serialization_drift(wheel, resource):
-    with zipfile.ZipFile(wheel) as archive:
-        assert archive.read(resource) == (
-            package_root() / resource.removeprefix("infosec_harness/")
-        ).read_bytes()
+def test_only_current_agent_specs_ship(wheel):
+    """No retained replay generation (agents/<name>/agent-v*.yaml) remains in the package."""
+    retained = [n for n in _names(wheel) if "/agents/" in n and "/agent-v" in n]
+    assert not retained, f"retained agent specs still ship: {retained}"
 
 
 def test_the_approved_model_catalogue_ships_in_the_wheel(wheel):
     """Model policy is governance data, so it travels with the code it governs rather than
     being something a deployment is trusted to place correctly."""
     assert "infosec_harness/config/models.yaml" in _names(wheel)
+
+
+def test_qualification_tooling_does_not_ship(wheel):
+    """The broker qualification package carries fakes and test-only patches; operators run it
+    from a checkout, and nothing in serving code may depend on it."""
+    shipped = [n for n in _names(wheel) if n.startswith("infosec_harness/qualification/broker/")]
+    assert not shipped, f"qualification tooling ships in the wheel: {shipped[:5]}"
 
 
 def test_the_wheel_carries_no_build_droppings(wheel):
@@ -143,34 +139,15 @@ def test_every_agent_builds_from_the_installed_wheel(installed, tmp_path):
     assumption anywhere in spec loading, skill loading or model resolution fails here."""
     names = json.loads(_run(installed, """
 import json
-from infosec_harness.agents.registry import AGENT_BINDINGS, build_agent
+from infosec_harness.agents.registry import BINDINGS, build_agent
 built = []
-for name in sorted(AGENT_BINDINGS):
+for name in sorted(BINDINGS):
     build_agent(name)
     built.append(name)
 print(json.dumps(built))
 """, tmp_path))
     expected = sorted(p.parent.name for p in (package_root() / "agents").glob("*/agent.yaml"))
     assert names == expected
-
-
-def test_installed_wheel_builds_all_retained_intake_generations(installed, tmp_path):
-    names = json.loads(_run(installed, """
-import json
-from infosec_harness.agents.intake_generations import intake_generations
-print(json.dumps(sorted(bundle.agent.name for bundle in intake_generations().values())))
-""", tmp_path))
-    assert names == ["intake", "intake-output-v2", "intake-output-v3", "intake-output-v4"]
-
-
-def test_installed_wheel_preserves_atomic_v3_spec_bytes(installed, tmp_path):
-    actual = _run(installed, """
-import hashlib
-from infosec_harness.resources import package_root
-p = package_root() / "agents" / "intake" / "agent-v1.0.3.yaml"
-print(hashlib.sha256(p.read_bytes()).hexdigest())
-""", tmp_path)
-    assert actual == "dbabcbc640b87ea9b63686baf82f01452e7c96875c511de55a68bf5a9977388e"
 
 
 def test_skills_resolve_to_the_package_not_the_working_directory(installed, tmp_path):

@@ -1,4 +1,3 @@
-import { timestamp } from "@/lib/format";
 import { queries } from "@/api/queries";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -8,22 +7,14 @@ import { QueryState, Freshness } from "@/components/QueryState";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { seconds } from "@/lib/format";
+import { seconds, timestamp } from "@/lib/format";
 import { parseFindingDetailSearch } from "@/lib/search";
-import {
-  elapsedSeconds,
-  phaseSummary,
-  workflowActive,
-  workflowCounts,
-} from "@/lib/workflow";
+import { batchActive, runActive } from "@/lib/status";
+import { elapsedSeconds, phaseSummary, workflowCounts } from "@/lib/workflow";
 
 function BatchFindings({ batchId }: { batchId: string }) {
   const [offset, setOffset] = useState(0);
-  const query = useQuery({
-    ...queries.workflowFindings(batchId, offset),
-    refetchInterval: (q) =>
-      q.state.data?.items.some((r) => workflowActive(r.status)) ? 2000 : 10000,
-  });
+  const query = useQuery(queries.workflowFindings(batchId, offset));
   const page = query.data;
   return (
     <div className="mt-4 border-t pt-4 space-y-3">
@@ -61,7 +52,7 @@ function BatchFindings({ batchId }: { batchId: string }) {
                 elapsedSeconds(
                   run.telemetry?.accepted_at,
                   run.telemetry?.completed_at,
-                  run.status,
+                  runActive(run.status),
                   query.dataUpdatedAt,
                 ),
               )}
@@ -158,7 +149,7 @@ function WorkflowCard({
               elapsedSeconds(
                 batch.started_at,
                 batch.completed_at,
-                batch.status,
+                batchActive(batch.status),
                 observedAt,
               ),
             )}
@@ -188,11 +179,7 @@ function WorkflowCard({
 }
 
 export function Workflows() {
-  const query = useQuery({
-    ...queries.batches(),
-    refetchInterval: (q) =>
-      q.state.data?.some((b) => workflowActive(b.status)) ? 2000 : 10000,
-  });
+  const query = useQuery(queries.batches());
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap justify-between items-end gap-3">

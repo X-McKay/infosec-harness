@@ -6,13 +6,12 @@ Callers store bytes and get back a ``sha256:...`` ref; the DB keeps refs, not by
 from __future__ import annotations
 
 import hashlib
-import os
 import re
-import tempfile
 from functools import lru_cache
 from pathlib import Path
 
-from infosec_harness.sandbox.docker import default_workspace
+from infosec_harness._io import atomic_write_bytes
+from infosec_harness.persistence.paths import workspace_dir
 from infosec_harness.settings import get_settings
 
 _REF = re.compile(r"^sha256:([0-9a-f]{64})$")
@@ -73,7 +72,7 @@ class ArtifactStore:
 
 class FilesystemStore(ArtifactStore):
     def __init__(self) -> None:
-        self.root = default_workspace() / "artifacts"
+        self.root = workspace_dir() / "artifacts"
         self.root.mkdir(parents=True, exist_ok=True)
 
     def _path(self, digest: str) -> Path:
@@ -85,13 +84,7 @@ class FilesystemStore(ArtifactStore):
         p.parent.mkdir(parents=True, exist_ok=True)
         # Publish atomically. Concurrent writers produce the same bytes for this key, and a put
         # repairs an object whose contents were damaged out of band.
-        descriptor, temporary = tempfile.mkstemp(prefix=f".{digest}.", dir=p.parent)
-        try:
-            with os.fdopen(descriptor, "wb") as stream:
-                stream.write(data)
-            os.replace(temporary, p)
-        finally:
-            Path(temporary).unlink(missing_ok=True)
+        atomic_write_bytes(p, data)
         return f"sha256:{digest}"
 
     def get_bytes(self, ref: str) -> bytes:
@@ -118,9 +111,9 @@ class S3Store(ArtifactStore):
         self._client = boto3.client(
             "s3", endpoint_url=s.s3_endpoint or None, region_name=s.s3_region,
             aws_access_key_id=s.s3_access_key or None, aws_secret_access_key=s.s3_secret_key or None,
-            aws_session_token=getattr(s, "s3_session_token", "") or None,
-            verify=str(s.s3_ca_file) if getattr(s, "s3_ca_file", None) else True,
-            config=Config(s3={"addressing_style": getattr(s, "s3_addressing_style", "auto")}),
+            aws_session_token=s.s3_session_token or None,
+            verify=str(s.s3_ca_file) if s.s3_ca_file else True,
+            config=Config(s3={"addressing_style": s.s3_addressing_style}),
         )
         try:
             self._client.head_bucket(Bucket=self.bucket)
@@ -130,7 +123,7 @@ class S3Store(ArtifactStore):
             status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
             missing = code in {"404", "NoSuchBucket"} or status == 404
             if ((status is not None and status != 404) or code in {"403", "AccessDenied"}
-                    or not missing or not getattr(s, "s3_create_bucket", True)):
+                    or not missing or not s.s3_create_bucket):
                 raise
             request = {"Bucket": self.bucket}
             if s.s3_region != "us-east-1":
@@ -172,7 +165,7 @@ class S3Store(ArtifactStore):
 @lru_cache
 def get_store() -> ArtifactStore:
     settings = get_settings()
-    backend = getattr(settings, "artifact_backend", "auto")
+    backend = settings.artifact_backend
     if backend == "s3" or (backend == "auto" and settings.s3_endpoint):
         return S3Store()
     return FilesystemStore()

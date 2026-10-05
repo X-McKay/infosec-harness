@@ -1,3 +1,11 @@
+import type { VerdictLabel } from "../api/client.ts";
+
+export const VERDICT_LABELS = [
+  "potentially_exploitable",
+  "inconclusive",
+  "likely_not_exploitable",
+] as const satisfies readonly VerdictLabel[];
+
 export function verdictVariant(
   v: string | null,
 ): "exploitable" | "safe" | "inconclusive" | "outline" {
@@ -8,9 +16,3 @@ export function verdictVariant(
 }
 export const verdictLabel = (v: string | null) =>
   v ? v.replace(/_/g, " ") : "No verdict";
-export const priorityRank: Record<string, number> = {
-  P1: 1,
-  P2: 2,
-  P3: 3,
-  P4: 4,
-};

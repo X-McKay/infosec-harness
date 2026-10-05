@@ -46,7 +46,6 @@ async def mixed_batches(tmp_path, monkeypatch):
 @pytest.mark.parametrize("population, states, verdicts", [
     ("operational", {"complete": 1, "pending": 1}, {"inconclusive": 1}),
     ("demo", {"complete": 1, "failed": 1}, {"likely_not_exploitable": 1, "potentially_exploitable": 1}),
-    ("legacy", {"complete": 1, "needs_info": 1}, {"inconclusive": 1}),
 ])
 async def test_selected_counts_include_only_matching_runs(mixed_batches, population, states, verdicts):
     response = await mixed_batches.get("/api/batches", params={"population": population})
@@ -73,6 +72,17 @@ async def test_unscoped_compatibility_preserves_whole_batch_counts(mixed_batches
     assert detail["status_counts"] == {"complete": 3, "failed": 1, "needs_info": 1, "pending": 1}
     assert detail["verdict_counts"] == {"inconclusive": 2, "likely_not_exploitable": 1,
                                         "potentially_exploitable": 1}
+
+
+async def test_runs_without_an_accepted_population_belong_to_none(mixed_batches):
+    """Regression: telemetry without a population formed a "legacy" population; there is none."""
+    assert (await mixed_batches.get("/api/batches", params={"population": "legacy"})).status_code == 422
+    counted = 0
+    for population in ("operational", "demo"):
+        detail = (await mixed_batches.get("/api/batches/mixed",
+                                          params={"population": population})).json()
+        counted += detail["finding_count"]
+    assert counted == 4  # the two runs without a population are in neither
 
 
 @pytest.mark.parametrize("batch", ["demo-only", "empty", "missing"])

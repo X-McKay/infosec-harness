@@ -1,4 +1,4 @@
-"""Synthetic protocol selection, finite privacy, and original guard parity."""
+"""Intake's one output protocol, finite privacy, and original guard parity."""
 
 from __future__ import annotations
 
@@ -13,12 +13,21 @@ from pydantic_ai.models.function import FunctionModel
 from infosec_harness.agents.intake_claims import AtomicFinding, ReferenceError, reconstruct
 from infosec_harness.agents.intake_evidence import extraction_evidence_violations
 from infosec_harness.domain.models import ExtractedFinding
-from infosec_harness.evals.intake_claim_observations import RULES, atomic_summary
-from infosec_harness.evals.intake_claim_schema import ERROR_TYPES, PATHS, diagnose_messages
-from infosec_harness.evals.intake_fields import intake_field_summary
+from infosec_harness.evals.intake_fields import (
+    ATOMIC_RULES as RULES,
+)
+from infosec_harness.evals.intake_fields import (
+    SCHEMA_ERROR_TYPES as ERROR_TYPES,
+)
+from infosec_harness.evals.intake_fields import (
+    SCHEMA_PATHS as PATHS,
+)
+from infosec_harness.evals.intake_fields import (
+    atomic_summary,
+    intake_field_summary,
+)
 
 REPORT = "fixture.py line 12\r\nCaller input reaches a shell.\nImpact is described.\n"
-PROTOCOL = "intake-atomic-claims/v2"
 
 
 def claim(value, start="S000001", end=None, confidence=0.75):
@@ -30,29 +39,21 @@ def message(args, name="final_result"):
 
 
 def observe(args, report=REPORT):
-    return intake_field_summary([message(args)], report=report, agent="intake", protocol=PROTOCOL)
+    return intake_field_summary([message(args)], report=report, agent="intake")
 
 
-def test_protocol_selected_by_host_and_flat_default_preserved():
+def diagnose_messages(messages):
+    return atomic_summary(messages, report=REPORT)["schema_error_diagnostics"]
+
+
+def test_intake_is_summarized_as_atomic_claims_and_other_agents_as_not_applicable():
     raw = {"file_path": claim("fixture.py")}
-    assert (
-        intake_field_summary([message(raw)], report=REPORT, agent="intake")["version"]
-        == "intake-proposal-fields/v1"
-    )
-    explicit = observe(raw)
-    assert explicit["version"] == "intake-atomic-claim-proposals/v2"
-    assert explicit["reconstructed_proposals"] == 1
-    unsupported = intake_field_summary(
-        [message(raw)], report=REPORT, agent="intake", protocol="PRIVATE_PROTOCOL"
-    )
-    assert unsupported == {
-        "version": "intake-proposal-protocol/v1",
-        "capture_status": "unknown",
-        "reason": "unsupported_host_protocol",
-        "proposals_observed": 0,
-        "truncated": False,
-    }
-    assert "PRIVATE_" not in json.dumps(unsupported)
+    observed = observe(raw)
+    assert observed["version"] == "intake-atomic-claim-proposals/v2"
+    assert observed["reconstructed_proposals"] == 1
+    other = intake_field_summary([message(raw)], report=REPORT, agent="context")
+    assert other["version"] == "intake-proposal-fields/v1"
+    assert other["capture_status"] == "not_applicable" and other["proposals_observed"] == 0
 
 
 @pytest.mark.parametrize(
@@ -150,7 +151,8 @@ def test_schema_partition_unknown_and_nonintake_capture():
         )
     )
     assert diagnose_messages([message({}, "PRIVATE_TOOL")])["capture_status"] == "unknown"
-    assert atomic_summary([], report=None, agent="other")["capture_status"] == "not_applicable"
+    assert intake_field_summary([], report=None, agent="other")["capture_status"] \
+        == "not_applicable"
 
 
 @pytest.mark.parametrize(
@@ -166,7 +168,7 @@ def test_schema_partition_unknown_and_nonintake_capture():
     ],
 )
 def test_capture_caps_are_finite_and_private(messages):
-    summary = atomic_summary(messages, report=REPORT, agent="intake")
+    summary = atomic_summary(messages, report=REPORT)
     assert summary["truncated"] and summary["proposals_observed"] <= 32
     assert summary["schema_error_diagnostics"]["proposals_observed"] <= 32
     assert "PRIVATE_" not in json.dumps(summary)
@@ -175,7 +177,7 @@ def test_capture_caps_are_finite_and_private(messages):
 def test_aggregate_materialized_capture_is_bounded_independently_of_schema():
     report = "PRIVATE_SOURCE" * 5000 + "\n"
     summary = atomic_summary(
-        [message({"claimed_impact": claim("impact")})] * 4, report=report, agent="intake"
+        [message({"claimed_impact": claim("impact")})] * 4, report=report
     )
     assert summary["truncated"]
     assert summary["reconstructed_proposals"] < 4
@@ -207,9 +209,7 @@ async def test_actual_sdk_invalid_then_correct_proposals_are_observed_without_re
 
     result = await agent.run("Synthetic report")
     assert isinstance(result.output, ExtractedFinding) and result.output.start_line == 12
-    summary = intake_field_summary(
-        result.all_messages(), report=REPORT, agent="intake", protocol=PROTOCOL
-    )
+    summary = intake_field_summary(result.all_messages(), report=REPORT, agent="intake")
     assert len(calls) == 2 and summary["proposals_observed"] == 2
     assert summary["schema_error_diagnostics"]["schema_valid_wire_proposals"] == 2
     assert summary["materialized_guard_summary"]["proposals_with_guard_violations"] == 1
@@ -221,7 +221,6 @@ async def test_actual_sdk_invalid_then_correct_proposals_are_observed_without_re
     )
 
 
-@pytest.mark.parametrize("protocol", [None, PROTOCOL])
 @pytest.mark.parametrize(
     "messages",
     [
@@ -235,7 +234,7 @@ async def test_actual_sdk_invalid_then_correct_proposals_are_observed_without_re
         [ModelResponse(parts=[])] * 128 + [message({})],
     ],
 )
-def test_nonempty_history_without_captured_output_remains_unknown(protocol, messages):
-    summary = intake_field_summary(messages, report=REPORT, agent="intake", protocol=protocol)
+def test_nonempty_history_without_captured_output_remains_unknown(messages):
+    summary = intake_field_summary(messages, report=REPORT, agent="intake")
     assert summary["capture_status"] == "unknown" and summary["proposals_observed"] == 0
     assert "PRIVATE_" not in json.dumps(summary)

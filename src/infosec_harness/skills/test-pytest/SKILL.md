@@ -9,8 +9,6 @@ metadata:
 
 # Probes in pytest
 
-<!-- generated: activation criteria (scripts/restructure_skills.py) -->
-
 ## Use this skill when
 
 - You are writing or repairing a probe and the repository's test framework is pytest or unittest.
@@ -20,7 +18,7 @@ metadata:
 - The repository uses a different framework; load that `test-*` skill.
 - You have not yet read `probe-oracle-protocol`; read it first.
 
-<!-- /generated: activation criteria -->
+## Procedure
 
 - Place the file at the planned repo-relative path (e.g. `tests/test_harness_probe_<id>.py`),
   matching the repo's import setup so it can import the code under test.
@@ -68,8 +66,6 @@ import fail: an `ImportError` naming the missing module is an *environment* sign
 repair can act on, and it now routes back to environment repair. `importorskip` converts that
 signal into silence, and the finding comes back inconclusive.
 
-<!-- generated: constraints (scripts/restructure_skills.py) -->
-
 ## Safety constraints
 
 - The test must run to completion and print its markers whether or not the exploit condition holds. Never let an assertion failure be the signal.
@@ -83,4 +79,3 @@ signal into silence, and the finding comes back inconclusive.
 - It runs to completion and exits cleanly either way.
 - Framework output is not captured away, so the markers reach the runner's stdout.
 
-<!-- /generated: constraints -->

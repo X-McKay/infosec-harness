@@ -15,10 +15,14 @@ import hashlib
 import secrets
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any, Literal
 
-from infosec_harness.domain.models import EnvironmentSpec, ProbeSource, RepoRef, SourceMode
-from infosec_harness.settings import REPO_ROOT, get_settings
+from infosec_harness.domain.models import EnvironmentSpec, ProbeSource
+from infosec_harness.evals.execution_checks import prepare_fixture_image
+from infosec_harness.sandbox import docker
+from infosec_harness.sandbox.errors import SandboxUnavailable
+from infosec_harness.settings import REPO_ROOT
 
 ProbeExecutionStatus = Literal["observed", "failed", "not_checked"]
 
@@ -130,93 +134,53 @@ def _harness_report_target():
 """
 
 
+def _check_name(declaration: ProbeExecutionDeclaration) -> str:
+    return f"target-call:{declaration.target_file}:{declaration.target_callable}"
+
+
 async def _secure_engine(
     declaration: ProbeExecutionDeclaration,
     probe: ProbeSource,
     nonce: str,
 ) -> ProbeExecutionResult:
-    from infosec_harness.repo.checkout import checkout
-    from infosec_harness.repo.detect import detect_stack
-    from infosec_harness.sandbox import docker
-    from infosec_harness.sandbox.policy import (
-        SandboxUnavailable,
-        build_egress_allowlist,
-        ensure_runtime_available,
-    )
+    check = _check_name(declaration)
 
-    settings = get_settings()
-    check = f"target-call:{declaration.target_file}:{declaration.target_callable}"
-    if settings.sandbox_runtime != "runsc" or settings.allow_insecure_runtime:
+    def target_identity(source: Path) -> str | None:
+        target = source / declaration.target_file
+        if (not target.is_file()
+                or hashlib.sha256(target.read_bytes()).hexdigest() != declaration.target_sha256):
+            return "declared target identity drifted; controller check requires review"
+        return None
+
+    image = await prepare_fixture_image(
+        declaration.repo, declaration.environment,
+        purpose="execute a target-invocation evaluation check",
+        root=REPO_ROOT, verify=target_identity,
+    )
+    if isinstance(image, str):
+        return ProbeExecutionResult(status="not_checked", check=check, reason=image)
+    if (build := image.build) is not None and not image.built:
+        infrastructure = image.infrastructure_failure
         return ProbeExecutionResult(
-            status="not_checked",
+            status="not_checked" if infrastructure else "failed",
             check=check,
-            reason="target-invocation checks require enforced runsc; insecure fallback is disabled",
-        )
-    source = (REPO_ROOT / declaration.repo).resolve()
-    try:
-        source.relative_to(REPO_ROOT.resolve())
-    except ValueError:
-        return ProbeExecutionResult(
-            status="not_checked",
-            check=check,
-            reason="declared fixture escapes repository root",
-        )
-    if not source.is_dir():
-        return ProbeExecutionResult(
-            status="not_checked",
-            check=check,
-            reason="declared fixture is missing",
-        )
-    target = source / declaration.target_file
-    if (
-        not target.is_file()
-        or hashlib.sha256(target.read_bytes()).hexdigest() != declaration.target_sha256
-    ):
-        return ProbeExecutionResult(
-            status="not_checked",
-            check=check,
-            reason="declared target identity drifted; controller check requires review",
+            reason=("sandbox builder infrastructure failed before evaluation"
+                    if infrastructure else "declared fixture environment failed"),
+            exit_code=build.exit_code,
+            timed_out=build.timed_out,
+            source_hash=image.source_hash,
+            image_tag=image.image_tag,
         )
     try:
-        await ensure_runtime_available("execute a target-invocation evaluation check")
-        snapshot = await checkout(
-            RepoRef(
-                repo_url=str(source),
-                revision="HEAD",
-                source_mode=SourceMode.working_snapshot,
-            )
-        )
-        image_tag = docker.image_tag_for(snapshot.content_hash, declaration.environment)
-        if not await docker.image_exists(image_tag):
-            built = await docker.build_image(
-                snapshot.path,
-                declaration.environment,
-                image_tag,
-                egress_hosts=build_egress_allowlist(detect_stack(snapshot.path)),
-            )
-            if built.exit_code != 0 or built.timed_out:
-                return ProbeExecutionResult(
-                    status="failed",
-                    check=check,
-                    reason="declared fixture environment failed",
-                    exit_code=built.exit_code,
-                    timed_out=built.timed_out,
-                    source_hash=snapshot.content_hash,
-                    image_tag=image_tag,
-                )
         executed = await docker.run_probe(
-            image_tag,
+            image.image_tag,
             probe.test_file_path,
             probe.content + _trace_suffix(declaration, nonce),
             declaration.environment.test_command,
             nonce,
         )
     except (FileNotFoundError, SandboxUnavailable) as exc:
-        return ProbeExecutionResult(
-            status="not_checked",
-            check=check,
-            reason=str(exc)[:500],
-        )
+        return ProbeExecutionResult(status="not_checked", check=check, reason=str(exc)[:500])
 
     output = executed.stdout + "\n" + executed.stderr
     invoked = f"HARNESS_TARGET_INVOKED::{nonce}" in output
@@ -241,8 +205,8 @@ async def _secure_engine(
         oracle_observed=oracle,
         exit_code=executed.exit_code,
         timed_out=executed.timed_out,
-        source_hash=snapshot.content_hash,
-        image_tag=image_tag,
+        source_hash=image.source_hash,
+        image_tag=image.image_tag,
     )
 
 
@@ -258,7 +222,7 @@ async def evaluate_probe_execution(
     declaration = DECLARED_CHECKS.get((agent, str(case.get("name") or "")))
     if declaration is None:
         return None
-    check = f"target-call:{declaration.target_file}:{declaration.target_callable}"
+    check = _check_name(declaration)
     if stub:
         return ProbeExecutionResult(
             status="not_checked",

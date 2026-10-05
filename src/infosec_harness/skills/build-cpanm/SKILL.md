@@ -9,8 +9,6 @@ metadata:
 
 # Building Perl targets
 
-<!-- generated: activation criteria (scripts/restructure_skills.py) -->
-
 ## Use this skill when
 
 - You are producing or repairing an EnvironmentSpec for a Perl repository.
@@ -20,7 +18,7 @@ metadata:
 
 - The repository is not Perl.
 
-<!-- /generated: activation criteria -->
+## Procedure
 
 - **Base image:** `perl:5.40` (or the repo's pinned major).
 - **Read the dependency declaration before planning.** A Perl repo declares its modules in
@@ -91,8 +89,6 @@ metadata:
   reads a `Makefile.PL`.
 - **Partial builds:** install deps for and test a single module directory.
 
-<!-- generated: constraints (scripts/restructure_skills.py) -->
-
 ## Safety constraints
 
 - Install as the non-root sandbox user with `HOME=/work/home`; never `sudo` or run as root.
@@ -110,4 +106,3 @@ metadata:
 - The `-I` path is the repository's real module root, which is not always `lib`. Measured: a distribution whose modules live in `blib/lib` (use `-b`, or `-Iblib/lib`) or under `src/perl` dies on `Can't locate Runner.pm` with `-Ilib`, before the probe prints anything.
 - Every module the repository's cpanfile/Makefile.PL/Build.PL declares is installed, and if the install used a local lib then `env.PERL5LIB` points at it.
 
-<!-- /generated: constraints -->

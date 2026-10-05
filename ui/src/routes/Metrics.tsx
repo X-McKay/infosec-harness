@@ -1,31 +1,24 @@
-import { api } from "@/api/client";
+import type { MetricsResponse, StageMetric, TrendPoint } from "@/api/client";
 import { queries } from "@/api/queries";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import {
-  DistributionChart,
-  type Distribution,
-} from "@/components/DistributionChart";
+import { DistributionChart } from "@/components/DistributionChart";
 import { Freshness, QueryState } from "@/components/QueryState";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { money, number, seconds } from "@/lib/format";
+import { integer, money, number, percent, seconds } from "@/lib/format";
 
-type MetricsData = Awaited<ReturnType<typeof api.metrics>>;
+const TOKEN_METRICS = {
+  tokens: "total_tokens",
+  input_tokens: "input_tokens",
+  output_tokens: "output_tokens",
+} as const;
 
 export function Metrics() {
-  const population = "operational";
-  const [tokenMetric, setTokenMetric] = useState<
-    "tokens" | "input_tokens" | "output_tokens"
-  >("tokens");
-  const query = useQuery({
-    ...queries.metrics(),
-  });
+  const [tokenMetric, setTokenMetric] =
+    useState<keyof typeof TOKEN_METRICS>("tokens");
+  const query = useQuery(queries.metrics());
   const metrics = query.data;
-  const binHref =
-    (metric: string, distribution: Distribution) => (index: number) => {
-      const bin = distribution.bins![index];
-      return `/?${new URLSearchParams({ population, metric, lower: String(bin.lower), upper: String(bin.upper), upper_inclusive: String(index === distribution.bins!.length - 1) })}`;
-    };
 
   return (
     <div className="space-y-6">
@@ -37,7 +30,16 @@ export function Metrics() {
             Understand resource use, tail latency, and measurement coverage.
           </p>
         </div>
-        <p className="text-xs text-muted-foreground">Operational records</p>
+        <div className="flex items-center gap-3">
+          <p className="text-xs text-muted-foreground">Operational records</p>
+          <Button
+            variant="outline"
+            disabled={query.isFetching}
+            onClick={() => void query.refetch()}
+          >
+            Refresh
+          </Button>
+        </div>
       </header>
       {!metrics && (
         <QueryState
@@ -76,24 +78,21 @@ export function Metrics() {
               title="Token distribution"
               unit="tokens"
               data={metrics[tokenMetric]}
-              binHref={binHref(
-                tokenMetric === "tokens" ? "total_tokens" : tokenMetric,
-                metrics[tokenMetric],
-              )}
+              metric={TOKEN_METRICS[tokenMetric]}
             />
             <DistributionChart
               title="Cost distribution"
               unit="USD inference cost"
               data={metrics.cost_usd}
               format={money}
-              binHref={binHref("cost_usd", metrics.cost_usd)}
+              metric="cost_usd"
             />
             <DistributionChart
               title="Elapsed time distribution"
               unit="elapsed seconds"
               data={metrics.wall_time_s}
               format={seconds}
-              binHref={binHref("wall_time_s", metrics.wall_time_s)}
+              metric="wall_time_s"
             />
           </div>
           <div className="grid gap-5 lg:grid-cols-2">
@@ -107,9 +106,9 @@ export function Metrics() {
   );
 }
 
-function SummaryCards({ metrics }: { metrics: MetricsData }) {
+function SummaryCards({ metrics }: { metrics: MetricsResponse }) {
   const cards = [
-    ["Runs", number(metrics.total_runs, 0)],
+    ["Runs", integer(metrics.total_runs)],
     ["Mean tokens", number(metrics.tokens.mean)],
     ["Mean cost", money(metrics.cost_usd.mean)],
     ["Mean elapsed", seconds(metrics.wall_time_s.mean)],
@@ -128,20 +127,13 @@ function SummaryCards({ metrics }: { metrics: MetricsData }) {
   );
 }
 
-type Trend = {
-  date: string;
-  runs: number;
-  tokens: number | null;
-  cost_usd: number | null;
-  wall_time_s: number | null;
-};
-function TrendCard({ trends }: { trends: Trend[] }) {
+function TrendCard({ trends }: { trends: TrendPoint[] }) {
   const measured = trends.filter((day) => day.tokens != null);
   const max = Math.max(1, ...measured.map((day) => day.tokens || 0));
   const x = (index: number) =>
     30 + (index * 440) / Math.max(1, trends.length - 1);
   const y = (value: number) => 120 - (value / max) * 90;
-  const segments: Trend[][] = [];
+  const segments: TrendPoint[][] = [];
   for (const day of trends) {
     if (day.tokens == null) continue;
     const previous = segments.at(-1);
@@ -200,7 +192,7 @@ function TrendCard({ trends }: { trends: Trend[] }) {
                 textAnchor="end"
                 className="fill-muted-foreground text-[10px]"
               >
-                {number(max, 0)}
+                {integer(max)}
               </text>
               {segments.map((segment, index) => (
                 <polyline
@@ -281,7 +273,7 @@ function TrendCard({ trends }: { trends: Trend[] }) {
                   {trends.map((day) => (
                     <tr key={day.date}>
                       <td>{day.date}</td>
-                      <td>{number(day.runs, 0)}</td>
+                      <td>{integer(day.runs)}</td>
                       <td>{number(day.tokens)}</td>
                       <td>{money(day.cost_usd)}</td>
                       <td>{seconds(day.wall_time_s)}</td>
@@ -299,15 +291,7 @@ function TrendCard({ trends }: { trends: Trend[] }) {
   );
 }
 
-type Stage = {
-  agent: string;
-  invocations: number;
-  agent_time_s: number;
-  tokens: number;
-  known_cost_usd: number;
-  cost_coverage: number;
-};
-function StageCard({ stages }: { stages: Stage[] }) {
+function StageCard({ stages }: { stages: StageMetric[] }) {
   const maximum = Math.max(1, ...stages.map((stage) => stage.agent_time_s));
   return (
     <Card>
@@ -324,8 +308,7 @@ function StageCard({ stages }: { stages: Stage[] }) {
               <div className="mb-2 flex justify-between text-sm">
                 <span>{stage.agent}</span>
                 <span className="text-muted-foreground">
-                  {seconds(stage.agent_time_s)} · {number(stage.tokens, 0)}{" "}
-                  tokens
+                  {seconds(stage.agent_time_s)} · {integer(stage.tokens)} tokens
                 </span>
               </div>
               <div className="h-2 rounded bg-muted">
@@ -335,9 +318,9 @@ function StageCard({ stages }: { stages: Stage[] }) {
                 />
               </div>
               <p className="mt-1 text-xs text-muted-foreground">
-                {number(stage.invocations, 0)} calls ·{" "}
+                {integer(stage.invocations)} calls ·{" "}
                 {money(stage.known_cost_usd)} known cost ·{" "}
-                {number(stage.cost_coverage * 100)}% coverage
+                {percent(stage.cost_coverage)} coverage
               </p>
             </div>
           ))

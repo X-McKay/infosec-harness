@@ -83,5 +83,5 @@ def test_recon_scoring_still_does_not_extract_labels_from_prose(
 ) -> None:
     # The independent scorer remains strict; guidance must repair model output rather
     # than changing the accepted answer to accommodate explanatory text in label fields.
-    _, _, _, predict, _ = recon_adapter({"repo": str(tmp_path), "expected": "unused"})
+    predict = recon_adapter({"repo": str(tmp_path), "expected": "unused"}).predict
     assert predict(RepoProfile.model_validate(_profile(language, framework))) == expected

@@ -53,7 +53,7 @@ async def client(tmp_path, monkeypatch):
             )
         await s.flush()
         s.add(
-            db.RunEvent(
+            db.RunEventRecord(
                 id="event",
                 run_id="b",
                 phase="probing",
@@ -62,7 +62,7 @@ async def client(tmp_path, monkeypatch):
             )
         )
         s.add(
-            db.RunEvent(
+            db.RunEventRecord(
                 id="demo-event",
                 run_id="demo",
                 phase="failed",
@@ -108,10 +108,13 @@ async def test_completion_requires_terminal_batch_and_every_selected_end(client)
     assert row["current_phases"] == {}
 
 
-async def test_legacy_or_missing_timestamps_are_unavailable(client):
+async def test_unmeasured_or_missing_timestamps_are_unavailable(client):
     c, sessions = client
-    (row,) = (await c.get("/api/batches?population=legacy")).json()
+    rows = {row["id"]: row for row in (await c.get("/api/batches")).json()}
+    # A run stored without telemetry belongs to no population and has no measured timings.
+    row = rows["legacy"]
     assert row["started_at"] is None and row["completed_at"] is None
+    assert (await c.get("/api/batches?population=legacy")).status_code == 422
     async with sessions() as s:
         run = await s.get(db.TriageRun, "b")
         run.telemetry = {**run.telemetry, "accepted_at": "invalid"}

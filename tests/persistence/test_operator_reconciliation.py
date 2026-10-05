@@ -20,6 +20,7 @@ async def closure():
     state = {"limits": {"requests": 10, "tokens": 300, "cost_usd": 10},
              "used": {"requests": 1, "tokens": 20, "cost_usd": 1},
              "deadline_at": (datetime.now(UTC) - timedelta(hours=1)).isoformat(),
+             "agent_config_digests": {"other": "config-other"},
              "broker_revoked_runs": ["run"], "operations": {"op": {
                  "status": "uncertain", "broker_owned": True, "broker_revoked": True,
                  "run_id": "run", "broker_binding": binding, "reserved": reserve,
@@ -166,8 +167,8 @@ async def test_multiple_closed_operations_keep_first_audit_valid(closure):
 async def test_competing_closures_charge_once_and_keep_dispatch_fenced(closure):
     import asyncio
 
-    from infosec_harness.inference import ledger
-    from infosec_harness.inference.protocol import BrokerError
+    from infosec_harness.inference.controller import ledger
+    from infosec_harness.inference.wire.protocol import BrokerError
 
     results = await asyncio.gather(rec.close_unknown(closure), rec.close_unknown(closure), return_exceptions=True)
     assert sum(isinstance(r, dict) and r["status"] == "applied" for r in results) == 1
@@ -175,7 +176,7 @@ async def test_competing_closures_charge_once_and_keep_dispatch_fenced(closure):
     root, _ = await rows_for(closure)
     assert root.state["used"]["tokens"] == 120
     with pytest.raises(BrokerError) as caught:
-        await ledger.claim(closure.unknown_request_ids[0], lease_id="deleted")
+        await ledger.DurableLedger().claim(closure.unknown_request_ids[0], lease_id="deleted")
     assert caught.value.code == "completion_unknown"
 
 
@@ -236,7 +237,7 @@ async def test_actual_closure_capacity_not_double_held_and_settle_cannot_rewrite
     # Isolate capacity arithmetic; actual admission independently rejects the expired root.
     monkeypatch.setattr(budgets, "_remaining_time", lambda _: None)
     next_operation = await budgets.reserve(closure.root_id, "next",
-        {"requests": 5, "tokens": 180, "cost_usd": 7}, "other")
+        {"requests": 5, "tokens": 180, "cost_usd": 7}, "other", "config-other")
     assert next_operation["status"] == "reserved"
 
 
@@ -252,7 +253,8 @@ async def test_scheduler_rejects_tampered_real_closure_accounting(closure, monke
     await mutate(closure, change)
     monkeypatch.setattr(budgets, "_remaining_time", lambda _: None)
     with pytest.raises(ValueError):
-        await budgets.reserve(closure.root_id, "next", {"requests": 1, "tokens": 1, "cost_usd": 0}, "other")
+        await budgets.reserve(closure.root_id, "next", {"requests": 1, "tokens": 1, "cost_usd": 0},
+                              "other", "config-other")
 
 
 async def test_recomputed_operation_hash_cannot_rebind_unknown_to_foreign_run(closure):

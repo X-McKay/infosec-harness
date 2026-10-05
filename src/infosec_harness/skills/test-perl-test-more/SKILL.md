@@ -9,8 +9,6 @@ metadata:
 
 # Probes in Test::More
 
-<!-- generated: activation criteria (scripts/restructure_skills.py) -->
-
 ## Use this skill when
 
 - You are writing or repairing a probe and the repository's test framework is Test::More or Test2.
@@ -20,7 +18,7 @@ metadata:
 - The repository uses a different framework; load that `test-*` skill.
 - You have not yet read `probe-oracle-protocol`; read it first.
 
-<!-- /generated: activation criteria -->
+## Procedure
 
 - Place the file at `t/harness_probe_<id>.t`. Add `use lib 'lib';` so it can load the modules.
 - Inline the nonce. Print markers to STDOUT; the verdict does not depend on `ok()` results.
@@ -82,8 +80,6 @@ defect, not a reason to decline. Let the `use`/`require` fail so the run exits n
 module name in its output; that is the signal build repair can act on by installing it. The
 probe's job is to report what it observed, and "I chose not to look" is not an observation.
 
-<!-- generated: constraints (scripts/restructure_skills.py) -->
-
 ## Safety constraints
 
 - The test must run to completion and print its markers whether or not the exploit condition holds. Never let an assertion failure be the signal.
@@ -99,4 +95,3 @@ probe's job is to report what it observed, and "I chose not to look" is not an o
 - The probe cannot decline to run: no skip, no disable, no assumption guard. A skipped test prints no markers, which the harness cannot distinguish from a broken probe, so probe repair is handed a correct probe and exhausts its budget on it.
 - The script declares a plan in its own dialect's spelling: `done_testing();` (Test::More or Test2::V0), `use Test::More tests => 1;`, `plan 1;` (Test2::V0 — it has no `tests =>` form), or a printed `1..1` line in a script that loads no Test:: module at all. With no plan, prove reports `Parse errors: No plan found in TAP output` and exits nonzero however well the probe behaved.
 
-<!-- /generated: constraints -->

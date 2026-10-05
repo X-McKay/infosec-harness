@@ -6,7 +6,7 @@ fabricated or contradictory outputs, including a model calling a tool it was not
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, get_args
 
 from pydantic import Field
 from pydantic_ai import RunContext
@@ -71,16 +71,16 @@ class NegativeOutput(Verdict):
     inconclusive_reason: None = None
 
 
-VERDICT_TOOL_LABELS = {
-    "final_result_inconclusive": VerdictLabel.inconclusive,
-    "final_result_positive": VerdictLabel.potentially_exploitable,
-    "final_result_negative": VerdictLabel.likely_not_exploitable,
-}
 VERDICT_OUTPUTS = [
     ToolOutput(InconclusiveOutput, name="final_result_inconclusive"),
     ToolOutput(PositiveOutput, name="final_result_positive"),
     ToolOutput(NegativeOutput, name="final_result_negative"),
 ]
+# Output tool name -> the one label its model admits, read from the model's `label` literal.
+VERDICT_TOOL_LABELS: dict[str, VerdictLabel] = {
+    tool.name: get_args(tool.output.model_fields["label"].annotation)[0]
+    for tool in VERDICT_OUTPUTS
+}
 
 
 def allowed_verdict_labels(facts: VerdictFacts | None) -> set[VerdictLabel]:

@@ -7,26 +7,54 @@ does not promote a component to tested support.
 
 from __future__ import annotations
 
-import contextlib
 import re
+import shlex
 from pathlib import Path
 
 from infosec_harness.domain.models import EnvironmentSpec
-from infosec_harness.repo.detect import declared_java_release, js_test_runners, jvm_test_framework
+from infosec_harness.repo.detect import (
+    java_build_texts,
+    java_release,
+    js_test_runners,
+    jvm_test_framework,
+)
 
-ADAPTER_CONTRACT_VERSION = "unit-probe-adapters/v1"
+# The sandbox builds the image with HOME under /opt and copies it to a /work tmpfs for the
+# probe: installs write under BUILD_HOME, anything resolved at probe time reads RUNTIME_HOME.
+from infosec_harness.sandbox.image import HOME_STAGE as BUILD_HOME
+from infosec_harness.sandbox.image import WORK_HOME as RUNTIME_HOME
+
+# v2: runner detection reads the executable instead of searching the command text, and every
+# retry message cites a canonical command that passes every check here. Both change which specs
+# are accepted and the bytes the models are shown on retry.
+ADAPTER_CONTRACT_VERSION = "unit-probe-adapters/v2"
+
+# Where Maven's local repository lives in each phase, and where cpanm's local lib is found.
+MAVEN_BUILD_REPOSITORY = f"{BUILD_HOME}/.m2/repository"
+MAVEN_RUNTIME_REPOSITORY = f"{RUNTIME_HOME}/.m2/repository"
+CPANM_LOCAL_LIB = f"{BUILD_HOME}/perl5"
+# /opt rather than the /work copy: /work is a noexec tmpfs, so an XS module's shared object
+# cannot be mapped from there.
+PERL5LIB_PATH = f"{CPANM_LOCAL_LIB}/lib/perl5"
 
 # pytest buffers stdout unless told not to, and the oracle markers are stdout. Either of
 # these disables that capture.
 PYTEST_TEST_COMMAND = "python -m pytest -q -s -o addopts= {test_file}"
+# prove must be verbose (see below), and -Ilib is load-bearing too: measured on fixtures whose
+# modules live in lib/, a probe with no `use lib` under a prove with no -I dies on
+# `Can't locate Runner.pm`.
+PROVE_TEST_COMMAND = "prove -v -Ilib {test_file}"
+# cpanm as the non-root sandbox user cannot write perl's site dir, so it installs into a local
+# lib that PERL5LIB then points at.
+CPANM_INSTALL_COMMAND = f"cpanm --notest --local-lib={CPANM_LOCAL_LIB} --installdeps ."
+# The build-time compile that populates the local repository for the offline probe.
+MAVEN_INSTALL_COMMAND = (
+    f"mvn -B -Dmaven.repo.local={MAVEN_BUILD_REPOSITORY} -DskipTests test-compile"
+)
 _PYTEST_UNBUFFERED = ("-s", "--capture=no", "--capture no")
-# A project's own `addopts` are prepended to every pytest invocation, including ours, from
-# pytest.ini / setup.cfg / tox.ini / pyproject.toml. Verified against real pytest: `-s` does
-# override an inherited `--capture=sys`, so capture is not the hazard -- but
-# `addopts = --collect-only` produces **exit 0, no markers, and no "collected 0 items" text**.
-# Output is literally "tests/test_probe.py: 1". The probe never runs, the run looks clean, and
-# `no_tests_executed` cannot see it either. `-x` and `-p no:...` are the same shape.
-# `-o addopts=` neutralises the lot, verified for both the ini and pyproject forms.
+# A project's own `addopts` are prepended to our invocation; `addopts = --collect-only` exits 0
+# with no markers and no "collected 0 items" text. `-o addopts=` neutralises it (ini and
+# pyproject forms both verified).
 _PYTEST_ADDOPTS_NEUTRALISED = (
     "-o addopts=",
     "-o addopts =",
@@ -43,48 +71,47 @@ _MAVEN_REDIRECT_OFF = (
     "-Dmaven.test.redirectTestOutputToFile=false",
     "-DredirectTestOutputToFile=false",
 )
-# Maven 3.x binds maven-surefire-plugin **2.12.4** to the `test` phase by default, and 2.12.4
-# has no JUnit Platform provider: a JUnit 5 probe is simply never discovered ("No tests were
-# executed"). The plugin version bound to a phase cannot be overridden from the command line,
-# so the only fix available to an EnvironmentSpec (which may not edit the repo's pom.xml) is to
-# compile with `test-compile` and then invoke a pinned surefire goal directly.
+# Maven 3.x binds Surefire 2.12.4 (no JUnit Platform provider) to the `test` phase, and a
+# phase-bound version cannot be overridden from the command line, so a spec compiles with
+# `test-compile` and invokes a pinned Surefire goal directly.
 _SUREFIRE_PIN = re.compile(r"maven-surefire-plugin:(\d+)[.:]")
 # Lifecycle phases that run the pom's own (2.12.4) surefire execution on the way past.
 _PHASES_RUNNING_SUREFIRE = frozenset(
     {"test", "integration-test", "verify", "package", "install", "deploy"}
 )
 _COMPILES_TESTS = "test-compile"
-# Every Maven retry message points the agent at this string, so it must itself satisfy every
-# check in this module. It did not: it omitted -Dmaven.repo.local, so an agent that copied it
-# verbatim was rejected for a *different* violation than the one it had just fixed. Measured on
-# java-sqli-vulnerable, which oscillated between the two and exhausted its output retries into
-# `environment_unbuildable`. test_validators.py now asserts the exemplars are clean.
+# Every Maven retry message cites this command, so it must itself pass every check here
+# (see MESSAGE_EXEMPLARS).
 MAVEN_TEST_COMMAND = (
     "mvn -B -o test-compile "
     "org.apache.maven.plugins:maven-surefire-plugin:3.2.5:test "
-    "-Dtest=HarnessProbeTest -Dmaven.repo.local=/work/home/.m2/repository "
+    f"-Dtest=HarnessProbeTest -Dmaven.repo.local={MAVEN_RUNTIME_REPOSITORY} "
     "-Dmaven.test.redirectTestOutputToFile=false"
 )
-# `--rerun-tasks` is the Gradle half of the "a run that executes nothing still exits 0" family.
-# Measured on Gradle 8.14.3 / JDK 17: the first `test` run printed all three markers, and running
-# the identical command again printed none and exited 0, with `> Task :test UP-TO-DATE` as the only
-# difference. `cleanTest test` is the other way to say it.
+# Gradle's `test` task is incremental: a repeated run is UP-TO-DATE, executes nothing and exits 0.
+# `--rerun-tasks` (or `cleanTest test`) forces it.
 _GRADLE_UNCONDITIONAL = ("--rerun-tasks", "--rerun")
 GRADLE_TEST_COMMAND = (
     "./gradlew --no-daemon --offline --rerun-tasks -i test --tests '*HarnessProbeTest'"
 )
-# The two Node runners that intercept a test's console. Measured on real fixtures under node 22:
-# a repository `jest.config.js` or `vitest.config.js` carrying `silent: true` -- an ordinary thing
-# for a project with chatty tests to do -- replaces the test's console, so ALL THREE markers
-# vanish while the run still exits 0. `--silent=false` on the command line overrides it, and is a
-# no-op when nothing was silencing anything. mocha and node:test never capture stdout.
+# jest and vitest honour a repository config's `silent: true`, which hides every marker while the
+# run exits 0; `--silent=false` overrides it. mocha and node:test never capture stdout.
 JEST_TEST_COMMAND = "npx jest --silent=false --runTestsByPath {test_file}"
 VITEST_TEST_COMMAND = "npx vitest run --silent=false {test_file}"
+MOCHA_TEST_COMMAND = "npx mocha {test_file}"
+NODE_TEST_COMMAND = "node --test {test_file}"
+JASMINE_TEST_COMMAND = "npx jasmine {test_file}"
 _JS_CAPTURING_RUNNERS = {"jest": JEST_TEST_COMMAND, "vitest": VITEST_TEST_COMMAND}
+# One command per Node runner, because the runner is not interchangeable with its selector.
+JS_TEST_COMMANDS: dict[str, str] = {
+    "jest": JEST_TEST_COMMAND,
+    "vitest": VITEST_TEST_COMMAND,
+    "mocha": MOCHA_TEST_COMMAND,
+    "node:test": NODE_TEST_COMMAND,
+    "jasmine": JASMINE_TEST_COMMAND,
+}
 _JS_SILENT_OFF = "--silent=false"
-# `--runTestsByPath` is jest's. vitest takes a bare path and dies in its own argument parser on
-# this flag, before loading a single test file, so the pairing costs the run with no test output
-# to diagnose from.
+# `--runTestsByPath` is jest's; vitest rejects it before loading any test file.
 _JEST_ONLY_SELECTOR = "--runTestsByPath"
 # `cmd || true` makes a failed dependency install invisible: the image builds, the smoke test
 # passes, and the absence surfaces at probe time as a compile error inside the probe — past
@@ -94,16 +121,198 @@ _SWALLOWED_FAILURE = re.compile(r"\|\|\s*(?:true|:)\s*(?=$|[;&|])|;\s*true\s*$")
 _CPANM_LOCAL_LIB = re.compile(r"cpanm\b.*?(?:\s-[lL]\s|--local-lib(?:-contained)?)")
 
 
+# --- Which runner a command invokes ----------------------------------------------------------
+#
+# The runner is the *executable* of a simple command, never a word that merely contains its name
+# (`tests/test_approve.py` is not `prove`; `--basetemp /tmp/mvn` is not Maven). The tokeniser
+# splits on shell operators, skips redirection targets and `VAR=value` prefixes, sees through the
+# usual wrappers (`env`, `timeout`, `sh -c`, `python -m`, `npx`, `uv run`, ...), and falls back to
+# a plain split on invalid shell so detection never silently turns off.
+
+_EXECUTABLE_RUNNERS = {
+    "mvn": "maven",
+    "mvnw": "maven",
+    "mvnd": "maven",
+    "gradle": "gradle",
+    "gradlew": "gradle",
+    "pytest": "pytest",
+    "py.test": "pytest",
+    "prove": "prove",
+    "jest": "jest",
+    "vitest": "vitest",
+    "mocha": "mocha",
+    "jasmine": "jasmine",
+    "cpanm": "cpanm",
+}
+_JVM_RUNNERS = frozenset({"maven", "gradle"})
+# Runners that take the probe's *path*; a `-Dtest=` next to one of these is not a JVM selector.
+_PATH_RUNNERS = frozenset({"pytest", "prove", "jest", "vitest", "mocha", "jasmine", "node:test"})
+_JS_RUNNERS = ("vitest", "jest", "mocha", "jasmine")
+_SHELLS = frozenset({"sh", "bash", "dash", "zsh", "ash", "ksh"})
+_PYTHONS = re.compile(r"^(?:python(?:\d+(?:\.\d+)?)?|py|pypy3?)$")
+# Wrappers whose own flags precede the real command; the int is how many positional arguments
+# they take before it (`timeout 60 mvn ...`).
+_WRAPPERS = {"env": 0, "exec": 0, "time": 0, "nohup": 0, "nice": 0,
+             "stdbuf": 0, "xvfb-run": 0, "sudo": 0, "timeout": 1}
+_RUN_WRAPPERS = frozenset({"uv", "poetry", "pipenv", "pdm", "hatch", "rye"})
+_NPX = frozenset({"npx", "bunx", "pnpx"})
+_PACKAGE_MANAGERS = frozenset({"npm", "pnpm", "yarn", "bun"})
+_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+_OPERATOR = re.compile(r"^[();<>|&]+$")
+_MAX_SHELL_DEPTH = 4
+
+
+def _words(command: str) -> list[str]:
+    """Shell words and operators. Never raises: invalid shell still yields words."""
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        lexer.commenters = ""  # `-Dx=#y` is a property, not a comment; keep every word
+        return list(lexer)
+    except ValueError:
+        return re.findall(r"[();<>|&]+|[^\s();<>|&]+", command)
+
+
+def _simple_commands(words: list[str]) -> list[list[str]]:
+    segments: list[list[str]] = [[]]
+    skip_target = False
+    for word in words:
+        if skip_target:
+            skip_target = False
+            continue
+        if _OPERATOR.match(word):
+            if "<" in word or ">" in word:
+                skip_target = not word.endswith("&")  # `2>&1` names no file
+                continue
+            segments.append([])
+            continue
+        segments[-1].append(word)
+    return [segment for segment in segments if segment]
+
+
+def _program(word: str) -> str:
+    """The program a word names: basename, no Windows or JS suffix, no `@version`."""
+    name = word.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    if "@" in name[1:]:
+        name = name[: name.index("@", 1)]
+    for suffix in (".cmd", ".bat", ".exe", ".js", ".cjs", ".mjs"):
+        name = name.removesuffix(suffix)
+    return name
+
+
+def _skip_flags(words: list[str], valued: tuple[str, ...] = ()) -> list[str]:
+    i = 0
+    while i < len(words) and (words[i].startswith("-") or _ASSIGNMENT.match(words[i])):
+        i += 2 if words[i] in valued else 1
+        if i <= len(words) and words[i - 1] == "--":
+            break
+    return words[i:]
+
+
+def _python_target(args: list[str]) -> list[str]:
+    """What `python [opts] -m mod args` / `python [opts] script args` runs, as a new argv."""
+    i = 0
+    while i < len(args):
+        word = args[i]
+        if word == "-m":
+            return args[i + 1 :]
+        if word.startswith("-m") and len(word) > 2 and not word.startswith("--"):
+            return [word[2:], *args[i + 1 :]]
+        if word in ("-c",) or (word.startswith("-") and not word.startswith("--")
+                               and word.endswith("c") and len(word) > 2):
+            return []  # inline code: nothing to resolve
+        if word in ("-W", "-X"):
+            i += 2
+            continue
+        if word.startswith("-"):
+            i += 1
+            continue
+        return args[i:]
+    return []
+
+
+def _resolve(argv: list[str], depth: int) -> list[tuple[str, list[str]]]:
+    while argv:
+        head, rest = argv[0], argv[1:]
+        if _ASSIGNMENT.match(head):
+            argv = rest
+            continue
+        program = _program(head)
+        if program in _WRAPPERS:
+            rest = _skip_flags(rest, ("-u", "-n", "-s", "-k", "--signal", "--kill-after"))
+            argv = rest[_WRAPPERS[program] :]
+            continue
+        if program in _SHELLS:
+            i = 0
+            while i < len(rest) and rest[i].startswith(("-", "+")):
+                word = rest[i]
+                if word in ("-o", "+o", "-O", "+O"):
+                    i += 2
+                    continue
+                if "c" in word[1:] and not word.startswith("--"):
+                    if depth >= _MAX_SHELL_DEPTH or i + 1 >= len(rest):
+                        return []
+                    return _invocations(rest[i + 1], depth + 1)
+                i += 1
+            argv = rest[i:]  # `sh ./gradlew test`: the script is the command
+            continue
+        if _PYTHONS.match(program):
+            argv = _python_target(rest)
+            continue
+        if program == "coverage":
+            argv = _python_target(rest[1:]) if rest[:1] == ["run"] else []
+            continue
+        if program in ("perl", "node", "tsx"):
+            if program != "perl" and "--test" in rest:
+                return [("node:test", rest)]
+            if program == "perl" and any(w in ("-e", "-E") for w in rest):
+                return []
+            argv = _skip_flags(rest, ("-I", "-M", "-r", "--require", "--import", "--loader"))
+            continue
+        if program in _RUN_WRAPPERS:
+            argv = _skip_flags(rest[1:]) if rest[:1] == ["run"] else []
+            continue
+        if program in _NPX:
+            argv = _skip_flags(rest, ("-p", "--package", "-c", "--call"))
+            continue
+        if program in _PACKAGE_MANAGERS:
+            if rest[:1] and rest[0] in ("exec", "x", "dlx", "run"):
+                rest = rest[1:]
+            elif program == "npm":
+                return []  # `npm test` runs a script this contract cannot see into
+            argv = _skip_flags(rest)
+            continue
+        runner = _EXECUTABLE_RUNNERS.get(program)
+        return [(runner, rest)] if runner else []
+    return []
+
+
+def _invocations(command: str, depth: int = 0) -> list[tuple[str, list[str]]]:
+    """Every (runner, arguments) the command invokes, in order."""
+    found: list[tuple[str, list[str]]] = []
+    for argv in _simple_commands(_words(command)):
+        found += _resolve(argv, depth)
+    return found
+
+
+def command_runners(command: str) -> frozenset[str]:
+    """The test runners and installers a shell command invokes, read from its executables."""
+    return frozenset(runner for runner, _ in _invocations(command))
+
+
+def _invokes(commands: str | list[str] | tuple[str, ...], runner: str) -> bool:
+    if isinstance(commands, str):
+        commands = [commands]
+    return any(runner in command_runners(command) for command in commands)
+
+
 def _js_runner(command: str) -> str | None:
-    """Which Node test runner a command invokes, or None. vitest before jest: a command may
-    legitimately mention both (`npx vitest run` in a repo whose config file is named jest.*),
-    and the runner is the executable, which is the first of the two to appear as a bare token."""
-    tokens = [t.rsplit("/", 1)[-1] for t in command.split() if not t.startswith("-")]
-    for token in tokens:
-        for runner in ("vitest", "jest", "mocha", "jasmine"):
-            if token == runner:
-                return runner
-    return None
+    """Which Node test runner a command invokes, or None: the first one run as an executable.
+
+    A command may legitimately mention two (`npx vitest run` in a repo whose config file is
+    named jest.*, or a `cd jest-compat && npx vitest ...`); only the executable counts.
+    """
+    return next((runner for runner, _ in _invocations(command) if runner in _JS_RUNNERS), None)
 
 
 def _js_runner_violations(command: str) -> list[str]:
@@ -130,21 +339,25 @@ def _js_runner_violations(command: str) -> list[str]:
     return problems
 
 
+def _path_runner_exemplar(runners: frozenset[str]) -> str:
+    """The canonical command for the path-taking runner a command invokes; pytest otherwise."""
+    if "prove" in runners:
+        return PROVE_TEST_COMMAND
+    js = next((runner for runner in (*_JS_RUNNERS, "node:test") if runner in runners), None)
+    return JS_TEST_COMMANDS[js] if js else PYTEST_TEST_COMMAND
+
+
 def _selects_by_class_name(command: str) -> bool:
-    return any(sel in command for sel in _CLASS_SELECTORS)
+    """A JVM class selector as a word of its own, not as part of some other flag or path."""
+    return any(
+        word.startswith("-Dtest=") or word == "--tests" or word.startswith("--tests=")
+        for word in _words(command)
+    )
 
 
 def _is_jvm_runner(command: str) -> bool:
-    """A Maven or Gradle command, selector or not.
-
-    Routing on the selector alone misfiled `mvn test` with no `-Dtest=` as a path runner and
-    told it to add `{test_file}`, which Maven does not accept — the opposite of the advice it
-    needs, which is to name a class.
-    """
-    return any(
-        token.rsplit("/", 1)[-1].removesuffix(".cmd") in ("mvn", "mvnw", "gradle", "gradlew")
-        for token in command.split()
-    )
+    """A Maven or Gradle command, selector or not, read from its executables."""
+    return bool(command_runners(command) & _JVM_RUNNERS)
 
 
 def _short_flag(command: str, letter: str) -> bool:
@@ -167,19 +380,14 @@ def _long_flag(command: str, *names: str) -> bool:
 
 
 def _maven_goals(command: str) -> list[str]:
-    """The phases and goals a `mvn` invocation asks for, with flags and properties removed."""
-    tokens = command.split()
-    start = next(
-        (
-            i
-            for i, t in enumerate(tokens)
-            if t.rsplit("/", 1)[-1] in ("mvn", "mvnw", "mvn.cmd", "./mvnw")
-        ),
-        None,
-    )
-    if start is None:
-        return []
-    return [t for t in tokens[start + 1 :] if not t.startswith("-")]
+    """The phases and goals the `mvn` invocations ask for, with flags and properties removed."""
+    return [
+        word
+        for runner, args in _invocations(command)
+        if runner == "maven"
+        for word in args
+        if not word.startswith("-")
+    ]
 
 
 def _install_violations(spec: EnvironmentSpec) -> list[str]:
@@ -202,7 +410,7 @@ def _install_violations(spec: EnvironmentSpec) -> list[str]:
         ):
             problems.append(
                 "This install puts the modules in a local lib, so set "
-                "env.PERL5LIB=/opt/home/perl5/lib/perl5 (matching the -l/-L path) or drop the "
+                f"env.PERL5LIB={PERL5LIB_PATH} (matching the -l/-L path) or drop the "
                 "local lib entirely. Without it prove runs with the stock @INC and the probe "
                 "dies on the modules that were just installed."
             )
@@ -212,7 +420,8 @@ def _install_violations(spec: EnvironmentSpec) -> list[str]:
 def _jvm_violations(command: str) -> list[str]:
     """Maven and Gradle: the ways a JVM probe runs and reports nothing anyway."""
     problems: list[str] = []
-    if "mvn" in command:
+    runners = command_runners(command)
+    if "maven" in runners:
         if _short_flag(command, "q") or _long_flag(command, "--quiet"):
             problems.append(
                 f"Drop -q and use -B instead: {MAVEN_TEST_COMMAND}. Maven relays the forked "
@@ -222,7 +431,8 @@ def _jvm_violations(command: str) -> list[str]:
             )
         if not any(flag in command for flag in _MAVEN_REDIRECT_OFF):
             problems.append(
-                "Add -Dmaven.test.redirectTestOutputToFile=false. A pom that turns the "
+                f"Add -Dmaven.test.redirectTestOutputToFile=false: {MAVEN_TEST_COMMAND}. A pom "
+                "that turns the "
                 "redirect on writes the markers to target/surefire-reports/*-output.txt "
                 "instead of stdout, and the harness only reads stdout."
             )
@@ -251,7 +461,7 @@ def _jvm_violations(command: str) -> list[str]:
                 "time, so a command that only invokes a surefire goal runs against the test "
                 "classes baked into the image and never sees the probe at all."
             )
-    if "gradle" in command:
+    if "gradle" in runners:
         if not (
             _short_flag(command, "i")
             or _short_flag(command, "d")
@@ -299,12 +509,8 @@ def _class_selector_value(command: str) -> str:
     return ""
 
 
-# Surefire and Gradle select by *class*, so a selector handed a file path matches nothing. The
-# run then exits having executed no test -- Surefire says `No tests matching pattern "<path>"
-# were executed!` -- which looks like a probe defect and is not one. Measured on
-# java-sqli-fixed: the planner wrote `-Dtest={test_file}`, the harness substituted
-# `src/test/java/com/example/UserDaoTest.java`, and the case burned its whole repair budget to
-# `inconclusive`. `{test_file}` is the giveaway, but a hardcoded path fails identically.
+# Surefire and Gradle select by *class*, so a selector given a file path (or `{test_file}`)
+# matches nothing and the run executes zero tests.
 _PATHISH_SELECTOR = re.compile(r"[/\\]|\.(?:java|kt|kts|groovy|scala)\b|\{test_file\}")
 
 
@@ -331,27 +537,15 @@ def _pathish_selector_violation(command: str) -> str | None:
 
 # --- JDK / language-level compatibility -----------------------------------------------------
 #
-# Vul4J's 79 reproducible Java vulnerabilities span projects targeting Java 7 through 16, so a
-# single pinned base image cannot build the corpus. Both directions of mismatch fail, and both
-# fail in ways build repair cannot reason its way out of, so they are caught at plan time.
-#
-# Floors come from JEP 182's "one plus three back" retirement policy. Only the two removals that
-# actually shipped are encoded; an unknown JDK gets no floor rather than a guessed one, because
-# a wrong floor would reject a spec that builds.
+# A JDK too old fails with "invalid target release"; one too new no longer accepts old -source
+# levels. Both are caught at plan time. An unknown JDK gets no floor rather than a guessed one.
 _JAVAC_SOURCE_FLOOR = (
     (20, 8),  # JDK 20 removed -source/-target 7: "Source option 7 is no longer supported."
     (12, 7),  # JDK 12 removed 6 (deprecated in 11).
     (11, 6),  # JDK 11 removed 5: "Source option 5 is no longer supported. Use 6 or later."
 )
-# Each floor above was executed rather than read off JEP 182: javac from Zulu 8/11/17/21 was
-# asked for -source 1.5/1.6/1.7/1.8 under Maven 3.9.16. JDK 8 accepted all four; JDK 11 rejected
-# 5; JDK 17 rejected 6; JDK 21 rejected 7. The 11-floor was missing, and three poms in the
-# harvested Vul4J corpus declare `<source>1.5</source>` -- so a spec pinning temurin-11 for them
-# was accepted here and then died in the image build on a message this check exists to predict.
-# The oldest JDK the allowlisted images offer is 8, so that is the floor of the advice as well.
-# The JDKs the official `maven:3.9-eclipse-temurin-*` line actually publishes, confirmed
-# against the registry tag list rather than assumed: 8, 11, 17 and 21 all exist (as do 19,
-# 20 and 22+), so every image this module names can be pulled. 9, 10 and 12-16 do not.
+# Each floor was executed (javac from JDK 8/11/17/21 against -source 1.5-1.8 under Maven 3.9.16).
+# The LTS JDKs the `maven:3.9-eclipse-temurin-*` line publishes, checked against the tag list.
 _MAVEN_IMAGE_JDKS = (8, 11, 17, 21)
 
 
@@ -360,20 +554,13 @@ def _javac_floor(jdk: int) -> int | None:
     return next((floor for threshold, floor in _JAVAC_SOURCE_FLOOR if jdk >= threshold), None)
 
 
-# The default JDK, and the ceiling on what this function recommends for old code. 21 compiles
-# source 8 perfectly well (measured), so the cap is not a compatibility floor -- it keeps this
-# function's answer identical to the table skills/build-maven publishes, and it keeps 2017-era
-# projects on the LTS they are most likely to have been built under. A project that declares 21
-# still gets 21, because `declared_release` overrides the cap below.
+# The ceiling on what is recommended for old code, matching the skills/build-maven table. Not a
+# compatibility floor: a project that declares 21 still gets 21.
 _PREFERRED_IMAGE_JDK = 17
 
 
 def maven_image_for_release(declared_release: int) -> str:
-    """An allowlisted Maven image whose JDK still compiles ``declared_release``.
-
-    Naming temurin-11 unconditionally was wrong for the levels JDK 11 itself removed: the
-    message told the planner to pin the very image that fails with the error being reported.
-    """
+    """An allowlisted Maven image whose JDK still compiles ``declared_release``."""
     usable = [
         jdk
         for jdk in _MAVEN_IMAGE_JDKS
@@ -433,25 +620,28 @@ def jdk_compatibility_violations(base_image: str, declared_release: int | None) 
 
 
 def environment_spec_violations(spec: EnvironmentSpec) -> list[str]:
-    """Deterministic requirements on a test command. Pure, so evals and tests can check it.
-
-    Both of these were produced by a live model and both silently destroyed a run, because
-    neither the probe nor the diagnosis can see the cause: the probe looks correct, exits
-    cleanly, and reports nothing.
-    """
+    """Deterministic requirements on a test command: each catches a run that exits cleanly and
+    reports nothing. Pure, so evals and tests can check it."""
     problems: list[str] = _install_violations(spec)
     command = spec.test_command or ""
-    if _selects_by_class_name(command) or _is_jvm_runner(command):
-        # Maven and Gradle select tests by *class*, not by path: `-Dtest=HarnessProbeTest`,
-        # `--tests '*HarnessProbeTest'`. Substituting a file path there matches nothing, so
-        # these commands legitimately carry no {test_file} — the coupling is that the probe's
-        # class name must be the one the selector names, which is the author's job and what
-        # the test-junit5 skill specifies.
+    runners = command_runners(command)
+    # A class selector with no runner this contract can read is still routed as JVM, as it always
+    # was; next to a runner that takes a path, it is not a JVM selector and must not exempt the
+    # command from that runner's checks.
+    if runners & _JVM_RUNNERS or (_selects_by_class_name(command) and not runners & _PATH_RUNNERS):
+        # Maven and Gradle select by *class*, so these commands carry no {test_file}; the probe's
+        # class must be the one the selector names.
         if not _has_class_selector_value(command):
+            exemplars = [
+                exemplar
+                for runner, exemplar in (("maven", MAVEN_TEST_COMMAND),
+                                         ("gradle", GRADLE_TEST_COMMAND))
+                if runner in runners
+            ] or [MAVEN_TEST_COMMAND, GRADLE_TEST_COMMAND]
             problems.append(
                 "a JVM test command must name the probe's test class in its selector, e.g. "
-                "'mvn -q -B -o test -Dtest=HarnessProbeTest' or "
-                "\"./gradlew --offline test --tests '*HarnessProbeTest'\"."
+                + " or ".join(repr(exemplar) for exemplar in exemplars)
+                + "."
             )
         elif pathish := _pathish_selector_violation(command):
             problems.append(pathish)
@@ -463,9 +653,9 @@ def environment_spec_violations(spec: EnvironmentSpec) -> list[str]:
         problems.append(
             "test_command must contain the literal placeholder {test_file}; the harness "
             "substitutes the probe's real path into it. Replace the hardcoded test path with "
-            "{test_file}, e.g. 'python -m pytest -q -s {test_file}'."
+            f"{{test_file}}, e.g. {_path_runner_exemplar(runners)!r}."
         )
-    if "pytest" in command and not any(f in command for f in _PYTEST_ADDOPTS_NEUTRALISED):
+    if "pytest" in runners and not any(f in command for f in _PYTEST_ADDOPTS_NEUTRALISED):
         problems.append(
             f"Add `-o addopts=` to the pytest command: {PYTEST_TEST_COMMAND}. A project's own "
             "`addopts` are "
@@ -475,33 +665,25 @@ def environment_spec_violations(spec: EnvironmentSpec) -> list[str]:
             "same. Overriding costs nothing when a project sets no addopts, and if a project "
             "genuinely needs one the prepare-phase canary fails loudly instead of silently."
         )
-    if "pytest" in command and not any(flag in command for flag in _PYTEST_UNBUFFERED):
+    if "pytest" in runners and not any(flag in command for flag in _PYTEST_UNBUFFERED):
         # Without this the probe runs, passes, and prints its markers into pytest's capture
         # buffer, so the harness sees precondition_reached=false on a probe that was correct.
         problems.append(
             "a pytest test_command must disable output capture with -s (or --capture=no), "
-            "otherwise the probe's HARNESS_ markers never reach the runner and a correct "
-            "probe is recorded as having reached nothing."
+            f"as in {PYTEST_TEST_COMMAND}, otherwise the probe's HARNESS_ markers never reach "
+            "the runner and a correct probe is recorded as having reached nothing."
         )
     problems += _js_runner_violations(command)
-    if "prove" in command and not (_short_flag(command, "v") or _long_flag(command, "--verbose")):
+    if "prove" in runners and not (_short_flag(command, "v") or _long_flag(command, "--verbose")):
         # prove is a TAP consumer: it parses the child's stream and reports the plan, and
         # everything that is not TAP — which is every HARNESS_ marker — is discarded unless it
         # is verbose. Same failure as an un-`-s`ed pytest, and just as invisible downstream.
         problems.append(
-            "a prove test_command must be verbose: 'prove -v {test_file}'. prove discards "
+            f"a prove test_command must be verbose: {PROVE_TEST_COMMAND!r}. prove discards "
             "non-TAP output from the test it runs, so without -v the probe's HARNESS_ markers "
             "never reach the runner and a correct probe is recorded as having reached nothing."
         )
     return problems
-
-
-# The image is built with HOME=/opt/home; run_probe then copies /opt/home to a writable
-# /work/home tmpfs and runs the test from there. So an install writes under /opt and anything
-# resolved at probe time reads from /work. Getting that backwards fails in two different
-# directions, and one of them is silent.
-BUILD_HOME = "/opt/home"
-RUNTIME_HOME = "/work/home"
 
 
 def install_path_violations(spec: EnvironmentSpec) -> list[str]:
@@ -518,41 +700,43 @@ def install_path_violations(spec: EnvironmentSpec) -> list[str]:
     # cpanm as the non-root sandbox user cannot write perl's site dir. It warns, "succeeds",
     # and installs nowhere on @INC -- so the build exits 0 with the dependency absent and the
     # failure only appears inside the probe as "Can't locate X.pm". Verified against the corpus.
-    if "cpanm" in installs and not any(f in installs for f in ("--local-lib", " -l ", " -L ")):
+    installs_cpanm = _invokes(spec.install_commands or [], "cpanm")
+    if installs_cpanm and not any(f in installs for f in ("--local-lib", " -l ", " -L ")):
         problems.append(
-            "a cpanm install must use --local-lib, e.g. "
-            f"'cpanm --notest --local-lib={BUILD_HOME}/perl5 --installdeps .' with "
-            f"env PERL5LIB={BUILD_HOME}/perl5/lib/perl5. Without it cpanm cannot write perl's "
+            f"a cpanm install must use --local-lib, e.g. {CPANM_INSTALL_COMMAND!r} with "
+            f"env PERL5LIB={PERL5LIB_PATH}. Without it cpanm cannot write perl's "
             "site directory as the non-root sandbox user: it reports success, installs nothing "
             "importable, and the build goes green with the dependency missing."
         )
     # Maven resolves its local repository from the JVM's user.home. The sandbox user has no
     # passwd entry, so that is /root, and the build dies with
     # "mkdir: cannot create directory '/root': Permission denied". Verified against the corpus.
-    if "mvn" in installs and "-Dmaven.repo.local=" not in installs:
+    if _invokes(spec.install_commands or [], "maven") and "-Dmaven.repo.local=" not in installs:
         problems.append(
-            f"a Maven install must set -Dmaven.repo.local={BUILD_HOME}/.m2/repository. Maven "
+            f"a Maven install must set -Dmaven.repo.local={MAVEN_BUILD_REPOSITORY}, as in "
+            f"{MAVEN_INSTALL_COMMAND!r}. Maven "
             "takes its local repository from the JVM's user.home, which is /root for the "
             "sandbox user's unmapped uid, so the build fails with \"cannot create directory "
             "'/root'\" before it resolves anything."
         )
     command = spec.test_command or ""
-    if "mvn" in command and "-Dmaven.repo.local=" not in command:
+    if _invokes(command, "maven") and "-Dmaven.repo.local=" not in command:
         problems.append(
-            f"a Maven test command must set -Dmaven.repo.local={RUNTIME_HOME}/.m2/repository — "
-            f"the repository populated under {BUILD_HOME} at build time is copied there for the "
-            "probe, and without the flag Maven looks in /root and cannot write it."
+            f"a Maven test command must set -Dmaven.repo.local={MAVEN_RUNTIME_REPOSITORY}, as "
+            f"in {MAVEN_TEST_COMMAND} — the repository populated under {BUILD_HOME} at build "
+            "time is copied there for the probe, and without the flag Maven looks in /root and "
+            "cannot write it."
         )
-    if "--local-lib" in installs or "cpanm" in installs:
+    if "--local-lib" in installs or installs_cpanm:
         perl5lib = (spec.env or {}).get("PERL5LIB", "")
         if not perl5lib:
             problems.append(
-                f"a cpanm install needs env PERL5LIB={BUILD_HOME}/perl5/lib/perl5 so the probe "
+                f"a cpanm install needs env PERL5LIB={PERL5LIB_PATH} so the probe "
                 "can find what was installed; without it prove fails with 'Can't locate X.pm'."
             )
         elif not perl5lib.startswith((BUILD_HOME, RUNTIME_HOME)):
             problems.append(
-                f"env PERL5LIB is {perl5lib!r}; point it at {BUILD_HOME}/perl5/lib/perl5. "
+                f"env PERL5LIB is {perl5lib!r}; point it at {PERL5LIB_PATH}. "
                 f"Legacy histories using {RUNTIME_HOME}/perl5/lib/perl5 remain schema-admissible "
                 "for replay, but that noexec copy cannot load XS modules and will fail the "
                 "execution-backed build-repair check."
@@ -560,10 +744,8 @@ def install_path_violations(spec: EnvironmentSpec) -> list[str]:
     return problems
 
 
-# The warm-up that populates the local repository has to *execute a test*, because Surefire
-# resolves its provider lazily -- at test-execution time, from the JUnit version it finds on the
-# test classpath -- and not during dependency resolution. Two flags turn "no test ran" into a
-# success, and they are exactly what makes a warm-up a silent no-op.
+# Flags that turn "no test ran" into success, which makes a warm-up a silent no-op: Surefire
+# resolves its provider only when a test executes.
 _WARMUP_NO_OPS = (
     "-DfailIfNoTests=false",
     "-Dsurefire.failIfNoTests=false",
@@ -572,24 +754,15 @@ _WARMUP_NO_OPS = (
 )
 
 
-# A throwaway test, written and removed inside one install step, so the warm-up has something to
-# run in a project whose test tree is empty. One line of Java on purpose: render_dockerfile emits
-# each install command as a single `RUN`, so a heredoc would not survive.
-#
-# **The throwaway test has to be written in the project's own framework.** The warm-up used to be
-# JUnit 5 unconditionally, and that is not a detail: in a JUnit-4 project the `test-compile` in
-# this very command fails with
-#   HarnessWarmupTest.java:[1,63] cannot find symbol / symbol: class Test
-# so the image never builds at all. Executed against three real corpus repositories (zt-zip,
-# commons-imaging, commons-fileupload at their harvested revisions) and against minimal fixtures:
-# the JUnit 5 warm-up fails the build on every one of them, and the matching-framework warm-up
-# then makes the offline probe pass with all three markers. The corpus is 50 JUnit-4 Maven
-# entries to 1 JUnit 5, so the old default was wrong for essentially the whole of it.
+# A throwaway test, written, run and removed inside one install step, so the warm-up has
+# something to execute in an empty test tree. One line of Java: render_dockerfile emits each
+# install command as a single `RUN`. It must be written in the project's own framework, or its
+# `test-compile` fails ("cannot find symbol: class Test") and the image never builds.
 def _warmup(import_line: str, declaration: str) -> str:
     return (
         f"mkdir -p src/test/java && echo '{import_line} {declaration}' > "
         "src/test/java/HarnessWarmupTest.java && "
-        f"mvn -B -Dmaven.repo.local={BUILD_HOME}/.m2/repository test-compile "
+        f"mvn -B -Dmaven.repo.local={MAVEN_BUILD_REPOSITORY} test-compile "
         "org.apache.maven.plugins:maven-surefire-plugin:3.2.5:test -Dtest=HarnessWarmupTest && "
         "rm -f src/test/java/HarnessWarmupTest.java target/test-classes/HarnessWarmupTest.class"
     )
@@ -609,8 +782,26 @@ MAVEN_WARMUP_COMMANDS: dict[str, str] = {
         "public class HarnessWarmupTest { @Test public void warm() {} }",
     ),
 }
-# Kept under its original name because every existing Maven retry message and test names it.
+# The warm-up cited when the project's test framework cannot be read.
 MAVEN_WARMUP_COMMAND = MAVEN_WARMUP_COMMANDS["junit5"]
+
+# Every whole command a retry message may tell an agent to write. Each must pass every check, or
+# an agent copying it verbatim is sent into a different violation and the retries cycle;
+# tests/agents/test_ecosystem_contract.py holds that.
+MESSAGE_EXEMPLARS: dict[str, str] = {
+    "PYTEST_TEST_COMMAND": PYTEST_TEST_COMMAND,
+    "PROVE_TEST_COMMAND": PROVE_TEST_COMMAND,
+    "MAVEN_TEST_COMMAND": MAVEN_TEST_COMMAND,
+    "GRADLE_TEST_COMMAND": GRADLE_TEST_COMMAND,
+    "JEST_TEST_COMMAND": JEST_TEST_COMMAND,
+    "VITEST_TEST_COMMAND": VITEST_TEST_COMMAND,
+    "MOCHA_TEST_COMMAND": MOCHA_TEST_COMMAND,
+    "NODE_TEST_COMMAND": NODE_TEST_COMMAND,
+    "JASMINE_TEST_COMMAND": JASMINE_TEST_COMMAND,
+    "MAVEN_INSTALL_COMMAND": MAVEN_INSTALL_COMMAND,
+    "CPANM_INSTALL_COMMAND": CPANM_INSTALL_COMMAND,
+    **{f"MAVEN_WARMUP_COMMANDS[{name}]": command for name, command in MAVEN_WARMUP_COMMANDS.items()},
+}
 # What each framework's warm-up (and probe) must import, and what it must not. Order matters:
 # `org.junit.jupiter` also contains `org.junit`, so jupiter is tested first.
 _FRAMEWORK_IMPORTS: dict[str, str] = {
@@ -649,59 +840,33 @@ def _warms_the_surefire_provider(install_commands: list[str]) -> bool:
     return False
 
 
-def offline_warmup_violations(
-    spec: EnvironmentSpec, framework: str | None = None, *, targeted_feedback: bool = False
-) -> list[str]:
+def offline_warmup_violations(spec: EnvironmentSpec, framework: str | None = None) -> list[str]:
     """A Maven probe runs with no network, so the build must have fetched *everything* first.
 
-    Sibling of ``install_path_violations``: same two-phase layout, but about what is in the
-    local repository rather than where it lives. Verified against the Java corpus, where the
-    naive warm-up (`surefire:3.2.5:test -DfailIfNoTests=false`, with an empty test tree) left
-    the offline probe dying on `surefire-junit-platform:jar:3.2.5 ... has not been downloaded
-    from it before` — a build that exits 0 and a probe that reports nothing, which is the
-    failure shape neither probe repair nor build repair can see the cause of.
+    Surefire resolves its provider lazily, at test-execution time, from the framework on the
+    test classpath: a warm-up that runs no test (an empty test tree, or `-DfailIfNoTests=false`)
+    fetches the plugin and never the provider, and the offline probe dies on
+    `surefire-junit-platform:jar:3.2.5 ... has not been downloaded from it before`.
 
     ``framework`` is the repository's own test framework, when it is known. The warm-up's
     throwaway test is compiled against the project's test classpath, so a warm-up written in the
-    wrong framework does not compile and the image never builds — and the provider Surefire
-    fetches is the one the *project's* classpath selects (surefire-junit4, surefire-testng,
-    surefire-junit-platform), so the absent-artifact message differs per framework too.
+    wrong framework does not compile and the image never builds.
     """
     problems: list[str] = []
     command = spec.test_command or ""
-    if "mvn" not in command:
+    if not _invokes(command, "maven"):
         return problems
     wanted = MAVEN_WARMUP_COMMANDS.get(framework or "", MAVEN_WARMUP_COMMAND)
-    provider = {"junit4": "surefire-junit4", "testng": "surefire-testng"}.get(
-        framework or "", "surefire-junit-platform"
-    )
     if not _warms_the_surefire_provider(spec.install_commands):
-        if targeted_feedback:
-            problems.append(
-                "install_commands must include a build-time test that warms the declared "
-                "Surefire provider. Keep prerequisite install commands and append this "
-                f"framework-specific warm-up command: {wanted!r}. "
-                "An empty test directory still requires creating, running, and removing "
-                "the temporary test; an empty install_commands list cannot warm the provider."
-            )
-        else:
-            problems.append(
-                f"the build must warm Surefire's {provider} provider by *running* a test, not by "
-                f"invoking the plugin with nothing to run: add the install command {wanted!r}. "
-                "Surefire resolves its provider lazily at test-execution time, from the test "
-                "framework on the test classpath, so a warm-up with an empty test tree (or with "
-                "-DfailIfNoTests=false, which makes 'no tests ran' a success) fetches the plugin and "
-                f"all of its own dependencies and never the provider. The offline probe then fails "
-                f'with "{provider}:jar:3.2.5 (absent) ... has not been downloaded from '
-                'it before". Pinning the provider with dependency:get does not fix it either: the '
-                "next missing artifact is junit-platform-launcher, whose version Surefire derives "
-                "from the project's own JUnit and which no fixed artifact list can predict."
-            )
+        problems.append(
+            "install_commands must include a build-time test that warms the declared "
+            "Surefire provider. Keep prerequisite install commands and append this "
+            f"framework-specific warm-up command: {wanted!r}. "
+            "An empty test directory still requires creating, running, and removing "
+            "the temporary test; an empty install_commands list cannot warm the provider."
+        )
     elif framework in _FRAMEWORK_IMPORTS:
-        # The warm-up runs a test, but in which framework? A JUnit 5 warm-up in a JUnit 4
-        # project fails `test-compile` with "cannot find symbol: class Test" and the image is
-        # never built; the reverse fails identically. Measured on zt-zip, commons-imaging and
-        # commons-fileupload at their harvested revisions.
+        # The warm-up runs a test; it must be written in the project's own framework.
         for install in spec.install_commands or ():
             if not (_SUREFIRE_PIN.search(install) and ":test" in install):
                 continue
@@ -719,34 +884,25 @@ def offline_warmup_violations(
     return problems
 
 
-# Build files whose declared language level binds the choice of JDK. Read at most a few, from
-# the repo root and one level down, because a multi-module project's root pom usually carries
-# the compiler properties and walking a whole tree here would be slow and rarely add anything.
-_JAVA_BUILD_FILES = ("pom.xml", "build.gradle", "build.gradle.kts")
-
-
 def js_runner_choice_violations(test_command: str, declared: list[str]) -> list[str]:
     """Reject a Node runner the repository does not have. Pure, so tests can check it.
 
-    The probe container has no network, and `npx <runner>` for a runner that is not installed
-    does not fall back to anything: measured on a vitest-only fixture, `npx --no-install jest
-    --runTestsByPath probe.test.js` exits 1 with `npx canceled due to missing packages` and no
-    test output whatsoever — a failure that looks like a probe defect, routes to probe repair,
-    and cannot be fixed there. A repository mid-migration carries both runners, which is why the
-    *first* declared one (the one its own `test` script invokes) is the one to name.
+    The offline probe container cannot fetch a missing runner (`npx canceled due to missing
+    packages`, no test output). The first declared runner is the one the repository's own `test`
+    script invokes, so it is the one to name.
     """
     runner = _js_runner(test_command)
     if runner is None or not declared or runner in declared:
         return []
     wanted = declared[0]
-    exemplar = _JS_CAPTURING_RUNNERS.get(wanted)
+    exemplar = JS_TEST_COMMANDS.get(wanted)
     hint = (
         f" Use {exemplar}" if exemplar else f" Invoke {wanted} instead"
     ) + ", and match the selector to it."
     return [
         f"test_command invokes {runner}, which this repository does not declare; its package.json "
         f"declares {', '.join(declared)} and its own `test` script runs {wanted}.{hint} "
-        f"`npx {runner}` cannot install a missing runner in an offline probe container — it exits "
+        f"`npx` cannot install a missing {runner} in an offline probe container — it exits "
         f"with `npx canceled due to missing packages` and no test output at all, which reads as a "
         f"probe defect and sends repair to the one stage that cannot fix it."
     ]
@@ -770,89 +926,24 @@ def repo_js_runners(repo_path: str | None) -> list[str]:
 
 
 def repo_java_release(repo_path: str | None) -> int | None:
-    """The oldest Java language level the repository's build files ask for.
-
-    None when there is no repo, no Java build file, or nothing declared -- in which case the
-    JDK check stays silent rather than guessing.
-    """
-    if not repo_path:
-        return None
-    root = Path(repo_path)
-    if not root.is_dir():
-        return None
-    candidates = [root / name for name in _JAVA_BUILD_FILES]
-    candidates += [
-        child / name
-        for child in sorted(root.iterdir())[:40]
-        if child.is_dir()
-        for name in _JAVA_BUILD_FILES
-    ]
-    declared = []
-    for path in candidates:
-        try:
-            if path.is_file():
-                found = declared_java_release(path.read_text(errors="replace"))
-                if found is not None:
-                    declared.append(found)
-        except OSError:
-            continue
-    return min(declared) if declared else None
+    """The repository's binding Java level; None (the JDK check stays silent) when unknown."""
+    return java_release(_java_build_texts(repo_path))
 
 
 def _java_build_texts(repo_path: str | None) -> list[str]:
-    """The repository's own build files, root and one level down. Same reach as the JDK check."""
-    if not repo_path:
+    """The repository's own build files (``repo.detect.java_build_texts``); none without a repo."""
+    if not repo_path or not Path(repo_path).is_dir():
         return []
-    root = Path(repo_path)
-    if not root.is_dir():
-        return []
-    candidates = [root / name for name in _JAVA_BUILD_FILES]
-    with contextlib.suppress(OSError):
-        candidates += [
-            child / name
-            for child in sorted(root.iterdir())[:40]
-            if child.is_dir()
-            for name in _JAVA_BUILD_FILES
-        ]
-    texts = []
-    for path in candidates:
-        try:
-            if path.is_file():
-                texts.append(path.read_text(errors="replace"))
-        except OSError:
-            continue
-    return texts
+    return java_build_texts(repo_path)
 
 
 def repo_jvm_test_framework(repo_path: str | None) -> str | None:
     """The repository's JVM test framework: junit5, junit4, testng, or None when unreadable.
 
-    The warm-up command and the probe's own shape both depend on this, and getting it from the
-    repository is the only honest way: the harness's previous assumption (always JUnit 5) is
-    wrong for 50 of the 51 Maven entries in the harvested Vul4J corpus.
+    The warm-up command and the probe's shape both depend on it, so it is read, never assumed.
     """
     for text in _java_build_texts(repo_path):
         framework = jvm_test_framework(text)
         if framework:
             return framework
     return None
-
-
-# Two Surefire settings a repository can put in its *plugin-level* `<configuration>` that the
-# corresponding `-D` flag cannot undo, because an explicit plugin configuration beats a
-# parameter's default-value user property. Both were executed under Surefire 3.2.5, and neither
-# is a violation here, because neither has a fix an EnvironmentSpec could name:
-#
-#   <redirectTestOutputToFile>true</redirectTestOutputToFile>
-#       the probe runs and passes, `-Dmaven.test.redirectTestOutputToFile=false` is ignored, and
-#       every marker goes to target/surefire-reports/<class>-output.txt. Exit 0, no markers.
-#       Handled in run_probe, which now reads those files back onto stdout.
-#   <skipTests>true</skipTests>
-#       the probe is never run, `-DskipTests=false` is ignored, and no reports are written.
-#       Exit 0, no markers. `no_tests_executed` names Surefire's "Tests are skipped." so the
-#       diagnosis says what happened instead of sending repair after a correct probe.
-#
-# The same settings inside an `<executions><execution>` block do *not* apply to a direct CLI goal
-# invocation (measured), and as a pom `<properties>` entry they *are* overridable from the command
-# line (measured: `-DskipTests=false` restored the markers), so only the plugin-level and
-# pluginManagement-level forms behave this way.

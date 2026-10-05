@@ -9,37 +9,51 @@ def test_all_specs_valid():
     assert registry.validate_all() == []
 
 
+def test_an_uncatalogued_tier_fails_validation_even_in_stub_mode(monkeypatch):
+    """Stub resolution accepts any tier name; validation must not, or the spec fails only live."""
+    original = registry.load_spec
+
+    def renamed(name, *args, **kwargs):
+        spec = original(name, *args, **kwargs)
+        return spec.model_copy(update={"model": "no-such-tier"}) if name == "recon" else spec
+    monkeypatch.setattr(registry, "load_spec", renamed)
+    assert any(problem.startswith("recon: model tier 'no-such-tier'")
+               for problem in registry.validate_all())
+
+
 def test_bindings_match_specs_on_disk():
-    assert set(registry.AGENT_BINDINGS) == registry.spec_names_on_disk()
+    assert set(registry.BINDINGS) == {p.parent.name for p in agents_dir().glob("*/agent.yaml")}
 
 
 def test_config_hashes_are_stable_and_distinct():
-    hashes = registry.agent_config_hashes()
+    hashes = {name: c.digest for name, c in registry.resolved_agent_configs().items()}
     assert len(set(hashes.values())) == len(hashes)
-    assert registry.agent_config_hashes() == hashes  # cached, deterministic
+    registry.resolved_agent_configs.cache_clear()
+    again = {name: c.digest for name, c in registry.resolved_agent_configs().items()}
+    assert again == hashes  # deterministic, not merely cached
 
 
 def test_committed_schema_is_current():
     on_disk = json.loads((registry.get_settings().agents_dir / "agent_schema.json").read_text())
-    assert on_disk == registry.json_schema(), "run `just agents-schema` to regenerate"
+    assert on_disk == registry.json_schema(), "run `just regenerate`"
 
 
 # --- OpenAI-spec single-system-message compatibility (see agents/models.py) ---
 
 def test_max_tokens_floor_raises_small_budgets_and_leaves_large_ones():
     """A reasoning endpoint spends thinking inside max_tokens; the floor only raises."""
-    from infosec_harness.agents.models import _apply_max_tokens_floor
+    from infosec_harness.agents.models import apply_max_tokens_floor
 
-    assert _apply_max_tokens_floor({"max_tokens": 3000}, 16000) == {"max_tokens": 16000}
-    assert _apply_max_tokens_floor({"max_tokens": 32000}, 16000) == {"max_tokens": 32000}
-    assert _apply_max_tokens_floor({"max_tokens": 3000}, 0) == {"max_tokens": 3000}
-    assert _apply_max_tokens_floor(None, 0) is None
+    assert apply_max_tokens_floor({"max_tokens": 3000}, 16000) == {"max_tokens": 16000}
+    assert apply_max_tokens_floor({"max_tokens": 32000}, 16000) == {"max_tokens": 32000}
+    assert apply_max_tokens_floor({"max_tokens": 3000}, 0) == {"max_tokens": 3000}
+    assert apply_max_tokens_floor(None, 0) is None
 
 
 def test_max_tokens_floor_preserves_other_settings():
-    from infosec_harness.agents.models import _apply_max_tokens_floor
+    from infosec_harness.agents.models import apply_max_tokens_floor
 
-    out = _apply_max_tokens_floor({"max_tokens": 10, "temperature": 0.0}, 99)
+    out = apply_max_tokens_floor({"max_tokens": 10, "temperature": 0.0}, 99)
     assert out == {"max_tokens": 99, "temperature": 0.0}
 
 
@@ -58,18 +72,20 @@ def test_the_token_floor_reaches_the_setting_pydantic_ai_reports(monkeypatch):
     floor, the payload-side floor is a no-op.
     """
     from infosec_harness.agents.models import (
-        _apply_max_tokens_floor,
+        apply_max_tokens_floor,
         load_models_config,
         max_tokens_floor,
     )
 
     monkeypatch.setenv("HARNESS_MODEL_BACKEND", "gateway")
+
+    monkeypatch.setenv("HARNESS_MODEL_BASE_URL", "https://gateway.invalid/v1")
     floor = load_models_config().backends["gateway"].min_max_tokens
     assert floor, "this test needs a backend that declares a per-call floor"
     assert max_tokens_floor("probe-planner") == floor
 
     raised = 0
-    for name in registry.AGENT_BINDINGS:
+    for name in registry.BINDINGS:
         declared = (registry.load_spec(name).model_settings or {}).get("max_tokens") or 0
         effective = registry.build_agent(name, durable=False).model_settings or {}
         assert effective.get("max_tokens") == max(declared, floor), (
@@ -77,7 +93,7 @@ def test_the_token_floor_reaches_the_setting_pydantic_ai_reports(monkeypatch):
             f"agent pydantic-ai will report on carries {effective.get('max_tokens')}"
         )
         # The payload-side floor is now redundant, which is what "they agree" means.
-        assert _apply_max_tokens_floor(effective, floor) == effective, name
+        assert apply_max_tokens_floor(effective, floor) == effective, name
         raised += declared < floor
     assert raised, "no spec sits below the floor, so this test would pass vacuously"
 
@@ -88,16 +104,16 @@ def test_the_token_floor_is_inert_where_thinking_has_its_own_budget(monkeypatch)
     from infosec_harness.agents.models import max_tokens_floor
 
     assert max_tokens_floor("probe-planner") == 0
-    for name in registry.AGENT_BINDINGS:
+    for name in registry.BINDINGS:
         declared = (registry.load_spec(name).model_settings or {}).get("max_tokens")
         assert (registry.build_agent(name, durable=False).model_settings or {}).get(
             "max_tokens") == declared, name
 
 
 def test_merge_leading_system_messages_collapses_the_prefix():
-    from infosec_harness.agents.models import _merge_leading_system_messages
+    from infosec_harness.inference.executor.compat import merge_leading_system_messages
 
-    merged = _merge_leading_system_messages([
+    merged = merge_leading_system_messages([
         {"role": "system", "content": "instructions"},
         {"role": "system", "content": "deferred capabilities"},
         {"role": "user", "content": "task"},
@@ -109,20 +125,20 @@ def test_merge_leading_system_messages_collapses_the_prefix():
 
 
 def test_merge_leading_system_messages_leaves_conforming_requests_alone():
-    from infosec_harness.agents.models import _merge_leading_system_messages
+    from infosec_harness.inference.executor.compat import merge_leading_system_messages
 
     for messages in ([{"role": "system", "content": "s"}, {"role": "user", "content": "u"}],
                      [{"role": "user", "content": "u"}]):
-        assert _merge_leading_system_messages(list(messages)) == messages
+        assert merge_leading_system_messages(list(messages)) == messages
 
 
 def test_merge_does_not_touch_a_later_system_message():
     """Only the leading run is collapsed; a mid-conversation system turn stays put."""
-    from infosec_harness.agents.models import _merge_leading_system_messages
+    from infosec_harness.inference.executor.compat import merge_leading_system_messages
 
     messages = [{"role": "system", "content": "a"}, {"role": "system", "content": "b"},
                 {"role": "user", "content": "u"}, {"role": "system", "content": "late"}]
-    assert _merge_leading_system_messages(messages) == [
+    assert merge_leading_system_messages(messages) == [
         {"role": "system", "content": "a\n\nb"},
         {"role": "user", "content": "u"},
         {"role": "system", "content": "late"},
@@ -257,3 +273,57 @@ def test_the_protocol_skill_still_defines_exactly_the_three_markers_the_prompts_
     assert "## The three markers" in protocol
     for marker in ("HARNESS_PRECONDITION::", "HARNESS_SINK_RETURNED::", "HARNESS_ORACLE::"):
         assert marker in protocol, f"{marker} missing from the protocol skill"
+
+
+# --- governance fails closed ---------------------------------------------------------------
+
+def _committed_metadata(name):
+    return dict(registry.load_spec(name).metadata)
+
+
+def test_an_evaluation_policy_nothing_can_see_is_a_violation_not_a_skipped_check(monkeypatch):
+    """Regression: a reference neither the package nor a checkout could resolve returned None,
+    and None passed, so off a checkout a spec could cite any path. The policy ships in the
+    package beside its spec, so it is resolved there or reported missing."""
+    from infosec_harness import resources
+    from infosec_harness.agents import governance
+
+    monkeypatch.setattr(resources, "source_checkout", lambda: None)
+    meta = _committed_metadata("verdict")
+    assert governance.violations("verdict", meta, tier="sonnet") == []
+    for reference in ("agents/verdict/evals/no-such-policy.yaml", "../pyproject.toml",
+                      "/etc/hosts", "agents/verdict"):
+        problems = governance.violations(
+            "verdict", {**meta, "evaluation_policy": reference}, tier="sonnet")
+        assert any("evaluation_policy" in p for p in problems), reference
+
+
+def test_the_model_policy_tier_rule_lives_with_the_other_governance_checks():
+    from infosec_harness.agents import governance
+
+    meta = _committed_metadata("verdict")
+    assert governance.violations("verdict", meta, tier=None) == []
+    assert any("not the spec's model tier 'opus'" in p
+               for p in governance.violations("verdict", meta, tier="opus"))
+
+
+def test_a_skills_include_naming_an_absent_skill_fails_construction():
+    """Regression: the include list was trusted as the set of loaded skills, so a spec naming a
+    skill that does not exist matched its own enabled_skills and was governed as if it had it."""
+    import pytest
+
+    from infosec_harness.agents.governance import GovernanceError
+
+    spec = registry.load_spec("recon")
+    skills = next(c for c in spec.capabilities if c.name == "Skills")
+    include = [*skills.kwargs["include"], "no-such-skill"]
+    overlay = {
+        "metadata": {"enabled_skills": include},
+        "capabilities": [
+            {"Skills": {**skills.kwargs, "include": include}}
+            if c.name == "Skills" else c.model_dump(by_alias=True, mode="json")
+            for c in spec.capabilities
+        ],
+    }
+    with pytest.raises(GovernanceError, match="enabled_skills"):
+        registry.build_agent("recon", overlay, durable=False)

@@ -17,6 +17,7 @@ from infosec_harness.resources import (
     skills_dir,
     source_checkout,
 )
+from infosec_harness.sandbox import REQUIRED_RUNTIME
 
 # The repository root when this runs from a checkout, and the package directory otherwise.
 # Kept for the tooling that reads reviewable *project* files -- risk assessments, the eval
@@ -73,18 +74,22 @@ class Settings(BaseSettings):
     agents_dir: Path = Field(default_factory=agents_dir)
     skills_dir: Path = Field(default_factory=skills_dir)
     models_config: Path = Field(default_factory=models_config)
+    # Endpoint for an OpenAI-compatible backend whose catalogue entry names no `base_url`.
+    # The packaged catalogue names none, so selecting such a backend fails closed until an
+    # operator configures one: the OpenAI client would otherwise default to api.openai.com.
+    model_base_url: str | None = None
     # ``live`` resolves model tiers through config/models.yaml; ``stub`` uses
     # deterministic in-process models (tests, offline demos, CI).
     model_mode: Literal["live", "stub"] = "live"
     # Opt-in operator-owned catalog. Direct mode never loads or contacts it.
     broker_config: Path | None = None
-    # Operator-owned pinned evidence; absent deployments report not_checked.
-    qualification_bundle: Path | None = None
+    # Operator-recorded evidence files; absent deployments report not_checked.
+    broker_observation: Path | None = None
     model_connection_observation: Path | None = None
     qualification_observation_max_age_seconds: int = Field(default=3600, ge=30, le=86400)
 
     # Sandbox
-    sandbox_runtime: str = "runsc"  # gVisor; set to "runc" only for local development without gVisor
+    sandbox_runtime: str = REQUIRED_RUNTIME  # gVisor; set to "runc" only for local development without gVisor
     sandbox_probe_timeout_s: int = 300
     # Ceiling on one agent run outside Temporal. A hung provider request has no natural
     # end: the client's own retries never fire because nothing failed, so a run can sit
@@ -121,10 +126,7 @@ class Settings(BaseSettings):
         "deb.debian.org", "security.debian.org",         # apt (debian base images)
     ]
     # Base-image allowlist (registries an EnvironmentSpec.base_image may be pulled from).
-    allowed_base_registries: list[str] = ["docker.io/library", "docker.io", "public.ecr.aws"]
-    # Manual, quiesced-maintenance target. Automatic eviction is unsafe until prepared images
-    # have durable leases spanning build, smoke, and every finding probe.
-    image_cache_max: int = 50
+    allowed_base_registries: list[str] = ["docker.io/library", "public.ecr.aws"]
 
     # Deployment safety ceilings; provisional until calibrated on representative batches.
     root_max_requests: int = Field(default=10000, gt=0)
@@ -152,6 +154,10 @@ class Settings(BaseSettings):
     # build attempt and falls back to the normal path, so the downside is bounded and the entry
     # is evicted the moment it stops working.
     recipe_cache_enabled: bool = True
+    # Where recipes live; defaults to <workspace_dir>/recipes. Evals and tests isolate it: a
+    # recipe surviving between runs makes them irreproducible, since run N+1 skips the planner
+    # that run N exercised and is therefore measuring something else.
+    recipe_cache_dir: Path | None = None
     per_repo_concurrency: int = 4
 
     # Azure DevOps (D13: comment-only write-back)
@@ -209,6 +215,65 @@ class Settings(BaseSettings):
         if (self.otel_exporter_otlp_headers or self.otel_exporter_otlp_client_cert) and not self.otel_exporter_otlp_endpoint.startswith("https://"):
             raise ValueError("Authenticated OTLP export requires an HTTPS endpoint")
         return self
+
+    # Operator allowlist for local repository sources: a local path or file:// repo_url is
+    # accepted only beneath one of these roots. Empty admits remote HTTPS sources only.
+    local_repo_roots: list[Path] = []
+
+    @model_validator(mode="after")
+    def validate_sandbox_isolation(self) -> Settings:
+        # A configured runtime name is not isolation evidence, but anything other than gVisor
+        # is a weaker boundary that only the explicit development override may select.
+        if self.sandbox_runtime != REQUIRED_RUNTIME and not self.allow_insecure_runtime:
+            raise ValueError(
+                f"sandbox_runtime other than {REQUIRED_RUNTIME!r} requires "
+                "HARNESS_ALLOW_INSECURE_RUNTIME=true"
+            )
+        return self
+
+
+# The store a developer's machine uses when no database is configured.
+LOCAL_DATABASE = Path(".harness") / "local.db"
+
+
+def local_database_path() -> Path:
+    """`.harness/local.db` in the checkout (in the working directory off a checkout)."""
+    return (source_checkout() or Path.cwd()) / LOCAL_DATABASE
+
+
+def local_database_url() -> str:
+    return f"sqlite+aiosqlite:///{local_database_path()}"
+
+
+def default_to_local_database(settings: Settings | None = None) -> Path | None:
+    """Point an unconfigured local command at `.harness/local.db`; ``None`` when configured.
+
+    Only commands that run on a developer's machine call this: evals, `submit --local`, `runs`
+    and `report`. The worker, the API and `harness migrate` keep the deployment default, so a
+    service with no database configured fails to connect instead of writing to a scratch file.
+    "Configured" means any settings source named the URL: the environment, `.env`, or the
+    `HARNESS_ENV_FILE` profile.
+    """
+    settings = settings or get_settings()
+    if "database_url" in settings.model_fields_set:
+        return None
+    path = local_database_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    settings.database_url = local_database_url()
+    return path
+
+
+def default_to_stub_models(settings: Settings | None = None) -> bool:
+    """Select stub models for a stub-only command when no model mode is configured.
+
+    Returns whether it did. A configured mode is left alone, so an explicit `live` is still
+    refused by the stub-only command rather than silently replaced.
+    """
+    settings = settings or get_settings()
+    if "model_mode" in settings.model_fields_set:
+        return False
+    settings.model_mode = "stub"
+    return True
 
 
 @lru_cache

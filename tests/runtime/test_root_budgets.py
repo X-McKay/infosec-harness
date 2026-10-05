@@ -5,29 +5,37 @@ from pydantic_ai.exceptions import UsageLimitExceeded
 from temporalio.exceptions import ActivityError, ApplicationError
 
 from infosec_harness.domain.models import InconclusiveReason
-from infosec_harness.graph.ops import classify_pipeline_failure
+from infosec_harness.graph.failures import classify_pipeline_failure
 from infosec_harness.persistence import budgets, db
+
+
+def _pinned(limits: dict, *agents: str) -> dict:
+    """A root ledger that pins one accepted configuration ("cfg") per named agent."""
+    state = budgets.initial_state(limits)
+    state["agent_config_digests"] = dict.fromkeys(agents, "cfg")
+    return state
 
 
 async def test_reservation_is_durable_idempotent_and_concurrent():
     await db.create_all()
     async with db.session() as session:
-        session.add(db.BudgetLedger(root_id="budget-test", state=budgets.initial_state(
-            {"tokens": 100, "requests": 10, "cost_usd": 1})))
+        session.add(db.BudgetLedger(root_id="budget-test", state=_pinned(
+            {"tokens": 100, "requests": 10, "cost_usd": 1}, "agent")))
         await session.commit()
     demand = {"tokens": 60, "requests": 3, "cost_usd": .3}
-    results = await asyncio.gather(*(budgets.reserve("budget-test", f"call-{i}", demand, "agent")
+    results = await asyncio.gather(*(budgets.reserve("budget-test", f"call-{i}", demand, "agent",
+                                                     "cfg")
                                     for i in range(2)), return_exceptions=True)
     assert sum(isinstance(r, UsageLimitExceeded) for r in results) == 1
     winner = next(i for i, r in enumerate(results) if not isinstance(r, BaseException))
     op = f"call-{winner}"
-    assert await budgets.reserve("budget-test", op, demand, "agent") == results[winner]
+    assert await budgets.reserve("budget-test", op, demand, "agent", "cfg") == results[winner]
     await budgets.settle("budget-test", op, {"tokens": 20, "requests": 1, "cost_usd": .1}, {"ok": True})
     await budgets.settle("budget-test", op, {"tokens": 20, "requests": 1, "cost_usd": .1}, {"ok": True})
-    assert (await budgets.reserve("budget-test", "next", demand, "agent"))["status"] == "reserved"
+    assert (await budgets.reserve("budget-test", "next", demand, "agent", "cfg"))["status"] == "reserved"
     await budgets.settle("budget-test", "next", None, {"failure": "timeout"})
     with pytest.raises(UsageLimitExceeded):
-        await budgets.reserve("budget-test", "after-unknown", demand, "agent")
+        await budgets.reserve("budget-test", "after-unknown", demand, "agent", "cfg")
     async with db.session() as session:
         ledger = await session.get(db.BudgetLedger, "budget-test")
         assert ledger.state["used"]["tokens"] == 20
@@ -45,31 +53,18 @@ async def test_non_finite_or_negative_budget_values_fail_before_storage(value):
         await budgets.settle("nonexistent", "operation", invalid, {})
 
 
-@pytest.mark.parametrize(
-    ("root", "parent", "fallback_patch", "expected"),
-    [
-        ("batch:new-server", "batch:parent", True, "new-server"),
-        (None, "batch:old-server", True, "old-server"),
-        (None, "batch:old-server", False, None),
-        (None, "standalone", True, None),
-    ],
-)
-async def test_temporal_root_budget_old_server_and_replay(
-    monkeypatch, root, parent, fallback_patch, expected,
-):
-    """Older servers must account child calls without changing recorded histories."""
+async def test_temporal_root_scope_is_explicit_not_parsed_from_workflow_ids(monkeypatch):
+    """The root and the finding come from the workflow's own arguments. Workflow ids are opaque:
+    one that looks like a batch id or embeds another fingerprint changes nothing."""
     from types import SimpleNamespace
 
     from infosec_harness.workflows import accounting
 
-    info = SimpleNamespace(
-        workflow_id="triage:fingerprint:batch:old-server",
-        root=SimpleNamespace(workflow_id=root) if root else None,
-        parent=SimpleNamespace(workflow_id=parent),
-    )
+    info = SimpleNamespace(workflow_id="triage:other-fp:batch:looks-like-a-root", run_id="run",
+                           root=SimpleNamespace(workflow_id="batch:looks-like-a-root"),
+                           parent=SimpleNamespace(workflow_id="batch:looks-like-a-root"))
     monkeypatch.setattr(accounting.workflow, "info", lambda: info)
-    monkeypatch.setattr(accounting.workflow, "patched", lambda name:
-                        fallback_patch if name == "root-budget-parent-v1" else True)
+    root_id, fingerprint = "batch-explicit", "fp-1"
     requests = []
 
     async def execute(activity, args, **kwargs):
@@ -81,16 +76,44 @@ async def test_temporal_root_budget_old_server_and_replay(
         agent_name="context",
         budget=SimpleNamespace(effective=SimpleNamespace(
             max_requests=1, max_tool_calls=2, max_input_tokens=100, max_output_tokens=20, max_cost_usd=1)),
-        model=SimpleNamespace(transport_retries=0, pricing_status="known_zero", mode="stub"),
+        model=SimpleNamespace(transport_retries=0, pricing_status="known_zero", mode="stub",
+                              broker_contract=None),
     )
-    result = await accounting.RootAccounting().reserve(config)
-    if expected is None:
-        assert result is None
-        assert requests == []
-    else:
-        assert result[0] == expected
-        assert requests[0]["root_id"] == expected
-        assert requests[0]["requested"]["tokens"] > 0
+    ledger = accounting.RootAccounting(root_id=root_id, fingerprint=fingerprint)
+    result = await ledger.reserve(config, configuration_digest="digest")
+    execution = await ledger.reserve_execution("build_environment_activity", 60)
+    reserve, progress, reserve_execution = requests
+    assert result[0] == execution[0] == root_id == reserve.root_id == reserve_execution.root_id
+    assert reserve.fingerprint == reserve_execution.fingerprint == fingerprint
+    assert (reserve.operation_kind, reserve_execution.operation_kind) == ("agent", "execution")
+    assert reserve.configuration_digest == "digest"
+    assert reserve.requested["tool_calls"] > 0 and reserve.requested["agent_runs"] == 1
+    assert progress.batch_id == root_id and progress.fingerprint == fingerprint
+
+
+@pytest.mark.parametrize(("root_id", "fingerprint"), [("", "fp"), ("batch-x", ""), ("", "")])
+def test_root_accounting_has_no_unaccounted_mode(root_id, fingerprint):
+    """Regression: a workflow without a batch id ran its agents and workloads unaccounted."""
+    from infosec_harness.workflows.accounting import RootAccounting
+
+    with pytest.raises(ValueError, match="requires the batch and the finding"):
+        RootAccounting(root_id=root_id, fingerprint=fingerprint)
+
+
+async def test_operations_record_their_finding_and_kind_and_cannot_be_rebound():
+    await db.create_all()
+    async with db.session() as session:
+        session.add(db.BudgetLedger(root_id="attribution", state=_pinned(
+            {"tokens": 100, "requests": 10, "cost_usd": 1}, "agent")))
+        await session.commit()
+    demand = {"tokens": 1, "requests": 1, "cost_usd": 0}
+    operation = await budgets.reserve("attribution", "op", demand, "agent", "cfg",
+                                      fingerprint="fp-a")
+    assert (operation["fingerprint"], operation["kind"]) == ("fp-a", "agent")
+    assert await budgets.reserve("attribution", "op", demand, "agent", "cfg",
+                                 fingerprint="fp-a") == operation
+    with pytest.raises(ValueError, match="different budget or agent"):
+        await budgets.reserve("attribution", "op", demand, "agent", "cfg", fingerprint="fp-b")
 
 
 def test_serialized_temporal_budget_failure_keeps_budget_taxonomy():
@@ -103,11 +126,13 @@ def test_serialized_temporal_budget_failure_keeps_budget_taxonomy():
 
 
 def test_terminal_persistence_retries_have_bounded_backoff():
-    from infosec_harness.workflows.workflows import _TERMINAL_ACT
+    from infosec_harness.workflows.activity_options import TERMINAL
 
-    retry = _TERMINAL_ACT["retry_policy"]
+    retry = TERMINAL["retry_policy"]
     assert retry.maximum_attempts == 0
     assert retry.maximum_interval.total_seconds() == 30
+    # A write naming a run or ledger that was never accepted cannot succeed on a retry.
+    assert {"MissingDurableRecord", "MissingLedger"} <= set(retry.non_retryable_error_types)
 
 
 @pytest.mark.parametrize('dimension', ['tool_calls', 'agent_runs', 'execution_seconds'])
@@ -117,22 +142,22 @@ async def test_extended_root_dimensions_reserve_atomically_and_hold_unknown(dime
               'tool_calls': 10, 'agent_runs': 10, 'execution_seconds': 10}
     root = f'extended-{dimension}'
     async with db.session() as session:
-        session.add(db.BudgetLedger(root_id=root, state=budgets.initial_state(limits)))
+        session.add(db.BudgetLedger(root_id=root, state=_pinned(limits, "test")))
         await session.commit()
     demand = dict.fromkeys(limits, 0)
     demand[dimension] = 6
-    results = await asyncio.gather(*(budgets.reserve(root, str(i), demand, 'test')
+    results = await asyncio.gather(*(budgets.reserve(root, str(i), demand, 'test', 'cfg')
                                     for i in range(2)), return_exceptions=True)
     assert sum(isinstance(r, UsageLimitExceeded) for r in results) == 1
     winner = str(next(i for i, r in enumerate(results) if not isinstance(r, BaseException)))
     # Partial observations cannot silently free the unobserved dimensions.
     await budgets.settle(root, winner, {'requests': 0, 'tokens': 0, 'cost_usd': 0}, {})
     with pytest.raises(UsageLimitExceeded):
-        await budgets.reserve(root, 'next', demand, 'test')
+        await budgets.reserve(root, 'next', demand, 'test', 'cfg')
     observed = dict.fromkeys(limits, 0)
     observed[dimension] = 2
     await budgets.settle(root, winner, observed, {'reconciled': True})
-    assert (await budgets.reserve(root, 'next', demand, 'test'))['status'] == 'reserved'
+    assert (await budgets.reserve(root, 'next', demand, 'test', 'cfg'))['status'] == 'reserved'
 
 
 async def test_root_deadline_persists_and_rejects_new_dispatch(monkeypatch):
@@ -162,7 +187,7 @@ async def test_execution_budget_stops_before_workload_dispatch(monkeypatch):
     from infosec_harness.domain.models import EnvironmentSpec, RepoSnapshot
     from infosec_harness.workflows.temporal_ops import TemporalOps
 
-    ops = TemporalOps()
+    ops = TemporalOps(root_id='batch', fingerprint='finding')
     async def exhausted(name, seconds):
         assert name == 'build_environment_activity'
         assert seconds == 40 * 60 * 3
@@ -203,4 +228,4 @@ def test_temporal_ops_never_loads_configuration_during_workflow_execution(monkey
         raise AssertionError('Workflow attempted configuration I/O')
     monkeypatch.setattr(registry, 'resolved_agent_configs', forbidden)
     monkeypatch.setattr(registry, 'resolved_model_names', forbidden)
-    assert TemporalOps()._configs['context'].agent_name == 'context'
+    assert TemporalOps(root_id='batch', fingerprint='finding')._configs['context'].agent_name == 'context'

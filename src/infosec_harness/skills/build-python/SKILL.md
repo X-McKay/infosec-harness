@@ -9,8 +9,6 @@ metadata:
 
 # Building Python targets
 
-<!-- generated: activation criteria (scripts/restructure_skills.py) -->
-
 ## Use this skill when
 
 - You are producing or repairing an EnvironmentSpec for a Python repository.
@@ -21,7 +19,7 @@ metadata:
 - The repository is not Python.
 - You are reading code rather than planning a build — use `lang-python`.
 
-<!-- /generated: activation criteria -->
+## Procedure
 
 - **Base image:** `python:3.12-slim` (match the repo's declared version when it pins one).
 - **System packages:** add build/runtime libs only when a wheel needs them (e.g. `gcc`,
@@ -39,8 +37,6 @@ metadata:
   `python -m pytest -q -s -o addopts= {test_file}` still runs it.
 - Registries: honor `pip.conf` / `[tool.uv]`/`[tool.pip]` index settings the repo declares.
 
-<!-- generated: constraints (scripts/restructure_skills.py) -->
-
 ## Safety constraints
 
 - Install as the non-root sandbox user with `HOME=/work/home`; never `sudo` or run as root.
@@ -56,4 +52,3 @@ metadata:
 - `test_command` contains the literal `{test_file}` placeholder — never a hardcoded test path. The harness writes the probe to the path its author chose and substitutes it here; a hardcoded path runs a file that does not exist and no test executes.
 - The pytest command disables output capture with `-s`, or the probe's markers are buffered away and a correct probe is recorded as having reached nothing.
 
-<!-- /generated: constraints -->

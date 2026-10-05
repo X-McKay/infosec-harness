@@ -7,9 +7,9 @@ import pytest
 from pydantic import ValidationError
 
 from infosec_harness.agents import models
-from infosec_harness.inference import invocations
-from infosec_harness.inference.profiles import ExecutorProfile
-from infosec_harness.inference.protocol import digest
+from infosec_harness.inference.catalog.profiles import ExecutorProfile
+from infosec_harness.inference.controller import issuance
+from infosec_harness.inference.wire.protocol import digest
 
 
 def test_omitted_request_cap_preserves_existing_profile_digest():
@@ -47,9 +47,9 @@ def test_trusted_request_policy_is_independent_of_cumulative_invocation(monkeypa
     monkeypatch.setattr(models, "broker_catalog", lambda: catalog)
     monkeypatch.setattr(models, "custom_prices", lambda _: models.Prices(
         input_per_mtok=0.0, output_per_mtok=0.0))
-    monkeypatch.setattr(invocations, "trusted_config", lambda *_, **__: config)
+    monkeypatch.setattr(issuance, "trusted_config", lambda *_, **__: config)
     request = SimpleNamespace(binding=SimpleNamespace(agent="context"), contract=contract)
-    policy = invocations.build_reservation_policy(request)
+    policy = issuance.build_reservation_policy(request)
     assert policy.max_input_tokens == expected
     assert catalog.bounds_for_agent("context").max_input_tokens == cumulative
     assert policy.max_output_tokens == (180000 if operator_cap is None else 18000)
@@ -63,8 +63,9 @@ async def test_healthy_loop_can_hold_multiple_requests_above_one_request_cap():
     from pydantic_ai.messages import ModelRequest, UserPromptPart
     from pydantic_ai.models import ModelRequestParameters
 
-    from infosec_harness.inference import admission, codec, ledger
-    from infosec_harness.inference.protocol import (
+    from infosec_harness.inference.controller import admission, ledger
+    from infosec_harness.inference.wire import codec
+    from infosec_harness.inference.wire.protocol import (
         ExecutorContract,
         InferenceRequest,
         ReservationBinding,
@@ -104,13 +105,14 @@ async def test_healthy_loop_can_hold_multiple_requests_above_one_request_cap():
     try:
         for ordinal in ("model:0", "model:1"):
             value = request("x" * 60000, ordinal)
-            await ledger.admit(value, lease_id="lease", allocation=await admission.authorize(value, policy))
+            await ledger.DurableLedger().admit(value, lease_id="lease",
+                                               allocation=await admission.authorize(value, policy))
         async with db.session() as session:
             root = await session.get(db.BudgetLedger, root_id)
             held = root.state["operations"]["op"]["broker_allocated"]
         assert 100000 < held["tokens"] < 240150
         assert held["requests"] == 2
-        from infosec_harness.inference.protocol import BrokerError
+        from infosec_harness.inference.wire.protocol import BrokerError
         with pytest.raises(BrokerError) as rejected:
             await admission.authorize(request("x" * 90000, "model:2"), policy)
         assert rejected.value.code == "budget"

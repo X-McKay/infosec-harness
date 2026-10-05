@@ -1,8 +1,8 @@
 import { queries } from "@/api/queries";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { BrokerRuntimeMetadata } from "@/components/RuntimeIndicator";
 import { QueryState, Freshness } from "@/components/QueryState";
 
 export function ConfigView() {
@@ -33,7 +33,13 @@ export function ConfigView() {
         error={query.error}
         retry={() => void query.refetch()}
       />
-      <BrokerRuntimeMetadata />
+      <p className="text-sm text-muted-foreground">
+        Runtime and broker observations are shown with measured evidence on{" "}
+        <Link to="/qualification" className="text-primary underline">
+          Qualification
+        </Link>
+        .
+      </p>
       {config && (
         <Card>
           <CardHeader>

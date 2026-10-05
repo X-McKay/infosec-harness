@@ -20,6 +20,8 @@ from pathlib import Path
 
 import pytest
 
+from infosec_harness.evals.trajectory import skill_covered_cwes
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EXCERPT = REPO_ROOT / "eval-corpus" / "external" / "vul4j_excerpt.csv"
 
@@ -30,7 +32,17 @@ harvest_vul4j = importlib.util.module_from_spec(_spec)
 sys.modules[_spec.name] = harvest_vul4j
 _spec.loader.exec_module(harvest_vul4j)
 
-COVERED = harvest_vul4j.FALLBACK_COVERED_CWES
+COVERED = skill_covered_cwes()
+
+
+def test_the_covered_classes_are_the_shipped_cwe_skills():
+    """One helper answers "which CWEs have skills" for harvester and trajectory scorer alike."""
+    assert COVERED == ("CWE-22", "CWE-78", "CWE-79", "CWE-89", "CWE-94", "CWE-502", "CWE-611",
+                       "CWE-918")
+    from infosec_harness.evals.trajectory import cwe_skill_prefix
+
+    assert [cwe_skill_prefix(cwe) for cwe in ("CWE-89", "CWE-835", "cwe-611", None)] == [
+        "cwe-89", None, "cwe-611", None]
 
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
 

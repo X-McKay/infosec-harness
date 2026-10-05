@@ -1,14 +1,11 @@
-"""Field-targeted Maven feedback preserves warmup requirements and historical retry text."""
+"""Field-targeted Maven feedback preserves warmup requirements and its retry text."""
 
-import hashlib
-import json
 from types import SimpleNamespace
 
 import pytest
 from pydantic_ai import Agent, ModelRetry
 from pydantic_ai.messages import ModelRequest, ModelResponse, RetryPromptPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
-from temporalio import workflow
 
 from infosec_harness.agents import ecosystem_contract as contract
 from infosec_harness.agents import validators
@@ -40,21 +37,30 @@ def spec(installs):
 def test_missing_warmup_rejection_equivalence_and_preserved_prerequisites(framework, installs):
     candidate = spec(installs)
     before = candidate.model_dump(mode="json")
-    legacy = contract.offline_warmup_violations(candidate, framework)
-    new = contract.offline_warmup_violations(candidate, framework, targeted_feedback=True)
-    assert len(legacy) == len(new) == 1
+    new = contract.offline_warmup_violations(candidate, framework)
+    assert len(new) == 1
     assert new[0].startswith("install_commands ")
     assert contract.MAVEN_WARMUP_COMMANDS[framework] in new[0].replace("\\'", "'")
     assert len(new[0]) < 1000
     assert candidate.model_dump(mode="json") == before
 
 
+def test_the_missing_warmup_message_is_byte_stable():
+    """The only form of this retry text; production has sent exactly these bytes since the
+    field-targeted wording was introduced, so a change here is a retry-bytes provenance change."""
+    assert contract.offline_warmup_violations(spec([COMPILE]), "junit4") == [
+        "install_commands must include a build-time test that warms the declared Surefire "
+        "provider. Keep prerequisite install commands and append this framework-specific "
+        f"warm-up command: {contract.MAVEN_WARMUP_COMMANDS['junit4']!r}. An empty test "
+        "directory still requires creating, running, and removing the temporary test; an empty "
+        "install_commands list cannot warm the provider."
+    ]
+
+
 @pytest.mark.parametrize("framework", sorted(contract.MAVEN_WARMUP_COMMANDS))
-@pytest.mark.parametrize("targeted", [False, True])
-def test_canonical_matching_command_accepted_by_combined_guards(framework, targeted):
+def test_canonical_matching_command_accepted_by_combined_guards(framework):
     output = spec([COMPILE, contract.MAVEN_WARMUP_COMMANDS[framework]])
     assert contract.offline_warmup_violations(output, framework) == []
-    assert contract.offline_warmup_violations(output, framework, targeted_feedback=targeted) == []
     assert contract.environment_spec_violations(output) == []
     assert contract.install_path_violations(output) == []
 
@@ -63,70 +69,31 @@ def test_canonical_matching_command_accepted_by_combined_guards(framework, targe
 def test_wrong_framework_still_rejected_with_exact_old_text(framework):
     other = next(x for x in contract.MAVEN_WARMUP_COMMANDS if x != framework)
     output = spec([COMPILE, contract.MAVEN_WARMUP_COMMANDS[other]])
-    assert contract.offline_warmup_violations(
-        output, framework, targeted_feedback=True
-    ) == contract.offline_warmup_violations(output, framework)
-    assert contract.offline_warmup_violations(output, framework)
+    [problem] = contract.offline_warmup_violations(output, framework)
+    assert problem.startswith(f"the warm-up's throwaway test is written in {other}")
 
 
 @pytest.mark.parametrize("command", [contract.PYTEST_TEST_COMMAND, contract.GRADLE_TEST_COMMAND])
-def test_nonmaven_feedback_and_marker_eligibility_unchanged(monkeypatch, command):
+def test_nonmaven_feedback_unchanged(command):
     output = EnvironmentSpec(
         base_image="python:3.12-slim" if "pytest" in command else "gradle:8-jdk17",
         install_commands=[],
         test_command=command,
     )
-    assert (
-        contract.offline_warmup_violations(output, targeted_feedback=True)
-        == contract.offline_warmup_violations(output)
-        == []
-    )
-    monkeypatch.setattr(
-        validators,
-        "_targeted_maven_warmup_repair",
-        lambda: pytest.fail("Unrelated path must not record marker"),
-    )
+    assert contract.offline_warmup_violations(output) == []
     validators.validate_environment_spec(None, output)
 
 
-@pytest.mark.parametrize(
-    "in_workflow,marker", [(False, False), (False, True), (True, False), (True, True)]
-)
-def test_historical_retry_bytes_and_patch_boundary(monkeypatch, in_workflow, marker):
-    seen = []
-    monkeypatch.setattr(workflow, "in_workflow", lambda: in_workflow)
-
-    def patched(name):
-        seen.append(name)
-        return marker
-
-    monkeypatch.setattr(workflow, "patched", patched)
+def test_empty_install_feedback_is_field_targeted():
     output = spec([])
     with pytest.raises(ModelRetry) as exc:
         validators.validate_environment_spec(None, output)
-    legacy = "The environment spec cannot run a probe:\n- " + "\n- ".join(
-        contract.offline_warmup_violations(output)
+    assert exc.value.message.startswith(
+        "The environment spec cannot run a probe:\n- install_commands "
     )
-    if in_workflow and not marker:
-        assert exc.value.message == legacy
-        # Matches immutable actual empty-install feedback, not merely a copied implementation.
-        assert (
-            hashlib.sha256(json.dumps(exc.value.message, sort_keys=True).encode()).hexdigest()
-            == "2ec0b2f7b57e9cde5f48ac1799687605ba5a9822591e93358c2e3171cc8ca0ec"
-        )
-    else:
-        assert exc.value.message.startswith(
-            "The environment spec cannot run a probe:\n- install_commands "
-        )
-    assert seen == (["maven-warmup-repair-v1"] if in_workflow else [])
 
 
-def test_good_warmup_does_not_record_marker(monkeypatch):
-    monkeypatch.setattr(
-        validators,
-        "_targeted_maven_warmup_repair",
-        lambda: pytest.fail("Accepted output must not record marker"),
-    )
+def test_good_warmup_is_accepted():
     output = spec([COMPILE, contract.MAVEN_WARMUP_COMMANDS["junit5"]])
     assert validators.validate_environment_spec(None, output) is output
 
@@ -148,19 +115,17 @@ def test_good_warmup_does_not_record_marker(monkeypatch):
 )
 def test_independent_command_and_failure_guards_remain_rejections(monkeypatch, mutation):
     output = mutation(spec([COMPILE, contract.MAVEN_WARMUP_COMMAND]))
-    assert contract.offline_warmup_violations(output, targeted_feedback=True) == []
+    assert contract.offline_warmup_violations(output) == []
     with pytest.raises(ModelRetry):
         validators.validate_environment_spec(None, output)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("framework", sorted(contract.MAVEN_WARMUP_COMMANDS))
-@pytest.mark.parametrize("targeted", [False, True])
 async def test_real_sdk_synthetic_retry_converges_preserving_prerequisites(
-    monkeypatch, framework, targeted
+    monkeypatch, framework
 ):
     monkeypatch.setattr(validators, "repo_jvm_test_framework", lambda _: framework)
-    monkeypatch.setattr(validators, "_targeted_maven_warmup_repair", lambda: targeted)
     calls = []
     initial = spec([COMPILE])
     corrected = spec([COMPILE, contract.MAVEN_WARMUP_COMMANDS[framework]])
@@ -184,21 +149,16 @@ async def test_real_sdk_synthetic_retry_converges_preserving_prerequisites(
         if isinstance(p, RetryPromptPart)
     ]
     assert len(retry) == 1
-    assert ("\n- install_commands " in retry[0].content) is targeted
+    assert "\n- install_commands " in retry[0].content
     assert result.output.install_commands[0] == initial.install_commands[0]
     assert contract.offline_warmup_violations(result.output, framework) == []
 
 
 @pytest.mark.parametrize("framework", sorted(contract.MAVEN_WARMUP_COMMANDS))
-def test_wrong_framework_rejection_does_not_record_feedback_marker(monkeypatch, framework):
+def test_wrong_framework_rejection_keeps_its_feedback(monkeypatch, framework):
     other = next(x for x in contract.MAVEN_WARMUP_COMMANDS if x != framework)
     output = spec([COMPILE, contract.MAVEN_WARMUP_COMMANDS[other]])
     monkeypatch.setattr(validators, "repo_jvm_test_framework", lambda _: framework)
-    monkeypatch.setattr(
-        validators,
-        "_targeted_maven_warmup_repair",
-        lambda: pytest.fail("Unchanged wrong-framework feedback must not record marker"),
-    )
     legacy = "The environment spec cannot run a probe:\n- " + "\n- ".join(
         contract.offline_warmup_violations(output, framework)
     )

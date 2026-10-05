@@ -11,9 +11,7 @@ import {
 } from "@/lib/runtime";
 
 export function RuntimeIndicator() {
-  const query = useQuery({
-    ...queries.runtime(),
-  });
+  const query = useQuery(queries.runtime());
   const runtime = query.data;
   const broker = runtime ? brokerPresentation(runtime.broker) : null;
   const connectivity = connectivityPresentation(runtime?.model_connectivity);
@@ -42,9 +40,7 @@ export function RuntimeIndicator() {
 }
 
 export function BrokerRuntimeMetadata() {
-  const query = useQuery({
-    ...queries.runtime(),
-  });
+  const query = useQuery(queries.runtime());
   const runtime = query.data;
   const broker = runtime ? brokerPresentation(runtime.broker) : null;
   const connectivity = connectivityPresentation(runtime?.model_connectivity);

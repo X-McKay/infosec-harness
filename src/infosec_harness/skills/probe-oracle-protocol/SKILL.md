@@ -9,8 +9,6 @@ metadata:
 
 # Probe oracle protocol
 
-<!-- generated: activation criteria (scripts/restructure_skills.py) -->
-
 ## Use this skill when
 
 - You are about to plan, write, or repair a probe.
@@ -25,7 +23,7 @@ metadata:
 
 - `cwe-918-ssrf` is the single sanctioned exception to the rule above that the probe must drive the real sink: the sandbox has no egress, so an SSRF probe has no real request it could make. **That skill wins** for SSRF findings, on the condition it states — confirm from the code that the target really uses the transport you injected — and for no other weakness class, each of which has a sink that can be driven for real inside the sandbox.
 
-<!-- /generated: activation criteria -->
+## Procedure
 
 A probe is a unit test whose job is to answer one question about a pre-identified finding:
 **was the exploit condition observed when we drove untrusted input to the sink, in a
@@ -134,8 +132,6 @@ if exploit_condition_holds(result):          # e.g. marker survived unescaped
 The `test-*` skills show this shape in each framework; the `cwe-*` skills define
 `build_input` and `exploit_condition_holds` for each weakness class.
 
-<!-- generated: constraints (scripts/restructure_skills.py) -->
-
 ## Safety constraints
 
 - The test must run to completion and print its markers whether or not the exploit condition holds. Never let an assertion failure be the signal.
@@ -146,4 +142,3 @@ The `test-*` skills show this shape in each framework; the `cwe-*` skills define
 
 - Both markers are emitted at the right moments, and the oracle fires only on the real exploit condition.
 
-<!-- /generated: constraints -->

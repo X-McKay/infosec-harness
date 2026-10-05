@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import httpx
+import pytest
 from pydantic import BaseModel
 from pydantic_ai import Agent
 
@@ -38,15 +39,22 @@ def test_openai_compatible_construction_applies_the_production_transport_contrac
 
     monkeypatch.setattr(openai, "AsyncOpenAI", Client)
     monkeypatch.setattr(pydantic_ai.providers.openai, "OpenAIProvider", Provider)
-    monkeypatch.setattr(models, "_CompatOpenAIChatModel", ChatModel)
-    backend = models.load_models_config().backends["gateway"]
-    assert backend.api_key_env
-    monkeypatch.setenv(backend.api_key_env, "test-key")
+    monkeypatch.setattr(models, "CompatOpenAIChatModel", ChatModel)
+    from infosec_harness.settings import get_settings
+
+    monkeypatch.setenv("HARNESS_MODEL_BASE_URL", "https://gateway.invalid/v1")
+    get_settings.cache_clear()
+    models.load_models_config.cache_clear()
     models._build_live.cache_clear()
     try:
-        result = models._build_live("gateway", "model-under-test", durable=True)
+        backend = models.load_models_config().backends["gateway"]
+        assert backend.api_key_env
+        monkeypatch.setenv(backend.api_key_env, "test-key")
+        result = models._build_live("gateway", "model-under-test", durable=True, atomic_intake=False)
     finally:
         models._build_live.cache_clear()
+        models.load_models_config.cache_clear()
+        get_settings.cache_clear()
 
     assert isinstance(result, ChatModel)
     assert captured["model_id"] == "model-under-test"
@@ -79,7 +87,7 @@ def test_bedrock_construction_uses_region_and_profile_without_a_live_aws_call(mo
     monkeypatch.setenv("AWS_PROFILE", "offline-contract-profile")
     models._build_live.cache_clear()
     try:
-        result = models._build_live("bedrock", "bedrock-model-under-test", durable=True)
+        result = models._build_live("bedrock", "bedrock-model-under-test", durable=True, atomic_intake=False)
     finally:
         models._build_live.cache_clear()
 
@@ -96,11 +104,12 @@ def test_bedrock_construction_uses_region_and_profile_without_a_live_aws_call(mo
 def test_backend_capabilities_preserve_typed_output_and_tool_calling(monkeypatch):
     """Both backends advertise the capabilities required by governed agent specs."""
     from infosec_harness.agents.outputs import VERDICT_OUTPUTS
-    from infosec_harness.agents.registry import AGENT_BINDINGS, build_agent
+    from infosec_harness.agents.registry import BINDINGS, build_agent
     from infosec_harness.domain.models import ProbeSource
     from infosec_harness.settings import get_settings
 
     monkeypatch.setenv("HARNESS_MODEL_MODE", "live")
+    monkeypatch.setenv("HARNESS_MODEL_BASE_URL", "https://gateway.invalid/v1")
     try:
         for backend in ("gateway", "bedrock"):
             monkeypatch.setenv("HARNESS_MODEL_BACKEND", backend)
@@ -115,7 +124,7 @@ def test_backend_capabilities_preserve_typed_output_and_tool_calling(monkeypatch
             assert author.output_json_schema()["title"] == "ProbeSource"
             assert resolved.capability_profile.structured_output == "tool"
             assert resolved.capability_profile.tool_calling is True
-            assert AGENT_BINDINGS["probe-author"] is ProbeSource
+            assert BINDINGS["probe-author"].domain_type is ProbeSource
     finally:
         get_settings.cache_clear()
         models.load_models_config.cache_clear()
@@ -197,7 +206,7 @@ async def test_openai_compatible_mock_transport_round_trips_tool_and_typed_outpu
         client = AsyncOpenAI(
             base_url="https://provider.invalid/v1", api_key="test", http_client=http_client
         )
-        model = models._CompatOpenAIChatModel(
+        model = models.CompatOpenAIChatModel(
             "test-model", provider=OpenAIProvider(openai_client=client)
         )
         result = await Agent(model, output_type=_TypedReply, tools=[_echo]).run("go")
@@ -257,3 +266,51 @@ async def test_bedrock_mock_transport_round_trips_tool_and_typed_output():
         "content": [{"text": '{"echoed":"hello"}'}],
         "status": "success",
     }
+
+
+def test_an_unknown_tier_fails_rather_than_becoming_a_provider_model_id():
+    """Regression: any string not in the catalogue was passed through as a literal model id, so
+    a typo'd tier reached the provider as a request for a model nobody configured."""
+    cfg = models.load_models_config()
+    assert cfg.model_id("sonnet", "bedrock") == cfg.model_catalog["sonnet"]["bedrock"]
+    with pytest.raises(KeyError, match="model catalogue"):
+        cfg.model_id("sonet", "bedrock")
+    with pytest.raises(KeyError, match="model catalogue"):
+        cfg.model_id("anthropic.claude-sonnet-5", "bedrock")
+    with pytest.raises(KeyError, match="model catalogue"):
+        cfg.model_id("sonnet", "no-such-backend")
+
+
+def test_the_model_catalogue_rejects_unknown_keys():
+    """A retired per-agent `agents:` override would otherwise be silently ignored."""
+    from pydantic import ValidationError
+
+    base = {"backends": {"b": {"kind": "bedrock"}}, "default_backend": "b", "model_catalog": {}}
+    models.ModelsConfig.model_validate(base)
+    with pytest.raises(ValidationError):
+        models.ModelsConfig.model_validate({**base, "agents": {"intake": {"backend": "b"}}})
+
+
+@pytest.mark.parametrize(("recorded", "expected"), [
+    ("bedrock:anthropic.claude-sonnet-5", ("claude-sonnet-5", "anthropic")),
+    ("bedrock:us.anthropic.claude-sonnet-5", ("claude-sonnet-5", "anthropic")),
+    ("bedrock:global.anthropic.claude-opus-5", ("claude-opus-5", "anthropic")),
+    ("gateway:Qwen3.6-35B-A3B-NVFP4", ("Qwen3.6-35B-A3B-NVFP4", None)),
+])
+def test_the_price_lookup_maps_bedrock_ids_to_the_catalogue_id(recorded, expected):
+    assert models._genai_price_ref(recorded) == expected
+
+
+def test_the_intake_stub_emits_the_atomic_wire_with_no_claims():
+    from pydantic_ai.messages import ModelRequest, UserPromptPart
+    from pydantic_ai.models.function import AgentInfo
+    from pydantic_ai.tools import ToolDefinition
+
+    from infosec_harness.agents import stubs
+
+    info = AgentInfo(function_tools=[], allow_text_output=False, model_settings=None,
+                     model_request_parameters=None, instructions=None,
+                     output_tools=[ToolDefinition(name="final_result")])
+    response = stubs.stub_model("intake", "sonnet").function(
+        [ModelRequest(parts=[UserPromptPart("x")])], info)
+    assert response.parts[0].args == {}

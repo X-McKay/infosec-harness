@@ -26,7 +26,7 @@ class _Ops:
         self.repairs = 0
         self.smokes = 0
 
-    async def run_agent(self, name, prompt, deps):
+    async def run_agent(self, name, prompt, deps, *, record=None):
         if name == "recon":
             output = RepoProfile(summary="fixture", primary_language="python",
                                  test_framework="pytest", test_layout="tests")
@@ -37,7 +37,10 @@ class _Ops:
             output = _spec(repaired=self.progress)
         else:  # pragma: no cover - a failure makes the assertion clearer than a mock default
             raise AssertionError(name)
-        return AgentOutcome(output=output, agent=name)
+        outcome = AgentOutcome(output=output, agent=name)
+        if record is not None:
+            record.append(outcome)
+        return outcome
 
     async def lookup_recipe(self, stack):
         return None

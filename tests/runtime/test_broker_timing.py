@@ -6,10 +6,10 @@ import asyncio
 import httpx
 import pytest
 
-from infosec_harness.inference import timing
-from infosec_harness.inference.diagnostics import report_transport_failure
-from infosec_harness.inference.http_service import JsonChannel
-from infosec_harness.inference.protocol import BrokerError
+from infosec_harness.inference.wire import timing
+from infosec_harness.inference.wire.diagnostics import record_failure
+from infosec_harness.inference.wire.http_service import JsonChannel
+from infosec_harness.inference.wire.protocol import BrokerError
 
 
 def test_nested_budgets_include_setup_claim_completion_and_response_margin():
@@ -48,7 +48,7 @@ async def test_json_channel_wall_timeout_cancels_even_when_transport_ignores_idl
     (httpx.RemoteProtocolError("synthetic-private-url"), "remote_protocol"),
     (TimeoutError("synthetic-private-payload"), "wall_timeout")])
 def test_diagnostics_only_emit_fixed_boundary_and_category(error, category, caplog):
-    report_transport_failure("worker_controller", error)
+    assert record_failure("worker_controller", error) == {"boundary": "worker_controller", "category": category}
     assert "boundary=worker_controller category=" + category in caplog.text
     assert "synthetic-private" not in caplog.text
 

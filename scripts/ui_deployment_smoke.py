@@ -12,18 +12,18 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 from pydantic import TypeAdapter
 
-from infosec_harness.agents.registry import AGENT_BINDINGS
+from infosec_harness.agents.registry import BINDINGS
 from infosec_harness.api.contracts import (
     BatchSummary,
-    ExperimentSummary,
-    MetricsResponse,
-    QualificationStatus,
-    RunSummary,
+    ConfigResponse,
+    ExperimentPage,
+    RunPage,
     RuntimeStatus,
 )
+from infosec_harness.persistence.metrics import MetricsResponse
 
-# Evaluation summaries are unpaginated and can exceed 5 MiB in a populated deployment.
-# Keep a finite transport ceiling independent of semantic contract validation.
+# A finite transport ceiling independent of semantic contract validation. Every list read is
+# paged or bounded server-side, so a contract-valid response is far below it.
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 
 
@@ -119,11 +119,6 @@ def check(api_url, web_url, *, timeout=60, expected_source_commit=None,
         for origin in (api_url, web_url):
             try:
                 runtime = RuntimeStatus.model_validate_json(fetch(origin + "/api/runtime-status", "json"))
-                qualification = QualificationStatus.model_validate_json(fetch(origin + "/api/qualification", "json"))
-                agents = [row.agent for row in qualification.components]
-                if (len(agents) != len(AGENT_BINDINGS) or set(agents) != set(AGENT_BINDINGS)
-                        or any(row.scope != "agent_semantics" for row in qualification.components)):
-                    raise SmokeFailure("incomplete component inventory")
                 for actual, expected in ((runtime.api_source_commit, expected_source_commit),
                                          (runtime.model_mode, expected_model_mode),
                                          (runtime.assessment_transport, expected_transport)):
@@ -131,11 +126,19 @@ def check(api_url, web_url, *, timeout=60, expected_source_commit=None,
                         raise SmokeFailure("deployment identity mismatch")
                 observed.append((runtime.api_source_commit, runtime.model_mode,
                                  runtime.assessment_transport))
-                for path, model in (("batches", BatchSummary), ("runs", RunSummary),
-                                    ("experiments", ExperimentSummary)):
-                    rows = TypeAdapter(list[model]).validate_json(fetch(
-                        origin + f"/api/{path}?population=operational", "json"))
-                    counts[path] = len(rows)
+                counts["batches"] = len(TypeAdapter(list[BatchSummary]).validate_json(fetch(
+                    origin + "/api/batches?population=operational", "json")))
+                # The runs and evaluations views read pages, so those are the contracts checked.
+                counts["runs"] = RunPage.model_validate_json(fetch(
+                    origin + "/api/run-page?population=operational", "json")).total
+                counts["experiments"] = ExperimentPage.model_validate_json(fetch(
+                    origin + "/api/experiments?population=operational", "json")).total
+                config = ConfigResponse.model_validate_json(fetch(origin + "/api/config", "json"))
+                agents = [agent.name for agent in config.agents]
+                if len(agents) != len(BINDINGS) or set(agents) != set(BINDINGS):
+                    raise SmokeFailure("incomplete agent configuration")
+                if config.model_mode != runtime.model_mode:
+                    raise SmokeFailure("deployment identity mismatch")
                 metrics = MetricsResponse.model_validate_json(fetch(
                     origin + "/api/metrics?population=operational", "json"))
                 if metrics.population != "operational":
@@ -167,7 +170,7 @@ def check(api_url, web_url, *, timeout=60, expected_source_commit=None,
         for url, kind in sorted(assets):
             if not fetch(url, kind):
                 raise SmokeFailure("empty asset")
-        return {"status": "passed", "components": len(AGENT_BINDINGS),
+        return {"status": "passed", "agents": len(BINDINGS),
                 "operational_counts": counts, "assets": len(assets), "writes": 0}
     finally:
         if owned:

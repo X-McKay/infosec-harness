@@ -1,18 +1,11 @@
 """Independent guards for Docker's observed mount-order/default representations."""
 
-import importlib.util
 from copy import deepcopy
-from pathlib import Path
 
 import pytest
+from conftest import load_script
 
-ROOT = Path(__file__).resolve().parents[2]
-SPEC = importlib.util.spec_from_file_location(
-    "controller_configuration", ROOT / "scripts/openshell_controller_configuration.py"
-)
-assert SPEC and SPEC.loader
-MODULE = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(MODULE)
+MODULE = load_script("openshell_controller_configuration")
 
 
 @pytest.fixture

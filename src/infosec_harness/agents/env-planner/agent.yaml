@@ -57,7 +57,6 @@ metadata:
   execution_class: durable
   temporal_enabled: true
   risk_tier: critical
-  risk_assessment: docs/risk-assessments/env-planner.yaml
   threat_model: docs/threat-models/triage-system.md
   data_classification: confidential
   model_policy: balanced-v1

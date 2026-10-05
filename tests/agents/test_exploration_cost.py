@@ -25,10 +25,14 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from conftest import load_script
 
 from infosec_harness.agents.budgets import run_budget
 from infosec_harness.agents.registry import load_spec
-from infosec_harness.evals.exploration import measure_recon, synth_repo
+
+exploration = load_script("exploration")
+measure_recon = exploration.measure_recon
+synth_repo = exploration.synth_repo
 
 SHIPPED = ("list_files", "read_file", "search_code", "describe_callables")
 ALL_TOOLS = (*SHIPPED, "read_files", "list_tree", "repo_digest")

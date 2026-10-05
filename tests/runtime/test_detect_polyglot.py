@@ -374,3 +374,53 @@ def test_components_keep_distinct_declared_java_releases(tmp_path):
     modern = component_stack(stack, owning_component(stack, "modern/App.java"))
     assert legacy.java_release == 8
     assert modern.java_release == 17
+
+
+# --- untrusted tree shapes -----------------------------------------------------------------
+
+@pytest.mark.parametrize("name", ["pom.xml", "package.json", "build.gradle", "cpanfile",
+                                  "pyproject.toml"])
+def test_a_directory_named_like_a_manifest_is_absent_not_a_crash(tmp_path, name):
+    """Fingerprinting reads only the regular files the validated walk admitted. A directory
+    named `pom.xml` used to reach `read_text` through an `exists()` check and raise
+    IsADirectoryError out of detection of an untrusted repository."""
+    (tmp_path / name).mkdir()
+    (tmp_path / name / "inner.txt").write_text("<artifactId>junit</artifactId>\n")
+    (tmp_path / "Main.java").write_text("class Main {}\n")
+    (tmp_path / "t").mkdir()
+    (tmp_path / "t" / "dir.t").mkdir()
+
+    stack = detect_stack(str(tmp_path))
+
+    assert name not in stack.manifests and stack.build_systems == []
+    assert stack.java_release is None
+    assert [component.root for component in stack.components] == ["."]
+    assert stack.components[0].manifest_paths == []
+
+
+def test_component_profiles_cover_their_subtree_from_one_walk(tmp_path, monkeypatch):
+    """A component's languages and manifests include nested components; its frameworks and
+    Java level come from its own root. The tree is walked once however many components exist."""
+    from infosec_harness.repo import detect
+
+    (tmp_path / "pom.xml").write_text("<maven.compiler.source>1.8</maven.compiler.source>")
+    (tmp_path / "svc").mkdir()
+    (tmp_path / "svc" / "pom.xml").write_text(
+        "<artifactId>junit-jupiter</artifactId><maven.compiler.release>17</maven.compiler.release>")
+    (tmp_path / "svc" / "A.java").write_text("class A {}\n")
+    (tmp_path / "web" / "test").mkdir(parents=True)
+    (tmp_path / "web" / "package.json").write_text("{}")
+    (tmp_path / "web" / "test" / "a.mjs").write_text("import test from 'node:test';\n")
+    walks = []
+    real_walk = detect.walk_files
+    monkeypatch.setattr(detect, "walk_files", lambda *a, **k: walks.append(a) or real_walk(*a, **k))
+
+    components = {c.root: c for c in detect_stack(str(tmp_path)).components}
+
+    assert len(walks) == 1
+    assert components["."].languages == {"java": 1, "javascript": 1}
+    assert components["."].manifest_paths == ["pom.xml", "svc/pom.xml", "web/package.json"]
+    assert components["."].java_release == 8 and components["svc"].java_release == 17
+    assert components["svc"].test_frameworks == ["junit5"]
+    assert components["web"].test_frameworks == ["node:test"]
+    assert components["web"].manifest_paths == ["package.json"]

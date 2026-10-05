@@ -49,7 +49,6 @@ metadata:
   execution_class: durable
   temporal_enabled: true
   risk_tier: high
-  risk_assessment: docs/risk-assessments/probe-diagnosis.yaml
   threat_model: docs/threat-models/triage-system.md
   data_classification: confidential
   model_policy: balanced-v1

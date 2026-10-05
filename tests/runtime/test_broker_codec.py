@@ -17,13 +17,13 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from infosec_harness.inference.codec import (
+from infosec_harness.inference.wire.codec import (
     decode_payload,
     decode_response,
     encode_payload,
     encode_response,
 )
-from infosec_harness.inference.protocol import BrokerError
+from infosec_harness.inference.wire.protocol import BrokerError
 
 
 def test_typed_history_tools_schema_and_usage_survive_roundtrip():
@@ -77,8 +77,8 @@ def test_negative_response_usage_is_rejected():
 
 
 def test_contradictory_usage_is_rejected():
-    from infosec_harness.inference.codec import validate_result_usage
-    from infosec_harness.inference.protocol import InferenceResult
+    from infosec_harness.inference.wire.codec import validate_result_usage
+    from infosec_harness.inference.wire.protocol import InferenceResult
     result = InferenceResult(request_id="a" * 64,
         response=encode_response(ModelResponse(parts=[TextPart("x")], usage=RequestUsage(input_tokens=2))),
         usage={"input_tokens": 0})
@@ -90,7 +90,7 @@ def test_contradictory_usage_is_rejected():
 def test_wire_usage_does_not_coerce_counters(counter):
     from pydantic import ValidationError
 
-    from infosec_harness.inference.protocol import InferenceResult
+    from infosec_harness.inference.wire.protocol import InferenceResult
     with pytest.raises(ValidationError):
         InferenceResult(request_id="a" * 64, response={}, usage={"input_tokens": counter})
 
@@ -104,7 +104,7 @@ def test_set_valued_tool_visibility_is_canonical_without_losing_membership():
     _, _, decoded = decode_payload(payload)
     assert decoded.deferred_capability_ids == params.deferred_capability_ids
     assert decoded.revealed_tool_names == params.revealed_tool_names
-    from infosec_harness.inference.protocol import digest
+    from infosec_harness.inference.wire.protocol import digest
     changed = payload.model_copy(update={"parameters": {**payload.parameters,
                                   "deferred_capability_ids": ["a-owner", "other-owner"]}})
     assert digest(changed.model_dump(mode="json")) != digest(payload.model_dump(mode="json"))
@@ -129,7 +129,7 @@ def test_actual_rendered_graph_prompt_preserves_cache_boundary():
 def test_authored_cache_marker_order_and_ttl_are_request_identity(ttl):
     from pydantic_ai.messages import CachePoint
 
-    from infosec_harness.inference.protocol import digest
+    from infosec_harness.inference.wire.protocol import digest
     messages = [ModelRequest(parts=[UserPromptPart(["prefix", CachePoint(ttl=ttl), "suffix"])])]
     payload = encode_payload(messages, {}, ModelRequestParameters())
     decoded, _, _ = decode_payload(payload)
@@ -153,8 +153,8 @@ def test_wire_marker_cannot_carry_remote_authority_or_invalid_fields(marker):
 
 
 def test_actual_openai_reasoning_usage_survives_response_and_history_roundtrip():
-    from infosec_harness.inference.codec import validate_result_usage
-    from infosec_harness.inference.protocol import InferenceResult
+    from infosec_harness.inference.wire.codec import validate_result_usage
+    from infosec_harness.inference.wire.protocol import InferenceResult
 
     # The pinned SDK extracts a known genai-prices counter into dynamic RequestUsage state.
     # OpenAI reports reasoning as part of completion tokens; it must not be added twice.

@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from infosec_harness.domain.models import RepoRef
-from infosec_harness.evals.corpus import load_corpus
+from infosec_harness.evals.corpus import is_remote, load_corpus
 from infosec_harness.repo.checkout import checkout
 from infosec_harness.settings import REPO_ROOT
 
@@ -29,7 +29,7 @@ def test_a_harvested_case_keeps_its_remote_url_intact():
     fails to clone with a message about a missing directory rather than about a URL."""
     for case in _cases()[:5]:
         assert case.finding.repo_url.startswith("https://"), case.finding.repo_url
-        assert not case.is_vendored
+        assert is_remote(case.finding.repo_url)
         with pytest.raises(ValueError, match="no path in this repository"):
             _ = case.repo_path
 

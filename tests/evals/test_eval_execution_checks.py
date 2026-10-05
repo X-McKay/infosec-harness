@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
-from infosec_harness.domain.models import EnvironmentSpec
+from dataclasses import replace
+from types import SimpleNamespace
+
+import pytest
+
+from infosec_harness.domain.models import EnvironmentSpec, ProbeSource
+from infosec_harness.evals import execution_checks, probe_execution
 from infosec_harness.evals.execution_checks import (
     ExecutionCheckResult,
-    _builder_infrastructure_failure,
+    builder_infrastructure_failure,
     run_execution_check,
 )
+from infosec_harness.sandbox import docker
 
 
 def _case() -> dict:
@@ -114,9 +121,71 @@ async def test_cases_without_an_execution_contract_keep_structural_scoring():
 
 
 def test_a_lima_host_tempfile_failure_is_infrastructure_not_model_quality():
-    assert _builder_infrastructure_failure(
+    assert builder_infrastructure_failure(
         "ERROR: failed to build: resolve : lstat /var/folders: no such file or directory"
     )
-    assert not _builder_infrastructure_failure(
+    assert not builder_infrastructure_failure(
         "RUN cpanm DBD::SQLite returned a non-zero code: 1"
     )
+
+
+# --- Both execution engines share one set of sandbox preconditions -------------------------
+
+_PROBE = ProbeSource(test_file_path="tests/test_probe.py", content="def test_probe():\n    pass\n")
+_DECLARED = probe_execution.DECLARED_CHECKS[("probe-author", "sqli-marker-oracle")]
+
+
+async def _both_engines(repo: str | None = None) -> tuple[str, str, str, str]:
+    """Run the dependency-check engine and the probe engine on the same fixture conditions."""
+    case = {**_case(), **({"repo": repo} if repo is not None else {})}
+    declaration = _DECLARED if repo is None else replace(_DECLARED, repo=repo)
+    dependency = await execution_checks._secure_engine(case, _spec("cpanm DBD::SQLite"),
+                                                        "perl_dbd_sqlite_v1")
+    probe = await probe_execution._secure_engine(declaration, _PROBE, "controller-nonce")
+    return dependency.status, dependency.reason, probe.status, probe.reason
+
+
+@pytest.fixture
+def no_build(monkeypatch):
+    """Every precondition below must refuse before a snapshot or build is attempted."""
+    async def refuse(*_args, **_kwargs):
+        raise AssertionError("a refused precondition must not reach checkout")
+
+    monkeypatch.setattr(execution_checks, "checkout", refuse)
+
+
+@pytest.mark.parametrize(("repo", "reason"), [
+    ("../outside-the-checkout", "execution fixture escapes the repository root"),
+    ("eval-corpus/no-such-fixture", "execution fixture is missing"),
+])
+async def test_both_engines_refuse_an_unsafe_fixture_identically(no_build, repo, reason):
+    assert await _both_engines(repo) == ("not_checked", reason, "not_checked", reason)
+
+
+@pytest.mark.parametrize("settings", [
+    SimpleNamespace(allow_insecure_runtime=True, sandbox_runtime="runsc"),
+    SimpleNamespace(allow_insecure_runtime=True, sandbox_runtime="runc"),
+    SimpleNamespace(allow_insecure_runtime=False, sandbox_runtime="runc"),
+])
+async def test_both_engines_refuse_anything_but_enforced_runsc_identically(
+    monkeypatch, no_build, settings,
+):
+    monkeypatch.setattr(execution_checks, "get_settings", lambda: settings)
+    reason = "execution checks require enforced runsc; the insecure fallback is disabled"
+    dependency_status, dependency, probe_status, probe = await _both_engines()
+    assert (dependency_status, probe_status) == ("not_checked", "not_checked")
+    assert dependency == probe == reason
+
+
+async def test_both_engines_require_runsc_to_be_registered_and_the_daemon_default(
+    monkeypatch, no_build,
+):
+    """The configured name is not evidence: the daemon must advertise and select runsc."""
+    async def unavailable(_runtime=None):
+        return False
+
+    monkeypatch.setattr(docker, "runtime_available", unavailable)
+    dependency_status, dependency, probe_status, probe = await _both_engines()
+    assert (dependency_status, probe_status) == ("not_checked", "not_checked")
+    assert "is not available on this host" in dependency
+    assert "is not available on this host" in probe

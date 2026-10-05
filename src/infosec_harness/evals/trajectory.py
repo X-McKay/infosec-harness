@@ -1,10 +1,8 @@
-"""Inspect an agent run's trajectory: which tools it called and which skills it loaded.
+"""Score an agent run's trajectory: did it evoke the tools and skills it should have?
 
-Used two ways:
-- at run time, ``inspect_messages`` records tools_called / skills_loaded on every
-  AgentOutcome (so real runs are auditable and persisted);
-- in evals, ``check_expectations`` scores whether an agent evoked the tools and skills it
-  should have (the "expected tools and skills are being read/evoked" question).
+The runtime records tools_called / skills_loaded on every AgentOutcome with
+``agents.trajectory.trace_calls``; here ``check_expectations`` scores them (the
+"expected tools and skills are being read/evoked" question).
 
 Under stub models no tools are called, so these are empty; they light up under a live model
 and are exercised deterministically in tests via a scripted tool-calling model.
@@ -12,88 +10,18 @@ and are exercised deterministically in tests via a scripted tool-calling model.
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from functools import cache
 
-from pydantic_ai.messages import ModelMessage, ToolCallPart
+from pydantic_ai.messages import ModelMessage
 
-# The Skills capability exposes this tool; its argument carries the skill id being loaded.
-LOAD_SKILL_TOOL = "load_capability"
-_SKILL_ARG_KEYS = ("id", "capability_id", "name")
-
-
-def _tool_calls(messages: Sequence[ModelMessage]) -> list[ToolCallPart]:
-    calls: list[ToolCallPart] = []
-    for msg in messages:
-        for part in getattr(msg, "parts", []):
-            if isinstance(part, ToolCallPart):
-                calls.append(part)
-    return calls
-
-
-def _skill_id(args) -> str | None:
-    if isinstance(args, dict):
-        for key in _SKILL_ARG_KEYS:
-            if key in args and isinstance(args[key], str):
-                return args[key]
-        for v in args.values():  # fall back to the first string arg
-            if isinstance(v, str):
-                return v
-    return None
-
-
-def inspect_messages(messages: Sequence[ModelMessage]) -> tuple[list[str], list[str]]:
-    """Return (tools_called, skills_loaded), each de-duplicated and order-preserving.
-
-    Output tools (``final_result`` and friends) are excluded — they are how the agent
-    returns its answer, not tool *use*.
-    """
-    tools: list[str] = []
-    skills: list[str] = []
-    for call in _tool_calls(messages):
-        name = call.tool_name
-        if name == LOAD_SKILL_TOOL:
-            sid = _skill_id(call.args_as_dict() if hasattr(call, "args_as_dict") else call.args)
-            if sid and sid not in skills:
-                skills.append(sid)
-            continue
-        if name.startswith("final_result") or name.startswith("_"):
-            continue
-        if name not in tools:
-            tools.append(name)
-    return tools, skills
-
-
-def count_repeated_calls(messages: Sequence[ModelMessage]) -> dict[str, int]:
-    """Count tool calls that were made with the *same arguments* more than once.
-
-    `inspect_messages` de-duplicates by tool name and discards arguments, which is right for
-    measuring evocation ("did the agent use its tools at all") but makes a run that read one
-    file eight times byte-identical to one that read it once. That is exactly the distinction
-    needed to tell a runaway loop from legitimate work when an agent exhausts its request
-    budget, so it is counted separately here rather than by loosening the contract above.
-
-    Keys are `tool(arg=value, ...)` with arguments sorted so the key is stable; only entries
-    with a count above one are returned, so a healthy run yields an empty dict and costs
-    nothing to record.
-    """
-    seen: Counter[str] = Counter()
-    for call in _tool_calls(messages):
-        name = call.tool_name
-        if name.startswith("final_result") or name.startswith("_"):
-            continue
-        try:
-            args = call.args_as_dict() if hasattr(call, "args_as_dict") else call.args
-        except Exception:  # malformed args from the model must not break accounting
-            args = None
-        if isinstance(args, dict):
-            rendered = ", ".join(f"{k}={args[k]!r}" for k in sorted(args))
-        else:
-            rendered = repr(args)
-        seen[f"{name}({rendered})"] += 1
-    return {key: n for key, n in seen.items() if n > 1}
+from infosec_harness.agents.capabilities import REPO_RO_TOOLS
+from infosec_harness.agents.trajectory import trace_calls
+from infosec_harness.evals.messages import MAX_NAME_CHARS, MAX_RECORDED_CALLS
+from infosec_harness.settings import get_settings
 
 
 @dataclass
@@ -139,7 +67,7 @@ def check_expectations(tools_called: Iterable[str], skills_loaded: Iterable[str]
 # relevant skill loaded. Agents with no tools are absent.
 # describe_callables belongs here: it is how an agent learns a symbol's name, signature and
 # import form. Omitting it would score an agent that used it well as having read nothing.
-READ_TOOLS = frozenset({"read_file", "search_code", "list_files", "describe_callables", "inspect_target", "read_files", "list_tree", "repo_digest"})
+READ_TOOLS = frozenset(REPO_RO_TOOLS)
 AGENT_EXPECTATIONS: dict[str, TrajectoryExpectation] = {
     "recon": TrajectoryExpectation(tool_groups=(READ_TOOLS,)),
     "env-planner": TrajectoryExpectation(tool_groups=(READ_TOOLS,)),
@@ -158,16 +86,22 @@ def scores_skills(agent: str) -> bool:
     return bool(exp and exp.skill_prefixes)
 
 
-@cache
-def _available_cwe_skill_prefixes() -> frozenset[str]:
-    """The `cwe-*` skills that exist on disk, as prefixes."""
-    from infosec_harness.settings import get_settings
+_CWE_SKILL = re.compile(r"cwe-(\d+)-.+")
 
+
+@cache
+def skill_covered_cwes() -> tuple[str, ...]:
+    """The CWE classes a shipped `skills/cwe-<n>-*` skill covers, as ``CWE-<n>``, sorted.
+
+    The single answer to "which CWEs have skills", used by the trajectory scorer and by the
+    corpus harvester, so the two cannot disagree about what a harvested case can be scored on.
+    """
     root = get_settings().skills_dir
     if not root.is_dir():
-        return frozenset()
-    return frozenset("-".join(p.name.split("-")[:2])
-                     for p in root.iterdir() if p.name.startswith("cwe-"))
+        return ()
+    found = {int(m.group(1)) for p in root.iterdir()
+             if p.is_dir() and (m := _CWE_SKILL.fullmatch(p.name))}
+    return tuple(f"CWE-{number}" for number in sorted(found))
 
 
 def cwe_skill_prefix(cwe: str | None) -> str | None:
@@ -183,42 +117,29 @@ def cwe_skill_prefix(cwe: str | None) -> str | None:
     num = cwe.upper().removeprefix("CWE-")
     if not num.isdigit():
         return None
-    prefix = f"cwe-{num}"
-    return prefix if prefix in _available_cwe_skill_prefixes() else None
+    return f"cwe-{num}" if f"CWE-{num}" in skill_covered_cwes() else None
 
 
-def summarize_calls(messages: Sequence[ModelMessage], *, limit: int = 128) -> dict[str, object]:
-    """Retain call order using encounter-local IDs, without recoverable argument hashes."""
-    import hashlib
-    import json
+def summarize_calls(messages: Sequence[ModelMessage], *,
+                    limit: int = MAX_RECORDED_CALLS) -> dict[str, object]:
+    """Retain call order using encounter-local IDs, without recoverable argument hashes.
 
-    counts: Counter[str] = Counter()
-    signatures: Counter[tuple[str, str]] = Counter()
+    Repetition is ``agents.trajectory.trace_calls``'s signature, so this summary and the
+    runtime's ``repeated_tool_calls`` agree on what counts as the same call.
+    """
+    trace = trace_calls(messages)
+    counts = Counter(name for name, _ in trace.sequence)
     sequence: list[dict[str, str]] = []
-    argument_ids: dict[tuple[str, str], str] = {}
-    for call in _tool_calls(messages):
-        name = call.tool_name
-        if name.startswith("final_result") or name.startswith("_"):
-            continue
-        try:
-            args = call.args_as_dict()
-        except Exception:
-            args = {"malformed": True}
-        digest = hashlib.sha256(
-            json.dumps(args, sort_keys=True, default=str).encode()
-        ).hexdigest()
-        counts[name] += 1
-        signature = (name, digest)
-        signatures[signature] += 1
-        if len(sequence) < limit:
-            argument_id = argument_ids.setdefault(signature, f"args-{len(argument_ids) + 1}")
-            sequence.append({"tool": name[:128], "argument_id": argument_id})
-    total = sum(counts.values())
+    argument_ids: dict[str, str] = {}
+    for name, signature in trace.sequence[:limit]:
+        argument_id = argument_ids.setdefault(signature, f"args-{len(argument_ids) + 1}")
+        sequence.append({"tool": name[:MAX_NAME_CHARS], "argument_id": argument_id})
+    total = len(trace.sequence)
     return {
         "tool_call_count": total,
         "counts": dict(sorted(counts.items())[:limit]),
         "sequence": sequence,
         "sequence_truncated": total > limit,
-        "repeated_call_count": sum(count - 1 for count in signatures.values()),
+        "repeated_call_count": sum(count - 1 for count in trace.signatures.values()),
         "arguments_retained": False,
     }

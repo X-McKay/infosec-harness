@@ -1,47 +1,65 @@
 """Temporal workflows (D3): a graph of durable agents + deterministic activities.
 
-- RepoPreparationWorkflow runs once per repo@revision (P0-P6), and is cached by workflow id.
-- FindingTriageWorkflow runs the intake + triage graph for one finding (F0-F9).
-- TriageBatchWorkflow groups findings by repo (then CWE), prepares each repo once, and fans
-  its findings out warm-first so they share the cached prompt prefix (§6.2).
+- TriageBatchWorkflow groups findings by repository, discovers each repository once, splits it
+  into compatible components, prepares each component once (ComponentPreparationWorkflow) and
+  fans its findings out warm-first (FindingTriageWorkflow) so they share the cached prompt
+  prefix (§6.2).
+- The grouping, scheduling, per-finding pipeline and failure records are shared with the
+  in-process path (:mod:`infosec_harness.graph.pipeline`); this module adds only durability.
+
+Every batch is durable: it is accepted with a budget ledger before it starts, and every
+progress event, output and operation is recorded against it. Workflow type names carry the
+execution generation. Histories recorded by an earlier generation are not replayable by design:
+retry such a batch as a new workflow.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections import defaultdict
-from datetime import timedelta
 
 from temporalio import workflow
-from temporalio.common import RetryPolicy
 from temporalio.exceptions import ApplicationError, is_cancelled_exception
 
 with workflow.unsafe.imports_passed_through():
-    from infosec_harness.agents.deps import AgentDeps
     from infosec_harness.agents.durable import AGENT_LIST
+    from infosec_harness.agents.registry import EXECUTION_GENERATION
     from infosec_harness.domain.models import (
+        BatchStatus,
         Finding,
         FindingInput,
-        InconclusiveReason,
         PreparedEnvironment,
         RepoPreparation,
         RepoRef,
-        RepoSnapshot,
-        StackFingerprint,
-        TriageResult,
         TriageRunOutput,
-        Verdict,
-        VerdictLabel,
+    )
+    from infosec_harness.graph.failures import (
+        classify_pipeline_failure,
+        describe_failure,
+        failure_cause,
     )
     from infosec_harness.graph.manifests import execution_manifest
-    from infosec_harness.graph.ops import classify_pipeline_failure
-    from infosec_harness.graph.prepare import PrepareFailed, prepare_resolved_component, run_prepare
-    from infosec_harness.graph.scoring import priority_for_inconclusive
-    from infosec_harness.graph.triage import TRIAGE_GRAPH, PreFilter, TriageDeps, TriageState
-    from infosec_harness.intake import adapters
-    from infosec_harness.repo.components import component_stack, owning_component, preparation_key
+    from infosec_harness.graph.pipeline import (
+        clamp_concurrency,
+        dedupe_by_fingerprint,
+        group_by_repository,
+        inconclusive_output,
+        split_components,
+        triage_finding,
+        warm_then_fan_out,
+    )
+    from infosec_harness.graph.prepare import PrepareFailed, run_prepare
     from infosec_harness.workflows import activities
-    from infosec_harness.workflows.progress import (
+    from infosec_harness.workflows.activity_options import CHECKOUT, SHORT, TERMINAL
+    from infosec_harness.workflows.payloads import (
+        BatchArgs,
+        ComponentPreparationArgs,
+        FindingTriageArgs,
+        FinishBatchArgs,
+        ProgressArgs,
+        SaveOutputArgs,
+        WritebackArgs,
+    )
+    from infosec_harness.workflows.persistence_activities import (
         finish_batch_activity,
         progress_activity,
         remaining_budget_time_activity,
@@ -50,368 +68,204 @@ with workflow.unsafe.imports_passed_through():
     )
     from infosec_harness.workflows.temporal_ops import TemporalOps
 
-_ACT = dict(start_to_close_timeout=timedelta(minutes=5), retry_policy=RetryPolicy(maximum_attempts=3))
-_TERMINAL_ACT = dict(start_to_close_timeout=timedelta(minutes=5),
-    retry_policy=RetryPolicy(maximum_attempts=0, maximum_interval=timedelta(seconds=30)))
+
+def _failed_preparation(exc: BaseException) -> RepoPreparation:
+    cause = failure_cause(exc)
+    return RepoPreparation(failure_reason=classify_pipeline_failure(cause),
+                           failure_detail=describe_failure(cause))
 
 
-def _terminal_activity_options() -> dict:
-    """Keep old histories on their recorded policy; new terminal writes retry until durable."""
-    return _TERMINAL_ACT if workflow.patched("terminal-persistence-retry-v1") else _ACT
-
-
-def _checkout_options() -> dict:
-    if workflow.patched("checkout-heartbeat-v1"):
-        return {**_ACT, "heartbeat_timeout": timedelta(seconds=30),
-                "cancellation_type": workflow.ActivityCancellationType.WAIT_CANCELLATION_COMPLETED}
-    return _ACT
-
-
-def _inconclusive(finding: Finding, reason: InconclusiveReason, rationale: str, status: str,
-                  invocations=None, manifest: dict | None = None, *, context=None,
-                  executions=None) -> TriageRunOutput:
-    verdict = Verdict(label=VerdictLabel.inconclusive, confidence=0.0, rationale=rationale,
-                      inconclusive_reason=reason)
-    score, band = priority_for_inconclusive(finding)
-    result = TriageResult(fingerprint=finding.fingerprint, verdict=verdict, priority_score=score,
-                          priority=band, environment_scope="none", early_exit=reason.value)
-    return TriageRunOutput(finding=finding, result=result, prepared_status=status,
-                           manifest=manifest or {}, invocations=invocations or [], context=context,
-                           executions=executions or [],
-                           needs_info=(reason == InconclusiveReason.needs_info))
-
-
-@workflow.defn
-class RepoPreparationWorkflow:
-    @workflow.run
-    async def run(self, ref: RepoRef) -> RepoPreparation:
-        """Prepare one repository, returning the outcome rather than failing on a bad one.
-
-        A preparation that raises is a result about this repository, not a reason to fail the
-        workflow: the batch has other repositories, and the agent calls this one already made
-        are the only evidence about why it failed. Both used to be lost -- the child workflow
-        failed, taking the batch with it, and the invocations never crossed the boundary.
-        """
-        snapshot = await workflow.execute_activity(activities.checkout_activity, ref, **_checkout_options())
-        stack = await workflow.execute_activity(activities.detect_stack_activity, snapshot, **_ACT)
-        return await _prepare_result(snapshot, stack)
-
-
-async def _prepare_result(snapshot: RepoSnapshot, stack: StackFingerprint,
-                          component_root: str = ".") -> RepoPreparation:
-    ops = TemporalOps()
-    try:
-        outcome = await run_prepare(ops, snapshot, stack, component_root=component_root)
-    except PrepareFailed as exc:
-        if is_cancelled_exception(exc.cause):
-            raise exc.cause from exc
-        return RepoPreparation(
-            prepared=PreparedEnvironment(snapshot=snapshot, stack=stack, status="failed",
-                                         reason=f"prepare_failed: {type(exc.cause).__name__}"),
-            invocations=exc.invocations,
-            failure_reason=classify_pipeline_failure(exc.cause),
-            failure_detail=f"{type(exc.cause).__name__}: {exc.cause}")
-    finally:
-        await ops.close()
-    return RepoPreparation(prepared=outcome.prepared, invocations=outcome.invocations)
-
-
-@workflow.defn
+@workflow.defn(name=f"ComponentPreparation-{EXECUTION_GENERATION}")
 class ComponentPreparationWorkflow:
-    """Prepare a selected component from one immutable repository discovery result."""
+    """Prepare one component of one immutable repository discovery result.
+
+    A preparation that raises is a result about this component, not a reason to fail the
+    workflow: the batch has other components, and the agent calls already made are the only
+    evidence about why it failed.
+    """
 
     @workflow.run
-    async def run(self, args: dict) -> RepoPreparation:
-        return await _prepare_result(RepoSnapshot.model_validate(args["snapshot"]),
-                                     StackFingerprint.model_validate(args["stack"]),
-                                     args["component_root"])
+    async def run(self, args: ComponentPreparationArgs) -> RepoPreparation:
+        ops = TemporalOps(root_id=args.batch_id, fingerprint=args.fingerprint)
+        try:
+            outcome = await run_prepare(ops, args.snapshot, args.stack,
+                                        component_root=args.component_root)
+        except PrepareFailed as exc:
+            if is_cancelled_exception(exc.cause):
+                raise exc.cause from exc
+            return RepoPreparation(
+                prepared=PreparedEnvironment(snapshot=args.snapshot, stack=args.stack,
+                                             status="failed",
+                                             reason=f"prepare_failed: {type(exc.cause).__name__}"),
+                invocations=exc.invocations,
+                failure_reason=classify_pipeline_failure(exc.cause),
+                failure_detail=describe_failure(exc.cause))
+        finally:
+            await ops.close()
+        return RepoPreparation(prepared=outcome.prepared, invocations=outcome.invocations)
 
 
-
-@workflow.defn
+@workflow.defn(name=f"FindingTriage-{EXECUTION_GENERATION}")
 class FindingTriageWorkflow:
     @workflow.run
-    async def run(self, args: dict) -> TriageRunOutput:
-        # Memoize absence during old-history replay before its first activity/frontier.
-        atomic_intake = workflow.patched("intake-atomic-inline-v1")
-        source_guidance = atomic_intake and workflow.patched("intake-source-guidance-v1")
-        inp = FindingInput.model_validate(args["finding_input"])
-        prepared = PreparedEnvironment.model_validate(args["prepared"])
-        ops = TemporalOps(intake_atomic_inline=atomic_intake, intake_source_guidance=source_guidance)
-        invocations = []
-        state = None
-        preserve_partial_failure = workflow.patched("finding-partial-failure-v1")
-
-        # F0: normalize, extract from prose if needed, resolve location.
-        finding = await workflow.execute_activity(activities.normalize_finding_activity, inp, **_ACT)
+    async def run(self, args: FindingTriageArgs) -> TriageRunOutput:
+        ops = TemporalOps(root_id=args.batch_id,
+                          fingerprint=Finding.compute_fingerprint(args.finding_input))
         try:
-            if adapters.needs_extraction(finding) and finding.description.strip():
-                deps = AgentDeps(repo_path=prepared.snapshot.path, report_text=finding.description)
-                outcome = await ops.run_agent(
-                    "intake", ops.intake_prompt("Extract the missing finding fields from the report text, "
-                                            "with citations.", {"report": finding.description,
-                                                                "known": finding}), deps)
-                invocations.append(outcome)
-                finding = adapters.merge_extraction(finding, outcome.output)
-            resolved = await workflow.execute_activity(
-                activities.resolve_location_activity,
-                {"finding": finding.model_dump(), "repo_path": prepared.snapshot.path}, **_ACT)
-            if resolved is None:
-                return _inconclusive(finding, InconclusiveReason.needs_info,
-                                     "The finding's location could not be resolved in the repository.",
-                                     prepared.status, invocations, execution_manifest(prepared))
-            finding = Finding.model_validate(resolved)
-
-            if workflow.patched("resolved-component-v1"):
-                try:
-                    rebound = await prepare_resolved_component(ops, finding, prepared)
-                    if rebound is not None:
-                        prepared = rebound.prepared
-                        invocations.extend(rebound.invocations)
-                except PrepareFailed as exc:
-                    if is_cancelled_exception(exc.cause):
-                        raise exc.cause from exc
-                    return _inconclusive(finding, classify_pipeline_failure(exc.cause),
-                        f"Preparing the resolved component failed: {type(exc.cause).__name__}: {exc.cause}",
-                        "failed", invocations + exc.invocations, execution_manifest(prepared))
-            if prepared.status != "ready":
-                return _inconclusive(finding, InconclusiveReason.environment_unbuildable,
-                                     f"The environment could not be prepared: {prepared.reason}.",
-                                     prepared.status, invocations, execution_manifest(prepared))
-
-            state = TriageState(finding=finding, prepared=prepared)
-            result = await TRIAGE_GRAPH.run(state=state, deps=TriageDeps(ops=ops), inputs=PreFilter())
-            return TriageRunOutput(finding=finding, result=result, prepared_status=prepared.status,
-                                   invocations=invocations + state.invocations,
-                                   context=state.context, executions=state.executions,
-                                   manifest=execution_manifest(prepared))
-        except (Exception, asyncio.CancelledError) as exc:
-            if is_cancelled_exception(exc) or not preserve_partial_failure:
-                raise
-            partial = invocations + (state.invocations if state else [])
-            return _inconclusive(finding, classify_pipeline_failure(exc),
-                f"Finding assessment failed: {type(exc).__name__}: {exc}", "failed", partial,
-                execution_manifest(prepared), context=state.context if state else None,
-                executions=state.executions if state else None)
-
+            return await triage_finding(ops, args.finding_input, args.prepared,
+                                        is_cancelled=is_cancelled_exception)
         finally:
             await ops.close()
 
-@workflow.defn
+
+@workflow.defn(name=f"TriageBatch-{EXECUTION_GENERATION}")
 class TriageBatchWorkflow:
     # The plugin registers every durable agent's activities once, from this workflow, for
     # the whole worker (the other workflows call the same agents).
     __pydantic_ai_agents__ = AGENT_LIST
 
     @workflow.run
-    async def run(self, args: dict) -> list[TriageRunOutput]:
+    async def run(self, args: BatchArgs) -> list[TriageRunOutput]:
+        self._batch_id = args.batch_id
         try:
-            if args.get("batch_id") and workflow.patched("root-elapsed-budget-v1"):
-                # Set before the first activity so an already-expired batch is persisted too.
-                self._batch_id = args["batch_id"]
-                self._durable = True
-                remaining = await workflow.execute_activity(remaining_budget_time_activity,
-                    self._batch_id, **_ACT)
-                deadline = asyncio.timeout(remaining)
-                try:
-                    async with deadline:
-                        return await self._run_batch(args)
-                except (Exception, asyncio.CancelledError) as exc:
-                    if deadline.expired():
-                        raise ApplicationError("Root elapsed-time budget exhausted",
-                            type="UsageLimitExceeded", non_retryable=True) from exc
-                    raise
-            return await self._run_batch(args)
+            # Read before the first other activity so an already-expired batch is persisted too.
+            remaining = await workflow.execute_activity(remaining_budget_time_activity,
+                                                        self._batch_id, **SHORT)
+            deadline = asyncio.timeout(remaining)
+            try:
+                async with deadline:
+                    return await self._run_batch(args)
+            except (Exception, asyncio.CancelledError) as exc:
+                if deadline.expired():
+                    raise ApplicationError("Root elapsed-time budget exhausted",
+                        type="UsageLimitExceeded", non_retryable=True) from exc
+                raise
         except (Exception, asyncio.CancelledError) as exc:
-            if getattr(self, "_durable", False):
-                status = "cancelled" if is_cancelled_exception(exc) else "failed"
-                await asyncio.shield(workflow.execute_activity(finish_batch_activity,
-                    {"batch_id": self._batch_id, "status": status,
-                     "detail": f"Batch {status}: {type(exc).__name__}"},
-                    **_terminal_activity_options()))
+            status = BatchStatus.cancelled if is_cancelled_exception(exc) else BatchStatus.failed
+            await asyncio.shield(workflow.execute_activity(finish_batch_activity, FinishBatchArgs(
+                batch_id=self._batch_id, status=status,
+                detail=f"Batch {status}: {type(exc).__name__}"), **TERMINAL))
             raise
 
-    async def _run_batch(self, args: dict) -> list[TriageRunOutput]:
-        self._batch_id = args.get("batch_id")
-        self._durable = workflow.patched("durable-output-v1") and bool(self._batch_id)
-        findings = [FindingInput.model_validate(f) for f in args["findings"]]
-        if self._durable:
-            findings = list({Finding.compute_fingerprint(f): f for f in findings}.values())
-        concurrency = max(1, min(32, int(args.get("per_repo_concurrency", 4))))
-
-        groups: dict[tuple[str, str, str | None], list[FindingInput]] = defaultdict(list)
-        for f in findings:
-            groups[(f.repo_url, f.revision, f.source_mode)].append(f)
-
-        results: dict[int, TriageRunOutput] = {}
+    async def _run_batch(self, args: BatchArgs) -> list[TriageRunOutput]:
+        findings = dedupe_by_fingerprint(args.findings)
+        concurrency = clamp_concurrency(args.per_repo_concurrency)
         order = {id(f): i for i, f in enumerate(findings)}
-
-        for (repo_url, revision, source_mode), group in groups.items():
-            group.sort(key=lambda f: (f.cwe or "", f.file_path or ""))
-            if self._durable:
-                for finding_input in group:
-                    await self._progress(finding_input, "preparing")
-            if self._durable and workflow.patched("component-preparation-v1"):
-                results.update(await self._prepare_components(group, order, repo_url, revision, source_mode, concurrency))
-                continue
-            try:
-                prep = await workflow.execute_child_workflow(
-                    RepoPreparationWorkflow.run, RepoRef(repo_url=repo_url, revision=revision, source_mode=source_mode),
-                    id=(f"prep:{workflow.info().workflow_id}:{Finding.compute_fingerprint(group[0])}"
-                        if workflow.patched("scoped-preparation-v1") else f"prep:{repo_url}:{revision}"), task_queue=workflow.info().task_queue,
-                )
-            except Exception as e:  # noqa: BLE001 - one repo must not sink the batch
-                if is_cancelled_exception(e):
-                    raise
-                # The child workflow itself failed (its checkout activity exhausted its
-                # attempts, say), which `RepoPreparation` cannot express because it never got
-                # to return one. Temporal wraps the cause, so classify on that.
-                cause = getattr(e, "cause", None) or e
-                prep = RepoPreparation(
-                    failure_reason=classify_pipeline_failure(cause),
-                    failure_detail=f"{type(cause).__name__}: {cause}")
-            if not prep.ok:
-                results.update(await self._abandon_group(group, order, prep, repo_url))
-                continue
-            for f, out in zip(group,
-                              await self._triage_group(group, prep.prepared.model_dump(), concurrency, prep.invocations),
-                              strict=True):
-                results[order[id(f)]] = out
-
-        if self._durable:
-            await workflow.execute_activity(finish_batch_activity, {"batch_id": self._batch_id},
-                                            **_terminal_activity_options())
+        results: dict[int, TriageRunOutput] = {}
+        for (repo_url, revision, source_mode), group in group_by_repository(findings).items():
+            for finding_input in group:
+                await self._progress(finding_input, "preparing")
+            ref = RepoRef(repo_url=repo_url, revision=revision, source_mode=source_mode)
+            results.update(await self._repository(ref, group, order, concurrency))
+        await workflow.execute_activity(finish_batch_activity, FinishBatchArgs(
+            batch_id=self._batch_id, status=BatchStatus.complete, detail=""), **TERMINAL)
         return [results[i] for i in sorted(results)]
 
-    async def _prepare_components(self, group: list[FindingInput], order: dict[int, int],
-                                  repo_url: str, revision: str, source_mode,
-                                  concurrency: int) -> dict[int, TriageRunOutput]:
+    async def _repository(self, ref: RepoRef, group: list[FindingInput], order: dict[int, int],
+                          concurrency: int) -> dict[int, TriageRunOutput]:
         """Discover once; prepare and account separately for incompatible component scopes."""
         try:
-            snapshot = await workflow.execute_activity(activities.checkout_activity,
-                RepoRef(repo_url=repo_url, revision=revision, source_mode=source_mode), **_checkout_options())
-            stack = await workflow.execute_activity(activities.detect_stack_activity, snapshot, **_ACT)
+            snapshot = await workflow.execute_activity(activities.checkout_activity, ref,
+                                                       **CHECKOUT)
+            stack = await workflow.execute_activity(activities.detect_stack_activity, snapshot,
+                                                    **SHORT)
         except Exception as exc:
             if is_cancelled_exception(exc):
                 raise
-            cause = getattr(exc, "cause", None) or exc
-            return await self._abandon_group(group, order, RepoPreparation(
-                failure_reason=classify_pipeline_failure(cause),
-                failure_detail=f"{type(cause).__name__}: {cause}"), repo_url)
-        groups: dict[str, list[FindingInput]] = defaultdict(list)
-        for finding in group:
-            groups[preparation_key(owning_component(stack, finding.file_path))].append(finding)
+            return await self._abandon_group(group, order, _failed_preparation(exc), ref.repo_url)
         results: dict[int, TriageRunOutput] = {}
-        for component_group in groups.values():
-            component = owning_component(stack, component_group[0].file_path)
-            narrowed = component_stack(stack, component) if component else stack
+        for component in split_components(stack, group):
+            first = Finding.compute_fingerprint(component.findings[0])
             try:
-                prep = await workflow.execute_child_workflow(ComponentPreparationWorkflow.run,
-                    {"snapshot": snapshot.model_dump(), "stack": narrowed.model_dump(),
-                     "component_root": component.root if component else "."},
-                    id=f"prep:{workflow.info().workflow_id}:{Finding.compute_fingerprint(component_group[0])}")
-            except Exception as exc:
+                prep = await workflow.execute_child_workflow(
+                    ComponentPreparationWorkflow.run,
+                    ComponentPreparationArgs(batch_id=self._batch_id, fingerprint=first,
+                                             snapshot=snapshot, stack=component.stack,
+                                             component_root=component.root),
+                    id=f"prep:{workflow.info().workflow_id}:{first}")
+            except Exception as exc:  # noqa: BLE001 - one component must not sink the batch
                 if is_cancelled_exception(exc):
                     raise
-                cause = getattr(exc, "cause", None) or exc
-                prep = RepoPreparation(failure_reason=classify_pipeline_failure(cause),
-                                       failure_detail=f"{type(cause).__name__}: {cause}")
+                prep = _failed_preparation(exc)
             if not prep.ok:
-                results.update(await self._abandon_group(component_group, order, prep, repo_url))
+                results.update(await self._abandon_group(component.findings, order, prep,
+                                                         ref.repo_url))
                 continue
-            outputs = await self._triage_group(component_group, prep.prepared.model_dump(),
-                                                concurrency, prep.invocations)
+            outputs = await self._triage_group(component.findings, prep, concurrency)
             results.update({order[id(finding)]: output
-                            for finding, output in zip(component_group, outputs, strict=True)})
+                            for finding, output in zip(component.findings, outputs, strict=True)})
         return results
 
-    async def _abandon_group(self, group, order: dict, prep: RepoPreparation,
-                             repo_url: str) -> dict[int, TriageRunOutput]:
-        """Report every finding of a repository whose preparation failed, and no others.
-
-        Mirrors ``triage_batch_local``: preparation is shared by a repo's findings, so its
-        failure decides all of them and nothing else in the batch.
+    async def _abandon_group(self, group: list[FindingInput], order: dict[int, int],
+                             prep: RepoPreparation, repo_url: str) -> dict[int, TriageRunOutput]:
+        """Report every finding of a component whose preparation failed, and no others.
 
         The shared preparation's invocations are attributed to the *first* finding of the group
         only. Attributing them to all of them would multiply one repository's spend by its
         finding count in every cost figure downstream; attributing them to none would lose the
-        per-agent record entirely, which is the defect this exists to fix. Naming the agents in
-        each rationale keeps the failure legible on the others.
+        per-agent record entirely. Naming the agents in each rationale keeps the failure legible
+        on the others.
         """
         ran = ", ".join(i.agent for i in prep.invocations) or "none"
         rationale = (f"Preparing {repo_url} failed after {len(prep.invocations)} agent call(s) "
                      f"({ran}): {prep.failure_detail}")
         status = prep.prepared.status if prep.prepared else "failed"
+        manifest = execution_manifest(prep.prepared) if prep.prepared else {}
         out: dict[int, TriageRunOutput] = {}
         for i, f in enumerate(group):
-            finding = await workflow.execute_activity(
-                activities.normalize_finding_activity, f, **_ACT)
-            out[order[id(f)]] = _inconclusive(
-                finding, prep.failure_reason, rationale, status,
-                prep.invocations if i == 0 else [],
-                execution_manifest(prep.prepared) if prep.prepared else {})
-            if self._durable:
-                await self._save(out[order[id(f)]])
+            finding = Finding.from_input(f)
+            output = inconclusive_output(finding, prep.failure_reason, rationale, status,
+                                         prep.invocations if i == 0 else [], manifest)
+            await self._save(output)
+            out[order[id(f)]] = output
         return out
 
-    async def _triage_group(self, group, prepared_dump: dict, concurrency: int, preparation_invocations=None) -> list[TriageRunOutput]:
+    async def _triage_group(self, group: list[FindingInput], prep: RepoPreparation,
+                            concurrency: int) -> list[TriageRunOutput]:
         async def triage(f: FindingInput) -> TriageRunOutput:
-            if self._durable:
-                await self._progress(f, "assessing")
+            await self._progress(f, "assessing")
             try:
                 output = await workflow.execute_child_workflow(
                     FindingTriageWorkflow.run,
-                {"finding_input": f.model_dump(), "prepared": prepared_dump},
+                    FindingTriageArgs(batch_id=self._batch_id, finding_input=f,
+                                      prepared=prep.prepared),
                     id=f"triage:{Finding.compute_fingerprint(f)}:{workflow.info().workflow_id}",
                 )
-            except Exception as exc:
-                if is_cancelled_exception(exc) or not self._durable:
-                    raise
-                finding = await workflow.execute_activity(activities.normalize_finding_activity, f, **_ACT)
-                cause = getattr(exc, "cause", None) or exc
-                output = _inconclusive(finding, classify_pipeline_failure(cause),
-                    f"Finding workflow failed: {type(cause).__name__}: {cause}", "failed")
-            if self._durable:
-                if f is group[0]:
-                    output.invocations = list(preparation_invocations or []) + output.invocations
-                await self._save(output)
-            return output
-
-        # Warm-then-fan-out: the first finding writes the shared cache prefix alone, then
-        # the rest read it concurrently under a per-repo limit (§6.2).
-        sem = asyncio.Semaphore(concurrency)
-
-        async def bounded(f: FindingInput) -> TriageRunOutput:
-            async with sem:
-                return await triage(f)
-
-        first = await triage(group[0])
-        rest = await asyncio.gather(*(bounded(f) for f in group[1:]))
-        return [first, *rest]
-
-
-    async def _progress(self, finding: FindingInput, phase: str) -> None:
-        await workflow.execute_activity(progress_activity,
-            {"batch_id": self._batch_id, "fingerprint": Finding.compute_fingerprint(finding),
-             "phase": phase, "event_key": phase}, **_ACT)
-
-    async def _save(self, output: TriageRunOutput) -> None:
-        payload = {"batch_id": self._batch_id, "output": output.model_dump(mode="json")}
-        run_id = await workflow.execute_activity(save_output_activity, payload,
-                                                 **_terminal_activity_options())
-        if workflow.patched("durable-ado-writeback-v1"):
-            try:
-                await workflow.execute_activity(writeback_output_activity,
-                    {**payload, "run_id": run_id}, **_ACT)
-            except Exception as exc:  # Optional writeback cannot discard a completed assessment.
+            except Exception as exc:  # noqa: BLE001 - one finding must not sink the batch
                 if is_cancelled_exception(exc):
                     raise
-                try:
-                    await workflow.execute_activity(progress_activity,
-                        {"batch_id": self._batch_id,
-                         "fingerprint": output.finding.fingerprint,
-                         "phase": "writeback_failed", "event_key": "writeback_failed",
-                         "detail": f"ADO writeback failed: {type(exc).__name__}: {exc}"}, **_ACT)
-                except Exception as progress_exc:
-                    if is_cancelled_exception(progress_exc):
-                        raise
+                finding = Finding.from_input(f)
+                cause = failure_cause(exc)
+                output = inconclusive_output(finding, classify_pipeline_failure(cause),
+                    f"Finding workflow failed: {describe_failure(cause)}", "failed")
+            if f is group[0]:
+                # Shared preparation is attributed once, to the warm finding.
+                output.invocations = list(prep.invocations) + output.invocations
+            await self._save(output)
+            return output
+
+        return await warm_then_fan_out(group, triage, concurrency)
+
+    async def _progress(self, finding: FindingInput, phase: str) -> None:
+        await workflow.execute_activity(progress_activity, ProgressArgs(
+            batch_id=self._batch_id, fingerprint=Finding.compute_fingerprint(finding),
+            phase=phase, event_key=phase), **SHORT)
+
+    async def _save(self, output: TriageRunOutput) -> None:
+        run_id = await workflow.execute_activity(
+            save_output_activity, SaveOutputArgs(batch_id=self._batch_id, output=output),
+            **TERMINAL)
+        try:
+            await workflow.execute_activity(writeback_output_activity,
+                                            WritebackArgs(run_id=run_id, output=output), **SHORT)
+        except Exception as exc:  # Optional writeback cannot discard a completed assessment.
+            if is_cancelled_exception(exc):
+                raise
+            try:
+                await workflow.execute_activity(progress_activity, ProgressArgs(
+                    batch_id=self._batch_id, fingerprint=output.finding.fingerprint,
+                    phase="writeback_failed", event_key="writeback_failed",
+                    detail=f"ADO writeback failed: {describe_failure(exc)}"), **SHORT)
+            except Exception as progress_exc:
+                if is_cancelled_exception(progress_exc):
+                    raise

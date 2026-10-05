@@ -8,6 +8,7 @@ caps (D6).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from infosec_harness.agents.deps import AgentDeps
@@ -19,9 +20,11 @@ from infosec_harness.domain.models import (
     PreparedEnvironment,
     RepoProfile,
     RepoSnapshot,
+    SmokeResult,
     StackFingerprint,
 )
 from infosec_harness.graph.ops import AgentOutcome, Ops
+from infosec_harness.repo.components import component_stack, owning_component
 from infosec_harness.settings import get_settings
 
 
@@ -68,21 +71,56 @@ async def run_prepare(ops: Ops, snapshot: RepoSnapshot, stack: StackFingerprint,
         raise PrepareFailed(e, invocations) from e
 
 
+_BUILD_FAILED = "The build failed; diagnose the log and return a revised EnvironmentSpec."
+_PARTIAL_BUILD = ("The full build failed; plan the smallest buildable unit containing the code and "
+                  "return a partial EnvironmentSpec.")
+_READINESS_FAILED = ("The image built, but its offline readiness check failed. Repair the "
+                     "environment or test-runner setup and return a revised EnvironmentSpec.")
+
+
+async def revise_environment(ops: Ops, agent: str, instruction: str, evidence: dict, *,
+                             failed_spec: EnvironmentSpec, tried: list[EnvironmentSpec],
+                             snapshot: RepoSnapshot, stack: StackFingerprint,
+                             profile: RepoProfile | None, record: list[AgentOutcome],
+                             bind: Callable[[EnvironmentSpec], EnvironmentSpec] = lambda s: s,
+                             ) -> EnvironmentSpec | None:
+    """Ask ``agent`` for a revised spec from one failure's evidence.
+
+    Returns the revision, appended to ``tried``, or None when it repeats a plan already tried:
+    rebuilding an equivalent plan cannot change the result and only spends the budget. Shared
+    by preparation's repair loops and the probe-time environment repair, so every revision is
+    asked the same way: the failed spec, the evidence, every attempt so far, and the failed
+    image to inspect.
+    """
+    outcome = await ops.run_agent(
+        agent,
+        render_prompt(instruction, {"failed_spec": failed_spec, **evidence,
+                                    "previous_attempts": [t.model_dump() for t in tried]},
+                      stack=stack, profile=profile),
+        AgentDeps(repo_path=snapshot.path, sandbox_image=failed_spec.base_image,
+                  source_files=stack.source_files),
+        record=record,
+    )
+    revised = bind(outcome.output)
+    if revised in tried:
+        return None
+    tried.append(revised)
+    return revised
+
+
 async def _run_prepare(ops: Ops, snapshot: RepoSnapshot, stack: StackFingerprint,
                        invocations: list[AgentOutcome], *, component_root: str) -> PrepareOutcome:
     """The preparation itself. ``invocations`` is owned by :func:`run_prepare` so that the
     calls completed before a failure survive it."""
     s = get_settings()
-    # Sum of the stack's per-language file counts: how much repository the agents have to
-    # explore, which is what their request budgets scale on.
-    source_files = sum((stack.languages or {}).values()) or None
-    deps = AgentDeps(repo_path=snapshot.path, source_files=source_files)
-    component_context = ({"component_root": component_root}
-                         if component_root not in ("", ".") else {})
+    whole_repository = component_root in ("", ".")
+    # How much repository the agents have to explore, which is what their budgets scale on.
+    deps = AgentDeps(repo_path=snapshot.path, source_files=stack.source_files)
+    component_context = {} if whole_repository else {"component_root": component_root}
 
     def bind_component(spec: EnvironmentSpec) -> EnvironmentSpec:
         """Confine every plan and repair to the selected component's working directory."""
-        if component_root in ("", "."):
+        if whole_repository:
             return spec
         return spec.model_copy(update={"scope": "partial", "module_path": component_root})
 
@@ -93,20 +131,26 @@ async def _run_prepare(ops: Ops, snapshot: RepoSnapshot, stack: StackFingerprint
         )
 
     # P2 recon
-    recon_instruction = ("Profile this repository." if component_root in ("", ".")
-                         else "Profile this repository component.")
     recon = await ops.run_agent(
-        "recon", render_prompt(recon_instruction, component_context, stack=stack), deps
-    )
-    invocations.append(recon)
+        "recon",
+        render_prompt("Profile this repository." if whole_repository
+                      else "Profile this repository component.", component_context, stack=stack),
+        deps, record=invocations)
     profile: RepoProfile = recon.output
+    tried: list[EnvironmentSpec] = []
+
+    async def revise(agent: str, instruction: str, failed: BuildResult,
+                     evidence: dict) -> EnvironmentSpec | None:
+        return await revise_environment(
+            ops, agent, instruction, evidence, failed_spec=failed.spec, tried=tried,
+            snapshot=snapshot, stack=stack, profile=profile, record=invocations,
+            bind=bind_component)
 
     # P3a a recipe that already built for this shape of repository, if there is one. The
     # expensive parts of a spec -- the surefire warm-up, cpanm's --local-lib and its matching
     # PERL5LIB, -Dmaven.repo.local on both sides of the two-path layout -- are properties of the
     # stack, not the project, so re-deriving them per repo is both slow and a chance to get them
     # wrong. A miss costs nothing; a bad hit costs one build and is then evicted.
-    spec: EnvironmentSpec | None = None
     build: BuildResult | None = None
     from_recipe = False
     cached = await ops.lookup_recipe(stack)
@@ -114,124 +158,67 @@ async def _run_prepare(ops: Ops, snapshot: RepoSnapshot, stack: StackFingerprint
         cached = bind_component(cached)
         build = await ops.build_environment(snapshot, cached)
         if build.ok:
-            spec, from_recipe = cached, True
+            tried.append(cached)
+            from_recipe = True
         else:
             # Evict before falling back, so the next repo of this shape does not pay for it too.
             await ops.record_recipe(stack, cached, worked=False)
             build = None
 
     # P3b env planner, unless the recipe already produced a working image.
-    if spec is None:
-        planner_instruction = (
-            "Design a container environment that can run one unit test of this repo."
-            if component_root in ("", ".") else
-            "Design a container environment that can run one unit test of this repository component."
-        )
+    if build is None:
         planned = await ops.run_agent(
             "env-planner",
-            render_prompt(planner_instruction, component_context, stack=stack, profile=profile),
-            deps,
-        )
-        invocations.append(planned)
+            render_prompt(
+                "Design a container environment that can run one unit test of this repo."
+                if whole_repository else
+                "Design a container environment that can run one unit test of this repository "
+                "component.", component_context, stack=stack, profile=profile),
+            deps, record=invocations)
         spec = bind_component(planned.output)
-
-    attempts = 0
-    if build is None:
+        tried.append(spec)
         build = await ops.build_environment(snapshot, spec)
 
-    # P5 full-build repair loop
-    tried_specs = [spec]
+    # P5 full-build repair, then P5b the partial-build fallback: each revises until a build
+    # succeeds, its cap is reached, or it repeats a plan already tried.
+    attempts = partial_attempts = 0
     while not build.ok and attempts < s.max_build_repairs:
         attempts += 1
-        repair = await ops.run_agent(
-            "build-repair",
-            render_prompt(
-                "The build failed; diagnose the log and return a revised EnvironmentSpec.",
-                {"failed_spec": build.spec, "build_error": build.error_excerpt,
-                 "previous_attempts": [t.model_dump() for t in tried_specs]},
-                stack=stack, profile=profile,
-            ),
-            AgentDeps(repo_path=snapshot.path, sandbox_image=build.spec.base_image,
-                      source_files=source_files),
-        )
-        invocations.append(repair)
-        spec = bind_component(repair.output)
-        if spec in tried_specs:
-            # Rebuilding an equivalent plan cannot change the result and only spends the shared
-            # preparation budget. Fall through to the distinct partial-build strategy.
+        spec = await revise("build-repair", _BUILD_FAILED, build,
+                            {"build_error": build.error_excerpt})
+        if spec is None:
             break
-        tried_specs.append(spec)
         build = await ops.build_environment(snapshot, spec)
-
-    # P5b partial-build fallback
-    partial_attempts = 0
     while not build.ok and partial_attempts < s.max_partial_build_attempts:
         partial_attempts += 1
-        partial = await ops.run_agent(
-            "partial-build",
-            render_prompt(
-                "The full build failed; plan the smallest buildable unit containing the code and "
-                "return a partial EnvironmentSpec.",
-                {"failed_spec": build.spec, "build_error": build.error_excerpt,
-                 "previous_attempts": [t.model_dump() for t in tried_specs]},
-                stack=stack, profile=profile,
-            ),
-            AgentDeps(repo_path=snapshot.path, sandbox_image=build.spec.base_image,
-                      source_files=source_files),
-        )
-        invocations.append(partial)
-        spec = bind_component(partial.output)
-        if spec in tried_specs:
+        spec = await revise("partial-build", _PARTIAL_BUILD, build,
+                            {"build_error": build.error_excerpt})
+        if spec is None:
             break
-        tried_specs.append(spec)
         build = await ops.build_environment(snapshot, spec)
-
-    total_attempts = attempts + partial_attempts
     if not build.ok:
         return PrepareOutcome(
-            prepared(status="unbuildable", profile=profile, build=build, attempts=total_attempts,
-                     reason="environment_unbuildable"),
+            prepared(status="unbuildable", profile=profile, build=build,
+                     attempts=attempts + partial_attempts, reason="environment_unbuildable"),
             invocations,
         )
 
     # P6 smoke test. The spec's own test command is passed so the runner it names is verified
     # here, where build repair can still act, rather than at probe time as exit 127.
-    # The canary inside the smoke test needs to know which language to write, and which
-    # module to run in for a partial build.
-    top_language = max(stack.languages, key=lambda k: (stack.languages[k], k)) if stack.languages else ""
-    smoke = await ops.smoke_test(build.image_tag, build.spec.test_command,
-                                 language=top_language,
-                                 module_path=build.spec.module_path or "")
+    smoke = await smoke_test(ops, build, stack)
     readiness_reason = ""
     while not smoke.ok and attempts < s.max_build_repairs:
         attempts += 1
-        repair = await ops.run_agent(
-            "build-repair",
-            render_prompt(
-                "The image built, but its offline readiness check failed. Repair the environment "
-                "or test-runner setup and return a revised EnvironmentSpec.",
-                {"failed_spec": build.spec, "readiness_error": smoke.output_excerpt,
-                 "previous_attempts": [t.model_dump() for t in tried_specs]},
-                stack=stack, profile=profile,
-            ),
-            AgentDeps(repo_path=snapshot.path, sandbox_image=build.spec.base_image,
-                      source_files=source_files),
-        )
-        invocations.append(repair)
-        revised = bind_component(repair.output)
-        if revised in tried_specs:
+        revised = await revise("build-repair", _READINESS_FAILED, build,
+                               {"readiness_error": smoke.output_excerpt})
+        if revised is None:
             readiness_reason = "readiness_repair_no_progress"
             break
-        tried_specs.append(revised)
         build = await ops.build_environment(snapshot, revised)
         if not build.ok:
             readiness_reason = "readiness_repair_build_failed"
             break
-        smoke = await ops.smoke_test(build.image_tag, build.spec.test_command,
-                                     language=top_language,
-                                     module_path=build.spec.module_path or "")
-    total_attempts = attempts + partial_attempts
-    status = "ready" if smoke.ok else "failed"
+        smoke = await smoke_test(ops, build, stack)
     # Recorded only after the smoke test, because a built image whose runner is missing is not
     # a working recipe -- that is the exact failure the smoke test was added to catch. The one
     # case that needs nothing written is a cached spec that worked again: re-recording it would
@@ -240,17 +227,24 @@ async def _run_prepare(ops: Ops, snapshot: RepoSnapshot, stack: StackFingerprint
     if not (from_recipe and smoke.ok):
         await ops.record_recipe(stack, build.spec, worked=smoke.ok)
     return PrepareOutcome(
-        prepared(status=status, profile=profile, build=build, smoke=smoke, attempts=total_attempts,
+        prepared(status="ready" if smoke.ok else "failed", profile=profile, build=build,
+                 smoke=smoke, attempts=attempts + partial_attempts,
                  reason="" if smoke.ok else (readiness_reason or "smoke_test_failed")),
         invocations,
     )
 
 
+async def smoke_test(ops: Ops, build: BuildResult, stack: StackFingerprint) -> SmokeResult:
+    """Smoke-test a built image: the canary needs the language to write and, for a partial
+    build, the module to run in."""
+    return await ops.smoke_test(build.image_tag, build.spec.test_command,
+                                language=stack.top_language,
+                                module_path=build.spec.module_path or "")
+
+
 async def prepare_resolved_component(ops: Ops, finding: Finding,
                                      prepared: PreparedEnvironment) -> PrepareOutcome | None:
     """Rebind a description-only finding when intake discovers a nested component."""
-    from infosec_harness.repo.components import component_stack, owning_component
-
     path = finding.location.file_path if finding.location else None
     component = owning_component(prepared.stack, path)
     current_root = prepared.build.spec.module_path if prepared.build else None

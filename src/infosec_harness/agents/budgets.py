@@ -2,7 +2,7 @@
 
 The agent playbook (§9) requires every production agent to carry per-request and per-run
 limits, in the order "prevent runaway execution" first. That ordering is the point: the
-repair storm measured in docs/validation/LIVE_VALIDATION.md grew one agent's context from 8.8k to 24k
+repair storm measured in docs/evidence/2026-09-25-live-model-validation/LIVE_VALIDATION.md grew one agent's context from 8.8k to 24k
 tokens over three turns before anyone noticed by eye. A budget turns that into a bounded,
 named failure.
 
@@ -12,14 +12,14 @@ declarative contract and move with an overlay during experiments.
 
 from __future__ import annotations
 
-import hashlib
-import json
 import math
 from decimal import Decimal
 from typing import Any
 
 from pydantic import BaseModel, Field
 from pydantic_ai.usage import UsageLimits
+
+from infosec_harness.domain.canonical import canonical_bytes, sha256_hex
 
 
 class RunBudget(BaseModel):
@@ -38,7 +38,7 @@ class RunBudget(BaseModel):
     So:
 
     * `max_input_tokens_per_request` is the brake — it catches an oversized context, which
-      is the failure the 8.8k -> 24k repair storm in docs/validation/LIVE_VALIDATION.md actually was;
+      is the failure the 8.8k -> 24k repair storm in docs/evidence/2026-09-25-live-model-validation/LIVE_VALIDATION.md actually was;
     * `max_input_tokens` is the run's arithmetic worst case derived from it
       (`max_requests x max_input_tokens_per_request`), exactly as `max_output_tokens` is
       derived from `max_requests x` the per-call output cap. It is a backstop, not the
@@ -79,7 +79,9 @@ class RunBudget(BaseModel):
         exception: it is a per-context brake, and one request's context does not get larger
         because the repository has more files in it.
         """
-        factor = size_factor(source_files)
+        return self._scaled_by(size_factor(source_files))
+
+    def _scaled_by(self, factor: float) -> RunBudget:
         if factor == 1.0:
             return self
         return self.model_copy(update={
@@ -89,11 +91,6 @@ class RunBudget(BaseModel):
             "max_output_tokens": max(1, round(self.max_output_tokens * factor)),
             "max_cost_usd": round(self.max_cost_usd * factor, 6),
         })
-
-    @property
-    def worst_case_input_tokens(self) -> int:
-        """The most input a run can legitimately accumulate within its own request budget."""
-        return self.max_requests * self.max_input_tokens_per_request
 
     def to_usage_limits(self) -> UsageLimits:
         return UsageLimits(
@@ -129,8 +126,8 @@ class BudgetResolution(BaseModel):
 
     @property
     def digest(self) -> str:
-        payload = json.dumps(self.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
-        return hashlib.sha256(payload.encode()).hexdigest()[:16]
+        # Persisted identity: the ASCII-escaped encoding it has always been hashed under.
+        return sha256_hex(canonical_bytes(self.model_dump(mode="json"), ascii_only=True))[:16]
 
     def to_usage_limits(self) -> UsageLimits:
         return self.effective.to_usage_limits()
@@ -184,40 +181,6 @@ def size_factor(source_files: int | None) -> float:
     return min(1.0 + GROWTH_PER_DOUBLING * doublings, MAX_SIZE_FACTOR)
 
 
-def usage_limits_for(agent_name: str, metadata: dict[str, Any] | None,
-                     *, source_files: int | None = None,
-                     root_ceiling: RunBudget | None = None) -> UsageLimits:
-    return resolve_budget(
-        agent_name,
-        metadata,
-        source_files=source_files,
-        root_ceiling=root_ceiling,
-    ).to_usage_limits()
-
-
-def resolve_budget(
-    agent_name: str,
-    metadata: dict[str, Any] | None,
-    *,
-    source_files: int | None = None,
-    root_ceiling: RunBudget | None = None,
-    provider_output_floor: int = 0,
-) -> BudgetResolution:
-    """Resolve the limits passed to PydanticAI and retain every adjustment as provenance.
-
-    A root ceiling can only tighten a member budget. This helper is shared by production and
-    eval callers so a calibration overlay changes the limits that execute, not just a report.
-    """
-    requested = run_budget(agent_name, metadata)
-    return resolve_declared_budget(
-        agent_name,
-        requested,
-        source_files=source_files,
-        root_ceiling=root_ceiling,
-        provider_output_floor=provider_output_floor,
-    )
-
-
 def resolve_declared_budget(
     agent_name: str,
     requested: RunBudget,
@@ -226,13 +189,14 @@ def resolve_declared_budget(
     root_ceiling: RunBudget | None = None,
     provider_output_floor: int = 0,
 ) -> BudgetResolution:
-    """Resolve an already-loaded budget without file or environment access.
+    """Resolve the limits passed to PydanticAI and retain every adjustment as provenance.
 
-    Temporal workflows use this form so scaling remains replay-safe after the worker has
-    loaded the declaration outside workflow execution.
+    Pure: no file or environment access, so Temporal workflows can rescale a declaration the
+    worker loaded outside workflow execution. A root ceiling can only tighten a member budget.
+    Production and evals share it, so a calibration overlay changes the limits that execute.
     """
     factor = size_factor(source_files)
-    scaled = requested.scaled_for(source_files)
+    scaled = requested._scaled_by(factor)
     effective = scaled
     binding: list[str] = []
     if root_ceiling is not None:

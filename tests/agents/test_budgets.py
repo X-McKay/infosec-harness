@@ -1,7 +1,7 @@
 """Every agent declares a run budget, and it is enforced rather than merely documented.
 
 The playbook (§9) puts "prevent runaway execution" first in its control order. The repair
-storm in docs/validation/LIVE_VALIDATION.md is why: one agent's context grew from 8.8k to 24k tokens
+storm in docs/evidence/2026-09-25-live-model-validation/LIVE_VALIDATION.md is why: one agent's context grew from 8.8k to 24k tokens
 across three turns with 6-7k-token outputs, and nothing stopped it — it was noticed by
 reading a trace. A budget turns that into a bounded, named failure.
 """
@@ -11,13 +11,28 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from infosec_harness.agents.budgets import MissingBudget, RunBudget, run_budget, usage_limits_for
-from infosec_harness.agents.registry import AGENT_BINDINGS, agent_usage_limits, load_spec
+from infosec_harness.agents.budgets import (
+    MissingBudget,
+    RunBudget,
+    resolve_declared_budget,
+    run_budget,
+)
+from infosec_harness.agents.registry import BINDINGS, load_spec, resolved_agent_configs
 from infosec_harness.resources import agents_dir
 
 
+def usage_limits_for(name, metadata, *, source_files=None):
+    return resolve_declared_budget(
+        name, run_budget(name, metadata), source_files=source_files).to_usage_limits()
+
+
+def worst_case_input_tokens(budget: RunBudget) -> int:
+    """The most input a run can legitimately accumulate within its own request budget."""
+    return budget.max_requests * budget.max_input_tokens_per_request
+
+
 def test_every_agent_declares_a_run_budget():
-    for name in AGENT_BINDINGS:
+    for name in BINDINGS:
         budget = run_budget(name, load_spec(name).metadata)
         assert budget.max_requests > 0, name
 
@@ -61,7 +76,7 @@ def test_the_per_request_input_ceiling_is_wired_to_the_per_request_limit():
     input per request, while its measured per-request floor on a Java case — instructions,
     tool schemas and task input, before any tool result — is already ~3.2k.
     """
-    for name in AGENT_BINDINGS:
+    for name in BINDINGS:
         budget = run_budget(name, load_spec(name).metadata)
         limits = usage_limits_for(name, load_spec(name).metadata)
         assert limits.per_request_input_tokens_limit == budget.max_input_tokens_per_request, name
@@ -81,15 +96,15 @@ def test_cost_ceiling_is_decimal_so_it_is_exact():
 
 def test_limits_are_precomputed_for_every_agent_the_workflow_can_run():
     """TemporalOps reads these inside a workflow, where loading a spec would be I/O."""
-    limits = agent_usage_limits()
-    assert set(limits) == set(AGENT_BINDINGS)
-    assert all(limits[name].request_limit for name in AGENT_BINDINGS)
+    configs = resolved_agent_configs()
+    assert set(configs) == set(BINDINGS)
+    assert all(configs[name].budget.to_usage_limits().request_limit for name in BINDINGS)
 
 
 def test_a_budget_leaves_room_for_the_measured_worst_case():
     """A ceiling below observed normal operation would fail healthy runs.
 
-    The maxima are from the live-model corpus runs recorded in docs/validation/LIVE_VALIDATION.md, and
+    The maxima are from the live-model corpus runs recorded in docs/evidence/2026-09-25-live-model-validation/LIVE_VALIDATION.md, and
     they are *single-call* observations — so the field they belong against is the per-request
     ceiling. Comparing them with the cumulative ceiling is what made a 16-request agent look
     like it had 12x headroom when it had less than half a request's worth per call.
@@ -115,12 +130,12 @@ def test_the_cumulative_input_ceiling_is_not_below_the_runs_arithmetic_worst_cas
     Deriving the ceiling keeps `max_requests` the operative brake and leaves the per-request
     ceiling as the one that catches an oversized context.
     """
-    for name in AGENT_BINDINGS:
+    for name in BINDINGS:
         budget = run_budget(name, load_spec(name).metadata)
-        assert budget.max_input_tokens >= budget.worst_case_input_tokens, (
+        assert budget.max_input_tokens >= worst_case_input_tokens(budget), (
             f"{name}: max_input_tokens {budget.max_input_tokens} is below the worst case "
             f"{budget.max_requests} requests x {budget.max_input_tokens_per_request} tokens = "
-            f"{budget.worst_case_input_tokens}, so the ceiling can fire on a healthy run"
+            f"{worst_case_input_tokens(budget)}, so the ceiling can fire on a healthy run"
         )
 
 
@@ -128,7 +143,7 @@ def test_raising_the_request_budget_is_caught_by_the_cumulative_input_invariant(
     """The two are coupled; the invariant above must be load-bearing, not incidentally true."""
     budget = run_budget("probe-author", load_spec("probe-author").metadata)
     doubled = budget.model_copy(update={"max_requests": budget.max_requests * 2})
-    assert doubled.max_input_tokens < doubled.worst_case_input_tokens, (
+    assert doubled.max_input_tokens < worst_case_input_tokens(doubled), (
         "this test exists to show the derivation is enforced: raising max_requests without "
         "raising max_input_tokens would put the ceiling back under its own worst case"
     )
@@ -150,7 +165,7 @@ def test_the_output_ceiling_is_not_below_the_runs_arithmetic_worst_case():
     from infosec_harness.agents.registry import spec_path
 
     floor = max(b.min_max_tokens for b in load_models_config().backends.values())
-    for name in AGENT_BINDINGS:
+    for name in BINDINGS:
         spec = yaml.safe_load(spec_path(name).read_text())
         per_call = max((spec.get("model_settings") or {}).get("max_tokens", 0), floor)
         budget = spec["metadata"]["budgets"]
@@ -202,7 +217,7 @@ def test_tool_call_ceilings_scale_with_the_request_budget():
 
     from infosec_harness.agents.registry import spec_path
 
-    for name in AGENT_BINDINGS:
+    for name in BINDINGS:
         spec = yaml.safe_load(spec_path(name).read_text())
         budget = spec["metadata"]["budgets"]
         if not (_capability_names(spec) & TOOL_CAPABILITIES):
@@ -220,7 +235,7 @@ def test_an_agent_with_no_tools_keeps_a_tight_ceiling():
 
     from infosec_harness.agents.registry import spec_path
 
-    for name in AGENT_BINDINGS:
+    for name in BINDINGS:
         spec = yaml.safe_load(spec_path(name).read_text())
         if _capability_names(spec) & TOOL_CAPABILITIES:
             continue
@@ -251,7 +266,7 @@ def test_an_agent_that_accumulates_tool_results_bounds_its_history():
 
     from infosec_harness.agents.registry import DEFAULT_CLEAR_TOOL_TOKENS, spec_path
 
-    for name in AGENT_BINDINGS:
+    for name in BINDINGS:
         spec = yaml.safe_load(spec_path(name).read_text())
         meta = spec["metadata"]
         if not (_capability_names(spec) & READ_TOOL_CAPABILITIES):
@@ -343,14 +358,12 @@ def test_every_ceiling_scales_together_so_the_invariants_survive():
 
 def test_the_derived_input_ceiling_still_matches_its_own_derivation_after_scaling():
     scaled = _recon_budget().scaled_for(500)
-    assert scaled.max_input_tokens >= scaled.worst_case_input_tokens * 0.98
+    assert scaled.max_input_tokens >= worst_case_input_tokens(scaled) * 0.98
 
 
 def test_the_repo_size_reaches_the_limits_a_run_is_given():
     """Threaded end to end: without this the scaling exists and never applies."""
     import yaml
-
-    from infosec_harness.agents.budgets import usage_limits_for
 
     md = yaml.safe_load((agents_dir() / "recon" / "agent.yaml").read_text())["metadata"]
     small = usage_limits_for("recon", md, source_files=3)

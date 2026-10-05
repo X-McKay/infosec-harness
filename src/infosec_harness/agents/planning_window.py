@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from pydantic_ai import RunContext
-from pydantic_ai.capabilities import AbstractCapability, PrepareTools, WrapRunHandler
+from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import ToolDefinition
 from temporalio import workflow
@@ -55,9 +55,6 @@ class PlanningWindow:
             if target is not None and type(requests) is int and 0 <= requests < target
             else []
         )
-
-    def capability(self) -> PrepareTools[AgentDeps]:
-        return PrepareTools(self.prepare_tools)
 
     def diagnostic(self, request_limit: int | None, final_requests: int | None) -> dict[str, Any]:
         target = self.target(request_limit)

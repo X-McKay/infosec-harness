@@ -17,14 +17,13 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from infosec_harness.agents.deps import AgentDeps
 from infosec_harness.agents.registry import build_agent
 from infosec_harness.agents.render import render_prompt
+from infosec_harness.agents.trajectory import trace_calls
 from infosec_harness.domain.models import StackFingerprint
 from infosec_harness.evals.trajectory import (
     AGENT_EXPECTATIONS,
     TrajectoryExpectation,
     check_expectations,
-    count_repeated_calls,
     cwe_skill_prefix,
-    inspect_messages,
 )
 
 
@@ -78,7 +77,8 @@ async def test_trajectory_detects_tools_and_skills():
         [ToolCallPart("read_file", {"path": "app.py", "start_line": 1, "end_line": 5})],
     ])
     result = await _run_context(model)
-    tools, skills = inspect_messages(result.all_messages())
+    trace = trace_calls(result.all_messages())
+    tools, skills = trace.tools, trace.skills
     assert "read_file" in tools
     assert "cwe-89-sql-injection" in skills
     # the read tool actually executed and returned real content (not just recorded)
@@ -93,7 +93,8 @@ async def test_trajectory_flags_missing_tool_and_skill_use():
     # A model that reads nothing and loads no skill must fail the expectation check.
     model = _scripted([])  # goes straight to output
     result = await _run_context(model)
-    tools, skills = inspect_messages(result.all_messages())
+    trace = trace_calls(result.all_messages())
+    tools, skills = trace.tools, trace.skills
     assert tools == [] and skills == []
     base = AGENT_EXPECTATIONS["context"]
     exp = TrajectoryExpectation(tool_groups=base.tool_groups, skill_prefixes=(cwe_skill_prefix("CWE-89"),))
@@ -108,7 +109,8 @@ async def test_wrong_cwe_skill_does_not_satisfy_match():
         [ToolCallPart("read_file", {"path": "app.py"})],
     ])
     result = await _run_context(model)
-    tools, skills = inspect_messages(result.all_messages())
+    trace = trace_calls(result.all_messages())
+    tools, skills = trace.tools, trace.skills
     exp = TrajectoryExpectation(tool_groups=(frozenset({"read_file"}),), skill_prefixes=("cwe-89",))
     res = check_expectations(tools, skills, exp)
     assert res.tools_ok and not res.skills_ok  # read the file, but wrong skill
@@ -150,13 +152,13 @@ def test_reading_different_files_is_not_counted_as_repetition():
     """Legitimate exploration must stay invisible, or the signal is useless noise."""
     messages = _calls(("read_file", {"path": "a.py"}), ("read_file", {"path": "b.py"}),
                       ("describe_callables", {"path": "a.py"}))
-    assert count_repeated_calls(messages) == {}
+    assert trace_calls(messages).repeated == {}
 
 
 def test_the_same_call_made_repeatedly_is_counted():
-    """The distinction inspect_messages cannot make: eight reads of one file vs one read."""
+    """The distinction tool evocation cannot make: eight reads of one file vs one read."""
     messages = _calls(*[("read_file", {"path": "a.py"})] * 8)
-    repeated = count_repeated_calls(messages)
+    repeated = trace_calls(messages).repeated
     assert repeated == {"read_file(path='a.py')": 8}, repeated
 
 
@@ -166,17 +168,38 @@ def test_a_loop_and_legitimate_work_are_distinguishable_at_equal_call_counts():
     """
     working = _calls(*[("read_file", {"path": f"f{i}.py"}) for i in range(6)])
     looping = _calls(*[("read_file", {"path": "f0.py"}) for _ in range(6)])
-    assert inspect_messages(working) == inspect_messages(looping), "premise: indistinguishable before"
-    assert count_repeated_calls(working) == {}
-    assert count_repeated_calls(looping) == {"read_file(path='f0.py')": 6}
+    assert (trace_calls(working).tools, trace_calls(working).skills) == (
+        trace_calls(looping).tools, trace_calls(looping).skills), "premise: indistinguishable before"
+    assert trace_calls(working).repeated == {}
+    assert trace_calls(looping).repeated == {"read_file(path='f0.py')": 6}
 
 
 def test_argument_order_does_not_create_spurious_distinct_keys():
     messages = _calls(("read_file", {"path": "a.py", "start_line": 1}),
                       ("read_file", {"start_line": 1, "path": "a.py"}))
-    assert count_repeated_calls(messages) == {"read_file(path='a.py', start_line=1)": 2}
+    assert trace_calls(messages).repeated == {"read_file(path='a.py', start_line=1)": 2}
 
 
 def test_output_tool_calls_are_excluded_like_they_are_from_evocation():
     messages = _calls(*[("final_result", {"kind": "x"})] * 3)
-    assert count_repeated_calls(messages) == {}
+    assert trace_calls(messages).repeated == {}
+
+
+def test_malformed_skill_arguments_are_recorded_not_raised():
+    """Regression: evocation read ``load_capability`` arguments without a malformed-args
+    policy, so the raw text of a malformed call was recorded as a loaded skill. Every view now
+    shares one policy: malformed arguments are ``None``."""
+    messages = _calls(("load_capability", "{bad"), ("load_capability", "{bad"),
+                      ("read_file", "{also bad"))
+    trace = trace_calls(messages)
+    assert trace.skills == [] and trace.tools == ["read_file"]
+    assert trace.repeated == {"load_capability(None)": 2}
+
+
+def test_runtime_and_eval_summaries_agree_on_repetition():
+    from infosec_harness.evals.trajectory import summarize_calls
+    messages = _calls(("read_file", {"path": "a.py"}), ("read_file", {"path": "a.py"}),
+                      ("read_file", "{bad"), ("read_file", "{bad"))
+    repeated = trace_calls(messages).repeated
+    assert sum(n - 1 for n in repeated.values()) == summarize_calls(messages)[
+        "repeated_call_count"] == 2

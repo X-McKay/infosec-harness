@@ -2,8 +2,8 @@ from copy import deepcopy
 
 import pytest
 
-from infosec_harness.inference.policy import policy_digest
-from infosec_harness.inference.protocol import BrokerError
+from infosec_harness.inference.catalog.policy import policy_digest
+from infosec_harness.inference.wire.protocol import BrokerError
 
 
 def policy():

@@ -6,22 +6,34 @@ agent-playbook 07-evaluation makes this a release blocker rather than a report:
     coverage, failed hard gates, or absent control evidence blocks release. Passing average
     quality cannot compensate for an uncovered material risk.
 
-These checks are static -- files only, no model -- so a scenario added to an assessment, or a
+These checks are static -- files only, no model -- so a scenario added to the library, or a
 case whose tag is a typo, fails the ordinary test run rather than surfacing at release time.
 """
 import pytest
 import yaml
 
-from infosec_harness.evals.coverage import (
-    CATEGORIES,
-    agents_with_datasets,
-    coverage_for,
-    dataset_path,
-    load_cases,
-    scenarios_for,
-)
+from infosec_harness.evals.coverage import scenario_coverage, scenarios_for
+from infosec_harness.evals.dataset import load_dataset
+from infosec_harness.settings import get_settings
 
-AGENTS = agents_with_datasets()
+AGENTS = sorted(p.parents[1].name
+                for p in get_settings().agents_dir.glob("*/evals/dataset.yaml"))
+# The dataset categories the playbook names. Every case declares exactly one, so a dataset can
+# be read for what it actually exercises rather than inferred from case names.
+CATEGORIES = ("smoke", "regression", "capability", "safety", "adversarial", "durability")
+
+
+def load_cases(agent):
+    return load_dataset(agent).cases
+
+
+def coverage_for(agent):
+    """Coverage of the agent's own packaged dataset, exactly as a full run computes it."""
+    return scenario_coverage(agent, load_cases(agent))
+
+
+def dataset_path(agent):
+    return load_dataset(agent).path
 
 
 def test_every_agent_has_a_dataset():
@@ -46,8 +58,8 @@ def test_no_case_tags_a_scenario_its_assessment_does_not_declare(agent):
     cov = coverage_for(agent)
     declared = sorted(s.id for s in scenarios_for(agent))
     assert not cov.unknown_scenarios, (
-        f"{agent}: cases tag {cov.unknown_scenarios}, which the risk assessment does not "
-        f"declare. It declares {declared}."
+        f"{agent}: cases tag {cov.unknown_scenarios}, which agents/risk-scenarios.yaml does not "
+        f"attribute to it. It attributes {declared}."
     )
 
 
@@ -109,3 +121,11 @@ def test_the_dataset_declares_the_schema_version_the_loader_expects(agent):
 def test_case_names_are_unique_within_a_dataset(agent):
     names = [c["name"] for c in load_cases(agent)]
     assert len(names) == len(set(names)), f"{agent}: duplicate case names"
+
+
+def test_coverage_is_of_the_cases_a_run_used_not_the_whole_dataset():
+    """A group-filtered or held-out run must not borrow coverage it did not exercise."""
+    cases = load_cases("verdict")
+    assert not scenario_coverage("verdict", cases).uncovered_material
+    untagged = [{**case, "scenarios": []} for case in cases]
+    assert scenario_coverage("verdict", untagged).uncovered_material == ["RISK-SEC-003"]

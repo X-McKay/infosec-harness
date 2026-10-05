@@ -11,14 +11,14 @@ from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.tools import ToolDefinition
 from test_broker_executor import request_fixture
-from test_broker_profiles import _config
+from test_broker_profiles import _config, backend
 
 from infosec_harness.agents import models
-from infosec_harness.inference.codec import encode_payload
-from infosec_harness.inference.compat import input_wire
-from infosec_harness.inference.executor import OpenAIInference
-from infosec_harness.inference.profiles import BrokerConfig, ExecutorProfile
-from infosec_harness.inference.protocol import BrokerError, digest
+from infosec_harness.inference.catalog.profiles import BrokerConfig, ExecutorProfile
+from infosec_harness.inference.executor.rendering import input_wire
+from infosec_harness.inference.executor.service import OpenAIInference
+from infosec_harness.inference.wire.codec import encode_payload
+from infosec_harness.inference.wire.protocol import BrokerError, digest
 
 
 def test_omitted_thinking_preserves_existing_identities_and_explicit_values_change_them():
@@ -57,9 +57,9 @@ def test_thinking_requires_exact_operator_profile_match(enabled):
     for mismatched in (None, not enabled):
         with pytest.raises(ValueError):
             catalog.resolve_contract('recon', 'gateway', 'model', {'max_tokens': 16},
-                backend_endpoint='https://provider.example/v1', enable_thinking=mismatched)
+                backend=backend(enable_thinking=mismatched))
     contract = catalog.resolve_contract('recon', 'gateway', 'model', {'max_tokens': 16},
-        backend_endpoint='https://provider.example/v1', enable_thinking=enabled)
+        backend=backend(enable_thinking=enabled))
     assert contract.enable_thinking is enabled
 
 
@@ -103,7 +103,7 @@ async def test_direct_executor_and_admission_match_constrained_thinking_wire(mon
     monkeypatch.setattr(models, 'load_models_config', lambda: cfg)
     monkeypatch.setattr(openai, 'AsyncOpenAI', client)
     try:
-        direct = models._build_live('thinking-offline', contract.model)
+        direct = models._build_live('thinking-offline', contract.model, False, False)
         await direct.request(messages, contract.model_settings, params)
     finally:
         models._build_live.cache_clear()
@@ -139,9 +139,9 @@ def test_typed_thinking_rejects_authored_overrides_without_mutating_settings(set
 
     from pydantic_ai.providers.openai import OpenAIProvider
 
-    from infosec_harness.inference.compat import _CompatOpenAIChatModel
+    from infosec_harness.inference.executor.compat import CompatOpenAIChatModel
 
-    model = _CompatOpenAIChatModel('offline',
+    model = CompatOpenAIChatModel('offline',
         provider=OpenAIProvider(api_key='offline', base_url='https://provider.invalid/v1'), enable_thinking=False)
     settings = {setting: {'unexpected': 'value'}, 'max_tokens': 16}
     before = deepcopy(settings)
@@ -150,64 +150,3 @@ def test_typed_thinking_rejects_authored_overrides_without_mutating_settings(set
     assert settings == before
 
 
-def thinking_baseline(tmp_path, monkeypatch):
-    from copy import deepcopy
-
-    from broker_real_provider_fixture import CASES, COMPARISON_MODEL_FIELDS
-
-    old = {'model': dict.fromkeys(COMPARISON_MODEL_FIELDS, 'frozen'),
-           'budget': {'requested': {'max_requests': 4}, 'effective': {'max_input_tokens': 20000}}}
-    old['model'].update(backend_name='gateway', resolved_model='gateway:Qwen3.6-35B-A3B-NVFP4',
-        capability_profile={'tool_calling': True}, pricing_table='sdk:1:abc;models:old;backend:gateway;custom:zero')
-    rows = [{'agent': name, 'case': case, 'case_digest': 'a' * 64, 'config': deepcopy(old)} for name, case in CASES.items()]
-    path = tmp_path / 'baseline.json'
-    path.write_text(json.dumps({'phase': 'direct', 'status': 'passed', 'cases': rows}))
-    monkeypatch.setenv('HARNESS_REAL_PROVIDER_BASELINE', str(path))
-    candidate = deepcopy(old)
-    candidate['model'].update(backend_name='gateway-intake', resolved_model='gateway-intake:Qwen3.6-35B-A3B-NVFP4',
-        capability_profile={'tool_calling': True, 'strict_closed_output_tools': True, 'enable_thinking': False},
-        pricing_table='sdk:1:abc;models:new;backend:gateway-intake;custom:zero', broker_contract={
-            'strict_closed_output_tools': True, 'enable_thinking': False, 'backend': 'gateway-intake',
-            'model': 'Qwen3.6-35B-A3B-NVFP4'})
-    return candidate
-
-
-def test_intake_diagnostic_declares_only_reasoning_and_fixed_routing_difference(tmp_path, monkeypatch):
-    from copy import deepcopy
-
-    from broker_real_provider_fixture import compare_baseline
-    from broker_thinking_diagnostic_fixture import compare_intake_nonthinking
-
-    candidate = thinking_baseline(tmp_path, monkeypatch)
-    before = deepcopy(candidate)
-    with pytest.raises(ValueError):
-        compare_baseline('intake', candidate, 'a' * 64, reviewed_strict_closed_output_tools=True)
-    result = compare_intake_nonthinking(candidate, 'a' * 64)
-    assert result['status'] == 'passed'
-    assert result['declared_reasoning_difference']['enable_thinking'] == {'baseline': None, 'candidate': False}
-    assert result['declared_reasoning_difference']['qualification_status'] == 'not_checked'
-    assert result['intentional_transport_fields']['capability_profile']['enable_thinking'] is False
-    assert candidate == before
-
-
-@pytest.mark.parametrize('field', ['budget', 'settings', 'price', 'model', 'backend', 'thinking', 'contract'])
-def test_intake_diagnostic_rejects_undeclared_drift(tmp_path, monkeypatch, field):
-    from broker_thinking_diagnostic_fixture import compare_intake_nonthinking
-
-    candidate = thinking_baseline(tmp_path, monkeypatch)
-    if field == 'budget':
-        candidate['budget']['effective']['max_input_tokens'] = 30000
-    elif field == 'settings':
-        candidate['model']['effective_settings'] = {'temperature': .7}
-    elif field == 'price':
-        candidate['model']['pricing_table'] = candidate['model']['pricing_table'].replace('custom:zero', 'custom:other')
-    elif field == 'model':
-        candidate['model']['resolved_model'] = 'gateway-intake:other'
-    elif field == 'backend':
-        candidate['model']['backend_name'] = 'other'
-    elif field == 'thinking':
-        candidate['model']['capability_profile']['enable_thinking'] = True
-    else:
-        candidate['model']['broker_contract']['enable_thinking'] = None
-    with pytest.raises(ValueError):
-        compare_intake_nonthinking(candidate, 'a' * 64)

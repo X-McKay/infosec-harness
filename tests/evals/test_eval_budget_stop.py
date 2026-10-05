@@ -10,7 +10,7 @@ from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from sqlalchemy import select
 
-from infosec_harness.agents.budgets import resolve_budget
+from infosec_harness.agents.budgets import resolve_declared_budget, run_budget
 from infosec_harness.agents.registry import load_spec
 from infosec_harness.evals.budget_stop import _binding_limit, budget_stop_diagnostic
 from infosec_harness.evals.run import run_experiment
@@ -71,7 +71,8 @@ def test_unknown_or_adversarial_wording_does_not_classify(message):
 
 def test_partial_response_observations_are_numeric_and_do_not_infer_missing_usage():
     spec = load_spec("build-repair")
-    budget = resolve_budget("build-repair", spec.metadata, source_files=500)
+    budget = resolve_declared_budget(
+        "build-repair", run_budget("build-repair", spec.metadata), source_files=500)
     messages = [
         ModelResponse(parts=[ToolCallPart("read_file", {"secret": "SENTINEL"})],
                       usage=RequestUsage(input_tokens=100, output_tokens=5)),
@@ -99,7 +100,8 @@ def test_partial_response_observations_are_numeric_and_do_not_infer_missing_usag
 def test_unavailable_or_invalid_token_counts_stay_unknown(usage):
     spec = load_spec("build-repair")
     diagnostic = budget_stop_diagnostic(
-        UsageLimitExceeded("SECRET_PROVIDER_BODY"), resolve_budget("build-repair", spec.metadata),
+        UsageLimitExceeded("SECRET_PROVIDER_BODY"),
+        resolve_declared_budget("build-repair", run_budget("build-repair", spec.metadata)),
         [ModelResponse(parts=[TextPart("SECRET")], usage=usage)],
     )
     assert diagnostic["bound"] == "unknown"

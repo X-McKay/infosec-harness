@@ -1,21 +1,14 @@
+import { Link } from "@tanstack/react-router";
+import type { Distribution } from "@/api/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { number } from "@/lib/format";
-
-export type Distribution = {
-  count: number;
-  population: number;
-  coverage: number | null;
-  mean?: number | null;
-  p50?: number | null;
-  p95?: number | null;
-  maximum?: number | null;
-  bins?: Array<{ lower: number; upper: number; count: number }>;
-};
+import { integer, number, percent } from "@/lib/format";
+import { histogramSearch, type FindingMetric } from "@/lib/search";
 
 type Props = {
   title: string;
   data: Distribution;
-  binHref?: (index: number) => string;
+  /** When set, each bin links to the queue filtered to that measurement range. */
+  metric?: FindingMetric;
   unit?: string;
   format?: (value: number | null | undefined) => string;
 };
@@ -24,7 +17,7 @@ export function DistributionChart({
   title,
   data,
   format = number,
-  binHref,
+  metric,
   unit = "value range",
 }: Props) {
   const bins = data.bins ?? [];
@@ -33,14 +26,16 @@ export function DistributionChart({
   const coverage =
     data.coverage == null
       ? "Coverage unavailable"
-      : `${number(data.coverage * 100)}% coverage`;
+      : `${percent(data.coverage)} coverage`;
+  const binSearch = (index: number) =>
+    metric && histogramSearch(metric, bins[index], index === bins.length - 1);
 
   return (
     <Card>
       <CardHeader>
         <CardTitle>{title}</CardTitle>
         <p className="text-xs text-muted-foreground">
-          {number(data.count, 0)} of {number(data.population, 0)} measured ·{" "}
+          {integer(data.count)} of {integer(data.population)} measured ·{" "}
           {coverage}
         </p>
       </CardHeader>
@@ -104,18 +99,20 @@ export function DistributionChart({
                   >
                     <title>
                       {format(bin.lower)}–{format(bin.upper)}:{" "}
-                      {number(bin.count, 0)} runs
+                      {integer(bin.count)} runs
                     </title>
                   </rect>
                 );
-                return binHref ? (
-                  <a
+                const search = binSearch(index);
+                return search ? (
+                  <Link
                     key={index}
-                    href={binHref(index)}
+                    to="/"
+                    search={search}
                     aria-label={`Show ${bin.count} runs in ${format(bin.lower)}–${format(bin.upper)}`}
                   >
                     {bar}
-                  </a>
+                  </Link>
                 ) : (
                   <g key={index}>{bar}</g>
                 );
@@ -201,23 +198,28 @@ export function DistributionChart({
                   </tr>
                 </thead>
                 <tbody>
-                  {bins.map((bin, index) => (
-                    <tr key={`${bin.lower}-${bin.upper}-${index}`}>
-                      <td>
-                        {binHref ? (
-                          <a
-                            className="underline underline-offset-2"
-                            href={binHref(index)}
-                          >
-                            {format(bin.lower)}–{format(bin.upper)}
-                          </a>
-                        ) : (
-                          `${format(bin.lower)}–${format(bin.upper)}`
-                        )}
-                      </td>
-                      <td className="text-right">{number(bin.count, 0)}</td>
-                    </tr>
-                  ))}
+                  {bins.map((bin, index) => {
+                    const search = binSearch(index);
+                    const range = `${format(bin.lower)}–${format(bin.upper)}`;
+                    return (
+                      <tr key={`${bin.lower}-${bin.upper}-${index}`}>
+                        <td>
+                          {search ? (
+                            <Link
+                              to="/"
+                              search={search}
+                              className="underline underline-offset-2"
+                            >
+                              {range}
+                            </Link>
+                          ) : (
+                            range
+                          )}
+                        </td>
+                        <td className="text-right">{integer(bin.count)}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </details>

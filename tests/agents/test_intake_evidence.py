@@ -3,13 +3,10 @@ from types import SimpleNamespace
 
 import pytest
 from pydantic_ai import ModelRetry
-from pydantic_ai.messages import ModelResponse, ToolCallPart
-from pydantic_ai.models.function import FunctionModel
-from pydantic_ai.usage import UsageLimits
 
 from infosec_harness.agents.deps import AgentDeps
 from infosec_harness.agents.intake_evidence import EXTRACTED_FIELDS, extraction_evidence_violations
-from infosec_harness.agents.registry import build_agent, load_spec, resolve_agent_config
+from infosec_harness.agents.registry import load_spec, resolve_agent_config
 from infosec_harness.agents.validators import validate_intake_evidence
 from infosec_harness.domain.models import AgentOutcome, ExtractedFinding, FindingInput
 from infosec_harness.evals.adapters import intake_adapter
@@ -89,7 +86,7 @@ def test_unavailable_source_fails_closed_and_retry_never_echoes_report_model_or_
 
 def test_eval_adapter_serializes_the_exact_source_without_normalizing_it():
     report = "\n\t" + REPORT + "  \n"
-    _, _, deps, _, _ = intake_adapter({"payload": {"report": report}, "expected": "CWE-78"})
+    deps = intake_adapter({"payload": {"report": report}, "expected": "CWE-78"}).deps
     assert deps.report_text == report
     assert AgentDeps.model_validate_json(deps.model_dump_json()).report_text == report
     assert AgentDeps.model_validate({"repo_path": "/legacy"}).report_text is None
@@ -101,44 +98,24 @@ async def test_production_local_intake_receives_the_same_exact_report(tmp_path, 
     report = "\n\t" + REPORT + "  \n"
     captured = []
 
-    async def run_agent(name, prompt, deps):
+    async def run_agent(name, prompt, deps, *, record=None):
         assert name == "intake"
         captured.append(deps.report_text)
-        return AgentOutcome(agent=name, output=ExtractedFinding())
+        outcome = AgentOutcome(agent=name, output=ExtractedFinding())
+        record.append(outcome)
+        return outcome
 
-    monkeypatch.setattr(local.adapters, "resolve_location", lambda *_args: None)
-    monkeypatch.setattr(local, "execution_manifest", lambda _prepared: {})
-    await local.triage_one(SimpleNamespace(run_agent=run_agent), FindingInput(
+    async def resolve_location(*_args):
+        return None
+
+    from infosec_harness.graph import pipeline
+
+    monkeypatch.setattr(pipeline, "execution_manifest", lambda _prepared: {})
+    await local.triage_one(SimpleNamespace(run_agent=run_agent,
+                                           resolve_location=resolve_location), FindingInput(
         title="Synthetic extraction", description=report, repo_url=str(tmp_path)),
         SimpleNamespace(snapshot=SimpleNamespace(path=str(tmp_path)), status="ready"))
     assert captured == [report]
-
-
-async def test_actual_current_sdk_retries_invalid_extraction_but_retained_generation_accepts_it():
-    bad = ExtractedFinding.model_validate({"cwe": None, "evidence": [evidence()]})
-    valid = ExtractedFinding.model_validate({"cwe": "CWE-78", "evidence": [evidence()]})
-    from infosec_harness.agents.intake_contracts import retained_intake_spec
-
-    for legacy, requests in ((False, 2), (True, 1)):
-        calls = []
-
-        def model(_messages, info, captured_calls=calls):
-            captured_calls.append(1)
-            output = bad if len(captured_calls) == 1 else valid
-            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name,
-                output.model_dump(mode="json"), tool_call_id=str(len(captured_calls)))])
-
-        agent = build_agent(
-            "intake", durable=False, legacy_output_contract=legacy,
-            spec_override=None if legacy else retained_intake_spec(),
-            atomic_output=False,
-        )
-        with agent.override(model=FunctionModel(model)):
-            result = await agent.run("synthetic", deps=AgentDeps(
-                repo_path="/nonexistent", report_text=REPORT),
-                usage_limits=UsageLimits(request_limit=4))
-        assert result.usage.requests == requests
-        assert result.output == (bad if legacy else valid)
 
 
 def test_validation_version_is_part_of_both_effective_and_full_config():
@@ -153,27 +130,27 @@ def test_validation_version_is_part_of_both_effective_and_full_config():
     assert config.digest != altered.digest and config.effective_digest != altered.effective_digest
 
 
-def test_shared_marker_true_does_not_select_new_intake_generation(monkeypatch):
-    from infosec_harness.agents.durable import AGENTS, LEGACY_OUTPUT_AGENTS
-    from infosec_harness.workflows import temporal_ops
+def test_the_closed_diagnostics_are_distinct_codes_and_sentences():
+    """Retry repair and retry classification branch on the code; the sentence is what the model
+    sees. Both must be unique, or two rules would be indistinguishable downstream."""
+    from infosec_harness.agents.intake_evidence import EVIDENCE_DIAGNOSTICS
 
-    monkeypatch.setattr(temporal_ops.workflow, "patched", lambda patch: patch == "agent-output-contracts-v2")
-    monkeypatch.setattr(temporal_ops.workflow.unsafe, "is_replaying", lambda: True)
-    ops = temporal_ops.TemporalOps()
-    assert ops._agent_for("intake") is LEGACY_OUTPUT_AGENTS["intake"]
-    assert ops._agent_for("context") is AGENTS["context"]
+    codes = [d.code for d in EVIDENCE_DIAGNOSTICS]
+    messages = [d.message for d in EVIDENCE_DIAGNOSTICS]
+    assert len(set(codes)) == len(codes) and len(set(messages)) == len(messages)
 
 
-async def test_legacy_intake_frontier_stops_before_accounting(monkeypatch):
-    from infosec_harness.workflows import temporal_ops
+def test_every_emitted_violation_is_a_registered_diagnostic():
+    from infosec_harness.agents.intake_evidence import (
+        EVIDENCE_DIAGNOSTICS,
+        extraction_evidence_diagnostics,
+    )
 
-    monkeypatch.setattr(temporal_ops.workflow, "patched", lambda patch: patch == "agent-output-contracts-v2")
-    monkeypatch.setattr(temporal_ops.workflow.unsafe, "is_replaying", lambda: False)
-    ops = temporal_ops.TemporalOps()
-
-    async def forbidden(*_args, **_kwargs):
-        raise AssertionError("Legacy frontier cannot schedule accounting or requests")
-
-    monkeypatch.setattr(ops._accounting, "reserve", forbidden)
-    with pytest.raises(RuntimeError, match="retry the triage as a new workflow"):
-        await ops.run_agent("intake", ["synthetic"], AgentDeps(repo_path="/legacy"))
+    output = {"file_path": "missing.py", "start_line": 7, "evidence": [
+        {"field": "file_path", "quote": REPORT.splitlines()[0], "confidence": 1.0},
+        {"field": "start_line", "quote": REPORT.splitlines()[0], "confidence": 1.0},
+        {"field": "nonsense", "quote": "", "confidence": 0.0},
+    ]}
+    found = extraction_evidence_diagnostics(REPORT, output)
+    assert found and set(found) <= set(EVIDENCE_DIAGNOSTICS)
+    assert extraction_evidence_diagnostics(None, output) == [EVIDENCE_DIAGNOSTICS[0]]

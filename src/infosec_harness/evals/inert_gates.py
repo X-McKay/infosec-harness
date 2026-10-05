@@ -32,47 +32,22 @@ turning it into a gate would just relocate the same blind spot.
 
 from __future__ import annotations
 
-import json
 import textwrap
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from enum import Enum, StrEnum
-from pathlib import Path
+from enum import Enum
+from functools import partial
 from typing import Any
+
+from infosec_harness.evals.gates import Check, ReleasePolicy
+from infosec_harness.evals.pricing import PricingStatus, pricing_label, pricing_status
 
 __all__ = [
     "InertCheck",
     "InertReason",
-    "PricingStatus",
-    "announce_inert_checks",
     "find_inert_checks",
     "format_inert_notice",
-    "pricing_status",
 ]
-
-
-class PricingStatus(StrEnum):
-    """Whether *this deployment* can turn token usage for a model into dollars."""
-
-    PRICED = "priced"
-    """A nonzero price exists, so a cost metric can move."""
-
-    STUB = "stub"
-    """No model was called at all (``HARNESS_MODEL_MODE=stub``); cost is definitionally 0."""
-
-    UNKNOWN_MODEL = "unknown_model"
-    """Neither genai-prices nor config/models.yaml knows this model id."""
-
-    ZERO_PRICED = "zero_priced"
-    """Prices are configured and are zero — e.g. self-hosted vLLM with no per-token billing."""
-
-    UNDETERMINED = "undetermined"
-    """The pricing lookup itself failed; treat cost as unverified rather than live."""
-
-    @property
-    def can_move(self) -> bool:
-        """True only when a cost metric derived from this model can be nonzero."""
-        return self is PricingStatus.PRICED
 
 
 class InertReason(Enum):
@@ -112,6 +87,11 @@ class InertCheck:
     def is_defect(self) -> bool:
         return self.reason.is_defect
 
+    def as_report(self) -> dict[str, Any]:
+        return {"kind": self.kind, "metric": self.metric, "bound": self.bound,
+                "limit": self.limit, "value": self.value, "reason": self.reason.code,
+                "is_defect": self.is_defect, "detail": self.detail}
+
     def describe(self) -> str:
         """``threshold average_cost_usd (max 0.5)`` — how the check is written in the policy."""
         where = f"{self.kind} {self.metric}"
@@ -137,48 +117,6 @@ def _is_cost_metric(metric: str) -> bool:
     return "cost" in metric
 
 
-def _probe_usage() -> Any:
-    """A usage record large enough that any real price table yields a nonzero cost."""
-
-    class _Usage:
-        input_tokens = 1_000_000
-        output_tokens = 1_000_000
-        cache_read_tokens = None
-        cache_write_tokens = None
-
-    return _Usage()
-
-
-def pricing_status(model_name: str) -> PricingStatus:
-    """Ask the deployment's own cost estimator whether ``model_name`` can be priced.
-
-    Deliberately routed through :func:`infosec_harness.agents.models.estimate_cost` — the
-    same function the eval loop uses — so this cannot drift from what the report measured.
-    A million tokens in and out is priced; if that comes back ``None`` or ``0.0``, no real
-    run of this model could have produced a nonzero cost either.
-    """
-    if model_name.startswith("stub:"):
-        return PricingStatus.STUB
-    try:
-        from infosec_harness.agents.models import estimate_cost
-
-        candidates = [model_name]
-        # `resolved_model_name` records "<backend>:<model_id>"; price tables are keyed by
-        # the bare model id, so try that too before declaring a model unpriced.
-        if ":" in model_name:
-            candidates.append(model_name.split(":", 1)[1])
-        best = None
-        for name in candidates:
-            cost, _ = estimate_cost(name, _probe_usage())
-            if cost:
-                return PricingStatus.PRICED
-            if cost == 0.0:
-                best = PricingStatus.ZERO_PRICED
-        return best or PricingStatus.UNKNOWN_MODEL
-    except Exception:
-        return PricingStatus.UNDETERMINED
-
-
 _COST_DETAIL = {
     PricingStatus.STUB: (
         "no model was called (stub mode), so every case reports a cost of 0.0 and no "
@@ -186,7 +124,7 @@ _COST_DETAIL = {
     ),
     PricingStatus.UNKNOWN_MODEL: (
         "this deployment cannot price model {model!r} — neither genai-prices nor "
-        "config/models.yaml has a rate for it — so cost is 0.0 for every case and no "
+        "config/models.yaml has a rate for it — so cost is not measured for any case and no "
         "ceiling could trip. An environment fact, not a defect: the ceiling wakes up "
         "unchanged against a priced backend"
     ),
@@ -195,118 +133,95 @@ _COST_DETAIL = {
         "so cost is 0.0 for every case and no ceiling could trip. An environment fact, not "
         "a defect"
     ),
-    PricingStatus.UNDETERMINED: (
-        "the cost is 0.0 and this deployment's pricing for model {model!r} could not be "
-        "determined, so the ceiling is unverified rather than live"
-    ),
 }
 
 _COST_REASON = {
     PricingStatus.STUB: InertReason.COST_STUB_MODEL,
     PricingStatus.UNKNOWN_MODEL: InertReason.COST_UNPRICED_MODEL,
     PricingStatus.ZERO_PRICED: InertReason.COST_ZERO_PRICED_MODEL,
-    PricingStatus.UNDETERMINED: InertReason.COST_UNPRICED_MODEL,
 }
 
 
 def find_inert_checks(
-    report: dict,
-    policy: dict,
+    report: Mapping[str, Any],
+    policy: ReleasePolicy,
     *,
-    pricing: Callable[[str], PricingStatus] = pricing_status,
+    pricing: Callable[[str], PricingStatus] | None = None,
 ) -> list[InertCheck]:
     """Every check in ``policy`` that the run described by ``report`` could not have failed.
 
-    ``report`` is the mapping :func:`infosec_harness.evals.run.write_release_report` writes
-    (``metrics``, ``hard_gates``, ``provenance``); ``policy`` is the agent's parsed
-    ``release-policy.yaml``. ``pricing`` is injectable for tests; by default it asks the
-    deployment's real cost estimator.
+    ``report`` is the mapping :func:`infosec_harness.evals.release_report.build_release_report`
+    returns (``metrics``, ``hard_gates``, ``provenance``). The checks are exactly the ones
+    :meth:`ReleasePolicy.evaluate` makes, so the audit and the verdict cannot disagree about
+    what the policy contains or what counts as a number. The model's cost basis is the one the
+    run recorded (``provenance.model_pricing``); ``pricing`` overrides it, and without either
+    the deployment's price source is asked.
 
-    Returns an empty list when every check is live. Order is stable: hard gates, then
-    thresholds, each in policy order.
+    Returns an empty list when every check is live. Order is the policy's: hard gates, then
+    thresholds.
     """
-    metrics = report.get("metrics") or {}
-    gates = report.get("hard_gates") or {}
-    model = str((report.get("provenance") or {}).get("model") or "")
+    values = {**(report.get("metrics") or {}), **(report.get("hard_gates") or {})}
+    provenance = report.get("provenance") or {}
+    model = str(provenance.get("model") or "")
+
+    def cost_basis() -> PricingStatus:
+        if pricing is not None:
+            return pricing(model)
+        return pricing_label(provenance.get("model_pricing")) or pricing_status(model)
+
     found: list[InertCheck] = []
-
-    for metric in policy.get("hard_gates") or {}:
-        limit = (policy["hard_gates"] or {})[metric]
-        value = gates.get(metric, metrics.get(metric))
-        if metric not in gates and metric not in metrics:
-            found.append(InertCheck(
-                kind="hard_gate", metric=metric, bound=None,
-                limit=_as_number(limit), value=None, reason=InertReason.METRIC_ABSENT,
-                detail=("the report emits no such key, so `agentctl release` sees a missing "
-                        "gate rather than a failure and this gate enforces nothing. Fix the "
-                        "report writer or drop the gate"),
-            ))
-        elif not isinstance(value, (int, float)) or isinstance(value, bool):
-            found.append(InertCheck(
-                kind="hard_gate", metric=metric, bound=None, limit=_as_number(limit),
-                value=None, reason=InertReason.METRIC_NOT_NUMERIC,
-                detail=(f"the report emits {value!r}, which cannot be compared against a "
-                        "numeric gate"),
-            ))
-
-    for metric, spec in (policy.get("thresholds") or {}).items():
-        spec = spec if isinstance(spec, dict) else {}
-        value = metrics.get(metric, gates.get(metric))
-        for bound in ("min", "max"):
-            if bound not in spec:
-                continue
-            limit = _as_number(spec[bound])
-            if metric not in metrics and metric not in gates:
-                found.append(InertCheck(
-                    kind="threshold", metric=metric, bound=bound, limit=limit, value=None,
-                    reason=InertReason.METRIC_ABSENT,
-                    detail=("the report never emits this metric, so the threshold is "
-                            "compared against nothing and can never fail. Fix the report "
-                            "writer or drop the threshold"),
-                ))
-                continue
-            if not isinstance(value, (int, float)) or isinstance(value, bool):
-                found.append(InertCheck(
-                    kind="threshold", metric=metric, bound=bound, limit=limit, value=None,
-                    reason=InertReason.METRIC_NOT_NUMERIC,
-                    detail=(f"the report emits {value!r}, which cannot be compared against "
-                            "a numeric bound"),
-                ))
-                continue
-            if (vacuous := _vacuous_detail(metric, bound, limit)) is not None:
-                found.append(InertCheck(
-                    kind="threshold", metric=metric, bound=bound, limit=limit,
-                    value=float(value), reason=InertReason.BOUND_VACUOUS, detail=vacuous,
-                ))
-                continue
-            if bound == "max" and _is_cost_metric(metric) and float(value) == 0.0:
-                status = pricing(model)
-                if not status.can_move:
-                    found.append(InertCheck(
-                        kind="threshold", metric=metric, bound=bound, limit=limit,
-                        value=0.0, reason=_COST_REASON[status],
-                        detail=_COST_DETAIL[status].format(model=model or "<unrecorded>"),
-                    ))
-                else:
-                    found.append(InertCheck(
-                        kind="threshold", metric=metric, bound=bound, limit=limit,
-                        value=0.0, reason=InertReason.COST_ZERO_UNEXPLAINED,
-                        detail=(f"cost is exactly 0.0 even though model {model!r} is priced "
-                                "by this deployment, so the ceiling could not have tripped "
-                                "and the zero is unexplained. Check that the eval loop is "
-                                "accounting usage"),
-                    ))
+    for check in policy.evaluate(values).checks:
+        inert = partial(_inert, check)
+        if check.metric not in values:
+            found.append(inert(InertReason.METRIC_ABSENT, (
+                "the report emits no such key, so `agentctl release` sees a missing gate "
+                "rather than a failure and this gate enforces nothing. Fix the report writer "
+                "or drop the gate") if check.kind == "hard_gate" else (
+                "the report never emits this metric, so the threshold is compared against "
+                "nothing and can never fail. Fix the report writer or drop the threshold")))
+            continue
+        reported = values[check.metric]
+        if check.value is None:
+            if (check.kind == "threshold" and reported is None
+                    and _is_cost_metric(check.metric)
+                    and (status := cost_basis()) is PricingStatus.UNKNOWN_MODEL):
+                # An unpriced model has no cost to report: the absence is the environment's,
+                # exactly as a zero is for a model priced at zero.
+                found.append(inert(_COST_REASON[status],
+                                   _COST_DETAIL[status].format(model=model or "<unrecorded>")))
+            else:
+                found.append(inert(InertReason.METRIC_NOT_NUMERIC, (
+                    f"the report emits {reported!r}, which cannot be compared against a "
+                    f"numeric {'gate' if check.kind == 'hard_gate' else 'bound'}")))
+            continue
+        if check.kind == "hard_gate":
+            continue
+        if (vacuous := _vacuous_detail(check.metric, check.bound, check.limit)) is not None:
+            found.append(inert(InertReason.BOUND_VACUOUS, vacuous, check.value))
+            continue
+        if check.bound == "max" and _is_cost_metric(check.metric) and check.value == 0.0:
+            status = cost_basis()
+            if not status.can_move:
+                found.append(inert(_COST_REASON[status],
+                                   _COST_DETAIL[status].format(model=model or "<unrecorded>"),
+                                   0.0))
+            else:
+                found.append(inert(InertReason.COST_ZERO_UNEXPLAINED, (
+                    f"cost is exactly 0.0 even though model {model!r} is priced by this "
+                    "deployment, so the ceiling could not have tripped and the zero is "
+                    "unexplained. Check that the eval loop is accounting usage"), 0.0))
     return found
 
 
-def _as_number(value: Any) -> float | None:
-    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+def _inert(check: Check, reason: InertReason, detail: str,
+           value: float | None = None) -> InertCheck:
+    return InertCheck(kind=check.kind, metric=check.metric,
+                      bound=None if check.kind == "hard_gate" else check.bound,
+                      limit=check.limit, value=value, reason=reason, detail=detail)
 
 
-def _vacuous_detail(metric: str, bound: str, limit: float | None) -> str | None:
+def _vacuous_detail(metric: str, bound: str, limit: float) -> str | None:
     """A bound no observation of this metric could violate, judged from its name alone."""
-    if limit is None:
-        return None
     low, high = _metric_range(metric)
     if bound == "min" and low is not None and limit <= low:
         return (f"{metric} can never be below {low:g}, so a floor of {limit:g} is satisfied "
@@ -317,21 +232,14 @@ def _vacuous_detail(metric: str, bound: str, limit: float | None) -> str | None:
     return None
 
 
-def _policy_check_count(policy: dict) -> int:
-    n = len(policy.get("hard_gates") or {})
-    for spec in (policy.get("thresholds") or {}).values():
-        n += sum(1 for bound in ("min", "max") if isinstance(spec, dict) and bound in spec)
-    return n
-
-
-def format_inert_notice(checks: list[InertCheck], *, subject: str, policy: dict | None = None,
-                        width: int = 92) -> str:
+def format_inert_notice(checks: list[InertCheck], *, subject: str,
+                        policy: ReleasePolicy | None = None, width: int = 92) -> str:
     """A block loud enough that a human or CI log reader cannot skim past it.
 
     Always states that this is information: an inert check does not fail the run.
     """
     rule = "=" * width
-    total = _policy_check_count(policy) if policy else None
+    total = len(policy.evaluate({}).checks) if policy else None
     if not checks:
         of_n = f"all {total} " if total else ""
         return f"inert-gate audit: {of_n}policy checks for {subject} were live for this run."
@@ -360,41 +268,3 @@ def format_inert_notice(checks: list[InertCheck], *, subject: str, policy: dict 
         "inert check enforces nothing, so do not read it as coverage.", width))
     lines.append(rule)
     return "\n".join(lines)
-
-
-_announced: set[tuple[str, str]] = set()
-
-
-def default_policy_path(agent: str) -> Path:
-    from infosec_harness.settings import get_settings
-
-    return get_settings().agents_dir / agent / "evals" / "release-policy.yaml"
-
-
-def announce_inert_checks(agent: str, report_path: Path, *, policy_path: Path | None = None,
-                          echo: Callable[[str], None] = print,
-                          once: bool = True) -> list[InertCheck]:
-    """Audit a just-written report against the agent's policy and print the finding.
-
-    Safe to call from more than one place in a process: by default the same
-    (agent, report) pair is announced only once, so wiring this into both
-    ``write_release_report`` and the CLI does not double-print. Never raises — an audit
-    that fails must not take a real eval run with it.
-    """
-    import yaml
-
-    report_path = Path(report_path)
-    key = (agent, str(report_path.resolve()))
-    if once and key in _announced:
-        return []
-    policy_path = policy_path or default_policy_path(agent)
-    try:
-        report = json.loads(report_path.read_text())
-        policy = yaml.safe_load(policy_path.read_text()) or {}
-    except Exception as exc:  # pragma: no cover - defensive; audit must not break a run
-        echo(f"inert-gate audit skipped: could not read report/policy ({exc})")
-        return []
-    _announced.add(key)
-    checks = find_inert_checks(report, policy)
-    echo(format_inert_notice(checks, subject=agent, policy=policy))
-    return checks

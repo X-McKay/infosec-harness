@@ -50,3 +50,30 @@ def test_target_context_truncation_is_explicit_and_byte_bounded(tmp_path):
 def test_target_context_is_opt_in_and_does_not_expand_default_tools():
     assert "inspect_target" in REPO_RO_TOOLS
     assert "inspect_target" not in DEFAULT_REPO_RO_TOOLS
+
+
+def test_target_inspection_reads_the_file_once(tmp_path, monkeypatch):
+    """Both sections come from one bounded read, so they describe the same bytes."""
+    from infosec_harness.agents import repo_tools, target_context
+
+    (tmp_path / "target.py").write_text("def lookup(value):\n    return value + 1\n")
+    reads = []
+    real = repo_tools._read_capped
+
+    def counting(target):
+        reads.append(target)
+        return real(target)
+
+    monkeypatch.setattr(target_context, "_read_capped", counting)
+    inspect_target(context(tmp_path), "target.py")
+    assert len(reads) == 1
+
+
+def test_each_section_is_clipped_with_its_own_marker(tmp_path):
+    from infosec_harness.agents.target_context import _SECTION_BYTES
+
+    (tmp_path / "wide.py").write_text("".join(f"x{i} = '{'y' * 200}'\n" for i in range(300)))
+    result = inspect_target(context(tmp_path), "wide.py")
+    source = result.split("## Numbered source\n", 1)[1]
+    assert source.endswith("\n[truncated: request a smaller range]")
+    assert len(source.encode()) <= _SECTION_BYTES + len("\n[truncated: request a smaller range]")

@@ -1,7 +1,22 @@
-# Project-local tool versions. ./dev bootstraps its pinned mise binary and installs these into
-# .harness/mise; neither global tools nor shell profiles are changed.
+# The single source of developer tool versions. ./dev bootstraps its pinned mise binary
+# (.dev-tools/versions.env holds that binary's version and hashes, because it is needed before
+# mise exists) and installs these into .harness/mise; neither global tools nor shell profiles
+# are changed. CI installs the same set with jdx/mise-action. The Dockerfile, the compose
+# overlay and dev_setup.py derive from or are checked against these values by
+# tests/development/test_dev_experience.py.
 [tools]
 python = "3.12.13"
 uv = "0.12.7"
 node = "22.23.3"
 just = "1.58.0"
+
+# The Temporal CLI provides the local dev server the durable replay/recovery tests start.
+# Installed straight from the upstream release with a pinned SHA-256 per supported host, so
+# the verification does not depend on a registry or a checksum proxy. Hashes are those of
+# the release assets (cross-checked against the release's checksums.txt).
+[tools."http:temporal"]
+version = "1.9.1"
+
+[tools."http:temporal".platforms]
+macos-arm64 = { url = "https://github.com/temporalio/cli/releases/download/v{{version}}/temporal_cli_{{version}}_darwin_arm64.tar.gz", checksum = "sha256:41e0425378fcb4fb5766340b97435e20fe47bbff2d7bf644ec2d51f7662b7c56" }
+linux-x64 = { url = "https://github.com/temporalio/cli/releases/download/v{{version}}/temporal_cli_{{version}}_linux_amd64.tar.gz", checksum = "sha256:09a0326a51db84d02735e53542b9ebd8c4758daf47482a9ab0abce15844e60d5" }

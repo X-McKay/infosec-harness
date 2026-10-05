@@ -11,33 +11,8 @@ from infosec_harness.domain.models import (
     CodeLocation,
     ExtractedFinding,
     Finding,
-    FindingInput,
 )
 from infosec_harness.repo.access import RepositoryAccessError, resolve_confined
-
-
-def to_finding(inp: FindingInput) -> Finding:
-    location = None
-    if inp.file_path:
-        location = CodeLocation(
-            file_path=inp.file_path, start_line=inp.start_line,
-            end_line=inp.end_line, symbol=inp.symbol,
-        )
-    return Finding(
-        fingerprint=Finding.compute_fingerprint(inp),
-        external_id=inp.external_id,
-        title=inp.title,
-        description=inp.description,
-        repo_url=inp.repo_url,
-        revision=inp.revision,
-        source_mode=inp.source_mode,
-        location=location,
-        cwe=inp.cwe,
-        severity=inp.severity,
-        source_kind=inp.source_kind,
-        source_tool=inp.source_tool,
-        ado_work_item_id=inp.ado_work_item_id,
-    )
 
 
 def needs_extraction(finding: Finding) -> bool:

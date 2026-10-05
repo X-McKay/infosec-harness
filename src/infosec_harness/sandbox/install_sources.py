@@ -7,13 +7,13 @@ Dynamic and obfuscated commands still require the existing fail-closed build bou
 
 from __future__ import annotations
 
-import hashlib
 import ipaddress
-import json
 import re
 from collections.abc import Iterable
 from typing import Protocol, TypedDict
 from urllib.parse import urlsplit
+
+from infosec_harness.domain.canonical import digest
 
 INSTALL_SOURCE_POLICY_VERSION = "build-install-sources/v1"
 INVALID_SOURCE = "invalid or unresolved source host"
@@ -51,12 +51,8 @@ def install_source_policy(approved_hosts: Iterable[str]) -> InstallSourcePolicy:
             raise ValueError("install-source operator policy requires plain valid hosts")
         hosts.add(host)
     policy = {"version": INSTALL_SOURCE_POLICY_VERSION, "approved_hosts": sorted(hosts)}
-    canonical = json.dumps(policy, sort_keys=True, separators=(",", ":"))
-    return {
-        "version": INSTALL_SOURCE_POLICY_VERSION,
-        "approved_hosts": sorted(hosts),
-        "fingerprint": hashlib.sha256(canonical.encode()).hexdigest(),
-    }
+    # Validated hosts are ASCII, so this equals the historical json.dumps fingerprint bytes.
+    return {**policy, "fingerprint": digest(policy)}
 
 
 def unapproved_install_sources(

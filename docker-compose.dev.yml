@@ -26,9 +26,7 @@ services:
   minio:
     runtime: runc
     logging: *local-logging
-    # Pinned S3-compatible development service with the API and console ports used here.
-    image: ghcr.io/rustfs/rustfs:1.0.0-glibc@sha256:bffcab0c9d647aab0055d1c69d340b202d0909966b385932d4ead1aeb7602858
-    command: ["rustfs"]
+    # The base file's pinned RustFS image, with this checkout's generated credentials.
     environment:
       RUSTFS_ACCESS_KEY: ${HARNESS_MINIO_ACCESS_KEY}
       RUSTFS_SECRET_KEY: ${HARNESS_MINIO_SECRET_KEY}
@@ -68,6 +66,8 @@ services:
       - /root/.docker/buildx:/root/.docker/buildx
     environment:
       AWS_PROFILE: !reset null
+      # Local sources the worker may snapshot: the smoke fixture and the seeded corpus.
+      HARNESS_LOCAL_REPO_ROOTS: '["/app/deploy/dev-runtime/fixture", "/app/eval-corpus"]'
       HARNESS_DATABASE_URL: postgresql+asyncpg://harness:${HARNESS_POSTGRES_PASSWORD}@postgres:5432/harness
       HARNESS_S3_ACCESS_KEY: ${HARNESS_MINIO_ACCESS_KEY}
       HARNESS_S3_SECRET_KEY: ${HARNESS_MINIO_SECRET_KEY}
@@ -78,6 +78,7 @@ services:
     runtime: runc
     logging: *local-logging
     build: !reset null
+    # Version must equal .mise.toml's node (tests/development/test_dev_experience.py).
     image: node:22.23.3-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c
     working_dir: /app
     command: ["sh", "-c", "npm ci --no-audit --no-fund && npm run dev -- --host 0.0.0.0 --port 5173"]

@@ -9,10 +9,10 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from importlib.metadata import PackageNotFoundError, version
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from infosec_harness.api.contracts import (
@@ -22,29 +22,33 @@ from infosec_harness.api.contracts import (
     BatchSummary,
     CancelResponse,
     ConfigResponse,
-    ExperimentSummary,
     HealthResponse,
     ReviewSaved,
     RunDetail,
-    RunSummary,
 )
 from infosec_harness.api.observations import router
-from infosec_harness.api.population import (
-    Population,
-    batch_population,
-    operational_experiment,
-    run_population,
-)
 from infosec_harness.api.status import router as status_router
 from infosec_harness.domain.models import FindingInput, VerdictLabel
 from infosec_harness.persistence import db, store
+from infosec_harness.persistence.batch_progress import batch_progress
+from infosec_harness.persistence.population import Population
 from infosec_harness.settings import get_settings
+
+SubmissionMode = Literal["local", "temporal"]
+
+
+def _api_version() -> str:
+    try:
+        return version("infosec-harness")
+    except PackageNotFoundError:  # pragma: no cover - editable/test installs have metadata
+        return "0.0.0"
 
 
 class SubmitRequest(BaseModel):
     findings: list[FindingInput]
     label: str = ""
-    mode: Literal["auto", "local", "temporal"] = "auto"
+    # `local` is stub-only test and development scaffolding; real assessments are durable.
+    mode: SubmissionMode = "temporal"
 
 
 class SubmitADORequest(BaseModel):
@@ -54,7 +58,7 @@ class SubmitADORequest(BaseModel):
 
 class ReviewRequest(BaseModel):
     reviewer: str = ""
-    decision: str  # confirm | override
+    decision: Literal["confirm", "override"]
     override_label: VerdictLabel | None = None
     reason: str = ""
 
@@ -65,7 +69,7 @@ async def lifespan(app: FastAPI):
 
     telemetry.configure("api")
     await db.create_all()
-    from infosec_harness.workflows.runner import reconcile_submissions
+    from infosec_harness.workflows.submission import reconcile_submissions
     async def reconcile_loop() -> None:
         while True:
             try:
@@ -81,22 +85,24 @@ async def lifespan(app: FastAPI):
         await asyncio.gather(task, return_exceptions=True)
 
 
-app = FastAPI(title="InfoSec Harness", version="2.0.0", lifespan=lifespan)
+app = FastAPI(title="InfoSec Harness", version=_api_version(), lifespan=lifespan)
 
 app.include_router(router)
 app.include_router(status_router)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
-async def _submit(findings: list[FindingInput], label: str, mode: str) -> str:
-    from infosec_harness.workflows import runner
-
+async def _submit(findings: list[FindingInput], label: str, mode: SubmissionMode) -> str:
     if mode == "local":
-        if get_settings().model_mode != "stub":
-            raise HTTPException(422, "Real assessments require Temporal; local mode is for stub demos.")
-        batch_id, _ = await runner.run_local(findings, label=label)
+        from infosec_harness.workflows.local_run import LocalModeUnavailable, run_in_process
+
+        try:
+            batch_id, _ = await run_in_process(findings, label=label)
+        except LocalModeUnavailable as exc:
+            raise HTTPException(422, str(exc)) from exc
         return batch_id
-    return await runner.submit_via_temporal(findings, label=label)
+    from infosec_harness.workflows.submission import submit_via_temporal
+
+    return await submit_via_temporal(findings, label=label)
 
 
 @app.post("/api/batches", response_model=BatchAccepted)
@@ -116,89 +122,35 @@ async def submit_ado(req: SubmitADORequest) -> AdoBatchAccepted:
         raise HTTPException(400, "Azure DevOps is not configured")
     items = await ado.fetch_work_items(req.work_item_ids)
     findings = [ado.work_item_to_finding(i, s.ado_field_map) for i in items]
-    batch_id = await _submit(findings, req.label or "ado", "auto")
+    batch_id = await _submit(findings, req.label or "ado", "temporal")
     return AdoBatchAccepted(batch_id=batch_id, imported=len(findings))
 
 
 @app.get("/api/batches", response_model=list[BatchSummary])
 async def batches(population: Population | None = None) -> list[BatchSummary]:
-    from infosec_harness.api.progress import batch_progress
-
-    if population is None:
-        summaries = await store.list_batches()
-        progress = await batch_progress([row["id"] for row in summaries])
-        return [{**row, **progress[row["id"]]} for row in summaries]
-    from sqlalchemy import func, select
-
-    matching = (select(db.TriageRun.batch_id, func.count().label("finding_count"))
-                .where(run_population(population)).group_by(db.TriageRun.batch_id).subquery())
-    async with db.session() as session:
-        rows = (await session.execute(
-            select(db.Batch, matching.c.finding_count)
-            .join(matching, matching.c.batch_id == db.Batch.id)
-            .order_by(db.Batch.created_at.desc()).limit(100))).all()
-        progress = await batch_progress([batch.id for batch, _ in rows], population)
-        return [{"id": batch.id, "status": batch.status, "label": batch.label,
-                 "source_kind": batch.source_kind, "finding_count": count,
-                 "created_at": batch.created_at.isoformat(), **progress[batch.id]} for batch, count in rows]
+    summaries = await store.list_batches(population=population)
+    progress = await batch_progress([row["id"] for row in summaries], population)
+    return [{**row, **progress[row["id"]]} for row in summaries]
 
 
 @app.get("/api/batches/{batch_id}", response_model=BatchDetail)
 async def batch(batch_id: str, population: Population | None = None) -> BatchDetail:
-    if population is None:
-        summary = await store.batch_summary(batch_id)
-        if summary is None:
-            raise HTTPException(404, "batch not found")
-        return summary
-    from sqlalchemy import func, select
-
-    async with db.session() as session:
-        record = await session.scalar(select(db.Batch).where(
-            db.Batch.id == batch_id, batch_population(population)))
-        if record is None:
-            raise HTTPException(404, "batch not found")
-        selected = (db.TriageRun.batch_id == batch_id, run_population(population))
-        states = dict((await session.execute(
-            select(db.TriageRun.status, func.count()).where(*selected)
-            .group_by(db.TriageRun.status))).all())
-        verdicts = dict((await session.execute(
-            select(db.TriageRun.verdict, func.count()).where(*selected)
-            .where(db.TriageRun.verdict.is_not(None)).group_by(db.TriageRun.verdict))).all())
-        ledger = await session.get(db.BudgetLedger, batch_id)
-        return {"id": record.id, "status": record.status, "label": record.label,
-                "source_kind": record.source_kind, "finding_count": sum(states.values()),
-                "created_at": record.created_at.isoformat(), "status_counts": states,
-                "verdict_counts": verdicts, "budget": ledger.state if ledger else None}
-
-
-@app.get("/api/runs", response_model=list[RunSummary])
-async def runs(batch_id: str | None = None, verdict: str | None = None,
-               limit: int = Query(200, ge=1, le=1000), population: Population | None = None) -> list[RunSummary]:
-    if population is None:
-        return await store.list_runs(batch_id=batch_id, verdict=verdict, limit=limit)
-    from sqlalchemy import select
-    statement = select(db.TriageRun).where(run_population(population))
-    if batch_id:
-        statement = statement.where(db.TriageRun.batch_id == batch_id)
-    if verdict:
-        statement = statement.where(db.TriageRun.verdict == verdict)
-    async with db.session() as session:
-        rows = (await session.scalars(statement.order_by(db.TriageRun.priority_score.desc().nullslast()).limit(limit))).all()
-        return [store._run_summary(r) for r in rows]
+    summary = await store.batch_summary(batch_id, population)
+    if summary is None:
+        raise HTTPException(404, "batch not found")
+    return summary
 
 
 @app.get("/api/runs/{run_id}", response_model=RunDetail)
 async def run(run_id: str, population: Population | None = None) -> RunDetail:
-    detail = await store.get_run(run_id)
-    if detail is None or (population is not None and (detail.get("telemetry") or {}).get("population", "legacy") != population):
+    detail = await store.get_run(run_id, population)
+    if detail is None:
         raise HTTPException(404, "run not found")
     return detail
 
 
 @app.post("/api/runs/{run_id}/review", response_model=ReviewSaved)
 async def review(run_id: str, req: ReviewRequest) -> ReviewSaved:
-    if req.decision not in ("confirm", "override"):
-        raise HTTPException(400, "decision must be 'confirm' or 'override'")
     if req.decision == "override" and req.override_label is None:
         raise HTTPException(400, "override requires override_label")
     ok = await store.save_review(run_id, reviewer=req.reviewer, decision=req.decision,
@@ -209,37 +161,13 @@ async def review(run_id: str, req: ReviewRequest) -> ReviewSaved:
     return ReviewSaved(ok=True)
 
 
-@app.get("/api/experiments", response_model=list[ExperimentSummary])
-async def experiments(population: Population | None = None) -> list[ExperimentSummary]:
-    from sqlalchemy import select
-
-    async with db.session() as s:
-        statement = select(db.EvalExperiment)
-        if population == "operational":
-            statement = statement.where(operational_experiment())
-        elif population == "demo":
-            statement = statement.where(db.EvalExperiment.backend == "stub")
-        elif population == "legacy":
-            statement = statement.where(db.EvalExperiment.backend == "")
-        rows = (await s.execute(statement.order_by(db.EvalExperiment.created_at.desc()).limit(100))).scalars().all()
-        return [{"id": e.id, "agent": e.agent, "dataset": e.dataset, "dataset_version": e.dataset_version,
-                 "git_sha": e.git_sha, "overlay": e.overlay, "repetitions": e.repetitions,
-                 "metrics": e.metrics, "config_hash": e.config_hash, "git_dirty": e.git_dirty,
-                 "model_name": e.model_name, "backend": e.backend, "pricing": e.pricing,
-                 "harness_version": e.harness_version, "created_at": e.created_at.isoformat()} for e in rows]
-
-
 @app.get("/api/config", response_model=ConfigResponse)
 async def config() -> ConfigResponse:
-    from infosec_harness.agents import models as model_factory
-    from infosec_harness.agents.registry import AGENT_BINDINGS, agent_config_hashes, load_spec
+    from infosec_harness.agents.registry import resolved_agent_configs
 
-    agents = []
-    for name in AGENT_BINDINGS:
-        spec = load_spec(name)
-        agents.append({"name": name, "model_tier": spec.model,
-                       "config_hash": agent_config_hashes()[name],
-                       "resolved_model": model_factory.resolved_model_name(name, spec.model or "sonnet")})
+    agents = [{"name": name, "model_tier": cfg.model.requested_model,
+               "config_hash": cfg.digest, "resolved_model": cfg.model.resolved_model}
+              for name, cfg in resolved_agent_configs().items()]
     return {"model_mode": get_settings().model_mode, "agents": agents}
 
 
@@ -250,7 +178,7 @@ async def health() -> HealthResponse:
 
 @app.post("/api/batches/{batch_id}/cancel", response_model=CancelResponse)
 async def cancel_batch(batch_id: str) -> CancelResponse:
-    from infosec_harness.workflows.runner import cancel_durable_batch
+    from infosec_harness.workflows.submission import cancel_durable_batch
     try:
         return CancelResponse(status=await cancel_durable_batch(batch_id))
     except KeyError as exc:

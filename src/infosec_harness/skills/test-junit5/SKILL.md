@@ -9,8 +9,6 @@ metadata:
 
 # Probes in JUnit 5
 
-<!-- generated: activation criteria (scripts/restructure_skills.py) -->
-
 ## Use this skill when
 
 - You are writing or repairing a probe and the repository's test framework is JUnit 5 — `junit-jupiter` or `junit-platform` is on the test classpath.
@@ -25,7 +23,7 @@ metadata:
 
 - `test-junit4` also fires on the repositories that have *both* `junit:junit` and `junit-jupiter` on the test classpath, and each skill's negative criteria send the reader to the other. **This skill wins** whenever jupiter is present at all: Surefire 3.2.5 then selects the JUnit Platform provider, which does not run a JUnit-4-annotated test — measured as `Tests run: 0` with exit 0, the one shape the harness cannot tell from a probe that reached nothing. Defer to `test-junit4` only when jupiter is absent from the test classpath.
 
-<!-- /generated: activation criteria -->
+## Procedure
 
 JVM runners select a test by **class**, not by file path, so the probe's identity has to line
 up in three places at once. Get these right before writing the body:
@@ -117,8 +115,6 @@ Assertions are for the same reason not the oracle: a failing assertion is a cras
 is indistinguishable from a broken probe. Print the marker on the true branch and let the test
 end normally either way.
 
-<!-- generated: constraints (scripts/restructure_skills.py) -->
-
 ## Safety constraints
 
 - The test must run to completion and print its markers whether or not the exploit condition holds. Never let an assertion failure be the signal.
@@ -134,4 +130,3 @@ end normally either way.
 - The probe cannot decline to run: no skip, no disable, no assumption guard. A skipped test prints no markers, which the harness cannot distinguish from a broken probe, so probe repair is handed a correct probe and exhausts its budget on it.
 - The probe compiles at the level the project declares: `var` needs Java 10 or newer, and a JUnit 5 project can still be pinned to `maven.compiler.source` 8.
 
-<!-- /generated: constraints -->

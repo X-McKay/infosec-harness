@@ -1,63 +1,47 @@
-import type {
-  ExperimentCase,
-  ExperimentDetail,
-  ExperimentSummary,
-} from "../api/client";
+import type { ExperimentCase, ExperimentSummary } from "../api/client.ts";
+import { percent } from "./format.ts";
+import { asRecord, numeric, text, type JsonRecord } from "./json.ts";
 
-export type Metrics = ExperimentSummary["metrics"];
-export type Experiment = ExperimentSummary;
-export type { ExperimentCase, ExperimentDetail };
 export type Gate = { label: string; status: string; detail: string };
 
-export const text = (value: unknown): string | null =>
-  typeof value === "string" && value ? value : null;
-export const numeric = (value: unknown): number | null =>
-  typeof value === "number" && Number.isFinite(value) ? value : null;
-export const record = (value: unknown): Metrics =>
-  value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Metrics)
-    : {};
-export function metricNumber(metrics: Metrics, ...keys: string[]) {
-  for (const key of keys) {
-    const value =
-      numeric(metrics[key]) ?? numeric(record(metrics.distributions)[key]);
-    if (value != null) return value;
-  }
-  return null;
-}
-export function gateObservations(experiment: Experiment): Gate[] {
-  const metrics = experiment.metrics;
-  const total = metricNumber(metrics, "n", "cases_completed");
-  const passed = metricNumber(metrics, "passed");
-  const accuracy = metricNumber(metrics, "accuracy", "accuracy_mean");
-  const planned = metricNumber(metrics, "n_planned");
-  const status = text(metrics.status);
-  const violations = metricNumber(metrics, "budget_enforcement_violations");
-  const unexpectedStops = metricNumber(metrics, "unexpected_budget_stops");
-  const expectedStops = metricNumber(metrics, "expected_budget_stops");
+/**
+ * Gate observations from an experiment's headline measurements. The API reads each from the
+ * stored report and reports null for anything not recorded as a finite number.
+ */
+export function gateObservations(experiment: ExperimentSummary): Gate[] {
+  const total = experiment.cases_completed;
+  const passed = experiment.passed;
+  const accuracy = experiment.task_success_rate;
+  const planned = experiment.cases_planned;
+  const status = experiment.status ?? "";
+  const exhausted = experiment.budget_exhausted_count;
+  const gates = experiment.gate_status ?? "";
   return [
     {
       label: "Quality evidence",
       status: accuracy != null && total != null ? "recorded" : "unknown",
       detail:
         passed != null && total != null
-          ? `${passed} / ${total} cases passed · ${((accuracy ?? 0) * 100).toFixed(1)}% accuracy`
+          ? `${passed} / ${total} cases passed · ${accuracy == null ? "accuracy unavailable" : `${percent(accuracy)} accuracy`}`
           : accuracy == null
             ? "No accuracy measurement was recorded."
-            : `${(accuracy * 100).toFixed(1)}% accuracy; case numerator unavailable.`,
+            : `${percent(accuracy)} accuracy; case numerator unavailable.`,
     },
     {
       label: "Budget evidence",
       status:
-        violations == null && unexpectedStops == null
-          ? "unknown"
-          : violations === 0 && unexpectedStops === 0
-            ? "clear"
-            : "findings",
+        exhausted == null ? "unknown" : exhausted === 0 ? "clear" : "findings",
       detail:
-        violations == null && unexpectedStops == null
-          ? "No budget enforcement counters were recorded."
-          : `${violations ?? 0} enforcement violations · ${unexpectedStops ?? 0} unexpected stops · ${expectedStops ?? 0} expected stops`,
+        exhausted == null
+          ? "No budget exhaustion count was recorded."
+          : `${exhausted} case runs exhausted their budget`,
+    },
+    {
+      label: "Release gates",
+      status: gates || "unknown",
+      detail: gates
+        ? `The agent's release policy evaluated this run as ${gates}.`
+        : "No release-gate evaluation was recorded (only complete runs are evaluated).",
     },
     {
       label: "Completion evidence",
@@ -72,51 +56,49 @@ export function gateObservations(experiment: Experiment): Gate[] {
   ];
 }
 
-export function qualityFraction(metrics: Metrics) {
-  const passed = metricNumber(metrics, "passed");
-  const total = metricNumber(metrics, "n", "cases_completed");
+export function qualityFraction(experiment: ExperimentSummary) {
+  const { passed, cases_completed: total } = experiment;
   return passed != null && total != null
     ? `${passed} / ${total} cases`
     : undefined;
 }
 
+export type ComparisonPoint = {
+  experiment: ExperimentSummary;
+  accuracy: number;
+  cost: number;
+};
 export function comparisonPoints(
-  experiments: Experiment[],
-  selected?: Experiment,
-) {
+  experiments: ExperimentSummary[],
+  selected?: ExperimentSummary,
+): ComparisonPoint[] {
   const cohort = selected
     ? experiments.filter(
         (item) =>
           item.agent === selected.agent &&
           item.dataset === selected.dataset &&
           item.dataset_version === selected.dataset_version &&
-          text(item.metrics.status) === "complete",
+          item.status === "complete",
       )
     : [];
   return cohort
     .map((experiment) => ({
       experiment,
-      accuracy: metricNumber(experiment.metrics, "accuracy", "accuracy_mean"),
-      cost: metricNumber(
-        experiment.metrics,
-        "cost_usd_per_case",
-        "mean_cost_usd",
-      ),
+      accuracy: experiment.task_success_rate,
+      cost: experiment.average_cost_usd,
     }))
     .filter(
-      (
-        item,
-      ): item is { experiment: Experiment; accuracy: number; cost: number } =>
+      (item): item is ComparisonPoint =>
         item.accuracy != null && item.cost != null,
     );
 }
 
-export function caseNumber(scores: Metrics, ...keys: string[]) {
+export function caseNumber(scores: JsonRecord, ...keys: string[]) {
   for (const key of keys) {
     const direct = numeric(scores[key]);
     if (direct != null) return direct;
   }
-  const usage = record(scores.usage);
+  const usage = asRecord(scores.usage);
   for (const key of keys) {
     const nested = numeric(usage[key]);
     if (nested != null) return nested;
@@ -126,10 +108,7 @@ export function caseNumber(scores: Metrics, ...keys: string[]) {
 
 export function caseCost(item: ExperimentCase) {
   const observed = numeric(item.scores.cost_usd);
-  const status =
-    typeof item.scores.cost_status === "string"
-      ? item.scores.cost_status
-      : null;
+  const status = text(item.scores.cost_status);
   if (observed != null) return observed;
   if (status === "known_zero") return 0;
   if (status === "unknown" || (item.cost_usd === 0 && !status)) return null;

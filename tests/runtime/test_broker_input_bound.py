@@ -9,10 +9,10 @@ from pydantic_ai.models import ModelRequestParameters, OutputObjectDefinition
 from pydantic_ai.tools import ToolDefinition
 from test_broker_executor import request_fixture
 
-from infosec_harness.inference.codec import encode_payload
-from infosec_harness.inference.compat import input_wire
-from infosec_harness.inference.executor import OpenAIInference
-from infosec_harness.inference.protocol import BrokerError, canonical_bytes, required_input_reserve
+from infosec_harness.inference.executor.rendering import input_wire, required_input_reserve
+from infosec_harness.inference.executor.service import OpenAIInference
+from infosec_harness.inference.wire.codec import ascii_normalized_size, encode_payload
+from infosec_harness.inference.wire.protocol import BrokerError, canonical_bytes
 
 
 def payload(text="hi", params=None):
@@ -75,7 +75,7 @@ async def test_admission_wire_matches_independently_captured_sdk_request(atomic,
 
 
 async def test_exponential_schema_refs_fail_before_sdk_expansion(monkeypatch):
-    from infosec_harness.inference.compat import _CompatOpenAIChatModel
+    from infosec_harness.inference.executor.compat import CompatOpenAIChatModel
 
     definitions = {"D0": {"type": "string"}}
     for index in range(1, 25):
@@ -90,7 +90,7 @@ async def test_exponential_schema_refs_fail_before_sdk_expansion(monkeypatch):
     def forbidden_prepare(*args, **kwargs):
         pytest.fail("Unbounded schema reached SDK expansion")
 
-    monkeypatch.setattr(_CompatOpenAIChatModel, "prepare_request", forbidden_prepare)
+    monkeypatch.setattr(CompatOpenAIChatModel, "prepare_request", forbidden_prepare)
     with pytest.raises(BrokerError, match="rendering expansion bound"):
         await required_input_reserve(value, request.contract.model_copy(update={"atomic_intake": True}))
 
@@ -125,10 +125,9 @@ async def test_decoded_tool_arguments_have_separate_normalization_reserve():
         ModelResponse(parts=[ToolCallPart("read", arguments, tool_call_id="call")])],
         {"max_tokens": 16}, ModelRequestParameters())
     wire = await input_wire(value, request.contract)
-    from infosec_harness.inference.protocol import _ascii_normalized_size
 
     required = await required_input_reserve(value, request.contract)
-    assert required >= _ascii_normalized_size(wire) + 128 * 2 + 2048 + 60_000
+    assert required >= ascii_normalized_size(wire) + 128 * 2 + 2048 + 60_000
 
 
 async def test_ascii_tool_rich_input_remains_practical():
@@ -153,7 +152,7 @@ async def test_sdk_wraps_malformed_original_arguments_before_admission(arguments
 
 
 async def test_cached_schema_expansion_height_cannot_bypass_depth_limit(monkeypatch):
-    from infosec_harness.inference.compat import _CompatOpenAIChatModel
+    from infosec_harness.inference.executor.compat import CompatOpenAIChatModel
 
     definition = {"type": "string"}
     for _ in range(40):
@@ -171,7 +170,7 @@ async def test_cached_schema_expansion_height_cannot_bypass_depth_limit(monkeypa
     def forbidden_prepare(*args, **kwargs):
         pytest.fail("Unbounded expanded depth reached SDK")
 
-    monkeypatch.setattr(_CompatOpenAIChatModel, "prepare_request", forbidden_prepare)
+    monkeypatch.setattr(CompatOpenAIChatModel, "prepare_request", forbidden_prepare)
     with pytest.raises(BrokerError, match="expanded rendering depth"):
         await required_input_reserve(value, request.contract.model_copy(update={"atomic_intake": True}))
 
@@ -179,11 +178,10 @@ async def test_cached_schema_expansion_height_cannot_bypass_depth_limit(monkeypa
 async def test_supplementary_cjk_normalization_cannot_shrink_json_escape_bound():
     import unicodedata
 
-    from infosec_harness.inference.protocol import _ascii_normalized_size
 
     text = "\U0002f800" * 5000
     assert len(json.dumps(unicodedata.normalize("NFD", text))) < len(json.dumps(text))
-    assert _ascii_normalized_size(text) >= len(json.dumps(text))
+    assert ascii_normalized_size(text) >= len(json.dumps(text))
     request, _ = request_fixture()
     value = payload(params=ModelRequestParameters(function_tools=[ToolDefinition(
         name="read", description=text, parameters_json_schema={"type": "object"})]))

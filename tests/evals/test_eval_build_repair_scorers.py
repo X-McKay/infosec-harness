@@ -23,7 +23,7 @@ def _no_progress_case() -> dict:
 @pytest.mark.parametrize("attempt_index", [0, 1])
 def test_no_progress_scorer_rejects_an_exact_previous_attempt(attempt_index):
     case = _no_progress_case()
-    predict = build_repair_adapter(case)[3]
+    predict = build_repair_adapter(case).predict
     attempted = case["payload"]["previous_attempts"][attempt_index]
 
     assert predict(EnvironmentSpec.model_validate(attempted)) == "addressed"
@@ -32,7 +32,7 @@ def test_no_progress_scorer_rejects_an_exact_previous_attempt(attempt_index):
 
 def test_no_progress_scorer_accepts_distinct_spec_without_claiming_it_builds():
     case = _no_progress_case()
-    predict = build_repair_adapter(case)[3]
+    predict = build_repair_adapter(case).predict
     candidate = deepcopy(case["payload"]["failed_spec"])
     candidate["system_packages"].append("libpq-dev")
 
@@ -43,7 +43,7 @@ def test_no_progress_scorer_accepts_distinct_spec_without_claiming_it_builds():
 
 def test_no_progress_scorer_rejects_a_rationale_only_rewrite():
     case = _no_progress_case()
-    predict = build_repair_adapter(case)[3]
+    predict = build_repair_adapter(case).predict
     candidate = deepcopy(case["payload"]["failed_spec"])
     candidate["rationale"] = "Different prose with the same executable configuration"
 
@@ -55,7 +55,7 @@ def test_no_progress_scorer_ignores_system_package_order_only():
     attempted = deepcopy(case["payload"]["failed_spec"])
     attempted["system_packages"] = ["postgresql-client", "libpq-dev"]
     case["payload"]["previous_attempts"].append(attempted)
-    predict = build_repair_adapter(case)[3]
+    predict = build_repair_adapter(case).predict
     reordered = deepcopy(attempted)
     reordered["system_packages"].reverse()
 
@@ -64,7 +64,7 @@ def test_no_progress_scorer_ignores_system_package_order_only():
 
 def test_no_progress_scorer_cannot_turn_a_malformed_spec_into_progress():
     case = _no_progress_case()
-    predict = build_repair_adapter(case)[3]
+    predict = build_repair_adapter(case).predict
     malformed = deepcopy(case["payload"]["failed_spec"])
     del malformed["test_command"]
 

@@ -10,7 +10,7 @@ from infosec_harness.persistence import artifacts
 
 @pytest.fixture
 def store(tmp_path, monkeypatch):
-    monkeypatch.setattr(artifacts, "default_workspace", lambda: tmp_path)
+    monkeypatch.setattr(artifacts, "workspace_dir", lambda: tmp_path)
     return artifacts.FilesystemStore()
 
 

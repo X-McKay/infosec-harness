@@ -5,16 +5,15 @@ uses directly: agent specs live at `src/infosec_harness/agents/<name>/agent.yaml
 `src/infosec_harness/skills/<name>/SKILL.md`, so they ship in the wheel as the playbook's Build
 and packaging section requires.
 
-Two differences remain, and both are naming rather than structure, so a throwaway mirror still
-stands between the repository and `agentctl`:
-
-* Agent and system directories are named as they are written (`probe-author`), while
-  `agentctl` expects the module-normalized form (`probe_author`).
-* Durable systems are expected to have an `activities/` package beside `workflows/`; ours is
-  one module, `workflows/activities.py`.
+Two differences remain, both naming rather than structure, so a throwaway mirror still stands
+between the repository and `agentctl`: agent directories are named as they are written
+(`probe-author`) while `agentctl` expects the module-normalized form (`probe_author`), and a
+durable system is expected to have an `activities/` package where ours is two modules.
 
 The contracts checked are the real ones: the same YAML files, the same schemas, the same
-semantic rules. Only the filenames are rearranged.
+semantic rules. Only the filenames are rearranged. Only the agent and skill validators run;
+the rendered risk-assessment and System Spec documents they would also read are not
+materialized in this repository (see docs/architecture/PLAYBOOK_CONFORMANCE.md).
 
     uv run python scripts/conformance.py             # summary
     uv run python scripts/conformance.py --verbose    # every diagnostic
@@ -39,6 +38,19 @@ PACKAGE = "infosec_harness"
 # Deviations we take deliberately, with the reason. A waiver is reported, never hidden: a
 # permanently red check trains people to ignore it, and an unexplained green one is worse.
 WAIVERS = {
+    # Risk is assessed in the packaged scenario library (agents/risk-scenarios.yaml) and the
+    # tier it establishes is enforced at agent construction; there is no per-agent assessment
+    # document for agentctl to open. See docs/architecture/PLAYBOOK_CONFORMANCE.md.
+    "AGENT008": "metadata.risk_assessment: the assessment is agents/risk-scenarios.yaml, read "
+                "and enforced at construction (agents/governance.py), not a per-agent file.",
+    "AGENT035": "metadata.risk_assessment: see AGENT008.",
+    # Tool policies carry only the fields the runtime enforces (name, effect, retry safety,
+    # timeout, output bound, tools). owner, authorization_scopes and data_classification were
+    # declared and never read, which made them a claim nothing checked.
+    "TOOL003": "tool policies declare only enforced fields (agents/capabilities.py reads them).",
+    "TOOL009": "see TOOL003.",
+    "TOOL011": "see TOOL003.",
+    "TOOL012": "see TOOL003.",
     "AGENT029": (
         "agentctl requires `retries` to be a plain integer. pydantic-ai's own Agent Spec "
         "schema accepts either an integer or an AgentRetries mapping — see the generated "
@@ -52,8 +64,8 @@ PACKAGE_DIR = REPO / "src" / PACKAGE
 _IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc")
 
 # Reviewable project files, which stay at the repository root by design and are what the specs'
-# `risk_assessment` and `threat_model` metadata point at.
-PROJECT_DIRS = ("docs", "evals")
+# `threat_model` metadata points at.
+PROJECT_DIRS = ("docs",)
 
 
 def build_mirror(destination: Path) -> None:
@@ -80,16 +92,13 @@ def build_mirror(destination: Path) -> None:
                     ignore=_IGNORE)
     shutil.copytree(PACKAGE_DIR / "agents", destination / "agents", dirs_exist_ok=True,
                     ignore=_IGNORE)
-    for system in sorted((REPO / "systems").glob("*/system.yaml")):
-        target = package / "systems" / system.parent.name.replace("-", "_")
-        shutil.copytree(system.parent, target, dirs_exist_ok=True, ignore=_IGNORE)
-    # agentctl requires a durable system to have both directories beside the package. Ours are
-    # one module (workflows/activities.py) rather than a package, so mirror the shape.
+    # agentctl requires a durable system to have an `activities/` package beside `workflows/`.
+    # Ours are two modules (workflows/activities.py and persistence_activities.py); mirror the
+    # shape so the structural check sees what it expects without a second package in the repo.
     for directory in ("workflows", "activities"):
         (package / directory).mkdir(parents=True, exist_ok=True)
         (package / directory / "__init__.py").write_text(
-            f'"""Mirrored for agentctl discovery; the real module is '
-            f'src/{PACKAGE}/workflows/."""\n'
+            f'"""Mirrored for agentctl discovery; the real modules are src/{PACKAGE}/workflows/."""\n'
         )
 
 
@@ -124,14 +133,14 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="harness-conformance-") as tmp:
         mirror = Path(tmp)
         build_mirror(mirror)
+        # Agents and skills are the real, hand-maintained YAML. The playbook's rendered risk
+        # assessments and System Spec are no longer materialized: the scenario library is
+        # `agents/risk-scenarios.yaml` and the composition is documented in
+        # docs/architecture/TRIAGE_SYSTEM.md, so `risk validate` and `system validate` have
+        # nothing to read and are not run.
         checks = {
             "agents": [*base, "validate", "--root", str(mirror)],
             "skills": [*base, "skills", "validate", str(mirror / "skills")],
-            # Only the agent assessments: the system one under systems/ has its own schema and
-            # is validated by `system validate`, which reads it through the System Spec.
-            "risk": [*base, "risk", "validate",
-                     *(str(p) for p in sorted((mirror / "docs" / "risk-assessments").glob("*.yaml")))],
-            "system": [*base, "system", "validate", "--root", str(mirror)],
         }
         failed = 0
         for label, command in checks.items():

@@ -4,13 +4,19 @@ from __future__ import annotations
 
 import ast
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from pydantic_ai import ModelRetry, RunContext
 
 from infosec_harness.agents.deps import AgentDeps
-from infosec_harness.agents.repo_tools import _resolve, list_files
+from infosec_harness.agents.repo_tools import (
+    MAX_FILE_BYTES,
+    _read_capped,
+    _resolve,
+    clip_bytes,
+    list_files,
+)
 
 MAX_SYMBOLS = 80
 MAX_SYMBOL_SOURCE_LINES = 4000
@@ -296,6 +302,30 @@ def _js_reach(local: str, named: dict[str, str], default: str | None, spec: str,
         f'caller in this file, or read the file that re-exports it.'), ()
 
 
+@dataclass
+class _ClassScope:
+    """Which class a JavaScript line sits inside, INFERRED from brace depth (no parser).
+
+    A class is open from its declaration until the brace depth falls back to where it stood
+    when the class was declared.
+    """
+
+    depth: int = 0
+    _open: list[tuple[str, int]] = field(default_factory=list)  # (class name, depth at opening)
+
+    @property
+    def owner(self) -> str | None:
+        return self._open[-1][0] if self._open else None
+
+    def open(self, name: str) -> None:
+        self._open.append((name, self.depth))
+
+    def advance(self, line: str) -> None:
+        self.depth += line.count("{") - line.count("}")
+        while self._open and self.depth <= self._open[-1][1]:
+            self._open.pop()
+
+
 def _javascript_symbols(text: str, rel: Path) -> tuple[list[_Symbol], list[str]]:
     named, default, system = _js_exports(text)
     esm = system.startswith("ES modules")
@@ -318,8 +348,7 @@ def _javascript_symbols(text: str, rel: Path) -> tuple[list[_Symbol], list[str]]
         header.append("WARNING: `module.exports = { ... }` contains a nested object literal; this "
                       "scan does not descend into it, so the export list below may be incomplete.")
     out: list[_Symbol] = []
-    class_stack: list[tuple[str, int]] = []  # (class name, brace depth at its opening)
-    depth = 0
+    scope = _ClassScope()
     for lineno, line in enumerate(text.splitlines(), start=1):
         cls = _JS_CLASS.match(line)
         method = None if cls else _JS_METHOD.match(line)
@@ -331,7 +360,7 @@ def _javascript_symbols(text: str, rel: Path) -> tuple[list[_Symbol], list[str]]
             out.append(_Symbol(name=name, kind="class", params=None, line=lineno, export=export,
                                reach=reach,
                                notes=(*notes, "construct an instance before calling its methods")))
-            class_stack.append((name, depth))
+            scope.open(name)
         elif func or var:
             m = func or var
             assert m is not None
@@ -341,7 +370,7 @@ def _javascript_symbols(text: str, rel: Path) -> tuple[list[_Symbol], list[str]]
                 params = var.group("aparams")
                 if params is None and var.group("single"):
                     params = var.group("single")
-            owner = class_stack[-1][0] if class_stack and m.group("indent") else None
+            owner = scope.owner if m.group("indent") else None
             export, reach, notes = _js_reach(owner or name, named, default, spec, esm)
             out.append(_Symbol(
                 name=f"{owner}.{name}" if owner else name,
@@ -350,8 +379,8 @@ def _javascript_symbols(text: str, rel: Path) -> tuple[list[_Symbol], list[str]]
                 reach=reach if not owner else f"{reach}  ->  new {owner}(...).{name}(...)",
                 notes=notes if not owner else (*notes, "needs an instance"),
             ))
-        elif method and method.group("name") not in _JS_NOT_A_METHOD and class_stack:
-            owner = class_stack[-1][0]
+        elif method and method.group("name") not in _JS_NOT_A_METHOD and scope.owner:
+            owner = scope.owner
             name, params = method.group("name"), method.group("params")
             export, reach, notes = _js_reach(owner, named, default, spec, esm)
             if name == "constructor":
@@ -366,9 +395,7 @@ def _javascript_symbols(text: str, rel: Path) -> tuple[list[_Symbol], list[str]]
                 line=lineno, export=export, reach=f"{reach}  ->  {call}",
                 notes=(*notes, hint),
             ))
-        depth += line.count("{") - line.count("}")
-        while class_stack and depth <= class_stack[-1][1]:
-            class_stack.pop()
+        scope.advance(line)
     for exported, local in sorted(named.items()):
         if not any(s.name == local or s.name.endswith(f".{local}") for s in out):
             out.append(_Symbol(
@@ -644,6 +671,15 @@ def describe_callables(ctx: RunContext[AgentDeps], path: str) -> str:
     (heuristic text scan - the output states per language what is certain and what is inferred).
     Only symbols actually found in the file are reported; at most 80.
     """
+    target, rel, language = describable_target(ctx, path)
+    return describe_text(*_read_capped(target), rel, language)
+
+
+def describable_target(ctx: RunContext[AgentDeps], path: str) -> tuple[Path, Path, str]:
+    """(file, repo-relative path, language) for a path describe_callables accepts.
+
+    Raises ModelRetry with a corrective message for anything else.
+    """
     # Keep the corrective response useful without passing an absolute host path through the
     # shared resolver. `_not_a_file_retry` only inspects the supplied absolute path after proving
     # it is inside the repository; paths outside remain opaque.
@@ -664,7 +700,11 @@ def describe_callables(ctx: RunContext[AgentDeps], path: str) -> str:
             f"{path!r} has no supported extension (got {target.suffix!r}; supported: "
             f"{_SUPPORTED_EXTS}). Use read_file({rel.as_posix()!r}) for this one.{instead}"
         )
-    text = target.read_text(errors="replace")
+    return target, rel, language
+
+
+def describe_text(text: str, truncated_bytes: bool, rel: Path, language: str) -> str:
+    """The describe_callables report for a file already read (at most MAX_FILE_BYTES of it)."""
     lines = text.splitlines()
     truncated_source = len(lines) > MAX_SYMBOL_SOURCE_LINES
     if truncated_source:
@@ -673,6 +713,9 @@ def describe_callables(ctx: RunContext[AgentDeps], path: str) -> str:
     symbols, header = _EXTRACTORS[language](text, rel)
     out = [f"{rel.as_posix()}  language={language}  lines={len(lines)}",
            f"certainty: {_CERTAINTY[language]}"]
+    if truncated_bytes:
+        out.append(f"WARNING: the file is larger than {MAX_FILE_BYTES} bytes; only its first "
+                   f"{len(lines)} lines were read.")
     if truncated_source:
         out.append(f"WARNING: only the first {MAX_SYMBOL_SOURCE_LINES} lines were scanned; "
                    "symbols below that line are not reported.")
@@ -693,8 +736,4 @@ def describe_callables(ctx: RunContext[AgentDeps], path: str) -> str:
                    f"export={_clip(s.export)}")
         out.append(f"  reach: {_clip(s.reach)}")
         out.extend(f"  note: {_clip(n)}" for n in s.notes)
-    body = "\n".join(out)
-    if len(body.encode()) > MAX_DESCRIBE_BYTES:
-        body = body.encode()[:MAX_DESCRIBE_BYTES].decode(errors="ignore")
-        body += f"\n... truncated at {MAX_DESCRIBE_BYTES} bytes"
-    return body
+    return clip_bytes("\n".join(out), MAX_DESCRIBE_BYTES)

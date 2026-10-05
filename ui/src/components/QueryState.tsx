@@ -32,6 +32,7 @@ export function QueryState({
     );
   return null;
 }
+/** Only a failed refresh is announced; routine refetches stay silent. */
 export function Freshness({
   at,
   fetching,
@@ -42,12 +43,11 @@ export function Freshness({
   stale?: boolean;
 }) {
   return (
-    <p className="text-xs text-muted-foreground" role="status">
-      {stale
-        ? "Refresh failed · showing last known data · "
-        : fetching
-          ? "Refreshing · "
-          : ""}
+    <p className="text-xs text-muted-foreground">
+      <span role="status">
+        {stale ? "Refresh failed · showing last known data · " : ""}
+      </span>
+      {!stale && fetching ? "Refreshing · " : ""}
       {at ? `Updated ${timestamp(at, "time")}` : "Waiting for data"}
     </p>
   );

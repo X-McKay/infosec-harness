@@ -11,9 +11,8 @@ kubectl apply -f deploy/k8s/sandbox-namespace.yaml
   network; the CNI must enforce NetworkPolicy, e.g. Cilium/Calico).
 - `automountServiceAccountToken: false` and the restricted Pod Security Standard.
 
-`infosec_harness.sandbox.k8s.render_probe_pod` renders a hardened Pod specification and is
-unit-tested. It does not submit Pods, and the worker currently executes through the Docker
-runner. These manifests are deployment building blocks, not an implemented Kubernetes runner.
+The worker executes through the Docker runner. These manifests are deployment building blocks,
+not an implemented Kubernetes runner.
 A RuntimeClass name alone is not execution evidence; a future runner must verify real isolation,
 CNI policy enforcement, artifact handling and durable retry/cancellation before operational use.
 
@@ -53,8 +52,7 @@ fields in the service Secret. Hosted S3 buckets are pre-created (`HARNESS_S3_CRE
 
 The template keeps worker replicas at **zero** until a real executor is connected and tested.
 The current worker executes Docker builds/probes. Running that worker process in Kubernetes
-does not turn it into a Kubernetes Job runner. The existing probe Pod renderer remains only
-a renderer.
+does not turn it into a Kubernetes Job runner.
 
 To activate the supplied Docker-backed worker, provide all three operator-owned resources:
 
@@ -77,6 +75,6 @@ repository does not claim an executed Kubernetes deployment or native Kubernetes
 
 For opt-in OpenShell inference, mount only the worker catalog and its controller authentication
 material into the worker. Run the privileged native controller/executor infrastructure in its
-own qualified trust boundary, as described in the [broker runbook](../../docs/architecture/CREDENTIAL_BROKER_RUNBOOK.md).
+own qualified trust boundary, as described in the [broker runbook](../../docs/broker/RUNBOOK.md).
 Provider tokens, gateway authority and Docker administrator credentials never belong in
 untrusted inference executors or probe containers.

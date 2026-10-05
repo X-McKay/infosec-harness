@@ -8,7 +8,6 @@ from typing import Any
 def test_atomic_intake_uses_bedrock_converse_with_existing_retry_and_region_contract(monkeypatch):
     from infosec_harness.agents import models
     from infosec_harness.agents.intake_claims import AtomicFinding
-    from infosec_harness.agents.intake_contracts import retained_intake_spec
     from infosec_harness.agents.registry import build_agent, load_spec, resolve_agent_config
     from infosec_harness.settings import get_settings
 
@@ -35,13 +34,10 @@ def test_atomic_intake_uses_bedrock_converse_with_existing_retry_and_region_cont
     models.load_models_config.cache_clear()
     models._build_live.cache_clear()
     try:
-        model = models.resolve_intake_atomic("intake", "sonnet", durable=True)
+        model = models.resolve("intake", "sonnet", durable=True, atomic_intake=True)
         backend = models.load_models_config().backends["bedrock"]
         expected_model_id = models.load_models_config().model_id("sonnet", "bedrock")
         current_config = resolve_agent_config("intake", load_spec("intake"), durable=True)
-        retained_config = resolve_agent_config(
-            "intake", retained_intake_spec(), durable=True
-        )
         agent = build_agent("intake", durable=True)
     finally:
         models._build_live.cache_clear()
@@ -55,11 +51,10 @@ def test_atomic_intake_uses_bedrock_converse_with_existing_retry_and_region_cont
     }
     assert captured["model_id"] == expected_model_id
     assert captured["model_provider"].__class__ is Provider
-    assert current_config.model.backend_name == retained_config.model.backend_name == "bedrock"
-    assert current_config.model.transport_retries == retained_config.model.transport_retries
-    assert current_config.model.durable is retained_config.model.durable is True
+    assert current_config.model.backend_name == "bedrock"
+    assert current_config.model.transport_retries == backend.max_retries_under_temporal
+    assert current_config.model.durable is True
     assert current_config.model.effective_settings.get("temperature") == 0.0
-    assert retained_config.model.effective_settings.get("temperature") is None
     assert agent.output_type is AtomicFinding
     assert len(agent._output_validators) >= 1
 

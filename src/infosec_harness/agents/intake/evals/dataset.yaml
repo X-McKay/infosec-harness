@@ -11,7 +11,7 @@ version: "1"
 # to extract nothing, and without it an agent that always produces some CWE scores perfectly.
 #
 # Every case declares a `category` (agent-playbook 07-evaluation) and, where it exercises one,
-# the risk-scenario IDs from docs/risk-assessments/intake.yaml. This agent has no material
+# the risk-scenario IDs from agents/risk-scenarios.yaml. This agent has no material
 # (high/critical inherent) scenario: it reads report text and writes fields, with no sandbox and
 # no execution, so RISK-SEC-001 is not in its assessment at all. RISK-SEC-002 (content treated
 # as instructions) is the one it lives with on every call, and the three `adversarial` cases

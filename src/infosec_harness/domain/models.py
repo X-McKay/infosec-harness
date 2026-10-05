@@ -6,12 +6,13 @@ part of the output schema the model sees, so keep them precise.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from enum import StrEnum
 from typing import Any, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from infosec_harness.domain.canonical import digest
 
 
 def _nested_model_fields(cls: type[BaseModel]) -> set[str]:
@@ -54,16 +55,6 @@ class _Model(BaseModel):
                 decoded = decoded if decoded is not None else dict(data)
                 decoded[name] = parsed
         return decoded if decoded is not None else data
-
-
-def canonical_json(model: BaseModel | dict | list) -> str:
-    """Byte-stable JSON (sorted keys, no whitespace variance) for hashing and prompts."""
-    data = model.model_dump(mode="json") if isinstance(model, BaseModel) else model
-    return json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-
-
-def sha256_text(text: str) -> str:
-    return hashlib.sha256(text.encode()).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -166,6 +157,31 @@ class Finding(_Model):
     source_tool: str | None = None
     ado_work_item_id: int | None = None
 
+    @classmethod
+    def from_input(cls, inp: FindingInput) -> Finding:
+        """Deterministic mapping of a submitted finding's structured fields (F0, D1)."""
+        location = None
+        if inp.file_path:
+            location = CodeLocation(
+                file_path=inp.file_path, start_line=inp.start_line,
+                end_line=inp.end_line, symbol=inp.symbol,
+            )
+        return cls(
+            fingerprint=cls.compute_fingerprint(inp),
+            external_id=inp.external_id,
+            title=inp.title,
+            description=inp.description,
+            repo_url=inp.repo_url,
+            revision=inp.revision,
+            source_mode=inp.source_mode,
+            location=location,
+            cwe=inp.cwe,
+            severity=inp.severity,
+            source_kind=inp.source_kind,
+            source_tool=inp.source_tool,
+            ado_work_item_id=inp.ado_work_item_id,
+        )
+
     @staticmethod
     def compute_fingerprint(inp: FindingInput) -> str:
         identity = {
@@ -182,8 +198,7 @@ class Finding(_Model):
         # a Git revision with the same spelling need not contain the same bytes.
         if inp.source_mode is not None:
             identity["source_mode"] = inp.source_mode
-        key = canonical_json(identity)
-        return sha256_text(key)[:24]
+        return digest(identity)[:24]
 
 
 # ---------------------------------------------------------------------------
@@ -252,15 +267,23 @@ class StackFingerprint(_Model):
     manifests: list[str] = Field(default_factory=list)
     build_systems: list[str] = Field(default_factory=list)
     test_frameworks: list[str] = Field(default_factory=list)
-    registries: list[str] = Field(
-        default_factory=list, description="Package registry hosts declared by the repo (D14)"
-    )
     test_dirs: list[str] = Field(default_factory=list)
     java_release: int | None = Field(
         default=None,
         description="Oldest Java language level the build files declare; binds the JDK choice",
     )
     components: list[ComponentProfile] = Field(default_factory=list)
+
+    @property
+    def source_files(self) -> int | None:
+        """How much repository the agents have to explore, for budget scaling (None: unknown)."""
+        return sum((self.languages or {}).values()) or None
+
+    @property
+    def top_language(self) -> str:
+        """The language with the most files (ties broken by name), or "" when none is known."""
+        languages = self.languages or {}
+        return max(languages, key=lambda k: (languages[k], k)) if languages else ""
 
 
 class RepoProfile(_Model):
@@ -338,6 +361,44 @@ class PreparedEnvironment(_Model):
 # ---------------------------------------------------------------------------
 
 
+class RunStatus(StrEnum):
+    """Persisted lifecycle of one finding's triage run."""
+
+    pending = "pending"
+    running = "running"
+    complete = "complete"
+    needs_info = "needs_info"
+    failed = "failed"
+    cancelled = "cancelled"
+
+
+TERMINAL_RUN_STATUSES = frozenset({RunStatus.complete, RunStatus.needs_info, RunStatus.failed,
+                                   RunStatus.cancelled})
+
+
+class BatchStatus(StrEnum):
+    """Persisted lifecycle of one submitted batch."""
+
+    accepted = "accepted"
+    running = "running"
+    cancellation_requested = "cancellation_requested"
+    complete = "complete"
+    failed = "failed"
+    cancelled = "cancelled"
+
+
+TERMINAL_BATCH_STATUSES = frozenset({BatchStatus.complete, BatchStatus.failed,
+                                     BatchStatus.cancelled})
+
+
+class ExperimentStatus(StrEnum):
+    """Persisted lifecycle of one eval experiment (`evals.run.run_experiment`)."""
+
+    running = "running"
+    complete = "complete"
+    truncated = "truncated"
+
+
 class CodeRef(_Model):
     file_path: str
     start_line: int
@@ -410,7 +471,7 @@ class ProbePlan(_Model):
     # tool's JSON schema, and they are the only length guidance it gets there: with none, a
     # reasoning model has nothing telling it the answer is short, and deliberating over an
     # open-ended one is how probe-planner spent a whole 16000-token cap on thinking and
-    # emitted nothing (docs/validation/LIVE_VALIDATION.md). The agent's instructions say the same thing;
+    # emitted nothing (docs/evidence/2026-09-25-live-model-validation/LIVE_VALIDATION.md). The agent's instructions say the same thing;
     # saying it in both places means it survives a prompt the model skims.
     hypothesis: str = Field(description="One sentence: the exploit condition the test attempts")
     payload: str = Field(
@@ -441,6 +502,45 @@ class ProbeSource(_Model):
     explanation: str = ""
 
 
+# Who authored each part of an execution record (sandbox.evidence). Only ``controller`` is the
+# harness's own observation; marker text and parsed runner output come from the untrusted probe
+# process. Readers must treat anything but ``controller`` as unverified.
+ExecutionOrigin = Literal["controller", "self_reported_marker", "parsed_untrusted_output"]
+
+
+class ExecutionProcess(_Model):
+    """The probe process as the controller observed it."""
+
+    exit_code: int | None
+    timed_out: bool
+    duration_s: float
+    origin: ExecutionOrigin
+
+
+class ExecutionObservations(_Model):
+    """The exploit markers the probe printed."""
+
+    precondition_reached: bool
+    sink_returned: bool
+    oracle_fired: bool
+    origin: ExecutionOrigin
+
+
+class ExecutionRunner(_Model):
+    """The runner's own zero-test phrase, or None when its output contained none."""
+
+    zero_test_signal: str | None
+    origin: ExecutionOrigin
+
+
+class ExecutionOrigins(_Model):
+    """The origin-labelled sections of the controller's execution record (sandbox.evidence)."""
+
+    process: ExecutionProcess
+    observations: ExecutionObservations
+    runner: ExecutionRunner
+
+
 class ProbeExecution(_Model):
     attempt: int
     exit_code: int | None
@@ -451,7 +551,7 @@ class ProbeExecution(_Model):
     # this a probe that threw mid-call looks exactly like one the code resisted.
     sink_returned: bool = False
     # Set when the test runner's own output says it executed zero tests (see
-    # sandbox.docker.no_tests_executed). A zero-test run is a probe defect, never a negative
+    # sandbox.output.no_tests_executed). A zero-test run is a probe defect, never a negative
     # result: nothing exercised the sink. Naming it deterministically keeps the diagnosis agent
     # from having to infer "did not run" from a bare exit code, which it gets wrong.
     runner_reported_no_tests: str | None = None
@@ -460,6 +560,9 @@ class ProbeExecution(_Model):
     duration_s: float = 0.0
     log_artifact: str | None = None
     source_artifact: str | None = None
+    # The controller's origin-labelled record of this execution. None when no probe process ran
+    # (the sandbox was unavailable or disabled): nothing was observed, so nothing is verified.
+    origins: ExecutionOrigins | None = None
 
 
 class DiagnosisKind(StrEnum):
@@ -503,6 +606,13 @@ class Verdict(_Model):
     rationale: str
     inconclusive_reason: InconclusiveReason | None = None
     evidence: list[CodeRef] = Field(default_factory=list)
+
+
+def inconclusive_verdict(reason: InconclusiveReason, rationale: str, *, confidence: float = 0.0,
+                         evidence: list[CodeRef] | None = None) -> Verdict:
+    """The verdict for a run with no supported security judgment."""
+    return Verdict(label=VerdictLabel.inconclusive, confidence=confidence, rationale=rationale,
+                   inconclusive_reason=reason, evidence=list(evidence or []))
 
 
 class VerdictFacts(_Model):
@@ -559,6 +669,9 @@ class AgentOutcome(_Model):
     # Tool calls repeated with identical arguments, `tool(args)` -> count, only where count > 1.
     # Empty on a healthy run; non-empty is the signature of a loop rather than of hard work.
     repeated_tool_calls: dict[str, int] = Field(default_factory=dict)
+    # Set when the call raised instead of returning an output: the exception type. Its usage is
+    # whatever the completed requests reported, so a failed call is never recorded as free.
+    failure: str | None = None
 
 
 class TriageRunOutput(_Model):
@@ -578,18 +691,13 @@ class TriageRunOutput(_Model):
 
 
 class RepoPreparation(_Model):
-    """What one repository's preparation produced, including a failure's partial evidence.
+    """What one component's preparation produced, including a failure's partial evidence.
 
-    ``RepoPreparationWorkflow`` returned a bare ``PreparedEnvironment``, which cannot express
-    either of the two things a caller needs when preparation goes wrong. The prepare-phase agent
-    calls never crossed the workflow boundary, so a durable run's recon and env-planner work was
-    unrecoverable; and a preparation that *raised* returned nothing at all, failing the child
-    workflow, which ``TriageBatchWorkflow`` had no handler for -- so one bad repository failed
-    the entire batch, the very containment the local path was hardened against.
-
-    ``prepared`` is None only when the failure came before there was a snapshot and a stack to
-    describe (a checkout that could not complete). ``failure_reason`` is set on every failure,
-    and ``invocations`` carries whatever preparation had already done.
+    A preparation that raises is still an outcome: ``failure_reason`` is set on every failure,
+    and ``invocations`` carries whatever preparation had already done, so one bad repository
+    neither fails the batch nor loses the evidence of why. ``prepared`` is None only when the
+    failure came before there was a snapshot and a stack to describe (a checkout that could not
+    complete).
     """
 
     prepared: PreparedEnvironment | None = None

@@ -111,41 +111,6 @@ def test_policy_host_changes_pin_both_build_digests_only(monkeypatch):
         assert first[name].effective_digest == second[name].effective_digest
 
 
-def test_old_build_keeps_pre_guard_validator_generation():
-    current = registry.build_agent("build-repair", durable=False)
-    legacy = registry.build_agent("build-repair", durable=False, legacy_output_contract=True)
-    assert len(current._output_validators) == len(legacy._output_validators) + 1
-    assert all(v.function.__name__ != "validate_install_sources" for v in legacy._output_validators)
-
-
-def test_build_has_independent_patch_even_if_old_shared_patch_was_true(monkeypatch):
-    from infosec_harness.agents.durable import LEGACY_OUTPUT_AGENTS, RETAINED_BUILD_AGENTS
-    from infosec_harness.workflows import temporal_ops
-    from infosec_harness.workflows.temporal_ops import TemporalOps
-
-    monkeypatch.setattr(temporal_ops.workflow, "patched",
-                        lambda patch: patch == "agent-output-contracts-v2")
-    monkeypatch.setattr(temporal_ops.workflow.unsafe, "is_replaying", lambda: True)
-    ops = TemporalOps()
-    assert ops._agent_for("build-repair") is LEGACY_OUTPUT_AGENTS["build-repair"]
-    assert ops._agent_for("partial-build") is RETAINED_BUILD_AGENTS["partial-build"]
-    assert "parallel_tool_calls" not in ops._agent_for("partial-build").model_settings
-    assert "parallel_tool_calls" not in ops._agent_for("build-repair").model_settings
-
-
-async def test_old_build_live_frontier_stops_before_accounting(monkeypatch):
-    from infosec_harness.agents.deps import AgentDeps
-    from infosec_harness.workflows import temporal_ops
-    from infosec_harness.workflows.temporal_ops import TemporalOps
-
-    monkeypatch.setattr(temporal_ops.workflow, "patched",
-                        lambda patch: patch == "agent-output-contracts-v2")
-    monkeypatch.setattr(temporal_ops.workflow.unsafe, "is_replaying", lambda: False)
-    ops = TemporalOps()
-
-    async def forbidden(*_args, **_kwargs):
-        raise AssertionError("legacy frontier must stop before accounting or requests")
-
-    monkeypatch.setattr(ops._accounting, "reserve", forbidden)
-    with pytest.raises(RuntimeError, match="retry the triage as a new workflow"):
-        await ops.run_agent("build-repair", ["fixture"], AgentDeps(repo_path="/snapshot"))
+def test_build_repair_carries_the_install_source_validator():
+    agent = registry.build_agent("build-repair", durable=False)
+    assert any(v.function.__name__ == "validate_install_sources" for v in agent._output_validators)
