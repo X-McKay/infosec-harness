@@ -28,12 +28,11 @@ Temporal history and visibility use separate PostgreSQL databases, `temporal` an
 `temporal_visibility`. Their independent schemas must not share a schema-version table. The
 bootstrap creates both databases for a fresh volume; Temporal auto-setup creates the missing
 visibility database for existing volumes. Managed smoke requires the completed demo to be
-queryable through Temporal visibility, in addition to persisted API results. No volume reset
-is required for this correction.
+queryable through Temporal visibility, in addition to persisted API results.
 
 
 Service connections can use local or hosted infrastructure without changing workflow code.
 See [service environments](../docs/development/SERVICE_ENVIRONMENTS.md) for Temporal TLS/auth,
-PostgreSQL TLS, AWS/MinIO artifact storage, hosted telemetry and environment-file examples.
+PostgreSQL TLS, AWS or S3-compatible artifact storage, hosted telemetry and environment-file examples.
 The Kubernetes control-plane template leaves the Docker-backed worker disabled until its
 separate executor and shared workspace are verified. No Kubernetes probe submission is added.

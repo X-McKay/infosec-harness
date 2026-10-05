@@ -63,7 +63,9 @@ needs a dependency beyond `pytest`.
 ## How it's used
 
 - `infosec_harness.evals.corpus.load_corpus()` yields typed `CorpusCase`s (findings +
-  ground truth), with `repo_url` resolved to an absolute path.
+  ground truth), with `repo_url` resolved to an absolute path. Local repositories are refused outside
+  `HARNESS_LOCAL_REPO_ROOTS`; `harness eval corpus` admits the manifest's own directory for
+  that process only, and refuses a case that resolves outside it.
 - End-to-end: run each `finding` through the pipeline and compare the verdict to
   `expected_verdict` (per-class precision/recall; the false-negative rate on vulnerable
   cases is the headline metric).

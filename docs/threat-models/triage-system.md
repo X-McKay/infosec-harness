@@ -31,10 +31,39 @@ a unit-test probe, runs that probe with no network, and returns `potentially_exp
 | Sandbox container | the worker and host | everything executing inside: the repo's build, its test runner, and the model-authored probe |
 | Model boundary | the recorded facts and the deterministic contracts | anything a model asserts |
 | Write-back | the harness's comment text | the tracker's other content |
+| API | the operator's authenticated gateway in front of it | every request; the API has no authentication of its own |
 
 The third boundary is the one that shapes the design. A model's conclusion is a *proposal*; the
 deterministic oracle and the verdict contract decide. That is why no agent can report
 exploitability without a marker having fired, whatever it believes about the code.
+
+## Runtime safety gates
+
+These checks run in code on every relevant path; a configuration file or an instruction cannot
+switch them off.
+
+- **Sandbox runtime.** `sandbox.policy.ensure_runtime_available` refuses to build or probe unless
+  the configured runtime is `runsc` and the Docker daemon advertises it, and a `Settings`
+  validator refuses any other runtime at startup. Only `HARNESS_ALLOW_INSECURE_RUNTIME=true`
+  selects or skips the runtime, for local development (CONDITION-002).
+- **Containers.** Builds, probes and the sandbox shell tool run non-root, with all capabilities
+  dropped, no new privileges, pid/memory/cpu limits and a read-only root with tmpfs work
+  directories. Probes and the shell tool never have a network. Build steps reach the network
+  only through the operator's allowlisting proxy on an internal network; the allowlist is
+  operator configuration, never derived from the repository.
+- **Image cache.** A cached image is reused only if its tag (which includes the build-boundary
+  mode) and its provenance label match what this harness built (`IMAGE_FORMAT_VERSION` 4).
+- **Repository sources.** Remote repositories must be HTTPS. A local path or `file://`
+  `repo_url` is accepted only beneath `HARNESS_LOCAL_REPO_ROOTS`, which is empty by default; the
+  development profile sets it to the eval corpus, and `harness eval corpus` admits only its own
+  manifest's directory for the life of that process. Git runs with a minimal environment (no system
+  or global config, no prompts, no credential helpers), `--` argument separators and an
+  explicit protocol allowlist.
+- **Prompt encoding.** Every value placed in a prompt is one line of JSON with `</` escaped, so
+  repository or finding text cannot close its block or open a section of its own. This narrows
+  prompt injection to the content of a value; it does not make that content trustworthy.
+- **Verdict contract.** A negative verdict needs a valid negative execution that reached the sink
+  and a parsed, passing adapter control record; anything less becomes `inconclusive`.
 
 ## Adversaries and what they can reach
 
@@ -43,13 +72,20 @@ attacker-influenced. It reaches the model (as text) and the sandbox (as executed
 
 - *Through the model:* prompt injection in source, README, or a finding description. The blast
   radius is a wrong triage conclusion, not an action, because the capability allowlist exposes no
-  write tool for injected text to reach — only file reads and skill loads.
+  write tool for injected text to reach — only file reads, skill loads and, for the environment
+  agents, a network-less sandbox shell. Prompt encoding keeps injected text inside its value.
 - *Through the sandbox:* arbitrary code at build time (setup.py, a Gradle task, a postinstall
   hook) and at probe time. This is the system's dominant risk, and the control that bounds it —
   gVisor — is the one control with no runtime evidence. See RISK-SEC-001.
 
-**A hostile finding.** A crafted finding could point the harness at an unintended path. Bounded
-by the same read-only tools, and by the location resolver rejecting a finding it cannot place.
+**A hostile finding.** A crafted finding could point the harness at an unintended path or
+repository. Bounded by the same read-only tools, by the location resolver rejecting a finding it
+cannot place, and by the local repository root allowlist: a finding cannot name a path on the
+worker as its repository.
+
+**An unauthenticated caller.** Anyone who can reach the API can submit findings and read results.
+The API is meant to sit behind an authenticated gateway and is served same-origin with the UI,
+with no CORS headers; exposing it directly is an operator error.
 
 **An operator error.** Pointing the model backend at an unapproved endpoint sends customer source
 outside the trust boundary (RISK-PRIV-001), and enabling `HARNESS_ALLOW_INSECURE_RUNTIME` outside
@@ -148,8 +184,9 @@ threshold on the corpus; budget exhaustion on more than a small fraction of find
 ## The honest gap
 
 Every control in the assessment is evidenced by a test or a measured run except the isolation
-boundary itself. gVisor has never executed: no host available to this project provides `runsc`,
-and it cannot run on macOS at all. Until `harness eval corpus` has run with the sandbox enabled
-on a `runsc` host, the system's largest risk is mitigated by a control whose design is reviewed
-and whose operation is unverified. That is why five agents and the system carry `conditional_go`
-rather than `go`.
+boundary itself. `runsc` now executes in the managed development VM, where `./dev` refuses to
+start unless actual sandbox and build-egress fixtures pass, and isolated build/probe runs have
+been recorded under [`docs/evidence/`](../evidence/README.md). That is execution evidence for a
+development host, not for a deployment. CTRL-SBX-001 stays `implemented` rather than `verified`
+until CONDITION-001's sandboxed corpus run is recorded, which is why five agents and the system
+carry `conditional_go` rather than `go`.

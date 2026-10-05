@@ -9,18 +9,10 @@ just conformance                                  # needs agentctl on PATH
 just conformance /path/to/playbooks      # or a checkout of that repo
 ```
 
-Historical validator output (not a current-tree acceptance result, and from when the rendered
-risk assessments and System Spec still existed):
-
-```
-PASS agents   errors=0 waived=11 warnings=22
-PASS skills   errors=0 waived= 0 warnings= 0
-```
-
 `scripts/conformance.py` mirrors the repository into the layout `agentctl` discovers and runs
-the agent and skill validators against the real YAML. The `risk` and `system` validators are
-not run: the per-agent risk-assessment documents and the System Spec they read were generated
-renderings of data that lives elsewhere, and they are no longer materialized (see below).
+the agent and skill validators against the real YAML. The playbook's `risk` and `system`
+validators are not run: they read per-agent risk-assessment and System Spec documents, and this
+repository keeps that content in the scenario library and the documents below instead.
 
 ## Where the artifacts live
 
@@ -39,15 +31,25 @@ ships in the wheel; everything reviewers read *about* the system stays at the re
 | Risk assessment and threat model | `docs/threat-models/triage-system.md` | no | hand-authored |
 | System composition | `docs/architecture/TRIAGE_SYSTEM.md` | no | hand-authored |
 
-Nothing is generated from anything else. The playbook's per-agent risk-assessment YAML and
-System Spec were rendered from the scenario library and the agent specs; the rendering was
-removed because every value in it was either derived (and therefore drift waiting to happen)
-or prose that belongs in a document. What the runtime needs from the assessment -- each
-agent's scenarios and the tier they establish -- it reads from the library directly, at
-construction (`agents/governance.py`, `agents/risk.py`), and the release gate on scenario
-coverage reads the same file (`evals/coverage.py`). The playbook rules those documents
-encoded are held by tests instead: `tests/agents/test_risk_scenarios.py`,
+Every artifact above is edited directly. What the runtime needs from the risk assessment --
+each agent's scenarios and the tier they establish -- it reads from the library at construction
+(`src/infosec_harness/agents/governance.py`, `src/infosec_harness/agents/risk.py`), and the
+release gate on scenario coverage reads the same file
+(`src/infosec_harness/evals/coverage.py`). The playbook rules a per-agent assessment document
+would encode are held by tests: `tests/agents/test_risk_scenarios.py`,
 `tests/development/test_release_policies.py` and `tests/evals/test_eval_coverage.py`.
+
+## Release gates
+
+Release gates are defined only in each agent's
+`src/infosec_harness/agents/<name>/evals/release-policy.yaml`: hard gates (the
+metric must equal the limit) and thresholds (`min`/`max`). `src/infosec_harness/evals/gates.py`
+is the one evaluator; the release report, calibration admissibility and the
+unevidenced-safety gate all read the policy through it. A metric that is missing or not a number
+makes its check `not_checked`, never `passed`, and a gate that could not have failed for a run
+is reported in the report's `inert_checks`. Budget behavior is gated by
+`budget_exhausted_count`; the task-success floor is 0.75 for every agent, an explicit owner
+decision recorded in [release evidence](../evaluation/RELEASE_EVIDENCE.md).
 
 ## Deliberate deviations
 
@@ -104,8 +106,11 @@ Three of those are worth their own note.
 **`git_dirty`.** `git rev-parse HEAD` answers the same SHA whether or not the tree matches it,
 so a run over uncommitted edits used to be filed against a commit that never contained the code
 it measured, with nothing downstream able to tell. `harness eval baseline save` refuses such a
-run outright, as it refuses a truncated one: a baseline that quietly lies is worse than no
-baseline, because it becomes the thing every later comparison is read against.
+run outright, as it refuses a run with no commit, one not recorded as complete (truncated,
+running, or with no status), one over less than the full dataset (a calibration, held-out or
+`--dataset` split), and a stub-model run: a baseline that quietly lies is worse than no
+baseline, because it becomes the thing every later comparison is read against. The rules are
+listed with the files in [`evals/baselines/README.md`](../../evals/baselines/README.md).
 
 **The model, as columns rather than only inside `config_hash`.** The hash fingerprints the
 model but cannot be grouped by, filtered on, or read, so "how did `verdict` do on opus" was not
@@ -163,7 +168,7 @@ code; promoting a file to a package before it needs to be one adds a directory, 
 Development skills live under `.claude/skills/`; `.agents/skills` is a symlink to the same
 files for Codex. These are distinct from packaged runtime skills.
 
-`graph/manifests.py` builds persisted harness, repository, environment and capability manifests.
+`src/infosec_harness/graph/manifests.py` builds persisted harness, repository, environment and capability manifests.
 They carry versioned runtime/policy digests and resolved agent configuration; the implementation
 and `tests/runtime/test_snapshot_integrity.py` establish the current fields. The manifest is persisted
 with triage output rather than represented solely by an opaque configuration hash.
@@ -171,28 +176,17 @@ with triage output rather than represented solely by an opaque configuration has
 Completed agent evals automatically export reports under `.harness/reports/evals/`; these
 transient reports are separate from committed accepted baselines.
 
+Operator qualification runners for the credential broker live in
+`src/infosec_harness/qualification/broker/` with their offline regressions in
+`tests/qualification/`. Serving code never imports them; they run from a checkout as
+`python -m infosec_harness.qualification.broker.<module>`.
+
 ## Historical live release-gate measurements
 
-The earlier live validation recorded the following results with budgets enforced (`harness eval run <agent> --report`,
-then `agentctl release check`):
-
-| agent | task success | schema validity | budget breaches | unevidenced safety | gate |
-| --- | --- | --- | --- | --- | --- |
-| `context` | 100% (7/7) | 1.0 | 0 | 0 | **pass** |
-| `probe-diagnosis` | 100% (7/7) | 1.0 | 0 | 0 | **pass** |
-| `verdict` | 67% (2/3) | 0.67 | 0 | 0 | **fail** |
-
-Two things worth reading off that table.
-
-No measured run hit its budget; this sample alone does not validate runaway-execution braking. And `unevidenced_safe_verdicts` is 0 everywhere: no agent
-claimed safety on evidence that could not support it.
-
-The historical `verdict` result failed its own gate. Its `inconclusive_env` case omitted the
-contract-required `inconclusive_reason` about a third of the time, exhausts its retries, and
-returns no valid output — the residual issue recorded in `LIVE_VALIDATION.md`. The gate catching
-it is the point: this is a real defect being blocked, not a threshold set to flatter. In
-production the graph fallback turns it into an `inconclusive` verdict rather than a lost
-finding, so the failure is contained; it is still a failure.
+The first live release-gate measurements, including a `verdict` gate failure that the gate
+correctly blocked, are recorded in
+[the live-model validation evidence](../evidence/2026-09-25-live-model-validation/LIVE_VALIDATION.md).
+They predate the current policies and are not current results.
 
 ## What conformance does and does not establish
 
@@ -201,9 +195,9 @@ owner, a governance tier that matches the risk scenarios it carries, an executio
 tools justify, a per-run budget that is enforced, an eval dataset, and an executable release
 gate.
 
-Conformance does not establish actual runtime isolation or release readiness. Current and
-historical execution evidence, remaining clean-host acceptance gaps, and real versus mocked
-checks are distinguished in [IMPLEMENTATION_VALIDATION.md](../validation/IMPLEMENTATION_VALIDATION.md).
+Conformance does not establish actual runtime isolation or release readiness. Execution
+evidence, clean-host acceptance gaps, and real versus mocked checks are recorded per run under
+[`docs/evidence/`](../evidence/README.md).
 Re-run runtime fixtures for the deployment being assessed; names and manifests alone are not
 execution evidence.
 

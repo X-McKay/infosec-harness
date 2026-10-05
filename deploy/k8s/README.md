@@ -77,6 +77,6 @@ repository does not claim an executed Kubernetes deployment or native Kubernetes
 
 For opt-in OpenShell inference, mount only the worker catalog and its controller authentication
 material into the worker. Run the privileged native controller/executor infrastructure in its
-own qualified trust boundary, as described in the [broker runbook](../../docs/architecture/CREDENTIAL_BROKER_RUNBOOK.md).
+own qualified trust boundary, as described in the [broker runbook](../../docs/broker/RUNBOOK.md).
 Provider tokens, gateway authority and Docker administrator credentials never belong in
 untrusted inference executors or probe containers.

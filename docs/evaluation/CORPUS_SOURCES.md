@@ -190,6 +190,16 @@ entries: **JDK 8 ×43, JDK 7 ×14, JDK 11 ×1**. Including the 11 quarantined en
 they are later recovered: JDK 8 ×48, JDK 7 ×20, JDK 11 ×1. There is nothing newer than 11 in
 the dataset at all.
 
+### Scoring the harvested corpus
+
+```
+uv run harness eval corpus --manifest eval-corpus/external/vul4j.json --dataset vul4j --limit 10
+```
+
+`--manifest` reads only the manifest's `cases` (never `quarantined`), `--dataset` labels every
+case with its source, and `--limit` keeps vulnerable/fixed pairs together. The report goes to
+`.harness/reports/corpus/`.
+
 ### Running the harvester
 
 ```

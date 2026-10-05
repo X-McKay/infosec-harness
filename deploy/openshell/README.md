@@ -1,7 +1,8 @@
 # Minimal native inference executor
 
 Use the operator deployment and migration instructions in
-[`CREDENTIAL_BROKER_RUNBOOK.md`](../../docs/architecture/CREDENTIAL_BROKER_RUNBOOK.md).
+the [broker runbook](../../docs/broker/RUNBOOK.md). After any change to the executor's packaged
+sources, rebuild the image and qualify it again before brokered use.
 The executor image includes the typed inference protocol, codec, compatible model
 adapter, and their hash-pinned dependencies. It excludes the controller, database,
 worker, tool execution, and provider credentials.
@@ -71,7 +72,7 @@ in the same directory); its host runner terminates a worker, retrieves the same 
 on retry and replays history with sends forbidden. The `cachepoint` scope sends the actual
 `render_prompt` output with an authored SDK CachePoint and checks its exact retained
 representation plus one counted provider send before the authentication, saved-result and
-native-close assertions. See `tests/runtime/broker_native_temporal_fixture.py` for the
+native-close assertions. See `src/infosec_harness/qualification/broker/native_temporal.py` for the
 Temporal host runner's strict operator inputs; `tests/runtime/test_broker_native_temporal.py`
 runs it only when `HARNESS_NATIVE_TEMPORAL_CONFIG` is set.
 
@@ -94,12 +95,14 @@ source commit must be the clean checkout HEAD, and its report directory must be 
 checkout so sandbox temporary files are guest-visible.
 
 ```bash
-uv run python scripts/broker_real_provider_check.py --manifest <manifest.json> --manifest-sha256 <sha256>
-uv run python scripts/broker_real_provider_check.py --manifest <manifest.json> --manifest-sha256 <sha256> \
-  --phase direct --allow-inference
-uv run python scripts/broker_real_provider_check.py --manifest <manifest.json> --manifest-sha256 <sha256> \
+PILOT="uv run --locked python -m infosec_harness.qualification.broker.pilot"
+$PILOT --manifest <manifest.json> --manifest-sha256 <sha256>
+$PILOT --manifest <manifest.json> --manifest-sha256 <sha256> --phase direct --allow-inference
+$PILOT --manifest <manifest.json> --manifest-sha256 <sha256> \
   --phase local --allow-inference --baseline-report <pilot-dir>/direct.json
 ```
+
+`scripts/broker_real_provider_check.py` is an equivalent wrapper.
 
 The default `validate` phase resolves every agent's direct and native route from the frozen
 files without constructing a client and makes no provider call. Each phase of a manifest is
@@ -114,8 +117,8 @@ production Temporal graph per pilot and phase with real sandbox build/probe exec
 persisted API checks and root/child replay with external I/O forbidden. Generated temporary
 build inputs stay in a private trial `TMPDIR` visible to the checkout-owned Lima guest.
 
-Live results, retained failures and remaining rollout gates are in
-[`CREDENTIAL_BROKER_LIVE_PROVIDER.md`](../../docs/validation/CREDENTIAL_BROKER_LIVE_PROVIDER.md).
+Earlier live results, retained failures and remaining rollout gates are in
+[`CREDENTIAL_BROKER_LIVE_PROVIDER.md`](../../docs/evidence/2026-10-01-broker-implementation/CREDENTIAL_BROKER_LIVE_PROVIDER.md).
 No endpoint discovery response attests deployed tokenizer identity or upstream
 authentication. Never resend `completion_unknown` requests when changing images.
 

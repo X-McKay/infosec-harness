@@ -3,7 +3,7 @@ name: harness-eval-experiment
 description: Run a controlled InfoSec Harness experiment that changes prompts, models, tools, skills, or orchestration behavior.
 metadata:
   owner: harness-maintainers
-  version: 1.0.1
+  version: 1.0.2
   compatibility: Codex and Claude repository development clients
   source_revision: repository-layout-v1
   playbook_revision: 9e7fc03f2e1253be3e2adea10663ddf429646cea
@@ -23,9 +23,18 @@ metadata:
 
 - Start with `docs/README.md` and `docs/development/REPOSITORY_GUIDE.md`.
 - Runtime implementation and packaged runtime skills stay under `src/infosec_harness/`.
-- Frontend source is `ui/`; use `just ui-check` for formatting, tests and the production build.
+- Frontend source is `ui/`; use `just ui-check` for formatting, API type drift, tests and the production build.
 - Tests are grouped under `tests/agents/`, `tests/runtime/`, `tests/persistence/`,
-  `tests/evals/` and `tests/development/`, with shared fixtures in `tests/conftest.py`.
+  `tests/evals/`, `tests/development/` and `tests/qualification/` (broker qualification
+  runners), with shared fixtures and gating markers in `tests/conftest.py`.
+- In `src/infosec_harness/`: orchestration shared by the in-process and durable paths is
+  `graph/pipeline.py` and `graph/workloads.py`; durable submission is `workflows/submission.py`
+  and stub-only local runs `workflows/local_run.py`; release gates are evaluated only by
+  `evals/gates.py` from each agent's `release-policy.yaml`, and datasets load through
+  `evals/dataset.py`; broker qualification runners are `qualification/broker/` and read-only
+  service checks `operations/`.
+- Dated evidence goes to `docs/evidence/<yyyy-mm-dd>-<topic>/`; accepted agent results to
+  `evals/baselines/`.
 - Agent overlays live in `evals/experiments/overlays/`; typed calibration plans live in
   `evals/experiments/calibration/`. Local logs and report exports belong under `.harness/`.
 - Development skills live in `.claude/skills/`; `.agents/skills` is a symlink to the same

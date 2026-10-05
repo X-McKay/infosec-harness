@@ -1,35 +1,18 @@
 # Qualification dashboard operations
 
-The Qualification page reads `GET /api/qualification` and `GET /api/runtime-status`. It displays selected evidence for all 11 agent semantic components, their measured source, case counts, dependency assessment and freshness. A passed component matrix does not establish a fresh full 118 run, hosted/Kubernetes qualification or system/network reliability. Retained failures remain failures; the dashboard does not rescore reports or release accounting holds.
+The Qualification page reads `GET /api/qualification` and `GET /api/runtime-status`. Both are
+read-only projections plus one bounded, unsigned admission check against a configured broker
+controller. Neither rescoring reports, releasing accounting holds nor generating evidence is
+possible from the UI.
 
-See [component qualification](../evaluation/COMPONENT_QUALIFICATION.md) for the reviewed ledger and [the current checkpoint](../validation/CREDENTIAL_BROKER_QUALIFICATION_CURRENT.md) for the contributing measurements and retained failures.
+## Component evidence
 
-## Evidence and invalidation
-
-The shared qualification assessor verifies record identities, evidence file hashes and each component's declared dependency inventory. Current file dependencies are hashed from actual bytes beneath the source checkout; a commit label does not substitute for those hashes. Inventories cover the relevant agent, shared runtime, model/configuration, dataset and grader dependencies rather than unrelated documentation or timestamps.
-
-Unchanged dependencies permit reuse of a complete measured cohort. A reviewed equivalence must bind the exact scope, before/after dependency digests, reviewer and retained evidence. A changed or missing dependency makes the affected component require retesting or a new review. A stale equivalence cannot approve a new candidate, and a review cannot promote failed or unchecked evidence. Existing report/cardinality validators remain the scoring authority.
-
-The page uses `fresh` for passed evidence measured at the candidate commit, `reused` for verified passed evidence from another commit, `stale` for changed dependencies, and `unavailable` when verified evidence is unavailable. Case counts come from the pinned completion witness or retained cardinality artifact. The overall component status is passed only when all 11 selected components pass. `as_of` is the API assessment time, not the time a model or sandbox was exercised.
-
-## Operator bundle
-
-Set `HARNESS_QUALIFICATION_BUNDLE` to an operator-owned JSON file. Its exact top-level keys are:
-
-| Key | Required value |
-| --- | --- |
-| `version` | Integer `1` |
-| `ledger` | Pinned reference to the reviewed version-1 ledger |
-| `current` | Pinned reference to the candidate dependency inventory |
-| `reviews` | Pinned reference to the equivalence reviews |
-| `selection` | Agent-to-record-ID mapping containing exactly all 11 registered agents |
-| `broker_observation` | Pinned reference to the retained broker observation |
-
-Every pinned reference has exactly `file` and `sha256` keys: an API-readable file path and its lowercase SHA256 digest. Each selected record must identify the matching agent and `agent_semantics` scope. `current` contains `qualification_candidate_commit` and `components`; its file dependencies must resolve to the actual deployment source files. The API can display `HARNESS_GIT_COMMIT_SHA` as the candidate label, but still checks dependency bytes.
-
-Do not copy private evidence into the frontend or embed developer workstation paths in deployment configuration. The bundle and its referenced operator artifacts are not packaged application resources. Local deployments must configure paths accessible to their API process. Hosted deployments must mount the bundle, evidence and required source/configuration inventories read-only at their own deployment paths. Keep credential/key files outside public qualification inventories. Retained configuration identities remain private provenance.
-
-Missing configuration, missing files, drift, malformed references or incomplete selections produce `not_checked`; they do not fall back to fabricated results. Qualification evidence must be prepared and reviewed before deployment. The dashboard has no evidence-generation, qualification-run or promotion action.
+`GET /api/qualification` reports every agent component `not_checked` with freshness
+`unavailable`. Accepted agent eval results are committed under `evals/baselines/` and reviewed
+with the change that produced them; the service does not measure them or promote them to runtime
+evidence. The component ledger the page used to read was removed because it could not be
+reproduced outside one workstation ([release evidence](../evaluation/RELEASE_EVIDENCE.md)).
+Qualification evidence predating that change is under [`docs/evidence/`](../evidence/README.md).
 
 ## Broker observation
 
@@ -59,7 +42,7 @@ These endpoints and views are read-only projections, plus the bounded unsigned a
 
 ## Runtime clarity and active-profile scope
 
-Runtime and Settings now display resolved model identities separately from execution evidence. An unconfigured broker displays `Not enabled`; stale observations and held-request warnings apply only to a configured broker. The component ledger is labeled `Component evidence`, and the active model/transport profile has a separate status. Retained component gates do not automatically promote a changed live/direct profile; active-profile qualification remains `not_checked` when no independently assessed active-profile release evidence is available.
+Runtime and Settings display resolved model identities separately from execution evidence. An unconfigured broker displays `Not enabled`; stale observations and held-request warnings apply only to a configured broker. Component evidence and the active model/transport profile have separate statuses; active-profile qualification remains `not_checked` without independently assessed active-profile evidence.
 
 An operator may set `HARNESS_MODEL_CONNECTION_OBSERVATION` to a credential-free receipt from an actual inference check. Exact fields: `version` (integer 1), `checked_at` (timezone-aware ISO timestamp), `source_commit` (the deployed source), `model_config_sha256` (actual model configuration file bytes), `broker_config_sha256` (actual broker catalog bytes, or null without a broker), `mode`, `transport`, and `status` (`passed` or `failed`). Only record a pass after a real request completes with the expected result. A configured provider name is insufficient. Duplicate/extra fields, mismatched profiles/source, invalid dates and unreadable evidence remain `not_checked`; checks expire after one hour. The API does not invoke a model when displaying or refreshing this observation, and its text identifies the check as operator-recorded rather than continuous health monitoring. This is connectivity evidence, not agent qualification.
 
