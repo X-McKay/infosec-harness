@@ -10,9 +10,12 @@ citations caused format feedback to mask the semantic explanation. Thirty cases 
 unstarted. See [target reachability feedback](TARGET_REACHABILITY_FEEDBACK.md).
 Unified feedback corrects the masking defect without changing admission, labels, thresholds
 or budgets. A bounded diagnostic on `9cd4adf` then failed post-probe verification because
-the probe left a generated symlink. The next correction preserves that boundary and returns
+the probe left a generated symlink. The correction preserves that boundary and returns
 unverified evidence only for a known completed command with rejected archive metadata.
-No candidate is qualified for promotion.
+The bounded diagnostic on `880a733` was then blocked by native mutation-admission capacity:
+995 completed claims plus five unresolved claims filled the caller's 1,000-claim limit.
+See [native capacity evidence](NATIVE_ADMISSION_CAPACITY.md). Live verification of the
+corrections remains not_checked, and no candidate is qualified for promotion.
 
 Earlier confirmed defects and bounded fixes are recorded in
 [verdict feedback](VERDICT_FEEDBACK.md), [native provider readiness](NATIVE_PROVIDER_READINESS.md)
@@ -22,11 +25,11 @@ and [marker feedback](PROBE_MARKER_FEEDBACK.md). Original failed reports are pre
 
 | Gate | Status | Evidence / limit |
 | --- | --- | --- |
-| Deterministic regression suite | passed | 267 tests with `HARNESS_TEST_REQUIRE_TEMPORAL=1` |
+| Deterministic regression suite | passed | 269 tests with `HARNESS_TEST_REQUIRE_TEMPORAL=1` |
 | Real Temporal replay, restart, cancellation and identity | passed | Includes two-worker model/tool/skill rejection, cleanup ownership and repeated cancellation |
 | Lint, compilation, generated contracts and instructions | passed | Local checks and backend CI |
 | Lightweight UI | passed | Five tests, types/build, browser inspection and managed control-plane readiness; web CI |
-| Native workspace/probe confinement and lifecycle | passed | Actual Landlock observations, transfer, receipts, offline execution and cleanup |
+| Native workspace/probe confinement and lifecycle | not_checked | Actual observations passed on `c34f1cc`; repeat for the newest correction is blocked by native admission capacity |
 | Repeated native model admission | passed | Same provider-attached sandbox, including a new adapter instance, without replaying commands |
 | Minimal executor / multi-turn usage decoding | passed | New native image imports and usage-extension preservation; no inference needed for decode proof |
 | Real self-hosted model dispatch | passed | Typed native smoke and completed production model responses; this is connectivity evidence only |

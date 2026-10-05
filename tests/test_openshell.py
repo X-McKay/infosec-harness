@@ -207,13 +207,16 @@ async def test_unknown_admission_closes_instead_of_resending_observation(adapter
 
 
 @pytest.mark.asyncio
-async def test_exec_unknown_is_fenced_across_worker_restart(adapter, monkeypatch):
+@pytest.mark.parametrize("exit_code", [None, 124])
+async def test_exec_unknown_is_fenced_across_worker_restart(adapter, monkeypatch, exit_code):
     boundary, native = adapter
     sandbox = await boundary.create("run")
-    native.next_code = None
+    native.next_code = exit_code
     with pytest.raises(ExecutionUnknown, match="unknown"):
         await boundary.execute(sandbox, "touch file", operation_id="activity", timeout=3)
     assert len(native.execs) == 1 and native.deleted == [sandbox.name]
+    assert native.last_stream.cancelled
+    assert not boundary.receipts("run")
     # Inspect the persisted fence independently; no completed outcome was invented.
     saved = json.loads(next((boundary.config.state_dir / "operations").glob("*.json")).read_bytes())
     assert "result" not in saved
@@ -727,3 +730,17 @@ async def test_provider_readiness_rpc_error_discloses_only_status_code(adapter, 
     assert str(caught.value) == "native provider readiness RPC failed: UNAVAILABLE"
     assert sentinel not in str(caught.value) and caught.value.__suppress_context__
     assert native.deleted and not native.execs
+
+
+@pytest.mark.asyncio
+async def test_ordinary_nonzero_exit_is_a_completed_replayable_receipt(adapter):
+    boundary, native = adapter
+    sandbox = await boundary.create("run")
+    native.next_code = 2
+    result = await boundary.execute(sandbox, "exit 2", operation_id="activity", timeout=3)
+    assert result.exit_code == 2
+    assert boundary.receipts("run")[0].result == result
+    assert native.last_stream.cancelled
+    assert native.deleted == []
+    assert await boundary.execute(sandbox, "exit 2", operation_id="activity", timeout=3) == result
+    assert len(native.execs) == 1

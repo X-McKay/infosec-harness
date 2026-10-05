@@ -615,6 +615,10 @@ class OpenShell:
                     code = int(event.exit.exit_code)
             if code is None:
                 raise ExecutionUnknown("native exec ended without an exit receipt")
+            if code == 124:
+                # Pinned OpenShell also synthesizes 124 on timeout without native
+                # terminal finalization. An explicit process exit 124 is ambiguous.
+                raise ExecutionUnknown("native exit 124 cannot establish terminal execution")
             return CommandResult(code, "" if binary else stdout.decode(errors="replace"), stderr.decode(errors="replace"),
                                  truncated), bytes(stdout)
         finally:
