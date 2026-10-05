@@ -9,8 +9,9 @@ network permissions are operator-selected; instructions cannot widen them.
 
 Keep the original source unchanged. Put new probes and dependencies under `/workspace/repo`
 so they can be copied into the fresh offline probe sandbox. Use a separate dependency folder
-such as `.harness-deps` and an external cache when a tool would rewrite tracked files. Avoid dependency symlinks, including virtualenv links and npm bin links: the transfer accepts regular files/directories only. Never rely on files
-in `/tmp` or a home directory surviving into the probe sandbox.
+such as `.harness-deps` and an external cache when a tool would rewrite tracked files.
+Avoid dependency symlinks, including virtualenv links and npm bin links: the transfer accepts
+regular files and directories only (see `probe` for what transfers).
 
 Choose the smallest environment that exercises the actual target. These are starting points,
 not mandatory command templates:

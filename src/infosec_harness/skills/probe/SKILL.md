@@ -1,63 +1,65 @@
 ---
 name: probe
-description: Author and run a focused offline vulnerability probe with explicit positive and negative controls.
+description: Load before writing or running any probe. Author and run a focused offline probe with controls that ends in the HARNESS_PROBE observation line.
 ---
 
-Trace the finding's real attacker-controlled value to the sensitive operation. Load the
-relevant language and CWE skills. Write a new probe without modifying any original source
-file. Inspect the actual function signature and preconditions rather than inventing a
-standalone reimplementation of the vulnerable function.
+Trace the finding's real attacker-controlled value to the sensitive operation; the matching
+`cwe-*` skill defines the oracle and controls. Inspect the actual function signature and
+preconditions. Never reimplement, stub or mock the target or its sink: a stand-in that
+rejects or ignores the input reports a false negative.
 
-Use `write` to add probe files and `execute` for preparation. Call `run_probe` to execute
-inside a fresh offline OpenShell sandbox. It copies the prepared workspace, checks original
-source bytes against the immutable snapshot, and records actual process results. Changes to
-original source invalidate the probe; do not patch the target to manufacture a conclusion.
+## Prepare and run
 
-Archive checks reject symlinks, hardlinks and special files, including generated artifacts.
-If an experiment creates temporary links or special files, remove only those exact
-probe-created artifacts in a `finally` block before the process exits. Use `os.path.lexists`
-to detect dangling symlinks. Preserve original source files. A completed command whose
-post-execution archive is rejected remains unverified; inspect the probe and explicitly
-run a corrected new probe, or return inconclusive. Never relabel its old receipt.
+- `run_probe` copies only `/workspace/repo` into a fresh offline sandbox and starts there.
+  Use `write` for probe files and `execute` for setup, all under `/workspace/repo`; anything
+  prepared in `/tmp` or a home directory does not transfer. Fixtures and marker files the
+  probe itself creates at run time (for example with `tempfile.mkdtemp()`) are fine.
+- Never modify original source files. They are checked against the immutable snapshot after
+  the run; a change invalidates it. Do not patch the target to manufacture a conclusion.
+- The archive check rejects symlinks, hardlinks and special files. Remove only those the probe
+  created, in a `finally` block before exit; use `os.path.lexists` for dangling links. A run
+  that returns `integrity_feedback` completed but is not source-verified.
+- Make the runner really run the probe: exit 0 with zero tests is not success. Pytest captures
+  stdout (use `-s`); Jest/Vitest may silence console output; Gradle may skip an up-to-date
+  task; Maven may pick the wrong JUnit provider. Inspect runner output. Keep output short.
 
-The probe must exercise the real target and report evidence for both controls:
+## Observation line
 
-- A positive control demonstrates the observation/oracle can detect the claimed behavior.
-- A negative control demonstrates the oracle does not fire on a known-safe/control input.
-- `target_reached` means the actual finding input invoked the real target entry point,
-  including its validation or containment checks. It does not mean the sensitive sink ran
-  or the attack succeeded. An observed security rejection by that target still sets
-  `target_reached` to true and can set `vulnerability_observed` to false when the oracle
-  and both controls worked. For example, a real file-reading callable rejecting `../`
-  while a normal read succeeds has reached the target. An import/setup exception, missing
-  dependency, or a stand-in rejecting the input has not reached the real target.
-- Report whether the vulnerability was observed. A false value is meaningful only when the
-  target was reached and the oracle and both controls worked.
-
-Print exactly one final line with this shape, filling booleans from actual observations:
+The last stdout line must hold the prefix and the JSON object on the SAME line, with exactly
+these five boolean fields and nothing else; print details on earlier lines:
 
 ```text
 HARNESS_PROBE {"target_reached":true,"oracle_valid":true,"positive_control":true,"negative_control":true,"vulnerability_observed":false}
 ```
 
-The prefix and JSON must be on the same final stdout line. Printing JSON and then a
-standalone `HARNESS_PROBE` line is invalid. Include only these five boolean fields;
-print details earlier. In Python, after deriving `observations` from the actual checks:
+In Python, after deriving `observations` from checks the probe actually ran:
+`print('HARNESS_PROBE '+json.dumps(observations))`. JSON on one line and a standalone
+`HARNESS_PROBE` on another, key=value pairs, extra fields such as `details`, or string values
+are not parsed and count as no observation.
 
-```python
-print('HARNESS_PROBE '+json.dumps(observations))
-```
+- `target_reached`: the finding-shaped input invoked the real target entry point, including its
+  validation or containment checks. A security rejection by the real target is still `true`
+  (a real file reader refusing `../` while a normal read succeeds has reached the target).
+  It does not mean the sink ran or the attack succeeded. Import or setup errors, missing
+  dependencies, or a stand-in rejecting the input are `false`.
+- `oracle_valid`: the oracle check executed and tests the condition the CWE skill names.
+- `positive_control`: a deliberately triggered case made the oracle fire.
+- `negative_control`: a benign or inert input left the oracle silent.
+- `vulnerability_observed`: the oracle fired for the finding-shaped input through the real
+  target. `false` is meaningful only when the other four are `true`.
 
-Never print a successful control without executing it. Marker values are self-reported claims,
-not independent proof. The runtime also requires an actual successful, complete offline
-execution and source citations before accepting a definitive verdict.
+Never report a control you did not execute. Values are self-reported claims, not proof.
 
-Ensure the runner really discovers and runs the probe. Exit code zero with zero tests is not
-success. Pytest may capture stdout; Jest/Vitest may silence console output; Gradle may skip an
-up-to-date task; Maven may select the wrong JUnit provider. Inspect runner output and use the
-appropriate flags for this repository. Do not guess a framework from descriptive text.
+## Use the result
 
-Cite the `run_probe` evidence ID and exact source lines in the final verdict. Distinguish a
-concrete blocker from an unexecuted path, missing dependency, timeout, or inconclusive result.
-Persistent source changes are checked after execution, but a hostile probe can mutate and
-restore files; do not claim independent semantic attestation of untrusted test code.
+- A complete probe exits 0 with untruncated output, is source-verified, and reports the four
+  prerequisite fields `true`. Only a cited complete probe whose `vulnerability_observed`
+  matches the label supports a definitive verdict, and any complete probe contradicting it
+  blocks that verdict. Failed, incomplete or unverified probes support only `inconclusive`;
+  workspace `execute` runs and earlier exploratory probes cannot substitute.
+- To correct a cited run, fix the probe, run a new `run_probe` and cite its new id. Never
+  relabel or reinterpret an old receipt; nothing is retried for you.
+- Cite the exact full returned Evidence.id, including its tool-call suffix, plus the source
+  lines the probe exercises.
+- A hostile probe can mutate and restore files; do not claim independent attestation of
+  untrusted test code.
