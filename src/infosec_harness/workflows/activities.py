@@ -16,7 +16,6 @@ from infosec_harness.domain.models import (
     EnvironmentSpec,
     Finding,
     ProbeExecution,
-    ProbeSource,
     RepoRef,
     RepoSnapshot,
     SmokeResult,
@@ -28,7 +27,14 @@ from infosec_harness.persistence import recipes
 from infosec_harness.repo.checkout import checkout
 from infosec_harness.repo.detect import detect_stack
 from infosec_harness.workflows.heartbeat import with_heartbeat
-from infosec_harness.workflows.progress import ACTIVITIES as PROGRESS_ACTIVITIES
+from infosec_harness.workflows.payloads import (
+    BuildArgs,
+    ProbeArgs,
+    RecordRecipeArgs,
+    ResolveLocationArgs,
+    SmokeArgs,
+)
+from infosec_harness.workflows.persistence_activities import ACTIVITIES as PERSISTENCE_ACTIVITIES
 
 
 @activity.defn
@@ -42,38 +48,33 @@ async def detect_stack_activity(snapshot: RepoSnapshot) -> StackFingerprint:
     return detect_stack(snapshot.path)
 
 
-
 @activity.defn
 @with_heartbeat
-async def build_environment_activity(args: dict) -> BuildResult:
+async def build_environment_activity(args: BuildArgs) -> BuildResult:
     """Render a Dockerfile from the spec and build it (cached by repo hash + spec)."""
-    return await workloads.build_environment(RepoSnapshot.model_validate(args["snapshot"]),
-                                             EnvironmentSpec.model_validate(args["spec"]))
+    return await workloads.build_environment(args.snapshot, args.spec)
 
 
 @activity.defn
 @with_heartbeat
-async def smoke_test_activity(args: dict) -> SmokeResult:
+async def smoke_test_activity(args: SmokeArgs) -> SmokeResult:
     """Prove the image starts, its test runner is installed, and the adapter controls pass."""
-    return await workloads.smoke_test(args["image_tag"], args.get("test_command") or "",
-                                      language=args.get("language") or "",
-                                      module_path=args.get("module_path") or "")
+    return await workloads.smoke_test(args.image_tag, args.test_command, language=args.language,
+                                      module_path=args.module_path)
 
 
 @activity.defn
 @with_heartbeat
-async def execute_probe_activity(args: dict) -> ProbeExecution:
+async def execute_probe_activity(args: ProbeArgs) -> ProbeExecution:
     """Run a probe in the built image with no network (F5)."""
-    return await workloads.execute_probe(args["image_tag"],
-                                         ProbeSource.model_validate(args["probe"]),
-                                         EnvironmentSpec.model_validate(args["spec"]),
-                                         args["nonce"], args["attempt"])
+    return await workloads.execute_probe(args.image_tag, args.probe, args.spec, args.nonce,
+                                         args.attempt)
 
 
 @activity.defn
-async def resolve_location_activity(args: dict) -> Finding | None:
+async def resolve_location_activity(args: ResolveLocationArgs) -> Finding | None:
     """Confirm the finding's file exists at the revision (F0c). None -> needs_info."""
-    return resolve_location(Finding.model_validate(args["finding"]), args["repo_path"])
+    return resolve_location(args.finding, args.repo_path)
 
 
 @activity.defn
@@ -89,11 +90,9 @@ async def lookup_recipe_activity(stack: StackFingerprint) -> EnvironmentSpec | N
 
 
 @activity.defn
-async def record_recipe_activity(args: dict) -> None:
+async def record_recipe_activity(args: RecordRecipeArgs) -> None:
     """Keep a spec that built and smoke-tested, drop one that did not."""
-    recipes.record_recipe_outcome(StackFingerprint.model_validate(args["stack"]),
-                                  EnvironmentSpec.model_validate(args["spec"]),
-                                  worked=args["worked"])
+    recipes.record_recipe_outcome(args.stack, args.spec, worked=args.worked)
 
 
 ALL_ACTIVITIES = [
@@ -108,7 +107,7 @@ ALL_ACTIVITIES = [
     record_recipe_activity,
 ]
 
-ALL_ACTIVITIES += PROGRESS_ACTIVITIES
+ALL_ACTIVITIES += PERSISTENCE_ACTIVITIES
 
 
 @activity.defn

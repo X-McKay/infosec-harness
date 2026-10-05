@@ -14,8 +14,17 @@ from urllib.parse import urlsplit
 import httpcore
 import httpx
 
-from .diagnostics import report_remote_diagnostic, report_transport_failure, sanitize_diagnostic
-from .protocol import ERROR_CODES, MAX_BODY_BYTES, BrokerError, canonical_bytes, fixed_https_url
+from .auth import CREDENTIAL_HEADERS
+from .diagnostics import record_failure, report_remote_diagnostic, sanitize_diagnostic
+from .protocol import (
+    ERROR_CODES,
+    ERROR_STATUS,
+    MAX_BODY_BYTES,
+    BrokerError,
+    DiagnosticBoundary,
+    canonical_bytes,
+    fixed_https_url,
+)
 from .timing import SERVER_TIMEOUT_S
 
 
@@ -81,6 +90,7 @@ def response_error(status: int, body: bytes) -> BrokerError:
 
     A proxy or gateway fault (for example an HTML 502 page) is ``unavailable``. Only a known
     closed error code is relayed, and the optional diagnostic stays observability-only.
+    Retryable codes keep their distinct transient type.
     """
     try:
         value = _canonical_object(body)
@@ -89,7 +99,7 @@ def response_error(status: int, body: bytes) -> BrokerError:
     code = value.get("error")
     if not isinstance(code, str) or code not in ERROR_CODES:
         code = "unavailable"
-    return BrokerError(code, diagnostic=report_remote_diagnostic(value.get("diagnostic")))
+    return BrokerError.of(code, diagnostic=report_remote_diagnostic(value.get("diagnostic")))
 
 
 # Failures of the network exchange itself. Only these map to the transient/unavailable code.
@@ -214,6 +224,8 @@ class _GatewayTransport(httpx.AsyncBaseTransport):
 
 
 class JsonChannel:
+    """One authenticated JSON hop; exchange failures are a retryable ``unavailable``."""
+
     def __init__(
         self,
         *,
@@ -222,13 +234,19 @@ class JsonChannel:
         transport: httpx.AsyncBaseTransport | None = None,
         gateway_origin: str | None = None,
         service_domain: str | None = None,
+        boundary: DiagnosticBoundary = "json_channel",
     ):
-        context = ssl.create_default_context(cafile=ca_file)
-        if cert:
-            context.load_cert_chain(*cert)
-        self.context = context
         if (gateway_origin is None) != (service_domain is None) or (gateway_origin and transport):
             raise BrokerError("policy")
+        self.boundary = boundary
+        try:
+            context = ssl.create_default_context(cafile=ca_file)
+            if cert:
+                context.load_cert_chain(*cert)
+        except TRANSPORT_ERRORS as error:
+            record_failure(boundary, error)
+            raise BrokerError.of("unavailable") from None
+        self.context = context
         self.transport = transport
         self.gateway_origin, self.service_domain = gateway_origin, service_domain
 
@@ -243,11 +261,92 @@ class JsonChannel:
                 url, body, headers, timeout=timeout, verify=self.context, transport=transport
             )
         except TRANSPORT_ERRORS as error:
-            report_transport_failure("json_channel", error)
-            raise BrokerError("unavailable") from None
+            record_failure(self.boundary, error)
+            raise BrokerError.of("unavailable") from None
         if status != 200:
             raise response_error(status, received)
         return parse_response(received)
+
+
+class _BrokerHandler(BaseHTTPRequestHandler):
+    """One bounded POST into ``server.core.handle``; never logs payloads or headers."""
+
+    server: _BoundedServer
+
+    def log_message(self, *_args):
+        pass
+
+    def _read_body(self) -> bytes:
+        if (
+            self.headers.get("Transfer-Encoding")
+            or len(self.headers.get_all("Content-Length", [])) != 1
+        ):
+            raise BrokerError("identity")
+        if any(len(self.headers.get_all(name, [])) > 1 for name in CREDENTIAL_HEADERS):
+            raise BrokerError("auth")
+        length = int(self.headers["Content-Length"])
+        if length <= 0 or length > MAX_BODY_BYTES:
+            raise BrokerError("identity")
+        body = self.rfile.read(length)
+        if len(body) != length:
+            raise BrokerError("identity")
+        return body
+
+    def do_POST(self):
+        future = None
+        try:
+            body = self._read_body()
+            future = asyncio.run_coroutine_threadsafe(
+                self.server.core.handle(self.path, body, dict(self.headers)), self.server.loop
+            )
+            response, status = future.result(timeout=SERVER_TIMEOUT_S), 200
+        except BrokerError as exc:
+            response, status = broker_error_body(exc), ERROR_STATUS.get(exc.code, 503)
+        except TimeoutError as error:
+            if future is not None and not future.done():
+                future.cancel()
+            record_failure("server", error)
+            response, status = {"error": "unavailable"}, 503
+        except Exception:
+            response, status = {"error": "unavailable"}, 503
+        encoded = canonical_bytes(response)
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
+
+
+class _BoundedServer(ThreadingHTTPServer):
+    """At most 32 connections, TLS handshakes and header parsing included."""
+
+    def __init__(self, address, *, core, loop: asyncio.AbstractEventLoop,
+                 tls: ssl.SSLContext | None):
+        self.core, self.loop, self.tls = core, loop, tls
+        self.slots = threading.BoundedSemaphore(32)
+        super().__init__(address, _BrokerHandler)
+
+    def process_request(self, request, address):
+        request.settimeout(10)
+        if not self.slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, address)
+        except BaseException:
+            self.slots.release()
+            raise
+
+    def process_request_thread(self, request, address):
+        wrapped = request
+        try:
+            if self.tls is not None:
+                wrapped = self.tls.wrap_socket(request, server_side=True)
+            super().process_request_thread(wrapped, address)
+        except (OSError, ssl.SSLError):
+            self.shutdown_request(wrapped)
+        finally:
+            self.slots.release()
 
 
 def serve(
@@ -267,87 +366,7 @@ def serve(
     thread.start()
     if startup is not None:
         asyncio.run_coroutine_threadsafe(startup(), loop).result()
-    slots = threading.BoundedSemaphore(32)
-
-    class Handler(BaseHTTPRequestHandler):
-        def log_message(self, *_args):
-            pass
-
-        def do_POST(self):
-            future = None
-            try:
-                if (
-                    self.headers.get("Transfer-Encoding")
-                    or len(self.headers.get_all("Content-Length", [])) != 1
-                ):
-                    raise BrokerError("identity")
-                if any(
-                    len(self.headers.get_all(name, [])) > 1
-                    for name in ("Authorization", "X-Harness-Admission")
-                ):
-                    raise BrokerError("auth")
-                length = int(self.headers["Content-Length"])
-                if length <= 0 or length > MAX_BODY_BYTES:
-                    raise BrokerError("identity")
-                body = self.rfile.read(length)
-                if len(body) != length:
-                    raise BrokerError("identity")
-                headers = dict(self.headers)
-                future = asyncio.run_coroutine_threadsafe(
-                    core.handle(self.path, body, headers), loop
-                )
-                response = future.result(timeout=SERVER_TIMEOUT_S)
-                status = 200
-            except BrokerError as exc:
-                response = broker_error_body(exc)
-                status = {
-                    "auth": 401,
-                    "policy": 403,
-                    "identity": 400,
-                    "conflict": 409,
-                    "pending": 409,
-                    "completion_unknown": 409,
-                    "expired": 410,
-                }.get(exc.code, 503)
-            except TimeoutError as error:
-                if future is not None and not future.done():
-                    future.cancel()
-                report_transport_failure("server", error)
-                response, status = {"error": "unavailable"}, 503
-            except Exception:
-                response, status = {"error": "unavailable"}, 503
-            encoded = canonical_bytes(response)
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(encoded)))
-            self.end_headers()
-            self.wfile.write(encoded)
-
-    class Server(ThreadingHTTPServer):
-        def process_request(self, request, address):
-            request.settimeout(10)
-            if not slots.acquire(blocking=False):
-                self.shutdown_request(request)
-                return
-            try:
-                super().process_request(request, address)
-            except BaseException:
-                slots.release()
-                raise
-
-        def process_request_thread(self, request, address):
-            wrapped = request
-            try:
-                # TLS handshakes and header parsing share the bounded connection slots.
-                if tls is not None:
-                    wrapped = tls.wrap_socket(request, server_side=True)
-                super().process_request_thread(wrapped, address)
-            except (OSError, ssl.SSLError):
-                self.shutdown_request(wrapped)
-            finally:
-                slots.release()
-
-    server = Server((host, port), Handler)
+    server = _BoundedServer((host, port), core=core, loop=loop, tls=tls)
     try:
         server.serve_forever()
     finally:

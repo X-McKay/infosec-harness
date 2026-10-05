@@ -271,11 +271,19 @@ async def test_runnable_calibration_executes_candidates_then_grouped_holdout(tmp
     assert not list(tmp_path.glob(f".{output.name}.*")), "atomic temp file was not cleaned up"
 
 
-async def test_live_custom_pricing_cost_cap_is_rejected_before_any_call(monkeypatch):
+async def test_live_custom_pricing_cost_cap_is_rejected_before_any_call(monkeypatch, tmp_path):
     from infosec_harness.agents import models
 
+    # A deployment whose gateway serves a model priced only by its own configured table: a
+    # tier never names a literal provider id, so the catalogue maps one to it.
+    config = yaml.safe_load(get_settings().models_config.read_text())
+    config["model_catalog"]["sonnet"]["gateway"] = "claude-sonnet-5"
+    custom = tmp_path / "models.yaml"
+    custom.write_text(yaml.safe_dump(config))
+    monkeypatch.setenv("HARNESS_MODELS_CONFIG", str(custom))
+
     raw = yaml.safe_load(Path("evals/experiments/calibration/verdict-tool-budget.yaml").read_text())
-    raw["model"] = "claude-sonnet-5"
+    raw["model"] = "sonnet"
     raw["backend_profile"] = "gateway"
     raw["constraints"]["maximum_cost_usd"] = 100.0
     spec = CalibrationSpec.model_validate(raw)
@@ -366,7 +374,7 @@ async def test_calibration_skips_provider_floor_equivalent_candidate(
     monkeypatch.setenv("HARNESS_MODEL_BACKEND", "gateway")
     monkeypatch.setenv("HARNESS_MODEL_BASE_URL", "https://gateway.invalid/v1")
     monkeypatch.setattr(calibration, "run_experiment", fake_run)
-    monkeypatch.setattr(calibration, "_experiment_row", fake_row)
+    monkeypatch.setattr(calibration, "load_experiment", fake_row)
     get_settings.cache_clear()
     models.load_models_config.cache_clear()
     try:

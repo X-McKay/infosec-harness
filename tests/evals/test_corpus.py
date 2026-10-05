@@ -4,7 +4,7 @@ import re
 
 import pytest
 
-from infosec_harness.evals.corpus import corpus_path, languages, load_corpus
+from infosec_harness.evals.corpus import corpus_path, is_remote, languages, load_corpus
 from infosec_harness.repo.detect import detect_stack
 
 CASES = load_corpus()
@@ -105,7 +105,7 @@ def test_the_corpus_spans_more_than_one_runner_per_ecosystem():
     """
     seen: dict[str, set[str]] = {}
     for case in CASES:
-        if case.language in ("javascript", "perl") and case.is_vendored:
+        if case.language in ("javascript", "perl") and not is_remote(case.finding.repo_url):
             seen.setdefault(case.language, set()).update(
                 detect_stack(str(case.repo_path)).test_frameworks)
     for language in ("javascript", "perl"):
@@ -336,7 +336,7 @@ def test_a_provider_outage_is_not_filed_as_an_unbuildable_environment():
     import httpx
     from pydantic_ai.exceptions import ModelHTTPError
 
-    from infosec_harness.graph.ops import is_infrastructure_failure
+    from infosec_harness.graph.failures import is_infrastructure_failure
 
     outage = ModelHTTPError(status_code=502, model_name="Qwen3.6-35B-A3B-NVFP4",
                             body={"type": "upstream_unreachable"})

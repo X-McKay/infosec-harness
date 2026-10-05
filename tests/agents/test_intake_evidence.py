@@ -86,7 +86,7 @@ def test_unavailable_source_fails_closed_and_retry_never_echoes_report_model_or_
 
 def test_eval_adapter_serializes_the_exact_source_without_normalizing_it():
     report = "\n\t" + REPORT + "  \n"
-    _, _, deps, _, _ = intake_adapter({"payload": {"report": report}, "expected": "CWE-78"})
+    deps = intake_adapter({"payload": {"report": report}, "expected": "CWE-78"}).deps
     assert deps.report_text == report
     assert AgentDeps.model_validate_json(deps.model_dump_json()).report_text == report
     assert AgentDeps.model_validate({"repo_path": "/legacy"}).report_text is None
@@ -98,10 +98,12 @@ async def test_production_local_intake_receives_the_same_exact_report(tmp_path, 
     report = "\n\t" + REPORT + "  \n"
     captured = []
 
-    async def run_agent(name, prompt, deps):
+    async def run_agent(name, prompt, deps, *, record=None):
         assert name == "intake"
         captured.append(deps.report_text)
-        return AgentOutcome(agent=name, output=ExtractedFinding())
+        outcome = AgentOutcome(agent=name, output=ExtractedFinding())
+        record.append(outcome)
+        return outcome
 
     async def resolve_location(*_args):
         return None
@@ -126,3 +128,29 @@ def test_validation_version_is_part_of_both_effective_and_full_config():
     metadata = {**config.effective_spec["metadata"], "output_validation": {"version": "older"}}
     altered = config.model_copy(update={"effective_spec": {**config.effective_spec, "metadata": metadata}})
     assert config.digest != altered.digest and config.effective_digest != altered.effective_digest
+
+
+def test_the_closed_diagnostics_are_distinct_codes_and_sentences():
+    """Retry repair and retry classification branch on the code; the sentence is what the model
+    sees. Both must be unique, or two rules would be indistinguishable downstream."""
+    from infosec_harness.agents.intake_evidence import EVIDENCE_DIAGNOSTICS
+
+    codes = [d.code for d in EVIDENCE_DIAGNOSTICS]
+    messages = [d.message for d in EVIDENCE_DIAGNOSTICS]
+    assert len(set(codes)) == len(codes) and len(set(messages)) == len(messages)
+
+
+def test_every_emitted_violation_is_a_registered_diagnostic():
+    from infosec_harness.agents.intake_evidence import (
+        EVIDENCE_DIAGNOSTICS,
+        extraction_evidence_diagnostics,
+    )
+
+    output = {"file_path": "missing.py", "start_line": 7, "evidence": [
+        {"field": "file_path", "quote": REPORT.splitlines()[0], "confidence": 1.0},
+        {"field": "start_line", "quote": REPORT.splitlines()[0], "confidence": 1.0},
+        {"field": "nonsense", "quote": "", "confidence": 0.0},
+    ]}
+    found = extraction_evidence_diagnostics(REPORT, output)
+    assert found and set(found) <= set(EVIDENCE_DIAGNOSTICS)
+    assert extraction_evidence_diagnostics(None, output) == [EVIDENCE_DIAGNOSTICS[0]]

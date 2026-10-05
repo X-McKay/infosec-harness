@@ -1,6 +1,7 @@
 """Preflight, evidence and process-ownership controls for the live production graph runner."""
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import signal
@@ -80,7 +81,8 @@ def test_host_worker_temporary_files_stay_in_the_guest_visible_trial(tmp_path, m
     monkeypatch.setenv("HARNESS_BROKER_CONFIG", "inherited-catalog")
     value = {"directory": str(directory), "phase": "direct", "database_env_file": str(database),
              "models_config": str(root / "models.yaml"), "task_queue": "broker-real-graph-test",
-             "temporal_address": "127.0.0.1:7365"}
+             "temporal_address": "127.0.0.1:7365", "worker_hmac_env": "HARNESS_BROKER_WORKER_KEY",
+             "worker_hmac_file": str(tmp_path / "absent-direct-key"), "broker_config": "catalog.yaml"}
     env = graph.environment(value)
     temporary = Path(env["TMPDIR"])
     assert temporary.is_dir() and temporary.is_relative_to(directory)
@@ -273,7 +275,7 @@ async def test_successful_inner_cleanup_stops_only_its_retained_pid():
     worker = sleeping_child()
     try:
         assert os.getpgid(worker.pid) == os.getpgrp()
-        assert await graph._stop_worker(worker) is True
+        assert await asyncio.to_thread(graph.reap, worker) is True
         assert worker.poll() is not None
     finally:
         reap([worker])
@@ -300,5 +302,5 @@ async def test_inner_cleanup_retains_bounded_exact_pid_escalation():
             return 0
 
     worker = OwnedProcess()
-    assert await graph._stop_worker(worker) is True
+    assert await asyncio.to_thread(graph.reap, worker) is True
     assert worker.calls == ["terminate", ("wait", 10), "kill", ("wait", 10)]

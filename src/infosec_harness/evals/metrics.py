@@ -27,6 +27,18 @@ FAILURE_CATEGORIES = ("wrong_answer", "budget_exhausted", "invalid_output",
 
 Attempt = Mapping[str, Any]
 
+# Published only for agents whose adapter defines the unevidenced-safety predicate.
+UNEVIDENCED_SAFETY_METRIC = "unevidenced_safe_verdicts"
+# The numeric top-level metrics every run publishes: the names a release policy may gate on.
+GATEABLE_METRICS = frozenset({
+    "n", "passed", "cost_usd_total", "cost_usd_per_case", "avg_tokens", "cache_hit_ratio",
+    "task_success_rate", "schema_validity_rate", "budget_exhausted_count", "usage_unknown",
+    "cost_unknown", "average_cost_usd", "p95_model_requests", "uncovered_material_scenarios",
+    "execution_not_checked_count", "execution_failed_count", "execution_checks_planned",
+    "execution_checks_passed", "n_planned", "cases_planned", "cases_completed",
+    "attempted_runs",
+})
+
 
 @dataclass(frozen=True)
 class RunPlan:
@@ -124,9 +136,7 @@ def experiment_metrics(
         tally[1] += 1
         confusion[f"{attempt['expected']}->{attempt['predicted']}"] += 1
     per_case_cost = round(cost / total, 6) if total and cost_unknown == 0 else None
-    p95_requests = int(percentile(requests, 0.95))
     metrics: dict[str, Any] = {
-        "accuracy": round(passed / total, 4) if total else 0.0,
         "n": total,
         "passed": passed,
         "cost_usd_total": round(cost, 6) if cost_unknown == 0 else None,
@@ -149,7 +159,6 @@ def experiment_metrics(
             "p50_cost_usd": round(percentile(costs, 0.50), 6) if costs else None,
             "p95_cost_usd": round(percentile(costs, 0.95), 6) if costs else None,
             "p50_model_requests": int(percentile(requests, 0.50)),
-            "p95_model_requests": p95_requests,
             "p50_tool_calls": int(percentile(tool_calls, 0.50)),
             "p95_tool_calls": int(percentile(tool_calls, 0.95)),
             "failure_categories": failure_categories(scored),
@@ -162,7 +171,7 @@ def experiment_metrics(
         "usage_unknown": sum(a.get("usage_status") != "observed" for a in attempts),
         "cost_unknown": cost_unknown,
         "average_cost_usd": per_case_cost,
-        "p95_model_requests": p95_requests,
+        "p95_model_requests": int(percentile(requests, 0.95)),
         # Static over the cases this run used: a group-filtered or held-out run cannot
         # borrow coverage from cases it did not exercise.
         "uncovered_material_scenarios": plan.uncovered_material_scenarios,
@@ -186,16 +195,5 @@ def experiment_metrics(
     if plan.unevidenced_safety:
         # Only emitted where the predicate is defined: a constant zero for an agent with no
         # predicate would read as a safety gate that held.
-        metrics["unevidenced_safe_verdicts"] = sum(bool(a["unevidenced_safe"]) for a in scored)
+        metrics[UNEVIDENCED_SAFETY_METRIC] = sum(bool(a["unevidenced_safe"]) for a in scored)
     return metrics
-
-
-def gateable_metrics(*, unevidenced_safety: bool) -> frozenset[str]:
-    """The numeric metric names a run publishes, so a policy can be checked against them."""
-    plan = RunPlan(cases=0, repetitions=1, execution_checks=0,
-                   unevidenced_safety=unevidenced_safety, uncovered_material_scenarios=0)
-    shape = experiment_metrics([], plan, status=ExperimentStatus.complete, cases_completed=0)
-    return frozenset(
-        name for name, value in shape.items()
-        if value is None or (isinstance(value, int | float) and not isinstance(value, bool))
-    )

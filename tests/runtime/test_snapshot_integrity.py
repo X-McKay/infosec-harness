@@ -112,7 +112,17 @@ async def test_concurrent_materialization_shares_one_immutable_destination(
     assert not os.access(first.path, os.W_OK)
 
 
-async def test_existing_direct_directory_snapshot_is_verified_and_reused(
+def _republish(snapshot_path: str, mutate) -> Path:
+    """Rewrite a published snapshot wrapper in place, as an older or tampered workspace would."""
+    tree = Path(snapshot_path)
+    wrapper = tree.parent
+    checkout_module._make_writable_for_cleanup(wrapper)
+    mutate(tree, wrapper)
+    checkout_module._make_read_only(wrapper)
+    return wrapper
+
+
+async def test_existing_snapshot_is_reused_only_after_its_tree_is_rehashed(
     snapshot_workspace, tmp_path
 ):
     source = tmp_path / "source"
@@ -120,19 +130,35 @@ async def test_existing_direct_directory_snapshot_is_verified_and_reused(
     (source / "a.py").write_text("print('x')\n")
     ref = RepoRef(repo_url=str(source), source_mode="working_snapshot")
     first = await checkout(ref)
-    tree = Path(first.path)
-    wrapper = tree.parent
-    legacy = wrapper.with_name(wrapper.name + "-legacy")
-    checkout_module._make_writable_for_cleanup(wrapper)
-    tree.rename(legacy)
-    wrapper.rmdir()
-    legacy.rename(wrapper)
-    checkout_module._make_read_only(wrapper)
-
     second = await checkout(ref)
+    assert second.path == first.path and second.file_count == first.file_count
 
-    assert Path(second.path) == wrapper
-    assert second.content_hash == first.content_hash
+    # Same identity name, different bytes: the name is not trusted.
+    _republish(first.path, lambda tree, _wrapper: (tree / "a.py").write_text("tampered\n"))
+    with pytest.raises(RuntimeError, match="identity collision"):
+        await checkout(ref)
+
+
+async def test_a_snapshot_in_the_old_direct_directory_layout_is_not_reused(
+    snapshot_workspace, tmp_path
+):
+    """No compatibility shape: a wrapper without ``tree/`` fails closed instead of being
+    re-hashed as a second candidate layout."""
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "a.py").write_text("print('x')\n")
+    ref = RepoRef(repo_url=str(source), source_mode="working_snapshot")
+    first = await checkout(ref)
+
+    def flatten(tree: Path, wrapper: Path) -> None:
+        legacy = wrapper.with_name(wrapper.name + "-legacy")
+        tree.rename(legacy)
+        wrapper.rmdir()
+        legacy.rename(wrapper)
+
+    _republish(first.path, flatten)
+    with pytest.raises(RuntimeError, match="identity collision"):
+        await checkout(ref)
 
 
 async def test_exclusion_policy_participates_in_snapshot_identity(snapshot_workspace, tmp_path):
@@ -213,25 +239,24 @@ def test_execution_manifest_records_identities_without_environment_values(tmp_pa
     )
 
     workflow_manifest = execution_manifest(prepared)
-    assert workflow_manifest["schema_version"] == 1
+    # The schema version is assigned once, when the manifest is persisted.
+    assert "schema_version" not in workflow_manifest
     assert "harness" not in workflow_manifest
     manifest = persisted_manifest(workflow_manifest)
     assert manifest["environment"]["adapter_contract_version"] == ADAPTER_CONTRACT_VERSION
     assert manifest["environment"]["adapter_profiles"] == {
         "profiles": [
-            {"id": "python-unit-probe", "version": "1", "support": "experimental"}
+            {"id": "python-unit-probe", "support": "experimental"}
         ],
         "unmapped_languages": [],
     }
 
     assert manifest["source"]["content_hash"] == "a" * 64
     assert manifest["environment"]["env_names"] == ["PRIVATE_TOKEN"]
-    assert manifest["schema_version"] == 2
+    assert manifest["schema_version"] == 3
     assert manifest["harness"]["identity_scope"] == "persistence_worker"
     assert manifest["harness"]["version"]
     assert len(manifest["harness"]["packaged_source_sha256"]) == 64
-    assert len(manifest["harness"]["graph_policy_sha256"]) == 64
-    assert len(manifest["harness"]["verdict_policy_sha256"]) == 64
     assert manifest["preparation"] == {
         "status": "ready",
         "attempts": 2,
@@ -283,7 +308,7 @@ async def test_git_runs_with_controlled_config_and_without_ambient_credentials(
     async def capture(argv, *, env, **_kwargs):
         seen["argv"], seen["env"] = argv, env
         from infosec_harness.sandbox.process import ProcessResult
-        return ProcessResult(0, b"", b"", False, False, 0.0)
+        return ProcessResult(0, "", "", False, 0.0)
 
     monkeypatch.setenv("GIT_ASKPASS", "/ambient/askpass")
     monkeypatch.setenv("SSH_AUTH_SOCK", "/ambient/agent.sock")

@@ -1,8 +1,7 @@
 """The intake prompt contract is shared by evals and production callers."""
 
 from infosec_harness.agents.intake_claims import report_source_lines
-from infosec_harness.agents.intake_contracts import render_intake_prompt
-from infosec_harness.agents.render import render_prompt
+from infosec_harness.agents.render import render_intake_prompt, render_prompt
 from infosec_harness.domain.models import Finding
 
 

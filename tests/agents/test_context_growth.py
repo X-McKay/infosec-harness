@@ -67,9 +67,13 @@ class _RecordingOps:
         self.prompts: list[tuple[str, str]] = []
         self.repairs = 0
 
-    async def run_agent(self, name: str, prompt, deps: AgentDeps) -> AgentOutcome:
+    async def run_agent(self, name: str, prompt, deps: AgentDeps, *,
+                        record: list[AgentOutcome] | None = None) -> AgentOutcome:
         self.prompts.append((name, prompt_text(prompt)))
-        return AgentOutcome(output=self._output(name), agent=name)
+        outcome = AgentOutcome(output=self._output(name), agent=name)
+        if record is not None:
+            record.append(outcome)
+        return outcome
 
     def _output(self, name: str):
         if name == "context":

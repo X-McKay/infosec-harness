@@ -1,17 +1,18 @@
 """Private, bounded observations of intake output proposals; never scoring or model feedback.
 
-The host selects the intake output protocol; it is never inferred from an untrusted proposal.
-Each protocol has one summary, and all of them read the same proposals through the shared
-bounded walker in :mod:`infosec_harness.evals.messages`:
+Intake speaks one output protocol, the atomic claim proposals the registry pins
+(``intake-atomic-claims/v2``). Its summary (``intake-atomic-claim-proposals/v2``) reads the
+captured proposals through the shared bounded walker in :mod:`infosec_harness.evals.messages`
+and records
 
-* flat ``ExtractedFinding`` proposals (``intake-proposal-fields/v1``): each field checked
-  through the unchanged evidence guard, retaining only closed per-field rule counts;
-* atomic claim proposals (``intake-atomic-claim-proposals/v2``): reconstruction outcomes in
-  closed categories, the flat guard summary of what reconstructed, and
+* reconstruction outcomes in closed categories,
+* the evidence-guard summary (``intake-proposal-fields/v1``) of what reconstructed: each field
+  checked through the unchanged guard, retaining only closed per-field rule counts, and
 * the atomic wire-schema errors (``intake-atomic-schema-errors/v1``) as closed path/type
   buckets.
 
-No proposal value, key, source ID, exception text or report fragment leaves this module.
+Every other agent records the guard summary as ``not_applicable``. No proposal value, key,
+source ID, exception text or report fragment leaves this module.
 """
 
 from __future__ import annotations
@@ -25,21 +26,18 @@ from pydantic_ai.messages import ModelMessage
 from infosec_harness.agents.intake_claims import AtomicFinding, ReferenceError, reconstruct
 from infosec_harness.agents.intake_evidence import (
     INTAKE_EVIDENCE_POLICY_VERSION,
-    extraction_evidence_violations,
+    extraction_evidence_diagnostics,
 )
 from infosec_harness.domain.models import ExtractedFinding
 from infosec_harness.evals.messages import (
     MAX_NODES,
     MAX_TEXT_CHARS,
     Walk,
-    bounded_shape,
     decode_arguments,
     iter_output_proposals,
-    shape_size,
+    measure_shape,
 )
-from infosec_harness.evals.output_retries import INTAKE_RULE_CATEGORIES
 
-ATOMIC_PROTOCOL = "intake-atomic-claims/v2"
 MAX_EVIDENCE = 64
 MAX_SCHEMA_ERRORS = 512
 
@@ -117,47 +115,17 @@ class AtomicSummary(TypedDict):
     truncated: bool
 
 
-class UnsupportedProtocolSummary(TypedDict):
-    version: Literal["intake-proposal-protocol/v1"]
-    capture_status: Literal["unknown"]
-    reason: Literal["unsupported_host_protocol"]
-    proposals_observed: int
-    truncated: bool
-
-
 def intake_field_summary(
     messages: Sequence[ModelMessage], *, report: str | None, agent: str,
-    protocol: str | None = None,
-) -> IntakeFieldSummary | AtomicSummary | UnsupportedProtocolSummary:
-    """Summarize captured output proposals under the host-selected protocol."""
-    if protocol == ATOMIC_PROTOCOL:
-        return atomic_summary(messages, report=report, agent=agent)
-    if protocol is not None:
-        return {"version": "intake-proposal-protocol/v1", "capture_status": "unknown",
-                "reason": "unsupported_host_protocol", "proposals_observed": 0, "truncated": False}
+) -> IntakeFieldSummary | AtomicSummary:
+    """The intake proposal summary; every other agent records the guard as not applicable."""
     if agent != "intake":
-        return _flat_summary([], report=report, status="not_applicable", truncated=False)
-    walk = Walk()
-    proposals = [part.args for part in iter_output_proposals(messages, walk)]
-    return _flat_summary(proposals, report=report, status=_status(messages),
-                         truncated=walk.truncated)
+        return guard_summary([], report=report, status="not_applicable")
+    return atomic_summary(messages, report=report)
 
 
-def atomic_summary(
-    messages: Sequence[ModelMessage], *, report: str | None, agent: str
-) -> AtomicSummary:
+def atomic_summary(messages: Sequence[ModelMessage], *, report: str | None) -> AtomicSummary:
     """Reconstruction outcomes for atomic claim proposals; materialization is not acceptance."""
-    if agent != "intake":
-        return {
-            "version": "intake-atomic-claim-proposals/v2", "capture_status": "not_applicable",
-            "proposals_observed": 0, "reconstructed_proposals": 0,
-            "rejection_category_counts": dict.fromkeys(ATOMIC_RULES, 0),
-            "materialized_guard_summary": _flat_summary(
-                [], report=report, status="not_applicable", truncated=False),
-            "schema_error_diagnostics": _schema_summary([], scan_truncated=False,
-                                                        status="not_applicable"),
-            "truncated": False,
-        }
     walk = Walk()
     proposals = [part.args for part in iter_output_proposals(messages, walk)]
     rejections: dict[AtomicRule, int] = dict.fromkeys(ATOMIC_RULES, 0)
@@ -188,19 +156,17 @@ def atomic_summary(
         except Exception:
             rejections["unsupported_shape"] += 1
             continue
-        if len(finding.evidence) > MAX_EVIDENCE or bounded_shape(value) is not None:
+        # Any shape problem in an already-validated finding is a size problem.
+        size = measure_shape(value) if len(finding.evidence) <= MAX_EVIDENCE else "bounded_out"
+        if isinstance(size, str) or (retained_nodes + size[0] > MAX_NODES
+                                     or retained_chars + size[1] > MAX_TEXT_CHARS):
             rejections["bounded_out"] += 1
             truncated = True
             continue
-        nodes, chars = shape_size(value)
-        if retained_nodes + nodes > MAX_NODES or retained_chars + chars > MAX_TEXT_CHARS:
-            rejections["bounded_out"] += 1
-            truncated = True
-            continue
-        retained_nodes += nodes
-        retained_chars += chars
+        retained_nodes += size[0]
+        retained_chars += size[1]
         materialized.append(value)
-    guard = _flat_summary(materialized, report=report, status="observed", truncated=False)
+    guard = guard_summary(materialized, report=report)
     return {
         "version": "intake-atomic-claim-proposals/v2",
         "capture_status": "observed" if proposals else "unknown",
@@ -214,24 +180,13 @@ def atomic_summary(
     }
 
 
-def schema_error_summary(
-    messages: Sequence[ModelMessage], *, agent: str = "intake"
-) -> ClaimSchemaSummary:
-    """Closed path/type buckets for atomic wire-schema failures in captured proposals."""
-    if agent != "intake":
-        return _schema_summary([], scan_truncated=False, status="not_applicable")
-    walk = Walk()
-    proposals = [part.args for part in iter_output_proposals(messages, walk)]
-    return _schema_summary(proposals, scan_truncated=walk.truncated, status=_status(messages))
-
-
 def _status(messages: Sequence[ModelMessage]) -> CaptureStatus:
     return "observed" if messages else "unknown"
 
 
-def _flat_summary(proposals: list[object], *, report: str | None, status: CaptureStatus,
-                  truncated: bool) -> IntakeFieldSummary:
-    """Check each field through the unchanged pure guard; retain only finite count keys."""
+def guard_summary(proposals: list[object], *, report: str | None,
+                  status: CaptureStatus = "observed") -> IntakeFieldSummary:
+    """Check each proposal's fields through the unchanged pure guard; retain only counts."""
     summary: IntakeFieldSummary = {
         "version": "intake-proposal-fields/v1", "validation_policy": INTAKE_EVIDENCE_POLICY_VERSION,
         "capture_status": status, "proposals_observed": 0, "proposals_checked": 0,
@@ -241,7 +196,7 @@ def _flat_summary(proposals: list[object], *, report: str | None, status: Captur
         "proposals_with_guard_violations": 0,
         "field_rule_counts": {field: dict.fromkeys(FIELD_RULES, 0) for field in FIELDS},
         "quote_not_verbatim_but_whitespace_normalized_match": dict.fromkeys(FIELDS, 0),
-        "truncated": truncated,
+        "truncated": False,
     }
     if status == "not_applicable":
         return summary
@@ -278,16 +233,16 @@ def _flat_summary(proposals: list[object], *, report: str | None, status: Captur
             continue
         try:
             value = output.model_dump(mode="json")
-            full = extraction_evidence_violations(report, value)
-            categories = {INTAKE_RULE_CATEGORIES[item] for item in full}
+            full = extraction_evidence_diagnostics(report, value)
+            categories = {item.code for item in full}
             per_field: dict[KnownField, set[FieldRule]] = {}
             whitespace_fields: set[KnownField] = set()
             if report is not None:
                 for field in FIELDS:
                     evidence = [entry for entry in value["evidence"] if entry["field"] == field]
-                    errors = extraction_evidence_violations(
+                    errors = extraction_evidence_diagnostics(
                         report, {field: value[field], "evidence": evidence})
-                    field_categories = {INTAKE_RULE_CATEGORIES[item] for item in errors}
+                    field_categories = {item.code for item in errors}
                     if not field_categories.issubset(FIELD_RULES):
                         raise ValueError("Unknown field-rule vocabulary")
                     per_field[field] = {cast(FieldRule, category) for category in field_categories}

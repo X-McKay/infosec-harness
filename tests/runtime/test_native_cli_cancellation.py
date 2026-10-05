@@ -242,17 +242,17 @@ async def test_timeout_is_reported_and_output_bound_keeps_tail():
         [sys.executable, "-c", "import sys; sys.stdout.write('a' * 50 + 'END')"],
         env={}, timeout=10, capture_limit=10,
     )
-    assert result.returncode == 0 and result.truncated and result.stdout == b"aaaaaaaEND"
+    assert result.exit_code == 0 and result.truncated and result.stdout == "aaaaaaaEND"
     slow = await run_bounded([sys.executable, "-c", "import time; time.sleep(5)"],
                              env={}, timeout=0.2)
-    assert slow.timed_out and slow.returncode is None
+    assert slow.timed_out and slow.exit_code is None
 
 
 @pytest.mark.asyncio
 async def test_stdin_closed_early_by_child_is_not_a_runner_failure():
     result = await run_bounded([sys.executable, "-c", "import os; os.close(0)"],
                                env={}, timeout=10, stdin=b"x" * 4_000_000)
-    assert result.returncode == 0 and not result.timed_out
+    assert result.exit_code == 0 and not result.timed_out
 
 
 @pytest.mark.asyncio
@@ -262,4 +262,4 @@ async def test_child_receives_only_the_explicit_environment(monkeypatch):
         [sys.executable, "-c", "import os; print(sorted(os.environ))"], env={"ONLY": "1"},
         timeout=10,
     )
-    assert b"IH_AMBIENT_SECRET" not in result.stdout and b"ONLY" in result.stdout
+    assert "IH_AMBIENT_SECRET" not in result.stdout and "ONLY" in result.stdout

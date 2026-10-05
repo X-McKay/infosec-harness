@@ -1,6 +1,4 @@
 """Controlled HTTP fixtures verify deployment checks without any live services or data writes."""
-import json
-
 import httpx
 import pytest
 from conftest import load_script
@@ -15,15 +13,12 @@ def deployment():
                "api_source_commit": COMMIT, "as_of": "2026-10-04T00:00:00Z",
                "database_backend": "sqlite", "temporal_mode": "tls",
                "broker": {"configured": True, "status": "not_checked", "detail": "No observation"}}
-    qualification = {"as_of": runtime["as_of"], "status": "not_checked", "detail": "No evidence",
-                     "components": [{"agent": agent, "scope": "agent_semantics", "status": "not_checked",
-                                     "freshness": "unavailable", "reason": "No evidence"}
-                                    for agent in smoke.AGENT_BINDINGS], "limitations": []}
     metrics = {"as_of": runtime["as_of"], "population": "operational", "total_runs": 0,
                "status_counts": {}, "verdict_counts": {}, "trends": [], "stages": [], "definitions": {}}
     for field in ("tokens", "input_tokens", "output_tokens", "cost_usd", "wall_time_s", "agent_time_s"):
         metrics[field] = {"count": 0, "population": 0, "coverage": None}
     run_page = {"items": [], "total": 0, "offset": 0, "limit": 50, "as_of": runtime["as_of"]}
+    experiment_page = {"items": [], "total": 0, "offset": 0, "limit": 50}
     config = {"model_mode": runtime["model_mode"], "agents": [
         {"name": agent, "model_tier": "sonnet", "config_hash": "0" * 16,
          "resolved_model": "local:configured-model"} for agent in smoke.AGENT_BINDINGS]}
@@ -37,8 +32,8 @@ def deployment():
             return overrides[key](request)
         if request.url.path == "/api/runtime-status":
             return httpx.Response(200, json=runtime)
-        if request.url.path == "/api/qualification":
-            return httpx.Response(200, json=qualification)
+        if request.url.path == "/api/experiments":
+            return httpx.Response(200, json=experiment_page)
         if request.url.path == "/api/metrics":
             return httpx.Response(200, json=metrics)
         if request.url.path == "/api/run-page":
@@ -55,7 +50,7 @@ def deployment():
                               '<link rel="stylesheet" href="/assets/app.css">', headers={"content-type": "text/html"})
 
     with httpx.Client(transport=httpx.MockTransport(serve)) as client:
-        yield client, requests, overrides, runtime, qualification
+        yield client, requests, overrides, runtime, config
 
 
 def run(deployment, **kwargs):
@@ -65,7 +60,7 @@ def run(deployment, **kwargs):
 def test_real_contract_empty_operational_data_and_all_asset_routes(deployment):
     result = run(deployment, expected_source_commit=COMMIT,
                  expected_model_mode="live", expected_transport="brokered")
-    assert result == {"status": "passed", "components": 11, "operational_counts": {
+    assert result == {"status": "passed", "agents": 11, "operational_counts": {
         "batches": 0, "runs": 0, "experiments": 0}, "assets": 2, "writes": 0}
     requests = deployment[1]
     assert all(request.method == "GET" for request in requests)
@@ -76,10 +71,12 @@ def test_real_contract_empty_operational_data_and_all_asset_routes(deployment):
         request.url.path for request in requests}
     assert {request.url.host for request in requests if request.url.path == "/api/runtime-status"} == {
         "api.test", "web.test"}
+    # The component qualification view was removed; nothing reads it.
+    assert "/api/qualification" not in {request.url.path for request in requests}
 
 
 @pytest.mark.parametrize("host,path", [("api.test", "/api/runtime-status"),
-                                      ("web.test", "/api/qualification"),
+                                      ("web.test", "/api/config"),
                                       ("web.test", "/assets/app.js")])
 def test_old_api_proxy_or_missing_asset_fail(deployment, host, path):
     deployment[2][host, path] = lambda request: httpx.Response(404, text="private body")
@@ -108,9 +105,9 @@ def test_malformed_or_incomplete_contract(deployment, problem):
     if problem == "malformed":
         deployment[3]["broker"]["status"] = "invented"
     elif problem == "duplicate":
-        deployment[4]["components"][-1] = deployment[4]["components"][0]
+        deployment[4]["agents"][-1] = deployment[4]["agents"][0]
     else:
-        deployment[4]["components"].pop()
+        deployment[4]["agents"].pop()
     with pytest.raises(smoke.SmokeFailure):
         run(deployment)
 
@@ -164,22 +161,25 @@ def test_metrics_must_report_operational_population(deployment):
         run(deployment)
 
 
-def test_unpaginated_existing_experiment_summaries_larger_than_five_mib(deployment):
-    # The deployed API returned 82 summaries / 6,678,651 bytes. Model the same scale
-    # with valid contracts, without copying findings, provider responses or live data.
+def test_experiments_are_read_as_a_page_and_counted_by_total(deployment):
+    """Regression: the unpaginated list carried full metrics (82 summaries, 6.7 MB)."""
     rows = [{"id": f"experiment-{index}", "agent": "context", "status": "complete",
-             "dataset": "controlled",
-             "dataset_version": "1", "git_sha": COMMIT, "overlay": "", "repetitions": 1,
-             "metrics": {"retained_metadata": "x" * 81_000}, "config_hash": "a" * 64,
-             "git_dirty": False, "model_name": "controlled", "backend": "live",
-             "pricing": "", "harness_version": "test", "created_at": "2026-10-04T00:00:00Z"}
-            for index in range(82)]
-    payload = json.dumps(rows).encode()
-    assert 5 * 1024 * 1024 < len(payload) < smoke.MAX_RESPONSE_BYTES
+             "dataset": "controlled", "dataset_version": "1", "git_sha": COMMIT, "overlay": "",
+             "repetitions": 1, "config_hash": "a" * 64, "git_dirty": False,
+             "model_name": "controlled", "backend": "live", "pricing": "",
+             "harness_version": "test", "created_at": "2026-10-04T00:00:00Z",
+             "accuracy": 0.5, "cost_usd_per_case": None, "p50_latency_s": None,
+             "p95_latency_s": None, "passed": 1, "cases_completed": 2, "cases_planned": 2,
+             "budget_exhausted_count": 0, "gate_status": None} for index in range(50)]
+    page = {"items": rows, "total": 82, "offset": 0, "limit": 50}
     for host in ("api.test", "web.test"):
-        deployment[2][host, "/api/experiments"] = lambda request: httpx.Response(
-            200, content=payload, headers={"content-type": "application/json"})
+        deployment[2][host, "/api/experiments"] = lambda request: httpx.Response(200, json=page)
     assert run(deployment)["operational_counts"]["experiments"] == 82
+    # The former unpaginated list is not the published contract.
+    for host in ("api.test", "web.test"):
+        deployment[2][host, "/api/experiments"] = lambda request: httpx.Response(200, json=rows)
+    with pytest.raises(smoke.SmokeFailure, match="invalid API contract"):
+        run(deployment)
 
 
 def test_response_exceeding_sixteen_mib_still_fails_before_contract_parse(deployment):

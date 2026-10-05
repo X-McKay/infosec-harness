@@ -353,7 +353,7 @@ def _native_model(config):
 
 def _native_missing_backend(config):
     value = models_config("brokered")
-    value["agents"] = {"intake": {"backend": "missing"}}
+    value["default_backend"] = "missing"
     _write(config.broker_models_config, value)
 
 
@@ -498,7 +498,7 @@ def test_native_comparison_rejects_each_undeclared_difference(tmp_path, monkeypa
 @pytest.mark.parametrize("report,digest,message", [
     ({"phase": "local"}, "a" * 64, "not a direct phase report"),
     ({"status": "failed"}, "a" * 64, "Baseline direct phase did not pass"),
-    ({}, "b" * 64, "Baseline case content differs"),
+    ({}, "b" * 64, "Baseline case content for intake differs"),
 ])
 def test_native_comparison_requires_a_passed_matching_direct_baseline(tmp_path, monkeypatch, report, digest, message):
     write_baseline(tmp_path, monkeypatch, **report)
@@ -650,10 +650,12 @@ def native_configs(monkeypatch, configuration):
     # Bind the workflow's module-level config references before the patch, never to it.
     import infosec_harness.qualification.broker.workflow  # noqa: F401
     from infosec_harness.agents import durable
+    from infosec_harness.agents.models import BackendConfig
     from infosec_harness.inference.profiles import BrokerConfig
 
     contract = BrokerConfig.model_validate(broker_catalog()).resolve_contract(
-        "context", "gateway", MODEL, {"max_tokens": 1024}, backend_endpoint=ENDPOINT)
+        "context", "gateway", MODEL, {"max_tokens": 1024},
+        backend=BackendConfig(kind="openai_compatible", transport="brokered", base_url=ENDPOINT))
     configs = {name: value.model_copy(update={"model": value.model.model_copy(update={
         "endpoint": ENDPOINT, "resolved_model": "gateway:" + MODEL, "broker_contract": contract})})
         for name, value in durable.CONFIGS.items()}

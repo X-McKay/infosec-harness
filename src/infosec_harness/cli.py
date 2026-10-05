@@ -37,7 +37,7 @@ def submit(
     from infosec_harness.workflows.local_run import (
         LocalModeUnavailable,
         require_local_mode,
-        run_local,
+        run_in_process,
     )
     from infosec_harness.workflows.submission import submit_via_temporal
 
@@ -51,7 +51,7 @@ def submit(
     async def _go():
         await db.create_all()
         if local:
-            batch_id, outputs = await run_local(items, label=label)
+            batch_id, outputs = await run_in_process(items, label=label)
             for o in outputs:
                 typer.echo(f"  {o.finding.fingerprint}  {o.result.verdict.label.value:26} {o.result.priority.value}")
         else:
@@ -193,10 +193,10 @@ def eval_run(
     """Run an agent's eval dataset, persist the experiment, and write its release report.
 
     Pass --model more than once to run the same dataset against each model in turn and print
-    accuracy, latency and cost side by side. The runs are sequential: latency is one of the
+    task success, latency and cost side by side. The runs are sequential: latency is one of the
     things being measured, so letting them contend would make every number depend on how many
-    models were in the sweep. Every completed run writes a release report, audited for checks
-    that could not have failed.
+    models were in the sweep. Every completed run writes a release report, and prints the
+    audit of policy checks that could not have failed beside it.
     """
     from infosec_harness.evals.run import TruncatedExperiment, run_experiment
 
@@ -261,10 +261,12 @@ def eval_compare(
         help="Show incompatible runs for inspection; output cannot clear release gates",
     ),
 ):
-    """Compare experiments on accuracy, latency and cost.
+    """Compare experiments on task success, latency and cost.
 
     Either name the experiments, or pass --agent to line up that agent's most recent run for
-    each model it has been evaluated against.
+    each model it has been evaluated against. Runs that are not release-comparable (different
+    cases, code, evaluator or pricing; incomplete or dirty runs) are refused unless
+    --descriptive is passed.
     """
     from infosec_harness.evals.reporting import compare_experiments, compare_models_for
 
@@ -314,25 +316,6 @@ def baseline_list(agent: str = typer.Option(None, help="Only this agent")):
                        + (f"  ! {note}" if note else ""))
 
 
-@eval_app.command("inert-gates")
-def eval_inert_gates(
-    report: Path = typer.Argument(..., help="An eval release report written by `eval run`"),
-    policy: Path = typer.Option(None, help="Policy YAML; defaults to the report agent's release-policy.yaml"),
-):
-    """Audit a release report: which of its policy's checks could not have failed?
-
-    Every report `eval run` writes is already audited, and carries the result as
-    `inert_checks`; this re-audits one on disk. Exit code is always 0 -- inertness is evidence
-    quality, not a gate (see infosec_harness.evals.inert_gates).
-    """
-    from infosec_harness.evals.inert_gates import audit_report_file
-
-    try:
-        audit_report_file(report, policy_path=policy, echo=typer.echo)
-    except ValueError as error:
-        raise typer.BadParameter(str(error)) from error
-
-
 @eval_app.command("corpus")
 def eval_corpus(
     language: str = typer.Option("python", help="Corpus language, or 'all' to sweep every one"),
@@ -356,9 +339,9 @@ def eval_corpus(
                              manifest_path=manifest, dataset=dataset, limit=limit, report=target))
 
 
-if __name__ == "__main__":
-    app()
-
-
 def main() -> None:
     app()
+
+
+if __name__ == "__main__":
+    main()

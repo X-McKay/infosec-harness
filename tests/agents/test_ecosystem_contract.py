@@ -88,7 +88,6 @@ def all_violations(spec: EnvironmentSpec, framework: str | None = None,
         C.environment_spec_violations(spec)
         + C.install_path_violations(spec)
         + C.offline_warmup_violations(spec, framework)
-        + C.offline_warmup_violations(spec, framework, targeted_feedback=True)
         + C.js_runner_choice_violations(spec.test_command or "", declared or [])
         + C.jdk_compatibility_violations(spec.base_image, 17 if framework else None)
     )
@@ -400,3 +399,23 @@ def test_the_home_paths_are_the_sandboxs_own():
     from infosec_harness.sandbox import docker
 
     assert (C.BUILD_HOME, C.RUNTIME_HOME) == (docker.HOME_STAGE, docker.WORK_HOME)
+
+
+def test_the_binding_java_release_is_the_oldest_any_candidate_declares():
+    pom = "<maven.compiler.source>{}</maven.compiler.source>"
+    assert C.java_release([]) is None
+    assert C.java_release(["<project/>"]) is None
+    assert C.java_release([pom.format("11"), pom.format("1.7"), "<project/>"]) == 7
+
+
+def test_the_repo_release_reads_the_root_and_its_modules(tmp_path):
+    """A multi-module repository whose root declares nothing still binds the JDK."""
+    (tmp_path / "pom.xml").write_text("<project><modules/></project>")
+    (tmp_path / "core").mkdir()
+    (tmp_path / "core" / "pom.xml").write_text(
+        "<maven.compiler.source>1.6</maven.compiler.source>")
+    (tmp_path / "web").mkdir()
+    (tmp_path / "web" / "build.gradle").write_text("sourceCompatibility = '1.8'")
+    assert C.repo_java_release(str(tmp_path)) == 6
+    assert C.repo_java_release(str(tmp_path / "missing")) is None
+    assert C.repo_java_release(None) is None

@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from infosec_harness.agents.governance import GovernanceError
-from infosec_harness.agents.registry import AGENT_BINDINGS, build_agent, load_spec
+from infosec_harness.agents.registry import BINDINGS, build_agent, load_spec
 from infosec_harness.tools.policies import (
     EXECUTION_CLASS_ORDER,
     ToolEffect,
@@ -21,7 +21,7 @@ from infosec_harness.tools.policies import (
 
 def test_every_toolset_an_agent_enables_has_a_declared_policy():
     declared = set(load_policies())
-    for name in AGENT_BINDINGS:
+    for name in BINDINGS:
         enabled = set(load_spec(name).metadata.get("enabled_toolsets") or [])
         assert enabled <= declared, f"{name} enables undeclared toolsets: {sorted(enabled - declared)}"
 
@@ -84,7 +84,7 @@ def test_an_agent_cannot_expose_a_tool_the_policy_does_not_declare():
     """Enforced at build time, like the execution-class floor, not only asserted here."""
     import pytest as _pytest
 
-    with _pytest.raises(GovernanceError, match="do not exist"):
+    with _pytest.raises(GovernanceError, match="Unknown repo-read-only tools"):
         build_agent("recon", {"capabilities": [{"RepoReadOnly": {"tools": ["read_everything"]}}]},
                     durable=False)
 
@@ -99,7 +99,7 @@ def test_the_sandbox_shell_key_is_stable_for_one_logical_call():
     assert name.startswith("harness-shell-") and len(name) <= 63  # Docker's limit
 
 
-@pytest.mark.parametrize("name", sorted(AGENT_BINDINGS))
+@pytest.mark.parametrize("name", sorted(BINDINGS))
 def test_each_agents_execution_class_covers_its_tools(name):
     metadata = load_spec(name).metadata
     declared = metadata["execution_class"]
@@ -148,7 +148,7 @@ def test_enabled_skills_must_be_the_skills_the_agent_can_load():
         build_agent("context", overlay, durable=False)
 
 
-@pytest.mark.parametrize("name", sorted(AGENT_BINDINGS))
+@pytest.mark.parametrize("name", sorted(BINDINGS))
 def test_each_committed_spec_runs_the_tier_its_model_policy_names(name):
     from infosec_harness.agents.models import load_models_config
 
@@ -170,3 +170,61 @@ def test_a_committed_spec_whose_policy_disagrees_with_its_tier_is_refused(monkey
     monkeypatch.setattr(registry, "load_spec", drifted)
     with pytest.raises(GovernanceError, match="resolves to 'sonnet', not the spec's model tier 'opus'"):
         build_agent("verdict", durable=False)
+
+
+def test_a_policy_field_with_no_enforcer_is_rejected():
+    """Unknown keys fail, so a policy cannot declare a bound that nothing applies."""
+    from pydantic import ValidationError
+
+    from infosec_harness.tools.policies import ToolPolicy
+
+    base = {"name": "x", "effect": "read", "retry_safety": "safe", "timeout_seconds": 1,
+            "max_output_bytes": 10, "tools": [{"name": "t", "effect": "read"}]}
+    ToolPolicy.model_validate(base)
+    with pytest.raises(ValidationError):
+        ToolPolicy.model_validate({**base, "data_classification": "confidential"})
+    with pytest.raises(ValidationError):
+        ToolPolicy.model_validate({**base, "tools": [{"name": "t", "effect": "read", "notes": ""}]})
+
+
+def test_the_repo_toolset_applies_its_declared_timeout():
+    from infosec_harness.agents.capabilities import DEFAULT_REPO_RO_TOOLS, repo_ro_toolset
+
+    declared = load_policies()["repo-read-only"].timeout_seconds
+    assert repo_ro_toolset(DEFAULT_REPO_RO_TOOLS).timeout == declared
+
+
+def test_every_repo_tool_result_is_held_to_the_declared_output_bound(monkeypatch):
+    """list_files and search_code are capped by entry count, not bytes: long paths could exceed
+    the declared bound, so the bound is applied to every result, not merely asserted."""
+    from infosec_harness.agents import capabilities
+
+    declared = load_policies()["repo-read-only"].max_output_bytes
+    assert capabilities._bounded(lambda: "x" * declared, declared)() == "x" * declared
+    out = capabilities._bounded(lambda: "\u00e9" * declared, declared)()
+    assert len(out.encode()) <= declared
+    assert out.endswith(f"\n... truncated at the toolset's {declared}-byte output bound")
+
+
+async def test_the_sandbox_shell_uses_the_declared_timeout_and_output_bound(monkeypatch):
+    from types import SimpleNamespace
+
+    from infosec_harness.agents.capabilities import run_in_sandbox
+    from infosec_harness.sandbox import docker
+
+    policy = load_policies()["sandbox-shell"]
+    seen = {}
+
+    async def run_shell(image, command, *, timeout, idempotency_key):
+        seen["timeout"] = timeout
+        # Multibyte output: 3000 characters of it is far more than 3000 bytes.
+        return SimpleNamespace(exit_code=0, timed_out=False, stdout="é" * 5000,
+                               stderr="é" * 5000)
+
+    monkeypatch.setattr(docker, "run_shell", run_shell)
+    ctx = SimpleNamespace(deps=SimpleNamespace(sandbox_image="img"), run_id="r", tool_call_id="c")
+    out = await run_in_sandbox(ctx, "true")
+    assert seen["timeout"] == policy.timeout_seconds
+    assert out.startswith("[exit code: 0]\n[stdout]\n")
+    assert len(out.encode()) <= policy.max_output_bytes
+    assert out.endswith("output bound")

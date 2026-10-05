@@ -10,13 +10,15 @@ def test_all_specs_valid():
 
 
 def test_bindings_match_specs_on_disk():
-    assert set(registry.AGENT_BINDINGS) == registry.spec_names_on_disk()
+    assert set(registry.BINDINGS) == {p.parent.name for p in agents_dir().glob("*/agent.yaml")}
 
 
 def test_config_hashes_are_stable_and_distinct():
-    hashes = registry.agent_config_hashes()
+    hashes = {name: c.digest for name, c in registry.resolved_agent_configs().items()}
     assert len(set(hashes.values())) == len(hashes)
-    assert registry.agent_config_hashes() == hashes  # cached, deterministic
+    registry.resolved_agent_configs.cache_clear()
+    again = {name: c.digest for name, c in registry.resolved_agent_configs().items()}
+    assert again == hashes  # deterministic, not merely cached
 
 
 def test_committed_schema_is_current():
@@ -71,7 +73,7 @@ def test_the_token_floor_reaches_the_setting_pydantic_ai_reports(monkeypatch):
     assert max_tokens_floor("probe-planner") == floor
 
     raised = 0
-    for name in registry.AGENT_BINDINGS:
+    for name in registry.BINDINGS:
         declared = (registry.load_spec(name).model_settings or {}).get("max_tokens") or 0
         effective = registry.build_agent(name, durable=False).model_settings or {}
         assert effective.get("max_tokens") == max(declared, floor), (
@@ -90,7 +92,7 @@ def test_the_token_floor_is_inert_where_thinking_has_its_own_budget(monkeypatch)
     from infosec_harness.agents.models import max_tokens_floor
 
     assert max_tokens_floor("probe-planner") == 0
-    for name in registry.AGENT_BINDINGS:
+    for name in registry.BINDINGS:
         declared = (registry.load_spec(name).model_settings or {}).get("max_tokens")
         assert (registry.build_agent(name, durable=False).model_settings or {}).get(
             "max_tokens") == declared, name
@@ -259,3 +261,57 @@ def test_the_protocol_skill_still_defines_exactly_the_three_markers_the_prompts_
     assert "## The three markers" in protocol
     for marker in ("HARNESS_PRECONDITION::", "HARNESS_SINK_RETURNED::", "HARNESS_ORACLE::"):
         assert marker in protocol, f"{marker} missing from the protocol skill"
+
+
+# --- governance fails closed ---------------------------------------------------------------
+
+def _committed_metadata(name):
+    return dict(registry.load_spec(name).metadata)
+
+
+def test_an_evaluation_policy_nothing_can_see_is_a_violation_not_a_skipped_check(monkeypatch):
+    """Regression: a reference neither the package nor a checkout could resolve returned None,
+    and None passed, so off a checkout a spec could cite any path. The policy ships in the
+    package beside its spec, so it is resolved there or reported missing."""
+    from infosec_harness import resources
+    from infosec_harness.agents import governance
+
+    monkeypatch.setattr(resources, "source_checkout", lambda: None)
+    meta = _committed_metadata("verdict")
+    assert governance.violations("verdict", meta, tier="sonnet") == []
+    for reference in ("agents/verdict/evals/no-such-policy.yaml", "../pyproject.toml",
+                      "/etc/hosts", "agents/verdict"):
+        problems = governance.violations(
+            "verdict", {**meta, "evaluation_policy": reference}, tier="sonnet")
+        assert any("evaluation_policy" in p for p in problems), reference
+
+
+def test_the_model_policy_tier_rule_lives_with_the_other_governance_checks():
+    from infosec_harness.agents import governance
+
+    meta = _committed_metadata("verdict")
+    assert governance.violations("verdict", meta, tier=None) == []
+    assert any("not the spec's model tier 'opus'" in p
+               for p in governance.violations("verdict", meta, tier="opus"))
+
+
+def test_a_skills_include_naming_an_absent_skill_fails_construction():
+    """Regression: the include list was trusted as the set of loaded skills, so a spec naming a
+    skill that does not exist matched its own enabled_skills and was governed as if it had it."""
+    import pytest
+
+    from infosec_harness.agents.governance import GovernanceError
+
+    spec = registry.load_spec("recon")
+    skills = next(c for c in spec.capabilities if c.name == "Skills")
+    include = [*skills.kwargs["include"], "no-such-skill"]
+    overlay = {
+        "metadata": {"enabled_skills": include},
+        "capabilities": [
+            {"Skills": {**skills.kwargs, "include": include}}
+            if c.name == "Skills" else c.model_dump(by_alias=True, mode="json")
+            for c in spec.capabilities
+        ],
+    }
+    with pytest.raises(GovernanceError, match="enabled_skills"):
+        registry.build_agent("recon", overlay, durable=False)

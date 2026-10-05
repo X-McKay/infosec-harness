@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 from pydantic import BaseModel
 from pydantic_ai import Agent, ModelRetry
+from pydantic_ai.capabilities import PrepareTools
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
@@ -69,7 +70,7 @@ def make_agent(log, bad_output=False, provider=None):
         looping_model(log, bad_output),
         deps_type=AgentDeps,
         output_type=Evidence,
-        capabilities=[POLICY.capability(), PlanningWindowTelemetry(POLICY)],
+        capabilities=[PrepareTools(POLICY.prepare_tools), PlanningWindowTelemetry(POLICY)],
         retries=1,
     )
 

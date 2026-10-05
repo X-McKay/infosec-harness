@@ -15,7 +15,7 @@ from test_broker_executor import request_fixture
 from infosec_harness.agents.intake_claims import AtomicFinding
 from infosec_harness.domain.models import EnvironmentSpec
 from infosec_harness.inference.codec import decode_payload, encode_payload
-from infosec_harness.inference.compat import input_wire
+from infosec_harness.inference.rendering import input_wire
 
 
 @pytest.mark.parametrize('strict', [None, False, True])
@@ -130,7 +130,7 @@ async def test_opt_in_changes_only_closed_output_tools_and_preserves_original_pa
 
 
 def test_flag_off_keeps_historical_contract_profile_and_capability_identity():
-    from test_broker_profiles import _config
+    from test_broker_profiles import _config, backend
 
     from infosec_harness.agents.models import BackendConfig, CapabilityProfile
     from infosec_harness.inference.profiles import BrokerConfig
@@ -152,9 +152,9 @@ def test_flag_off_keeps_historical_contract_profile_and_capability_identity():
     cfg['profiles']['inference-only']['strict_closed_output_tools'] = True
     catalog = BrokerConfig.model_validate(cfg)
     with pytest.raises(ValueError, match='Strict output adaptation'):
-        catalog.resolve_contract('recon', 'gateway', 'model', {'max_tokens': 16}, backend_endpoint='https://provider.example/v1')
+        catalog.resolve_contract('recon', 'gateway', 'model', {'max_tokens': 16}, backend=backend())
     contract = catalog.resolve_contract('recon', 'gateway', 'model', {'max_tokens': 16},
-        backend_endpoint='https://provider.example/v1', strict_closed_output_tools=True)
+        backend=backend(strict_closed_output_tools=True))
     assert contract.strict_closed_output_tools and contract.profile_digest != old_profile.profile_digest
 
 
@@ -309,7 +309,7 @@ async def test_direct_model_factory_matches_executor_admission_strict_wire(monke
     monkeypatch.setattr(models, 'load_models_config', lambda: cfg)
     monkeypatch.setattr(openai, 'AsyncOpenAI', client)
     try:
-        model = models._build_live('strict-output-factory-offline', contract.model, intake_atomic=True)
+        model = models._build_live('strict-output-factory-offline', contract.model, False, True)
         await model.request(messages, contract.model_settings, params)
     finally:
         models._build_live.cache_clear()

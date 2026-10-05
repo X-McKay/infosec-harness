@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from infosec_harness.agents import capabilities
-from infosec_harness.sandbox import docker
+from infosec_harness.sandbox import docker, engine
 from infosec_harness.sandbox.policy import SandboxUnavailable
 
 
@@ -21,9 +21,12 @@ async def test_a_missing_docker_client_is_reported_as_sandbox_unavailable(monkey
     async def no_docker(argv, **_):
         raise FileNotFoundError(2, "No such file or directory", argv[0])
 
-    monkeypatch.setattr(docker, "run_bounded", no_docker)
+    monkeypatch.setattr(engine, "run_bounded", no_docker)
     with pytest.raises(SandboxUnavailable, match="Docker client is not installed"):
-        await docker._run(["docker", "info"], timeout=5)
+        await engine.run_docker(["docker", "info"], timeout=5)
+    # The availability predicates answer the question instead of raising it.
+    assert await docker.docker_available() is False
+    assert await docker.runtime_available("runsc") is False
 
 
 async def test_the_sandbox_shell_tool_reports_an_unavailable_sandbox_without_executing(monkeypatch):

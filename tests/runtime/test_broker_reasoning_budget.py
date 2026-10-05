@@ -14,15 +14,16 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.tools import ToolDefinition
 from test_broker_executor import request_fixture
-from test_broker_profiles import _config
+from test_broker_profiles import _config, backend
 
 from infosec_harness.agents import models
 from infosec_harness.inference.auth import AUTH_HEADER, sign_request
 from infosec_harness.inference.codec import encode_payload
-from infosec_harness.inference.compat import CompatOpenAIChatModel, input_wire
+from infosec_harness.inference.compat import CompatOpenAIChatModel
 from infosec_harness.inference.executor import Executor, OpenAIInference
 from infosec_harness.inference.profiles import BrokerConfig, ExecutorProfile
 from infosec_harness.inference.protocol import BrokerError, canonical_bytes, digest
+from infosec_harness.inference.rendering import input_wire
 
 
 def test_omitted_reasoning_budget_preserves_historical_payloads_and_identities():
@@ -100,9 +101,9 @@ def test_operator_profile_requires_exact_reasoning_budget(cap):
     catalog = BrokerConfig.model_validate(config)
     with pytest.raises(ValueError):
         catalog.resolve_contract('recon', 'gateway', 'model', {'max_tokens': 16},
-            backend_endpoint='https://provider.example/v1', thinking_token_budget=cap)
+            backend=backend(thinking_token_budget=cap))
     approved = catalog.resolve_contract('recon', 'gateway', 'model', {'max_tokens': 16},
-        backend_endpoint='https://provider.example/v1', thinking_token_budget=8)
+        backend=backend(thinking_token_budget=8))
     assert approved.thinking_token_budget == 8
 
 
@@ -152,7 +153,7 @@ async def test_actual_sdk_direct_executor_and_admission_use_top_level_budget(mon
     monkeypatch.setattr(models, 'load_models_config', lambda: config)
     monkeypatch.setattr(openai, 'AsyncOpenAI', client)
     try:
-        await models._build_live('offline', contract.model).request(messages, contract.model_settings, parameters)
+        await models._build_live('offline', contract.model, False, False).request(messages, contract.model_settings, parameters)
     finally:
         models._build_live.cache_clear()
         for instance in clients:
@@ -218,7 +219,7 @@ def test_resolved_model_provenance_routes_budget_after_total_floor(monkeypatch):
     config = models.ModelsConfig(backends={'bounded': models.BackendConfig(
         kind='openai_compatible', base_url='https://provider.invalid/v1',
         thinking_token_budget=8, min_max_tokens=16)},
-        default_backend='bounded', model_catalog={})
+        default_backend='bounded', model_catalog={'offline-model': {'bounded': 'offline-model'}})
     monkeypatch.setattr(models, 'get_settings', lambda: SimpleNamespace(model_mode='live'))
     monkeypatch.setattr(models, 'load_models_config', lambda: config)
     monkeypatch.setattr(models, 'pricing_source', lambda _: 'custom-zero')

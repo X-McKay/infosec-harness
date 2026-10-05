@@ -180,3 +180,14 @@ async def test_eval_persists_observations_for_accepted_and_protocol_failed_outpu
         assert row.scores["usage_status"] == "unknown"
         assert "SECRET" not in json.dumps(row.scores)
     assert "SECRET" not in json.dumps(summary)
+
+
+def test_retry_categories_are_the_evidence_guards_own_codes():
+    """Classification is derived from the guard's (code, message) pairs, never restated."""
+    from typing import get_args
+
+    from infosec_harness.agents.intake_evidence import EVIDENCE_DIAGNOSTICS
+    from infosec_harness.evals.output_retries import INTAKE_RULE_CATEGORIES, RetryCategory
+
+    assert {d.message: d.code for d in EVIDENCE_DIAGNOSTICS} == INTAKE_RULE_CATEGORIES
+    assert set(INTAKE_RULE_CATEGORIES.values()) == set(get_args(RetryCategory))

@@ -18,6 +18,13 @@ from infosec_harness.graph.triage import TRIAGE_GRAPH, PreFilter, TriageDeps, Tr
 from infosec_harness.repo.detect import detect_stack
 
 
+def _recorded(record, outcome):
+    """What an Ops implementation does with a call's outcome: record it, then return it."""
+    if record is not None:
+        record.append(outcome)
+    return outcome
+
+
 @pytest.fixture
 def repo():
     d = tempfile.mkdtemp()
@@ -158,10 +165,10 @@ async def test_a_judge_that_cannot_satisfy_the_contract_yields_inconclusive(repo
     ops.execute_probe = fake_exec
     real_run_agent = ops.run_agent
 
-    async def flaky_run_agent(name, prompt, deps):
+    async def flaky_run_agent(name, prompt, deps, *, record=None):
         if name == "verdict":
             raise UnexpectedModelBehavior("Exceeded maximum output retries (4)")
-        return await real_run_agent(name, prompt, deps)
+        return await real_run_agent(name, prompt, deps, record=record)
 
     ops.run_agent = flaky_run_agent
     finding = Finding.from_input(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
@@ -489,16 +496,16 @@ def _diagnosis_ops(ops, kinds):
     real = ops.run_agent
     seen = []
 
-    async def run_agent(name, prompt, deps):
+    async def run_agent(name, prompt, deps, *, record=None):
         seen.append(name)
         if name == "probe-diagnosis":
             nth = seen.count("probe-diagnosis") - 1
             kind = kinds[min(nth, len(kinds) - 1)]
-            return AgentOutcome(
+            return _recorded(record, AgentOutcome(
                 output=ProbeDiagnosis(kind=DiagnosisKind(kind),
                                       explanation="missing driver", fix_hint=""),
-                agent=name, model_name="stub")
-        return await real(name, prompt, deps)
+                agent=name, model_name="stub"))
+        return await real(name, prompt, deps, record=record)
 
     ops.run_agent = run_agent
     return seen
@@ -510,12 +517,12 @@ def _make_build_repair_change_the_plan(ops):
 
     real = ops.run_agent
 
-    async def run_agent(name, prompt, deps):
+    async def run_agent(name, prompt, deps, *, record=None):
+        if name != "build-repair":
+            return await real(name, prompt, deps, record=record)
         outcome = await real(name, prompt, deps)
-        if name == "build-repair":
-            output = outcome.output.model_copy(update={"env": {"HARNESS_REPAIRED": "1"}})
-            return AgentOutcome(**{**outcome.model_dump(), "output": output})
-        return outcome
+        output = outcome.output.model_copy(update={"env": {"HARNESS_REPAIRED": "1"}})
+        return _recorded(record, AgentOutcome(**{**outcome.model_dump(), "output": output}))
 
     ops.run_agent = run_agent
 
@@ -673,16 +680,16 @@ async def test_context_only_reachability_claims_are_probed(repo):
         real = ops.run_agent
         probed = []
 
-        async def run_agent(name, prompt, deps):
+        async def run_agent(name, prompt, deps, *, record=None):
             if name == "context":
-                return AgentOutcome(
+                return _recorded(record, AgentOutcome(
                     output=FindingContext(
                         summary="s", reachability=reachability,
                         reachability_rationale="r",
                         sink=CodeRef(file_path="app.py", start_line=2, end_line=2),
                         sanitizers=sanitizers, target_callable="lookup"),
-                    agent=name, model_name="stub")
-            return await real(name, prompt, deps)
+                    agent=name, model_name="stub"))
+            return await real(name, prompt, deps, record=record)
 
         ops.run_agent = run_agent
 
@@ -728,8 +735,8 @@ def test_infrastructure_uncertainty_does_not_demote_critical_security_priority()
         Verdict,
     )
     from infosec_harness.graph.scoring import (
+        priority,
         priority_band,
-        priority_for_inconclusive,
         priority_score,
     )
 
@@ -737,7 +744,7 @@ def test_infrastructure_uncertainty_does_not_demote_critical_security_priority()
     verdict = Verdict(label=VerdictLabel.inconclusive, confidence=0.0,
                       rationale="provider unavailable",
                       inconclusive_reason=InconclusiveReason.infrastructure_error)
-    score, band = priority_for_inconclusive(finding)
+    score, band = priority(finding, verdict, Reachability.unknown)
     assert band is PriorityBand.p1
     assert priority_band(priority_score(finding, verdict, Reachability.unknown)) is PriorityBand.p1
     assert score >= 0.6
@@ -800,16 +807,16 @@ def _negative_ops(ops, verdict_label="likely_not_exploitable"):
 
     real = ops.run_agent
 
-    async def run_agent(name, prompt, deps):
+    async def run_agent(name, prompt, deps, *, record=None):
         if name == "probe-diagnosis":
-            return AgentOutcome(output=ProbeDiagnosis(kind=DiagnosisKind.valid_negative,
-                                                      explanation="resisted", fix_hint=""),
-                                agent=name)
+            return _recorded(record, AgentOutcome(
+                output=ProbeDiagnosis(kind=DiagnosisKind.valid_negative, explanation="resisted",
+                                      fix_hint=""), agent=name))
         if name == "verdict":
-            return AgentOutcome(output=Verdict(label=VerdictLabel(verdict_label), confidence=0.8,
-                                               rationale="The sink returned safely."),
-                                agent=name)
-        return await real(name, prompt, deps)
+            return _recorded(record, AgentOutcome(
+                output=Verdict(label=VerdictLabel(verdict_label), confidence=0.8,
+                               rationale="The sink returned safely."), agent=name))
+        return await real(name, prompt, deps, record=record)
 
     async def fake_exec(image, probe, spec, nonce, attempt):
         return ProbeExecution(attempt=attempt, exit_code=0, oracle_fired=False,
@@ -855,8 +862,7 @@ async def test_a_negative_with_passing_controls_stands(repo):
     assert result.verdict.label is VerdictLabel.likely_not_exploitable
 
 
-@pytest.mark.parametrize("attached", [False, True])
-async def test_a_failed_verdict_call_is_recorded_with_its_usage(repo, attached):
+async def test_a_failed_verdict_call_is_recorded_with_its_usage(repo):
     """Regression: a verdict call that exhausted its retries vanished from the record, so its
     requests and tokens were missing from every cost and trajectory figure."""
     from pydantic_ai.exceptions import UnexpectedModelBehavior
@@ -867,15 +873,14 @@ async def test_a_failed_verdict_call_is_recorded_with_its_usage(repo, attached):
     _negative_ops(ops)
     negative_run_agent = ops.run_agent
 
-    async def failing(name, prompt, deps):
+    async def failing(name, prompt, deps, *, record=None):
         if name == "verdict":
-            error = UnexpectedModelBehavior("Exceeded maximum output retries (4)")
-            if attached:
-                error.agent_outcome = AgentOutcome(output=None, agent="verdict", requests=5,
-                                                   input_tokens=900, output_tokens=40,
-                                                   failure="UnexpectedModelBehavior")
-            raise error
-        return await negative_run_agent(name, prompt, deps)
+            # What run_recorded does: the failed call's partial outcome, then the error.
+            _recorded(record, AgentOutcome(output=None, agent="verdict", requests=5,
+                                           input_tokens=900, output_tokens=40,
+                                           failure="UnexpectedModelBehavior"))
+            raise UnexpectedModelBehavior("Exceeded maximum output retries (4)")
+        return await negative_run_agent(name, prompt, deps, record=record)
 
     ops.run_agent = failing
     finding = Finding.from_input(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
@@ -887,10 +892,44 @@ async def test_a_failed_verdict_call_is_recorded_with_its_usage(repo, attached):
     failed = state.invocations[-1]
     assert (failed.agent, failed.failure, failed.output) == ("verdict", "UnexpectedModelBehavior",
                                                              None)
-    assert failed.requests == (5 if attached else 0)
+    assert failed.requests == 5
+    assert [i.agent for i in state.invocations].count("verdict") == 1
 
 
-async def test_local_ops_attaches_the_partial_usage_of_a_failed_call(repo, monkeypatch):
+@pytest.mark.parametrize("failing_agent", ["context", "probe-planner", "probe-author",
+                                           "probe-diagnosis", "probe-repair", "build-repair"])
+async def test_every_failed_agent_call_keeps_its_partial_usage(repo, monkeypatch,
+                                                               failing_agent):
+    """Regression: only the verdict node recorded a failed call. A context, planner, author,
+    diagnosis or repair call that raised dropped the requests and tokens it had spent, so the
+    inconclusive record of the finding understated its cost."""
+    from pydantic_ai.messages import ModelResponse, ToolCallPart
+    from pydantic_ai.models.function import FunctionModel
+    from pydantic_ai.usage import RequestUsage
+
+    from infosec_harness.graph.pipeline import triage_finding
+
+    ops, prepared = await _prepared(repo)
+    if failing_agent in {"probe-repair", "build-repair"}:
+        _diagnosis_ops(ops, ["probe_defect" if failing_agent == "probe-repair"
+                             else "environment_issue", "valid_negative"])
+    agent, _config = ops._agent(failing_agent)
+
+    def respond(messages, info):
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {"bogus": 1})],
+                             usage=RequestUsage(input_tokens=100, output_tokens=7))
+
+    with agent.override(model=FunctionModel(respond)):
+        output = await triage_finding(ops, FindingInput(
+            title="SQLi", repo_url=repo, file_path="app.py", start_line=2, cwe="CWE-89",
+            severity="high"), prepared)
+    failed = [i for i in output.invocations if i.failure is not None]
+    assert [i.agent for i in failed] == [failing_agent]
+    assert failed[0].requests >= 2 and failed[0].input_tokens == 100 * failed[0].requests
+    assert output.result.verdict.label is VerdictLabel.inconclusive
+
+
+async def test_local_ops_records_the_partial_usage_of_a_failed_call(repo, monkeypatch):
     """The in-process path measures a failed run from the messages it exchanged."""
     from pydantic_ai.exceptions import UnexpectedModelBehavior
     from pydantic_ai.messages import ModelResponse, ToolCallPart
@@ -906,9 +945,85 @@ async def test_local_ops_attaches_the_partial_usage_of_a_failed_call(repo, monke
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {"bogus": 1})],
                              usage=RequestUsage(input_tokens=100, output_tokens=7))
 
+    record = []
     with agent.override(model=FunctionModel(respond)), \
             pytest.raises(UnexpectedModelBehavior) as error:
-        await ops.run_agent("verdict", ["Decide."], AgentDeps(repo_path=repo))
-    outcome = error.value.agent_outcome
+        await ops.run_agent("verdict", ["Decide."], AgentDeps(repo_path=repo), record=record)
+    assert not hasattr(error.value, "agent_outcome")
+    [outcome] = record
     assert outcome.failure == "UnexpectedModelBehavior" and outcome.agent == "verdict"
     assert outcome.requests >= 2 and outcome.input_tokens == 100 * outcome.requests
+
+
+async def test_an_executed_probe_carries_the_controller_record_origins(monkeypatch, tmp_path):
+    """The origins the controller records travel with the execution itself, not only inside
+    the encoded log artifact: the process is the controller's, the markers are self-reported."""
+    from infosec_harness.domain.models import EnvironmentSpec, ProbeSource
+    from infosec_harness.graph import workloads
+    from infosec_harness.sandbox import docker
+    from infosec_harness.sandbox.process import ProcessResult
+
+    async def available(purpose):
+        return None
+
+    async def run_probe(image, path, content, command, nonce, module_path=""):
+        return ProcessResult(exit_code=0, stdout=f"HARNESS_PRECONDITION::{nonce}\n",
+                             stderr="", timed_out=False, duration_s=0.5)
+
+    monkeypatch.setattr(docker, "ensure_runtime_available", available)
+    monkeypatch.setattr(docker, "run_probe", run_probe)
+    execution = await workloads.execute_probe(
+        "image", ProbeSource(test_file_path="tests/test_probe.py", content="probe"),
+        EnvironmentSpec(base_image="python:3.12", test_command="pytest {test_file}"), "n0nce", 1)
+    origins = execution.origins
+    assert origins is not None
+    assert origins.process.origin == "controller" and origins.process.exit_code == 0
+    assert origins.observations.origin == "self_reported_marker"
+    assert origins.observations.precondition_reached is True
+    assert origins.runner.origin == "parsed_untrusted_output"
+
+
+async def test_an_unexecuted_probe_records_no_origins(monkeypatch):
+    """Nothing ran, so nothing is observed: the record carries no origin to be verified."""
+    from infosec_harness.domain.models import EnvironmentSpec, ProbeSource
+    from infosec_harness.graph import workloads
+    from infosec_harness.sandbox import docker
+    from infosec_harness.sandbox.errors import SandboxUnavailable
+
+    async def unavailable(purpose):
+        raise SandboxUnavailable("no runtime")
+
+    monkeypatch.setattr(docker, "ensure_runtime_available", unavailable)
+    execution = await workloads.execute_probe(
+        "image", ProbeSource(test_file_path="tests/test_probe.py", content="probe"),
+        EnvironmentSpec(base_image="python:3.12", test_command="pytest {test_file}"), "n", 1)
+    assert execution.origins is None and execution.exit_code is None
+    offline = await LocalOps(sandbox=False).execute_probe("i", None, None, "n", 1)
+    assert offline.origins is None
+
+
+@pytest.mark.parametrize("failing_agent", ["recon", "env-planner"])
+async def test_a_failed_preparation_call_keeps_its_partial_usage(repo, failing_agent):
+    """Regression: a preparation agent call that raised was dropped from PrepareFailed's
+    invocations, so a repository that failed to prepare under-reported what it spent."""
+    from pydantic_ai.messages import ModelResponse, ToolCallPart
+    from pydantic_ai.models.function import FunctionModel
+    from pydantic_ai.usage import RequestUsage
+
+    from infosec_harness.graph.prepare import PrepareFailed
+
+    ops = LocalOps(sandbox=False, recipe_cache=False)
+    agent, _config = ops._agent(failing_agent)
+
+    def respond(messages, info):
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {"bogus": 1})],
+                             usage=RequestUsage(input_tokens=50, output_tokens=3))
+
+    stack = detect_stack(repo)
+    snapshot = RepoSnapshot(repo_url=repo, revision="HEAD", path=repo, content_hash="h" * 8)
+    with agent.override(model=FunctionModel(respond)), pytest.raises(PrepareFailed) as failed:
+        await run_prepare(ops, snapshot, stack)
+    recorded = failed.value.invocations
+    assert recorded[-1].agent == failing_agent and recorded[-1].failure is not None
+    assert recorded[-1].input_tokens == 50 * recorded[-1].requests > 0
+    assert [i.agent for i in recorded].count(failing_agent) == 1

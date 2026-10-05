@@ -59,7 +59,7 @@ async def _git(*args: str, cwd: str | None = None, local: bool = False) -> tuple
                                stderr_to_stdout=True)
     if result.timed_out:
         raise TimeoutError(f"git timed out after {GIT_TIMEOUT_S} seconds")
-    return result.returncode, result.stdout.decode(errors="replace")
+    return result.exit_code, result.stdout
 
 
 def _hash_part(hasher, value: bytes) -> None:
@@ -281,20 +281,13 @@ async def checkout(ref: RepoRef) -> RepoSnapshot:
                 raise
             if dest.is_symlink() or not dest.is_dir():
                 raise RuntimeError(f"snapshot destination is not a directory: {dest}") from exc
-            # Compatibility with snapshots published by the earlier direct-directory layout.
-            # Try both shapes by content; an old repository could itself contain a `tree/`
-            # directory, so shape alone cannot distinguish them.
-            matched = None
-            for candidate in (published, dest):
-                if candidate.is_symlink() or not candidate.is_dir():
-                    continue
-                existing_hash, existing_count = _content_identity(candidate)
-                if existing_hash == content_hash:
-                    matched = (candidate, existing_count)
-                    break
-            if matched is None:
+            # Published concurrently (or earlier) under the same identity. The name is not
+            # trusted: the published tree is re-hashed and reused only if its content matches.
+            if published.is_symlink() or not published.is_dir():
                 raise RuntimeError(f"snapshot identity collision at {dest}") from exc
-            published, file_count = matched
+            existing_hash, file_count = _content_identity(published)
+            if existing_hash != content_hash:
+                raise RuntimeError(f"snapshot identity collision at {dest}") from exc
             _make_read_only(dest)
         return RepoSnapshot(
             repo_url=ref.repo_url,

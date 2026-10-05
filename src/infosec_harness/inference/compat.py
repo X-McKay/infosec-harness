@@ -5,6 +5,13 @@ from dataclasses import replace
 from typing import Any
 
 from pydantic_ai.models.openai import OpenAIChatModel as OpenAIChatModelBase
+from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.providers.openai import OpenAIProvider
+
+from infosec_harness.agents.intake_schema import intake_openai_profile
+
+from .codec import check_schemas
+from .protocol import BrokerError, validate_thinking_token_budget
 
 
 def merge_leading_system_messages(messages: list[Any]) -> list[Any]:
@@ -55,9 +62,7 @@ class CompatOpenAIChatModel(OpenAIChatModelBase):  # type: ignore[misc,valid-typ
         self._strict_closed_output_tools = strict_closed_output_tools
         if enable_thinking is not None and type(enable_thinking) is not bool:
             raise ValueError("Thinking control must be a strict boolean or omitted")
-        from .protocol import validate_thinking_token_budget
-
-        validate_thinking_token_budget(thinking_token_budget, enable_thinking)
+        # The budget is validated against the effective output cap on every request.
         self._enable_thinking = enable_thinking
         self._thinking_token_budget = thinking_token_budget
 
@@ -67,8 +72,6 @@ class CompatOpenAIChatModel(OpenAIChatModelBase):  # type: ignore[misc,valid-typ
         settings, params = super().prepare_request(model_settings, model_request_parameters)
         settings = apply_max_tokens_floor(settings, self._min_max_tokens)
         if self._enable_thinking is not None or self._thinking_token_budget is not None:
-            from .protocol import BrokerError, validate_thinking_token_budget
-
             if settings and any(key in settings for key in ("extra_body", "extra_headers")):
                 raise BrokerError("policy", "Thinking control cannot be combined with request overrides")
             try:
@@ -91,17 +94,21 @@ class CompatOpenAIChatModel(OpenAIChatModelBase):  # type: ignore[misc,valid-typ
         return merge_leading_system_messages(mapped) if self._merge_system else mapped
 
 
+def contract_profile(model: str, *, atomic_intake: bool) -> ModelProfile:
+    """The static OpenAI profile of a contract model; atomic intake inlines its output schema."""
+    profile = OpenAIProvider.model_profile(model) or {}
+    return intake_openai_profile(profile) if atomic_intake else profile
+
+
 def model_for_contract(contract: Any, provider: Any) -> CompatOpenAIChatModel:
     """The one construction of a contract's provider model.
 
-    Admission sizing (:func:`input_wire`) and executor dispatch both call this, so the request
+    Admission sizing (:func:`rendering.input_wire`) and executor dispatch both call this, so the request
     that is measured is the request that is sent.
     """
     extra: dict[str, Any] = {}
     if contract.atomic_intake:
-        from infosec_harness.agents.intake_schema import intake_openai_profile
-
-        extra["profile"] = intake_openai_profile(provider.model_profile(contract.model))
+        extra["profile"] = contract_profile(contract.model, atomic_intake=True)
     return CompatOpenAIChatModel(
         contract.model,
         provider=provider,
@@ -137,20 +144,14 @@ def _closed_output_schema(schema: Any) -> bool:
 
 def strict_closed_outputs(params: Any, profile: Any) -> Any:
     """Copy output definitions only; authored parameters and local guards stay intact."""
-    from .protocol import BrokerError
-
     if params.output_mode not in {"auto", "tool"}:
         return params
-    tools, size, nodes = [], 0, 0
+    check_schemas(tool.parameters_json_schema for tool in params.output_tools if tool.strict is None)
+    tools = []
     for tool in params.output_tools:
         if tool.strict is not None:
             tools.append(tool)
             continue
-        expanded_size, expanded_nodes = _check_schema_expansion(tool.parameters_json_schema)
-        size += expanded_size
-        nodes += expanded_nodes
-        if size > 1_048_576 or nodes > 65_536:
-            raise BrokerError("policy", "Aggregate output schemas exceed rendering bound")
         if _closed_output_schema(tool.parameters_json_schema):
             if not profile.get("openai_supports_strict_tool_definition", True):
                 raise BrokerError("policy", "Model profile does not support strict output tools")
@@ -158,116 +159,3 @@ def strict_closed_outputs(params: Any, profile: Any) -> Any:
         else:
             tools.append(tool)
     return replace(params, output_tools=tools)
-
-
-
-def _check_schema_expansion(schema: Any) -> tuple[int, int]:
-    """Bound acyclic local-ref expansion before SDK inlining/deepcopy.
-
-    The SDK protects cycles but repeated acyclic references can expand exponentially.
-    These are rendering resource bounds, independent of token/context admission.
-    """
-    from .protocol import BrokerError, _ascii_normalized_size
-
-    definitions = schema.get("$defs", {}) if isinstance(schema, dict) else {}
-    cache: dict[str, tuple[int, int, int]] = {}
-
-    def visit(value: Any, depth: int, stack: tuple[str, ...]) -> tuple[int, int, int]:
-        if depth > 64:
-            raise BrokerError("policy", "Admission schema exceeds rendering depth")
-        size, nodes, height = 0, 1, 1
-        if isinstance(value, dict):
-            for key, child in value.items():
-                child_size, child_nodes, child_height = visit(child, depth + 1, stack)
-                size += _ascii_normalized_size(key) + child_size + 4
-                nodes += child_nodes
-                height = max(height, child_height + 1)
-            if "$ref" in value:
-                reference = value["$ref"]
-                if not isinstance(reference, str) or not reference.startswith("#/$defs/"):
-                    raise BrokerError("policy", "Admission schema has an unsupported reference")
-                name = reference[8:]
-                if name in stack or name not in definitions:
-                    raise BrokerError("policy", "Admission schema reference cannot be bounded")
-                if name not in cache:
-                    cache[name] = visit(definitions[name], depth + 1, (*stack, name))
-                extra_size, extra_nodes, extra_height = cache[name]
-                size += extra_size
-                nodes += extra_nodes
-                height = max(height, extra_height + 1)
-        elif isinstance(value, list):
-            for child in value:
-                child_size, child_nodes, child_height = visit(child, depth + 1, stack)
-                size += child_size + 2
-                nodes += child_nodes
-                height = max(height, child_height + 1)
-        else:
-            size = _ascii_normalized_size(value)
-        if depth + height > 64:
-            raise BrokerError("policy", "Admission schema exceeds expanded rendering depth")
-        if size > 262_144 or nodes > 16_384:
-            raise BrokerError("policy", "Admission schema exceeds rendering expansion bound")
-        return size, nodes, height
-
-    size, nodes, _ = visit(schema, 0, ())
-    return size, nodes
-
-
-async def input_wire(payload: Any, contract: Any) -> dict[str, Any]:
-    """Pure SDK shaping, in the same order as request/_completions_create.
-
-    The restricted codec excludes every content item that can fetch a remote resource.
-    A rejecting transport additionally prevents any accidental provider request. This
-    deliberately does not invoke request() or its global allow-model-requests check.
-    """
-    import httpx2
-    from openai import AsyncOpenAI
-    from pydantic_ai.providers.openai import OpenAIProvider
-
-    from .codec import decode_payload
-    from .protocol import MAX_BODY_BYTES, BrokerError, _ascii_normalized_size
-
-    def deny_request(request: Any) -> Any:
-        raise BrokerError("policy", "Admission rendering cannot send a provider request")
-
-    messages, settings, params = decode_payload(payload)
-    schemas = [schema for definition in (*params.function_tools, *params.output_tools)
-               for schema in (definition.parameters_json_schema, definition.return_schema)
-               if schema is not None]
-    if params.output_object is not None:
-        schemas.append(params.output_object.json_schema)
-    total_size, total_nodes = 0, 0
-    for schema in schemas:
-        size, nodes = _check_schema_expansion(schema)
-        total_size += size
-        total_nodes += nodes
-        if total_size > 1_048_576 or total_nodes > 65_536:
-            raise BrokerError("policy", "Aggregate admission schemas exceed rendering bound")
-    async with (
-        httpx2.AsyncClient(transport=httpx2.MockTransport(deny_request), trust_env=False) as transport,
-        AsyncOpenAI(base_url=contract.endpoint, api_key="admission-no-network",
-                    max_retries=0, http_client=transport) as client,
-    ):
-        model = model_for_contract(contract, OpenAIProvider(openai_client=client))
-        try:
-            settings, params = model.prepare_request(settings, params)
-            settings = settings or {}
-            tools, _ = model._get_tool_choice(settings, params)
-            mapped = await model._map_messages(messages, params, model_settings=settings)
-            response_format = None
-            if params.output_mode == "native":
-                if params.output_object is None:
-                    raise BrokerError("policy", "Native output schema is missing")
-                response_format = model._map_json_schema(params.output_object)
-            elif params.output_mode == "prompted":
-                raise BrokerError("policy", "Prompted output is not qualified for admission")
-        except BrokerError:
-            raise
-        except Exception as exc:
-            raise BrokerError("policy", "Unsupported admission rendering") from exc
-    wire = {"messages": mapped, "tools": tools, "response_format": response_format}
-    if contract.enable_thinking is not None or contract.thinking_token_budget is not None:
-        wire["extra_body"] = settings["extra_body"]
-    if _ascii_normalized_size(wire) > MAX_BODY_BYTES:
-        raise BrokerError("policy", "Transformed admission input exceeds rendering bound")
-    return wire

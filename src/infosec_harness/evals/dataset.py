@@ -24,15 +24,6 @@ from infosec_harness.settings import get_settings
 Case = dict[str, Any]
 
 
-def default_dataset_path(agent: str) -> Path:
-    return get_settings().agents_dir / agent / "evals" / "dataset.yaml"
-
-
-def agents_with_datasets() -> list[str]:
-    root = get_settings().agents_dir
-    return sorted(p.name for p in root.iterdir() if (p / "evals" / "dataset.yaml").is_file())
-
-
 def case_group(case: Mapping[str, object]) -> str:
     """Stable group used to keep related variants on the same side of a holdout split."""
     if group := case.get("group"):
@@ -95,7 +86,8 @@ class Dataset:
 
 def load_dataset(agent: str, path: Path | None = None) -> Dataset:
     """Load ``agent``'s dataset, or the dataset at ``path`` when one is named."""
-    path = Path(path) if path is not None else default_dataset_path(agent)
+    path = (Path(path) if path is not None
+            else get_settings().agents_dir / agent / "evals" / "dataset.yaml")
     document = yaml.safe_load(path.read_text())
     if not isinstance(document, dict) or not isinstance(document.get("cases"), list):
         raise ValueError(f"{path}: an eval dataset is a mapping with a `cases` list")

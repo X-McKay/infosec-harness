@@ -7,11 +7,9 @@ only ever touch this interface, so the exact same topology runs standalone and d
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Sequence
 from typing import Any, Protocol
 
-import httpx
-from pydantic_ai.exceptions import ModelAPIError, UsageLimitExceeded
 from pydantic_ai.messages import UserContent
 
 from infosec_harness.agents.deps import AgentDeps
@@ -20,7 +18,6 @@ from infosec_harness.domain.models import (
     BuildResult,
     EnvironmentSpec,
     Finding,
-    InconclusiveReason,
     ProbeExecution,
     ProbeSource,
     RepoSnapshot,
@@ -29,83 +26,16 @@ from infosec_harness.domain.models import (
 )
 
 
-def _failure_chain(e: BaseException) -> Iterator[BaseException]:
-    """Yield wrapper causes once, including Temporal's serialized failure chain."""
-    seen: set[int] = set()
-    current: BaseException | None = e
-    while current is not None and id(current) not in seen:
-        seen.add(id(current))
-        yield current
-        current = getattr(current, "cause", None) or current.__cause__
-
-
-def _application_error_type(e: BaseException) -> str | None:
-    """The serialized type name of a Temporal ``ApplicationError``, without importing Temporal.
-
-    Classification runs on both paths, and the in-process one must not depend on Temporal.
-    """
-    if any(cls.__name__ == "ApplicationError" for cls in type(e).__mro__):
-        value = getattr(e, "type", None)
-        return value if isinstance(value, str) else None
-    return None
-
-
-def is_infrastructure_failure(e: BaseException) -> bool:
-    """True when the harness's own dependencies failed, rather than the work failing.
-
-    A provider outage, a transport error or a run timeout says nothing about the repository or
-    the finding, so it must not be recorded as `environment_unbuildable` -- an eval reading
-    that cannot tell an endpoint being down from a pipeline regression.
-    """
-    serialized_types = {"ModelAPIError", "ModelHTTPError", "APIConnectionError", "APITimeoutError",
-                        "ConnectError", "ReadTimeout", "TimeoutError", "BrokerError"}
-    from infosec_harness.inference.protocol import BrokerError
-    return any(isinstance(cause, ModelAPIError | httpx.TransportError | TimeoutError | BrokerError)
-        or _application_error_type(cause) in serialized_types
-        for cause in _failure_chain(e))
-
-
-def classify_pipeline_failure(e: BaseException) -> InconclusiveReason:
-    """Which ``InconclusiveReason`` an exception escaping a pipeline stage deserves.
-
-    Classified by exception *type*, extending :func:`is_infrastructure_failure` rather than
-    matching on message text: a provider's or a library's wording is not a contract, and a
-    taxonomy built on strings silently reclassifies itself when one of them is reworded.
-
-    Three outcomes the pipeline used to file under one reason, each with a different fix:
-
-    - ``budget_exhausted`` -- a ceiling *we* set stopped the run; it was not answered. The fix
-      is ours: raise the limit, or find the loop that burned it (which is what the per-agent
-      ``repeated_tool_calls`` record exists to show). ``UsageLimitExceeded`` means exactly this,
-      and the enum member already existed while nothing on this path ever produced it, so a
-      budget breach during preparation was indistinguishable from a repository that will not
-      build.
-    - ``infrastructure_error`` -- our own dependency failed (provider outage, transport error,
-      run timeout). Says nothing about the finding at all.
-    - ``error`` -- the harness fell over some other way, which is a bug report, not a triage
-      result.
-
-    ``environment_unbuildable`` is deliberately *not* reachable from here. It is a claim about
-    the repository -- "preparation ran to completion and produced no usable environment" -- and
-    a completed ``run_prepare`` makes that claim itself by returning ``status != "ready"``. An
-    exception is not that claim: a preparation that crashed never reached a verdict on the
-    repository, so recording one put the blame on a stage that had not finished being tried.
-    """
-    if any(isinstance(cause, UsageLimitExceeded)
-           or _application_error_type(cause) == "UsageLimitExceeded"
-           for cause in _failure_chain(e)):
-        return InconclusiveReason.budget_exhausted
-    if is_infrastructure_failure(e):
-        return InconclusiveReason.infrastructure_error
-    return InconclusiveReason.error
-
-
 class Ops(Protocol):
     async def resolve_location(self, finding: Finding, repo_path: str) -> Finding | None: ...
 
     async def run_agent(
-        self, name: str, prompt: Sequence[UserContent], deps: AgentDeps
-    ) -> AgentOutcome: ...
+        self, name: str, prompt: Sequence[UserContent], deps: AgentDeps, *,
+        record: list[AgentOutcome] | None = None,
+    ) -> AgentOutcome:
+        """Run one agent call. Its outcome -- a failed call's partial usage included -- is
+        appended to ``record`` before this returns or raises (see ``pipeline.run_recorded``)."""
+        ...
 
     async def new_nonce(self) -> str: ...
 
@@ -162,14 +92,12 @@ class LocalOps:
 
         return resolve_location(finding, repo_path)
 
-    async def run_agent(self, name: str, prompt, deps: AgentDeps) -> AgentOutcome:
-        import asyncio
+    async def run_agent(self, name: str, prompt, deps: AgentDeps, *,
+                        record: list[AgentOutcome] | None = None) -> AgentOutcome:
         import time
 
-        from pydantic_ai import capture_run_messages
-
         from infosec_harness import telemetry
-        from infosec_harness.graph.pipeline import agent_outcome, partial_outcome
+        from infosec_harness.graph.pipeline import run_recorded
         from infosec_harness.settings import get_settings
 
         if self._broker_closed:
@@ -190,28 +118,19 @@ class LocalOps:
                 agent=name, configuration_digest=base_config.digest, contract=contract))
             deps = deps.model_copy(update={"broker_binding": binding, "broker_contract": contract})
         attrs = telemetry.agent_run_attributes(name, config.model.resolved_model, config.digest)
-        start = time.monotonic()
         timeout = get_settings().agent_run_timeout_s
-        with telemetry.agent_span(name, attrs) as span, capture_run_messages() as messages:
+        with telemetry.agent_span(name, attrs) as span:
             try:
-                result = await asyncio.wait_for(
-                    agent.run(list(prompt), deps=deps,
-                              usage_limits=config.budget.to_usage_limits()),
-                    timeout=timeout,
-                )
-            except Exception as e:
-                # Record the failed call's observed usage on the error for the graph to keep.
-                e.agent_outcome = partial_outcome(  # type: ignore[attr-defined]
-                    name, messages, config, time.monotonic() - start, e)
-                if not isinstance(e, TimeoutError):
-                    raise
+                outcome = await run_recorded(agent, name, prompt, deps, config,
+                                             [] if record is None else record,
+                                             clock=time.monotonic, timeout=timeout)
+            except TimeoutError as e:
                 # A hung provider request never fails on its own, so neither the client's
                 # retries nor a budget will end it. Surface it as the infrastructure failure it
                 # is; callers contain it per finding.
                 raise TimeoutError(
                     f"agent {name!r} exceeded HARNESS_AGENT_RUN_TIMEOUT_S={timeout}s"
                 ) from e
-            outcome = agent_outcome(name, result, config, time.monotonic() - start)
             span.set_attributes(telemetry.outcome_attributes(outcome))
         return outcome
 

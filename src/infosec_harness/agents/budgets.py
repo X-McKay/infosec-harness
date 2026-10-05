@@ -79,7 +79,9 @@ class RunBudget(BaseModel):
         exception: it is a per-context brake, and one request's context does not get larger
         because the repository has more files in it.
         """
-        factor = size_factor(source_files)
+        return self._scaled_by(size_factor(source_files))
+
+    def _scaled_by(self, factor: float) -> RunBudget:
         if factor == 1.0:
             return self
         return self.model_copy(update={
@@ -89,11 +91,6 @@ class RunBudget(BaseModel):
             "max_output_tokens": max(1, round(self.max_output_tokens * factor)),
             "max_cost_usd": round(self.max_cost_usd * factor, 6),
         })
-
-    @property
-    def worst_case_input_tokens(self) -> int:
-        """The most input a run can legitimately accumulate within its own request budget."""
-        return self.max_requests * self.max_input_tokens_per_request
 
     def to_usage_limits(self) -> UsageLimits:
         return UsageLimits(
@@ -184,40 +181,6 @@ def size_factor(source_files: int | None) -> float:
     return min(1.0 + GROWTH_PER_DOUBLING * doublings, MAX_SIZE_FACTOR)
 
 
-def usage_limits_for(agent_name: str, metadata: dict[str, Any] | None,
-                     *, source_files: int | None = None,
-                     root_ceiling: RunBudget | None = None) -> UsageLimits:
-    return resolve_budget(
-        agent_name,
-        metadata,
-        source_files=source_files,
-        root_ceiling=root_ceiling,
-    ).to_usage_limits()
-
-
-def resolve_budget(
-    agent_name: str,
-    metadata: dict[str, Any] | None,
-    *,
-    source_files: int | None = None,
-    root_ceiling: RunBudget | None = None,
-    provider_output_floor: int = 0,
-) -> BudgetResolution:
-    """Resolve the limits passed to PydanticAI and retain every adjustment as provenance.
-
-    A root ceiling can only tighten a member budget. This helper is shared by production and
-    eval callers so a calibration overlay changes the limits that execute, not just a report.
-    """
-    requested = run_budget(agent_name, metadata)
-    return resolve_declared_budget(
-        agent_name,
-        requested,
-        source_files=source_files,
-        root_ceiling=root_ceiling,
-        provider_output_floor=provider_output_floor,
-    )
-
-
 def resolve_declared_budget(
     agent_name: str,
     requested: RunBudget,
@@ -226,13 +189,14 @@ def resolve_declared_budget(
     root_ceiling: RunBudget | None = None,
     provider_output_floor: int = 0,
 ) -> BudgetResolution:
-    """Resolve an already-loaded budget without file or environment access.
+    """Resolve the limits passed to PydanticAI and retain every adjustment as provenance.
 
-    Temporal workflows use this form so scaling remains replay-safe after the worker has
-    loaded the declaration outside workflow execution.
+    Pure: no file or environment access, so Temporal workflows can rescale a declaration the
+    worker loaded outside workflow execution. A root ceiling can only tighten a member budget.
+    Production and evals share it, so a calibration overlay changes the limits that execute.
     """
     factor = size_factor(source_files)
-    scaled = requested.scaled_for(source_files)
+    scaled = requested._scaled_by(factor)
     effective = scaled
     binding: list[str] = []
     if root_ceiling is not None:

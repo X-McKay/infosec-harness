@@ -11,26 +11,28 @@ from pathlib import Path
 
 import yaml
 
+from infosec_harness.agents import models
 from infosec_harness.inference.admission import ReservationPolicy
 from infosec_harness.inference.controller import Controller
 from infosec_harness.inference.http_service import JsonChannel
-from infosec_harness.inference.invocations import (
+from infosec_harness.inference.issuance import (
     build_reservation_policy,
     issue_invocation,
     trusted_config,
 )
 from infosec_harness.inference.openshell import NativeDeploymentConfig
 from infosec_harness.inference.policy import canonical_policy
-from infosec_harness.inference.profiles import registered_agents
 from infosec_harness.inference.protocol import BrokerError, InvocationRequest
 
 
-def contracts(*, durable: bool = True):
-    return {name: trusted_config(name, durable=durable) for name in registered_agents()}
+def contracts() -> dict:
+    """Every registered agent's durable effective configuration, as the controller admits it."""
+    from infosec_harness.agents.registry import AGENT_BINDINGS
+
+    return {name: trusted_config(name, durable=True) for name in AGENT_BINDINGS}
 
 
 def controller_factory() -> Controller:
-    from infosec_harness.agents import models
     path = Path(os.environ.get("HARNESS_BROKER_NATIVE_CONFIG", ""))
     if not path.is_absolute() or not path.is_file() or path.is_symlink():
         raise BrokerError("policy", "A native operator deployment file is required")
@@ -71,19 +73,23 @@ def controller_factory() -> Controller:
             cert=(str(native.gateway_client_certificate), str(native.gateway_client_key))))
 
 
+def print_contracts() -> None:
+    values = {}
+    for name, config in contracts().items():
+        contract = config.model.broker_contract
+        values[name] = {"configuration_digest": config.digest,
+            "transport": "brokered" if contract else "direct",
+            "contract_digest": contract.digest if contract else None,
+            "contract": contract.model_dump(mode="json") if contract else None}
+    print(json.dumps(values, sort_keys=True, indent=2))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--print-contracts", action="store_true", required=True)
-    args = parser.parse_args()
-    if args.print_contracts:
-        values = {}
-        for name, config in contracts().items():
-            contract = config.model.broker_contract
-            values[name] = {"configuration_digest": config.digest,
-                "transport": "brokered" if contract else "direct",
-                "contract_digest": contract.digest if contract else None,
-                "contract": contract.model_dump(mode="json") if contract else None}
-        print(json.dumps(values, sort_keys=True, indent=2))
+    parser.add_argument("--print-contracts", action="store_true", required=True,
+                        help="Print every agent's secret-free transport contract")
+    parser.parse_args()
+    print_contracts()
 
 
 if __name__ == "__main__":

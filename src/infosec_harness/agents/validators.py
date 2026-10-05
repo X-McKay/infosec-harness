@@ -23,7 +23,10 @@ from infosec_harness.agents.ecosystem_contract import (
     repo_js_runners,
     repo_jvm_test_framework,
 )
-from infosec_harness.agents.intake_evidence import extraction_evidence_violations
+from infosec_harness.agents.intake_evidence import (
+    evidence_retry_message,
+    extraction_evidence_diagnostics,
+)
 from infosec_harness.domain.models import (
     DiagnosisKind,
     EnvironmentSpec,
@@ -43,9 +46,9 @@ OutputValidator = Callable[[RunContext[AgentDeps], Any], Any]
 def validate_intake_evidence(
     ctx: RunContext[AgentDeps], output: ExtractedFinding
 ) -> ExtractedFinding:
-    problems = extraction_evidence_violations(ctx.deps.report_text, output.model_dump(mode="json"))
+    problems = extraction_evidence_diagnostics(ctx.deps.report_text, output.model_dump(mode="json"))
     if problems:
-        raise ModelRetry("Extraction violates its evidence contract:\n- " + "\n- ".join(problems))
+        raise ModelRetry(evidence_retry_message(problems))
     return output
 
 
@@ -101,11 +104,19 @@ def _repo_path(ctx: RunContext[AgentDeps] | None) -> str | None:
     return getattr(getattr(ctx, "deps", None), "repo_path", None)
 
 
+# With no recorded controller facts nothing corroborates a claim, so only inconclusive is
+# admissible: the same reduction ``outputs.allowed_verdict_labels`` applies to the offered tools.
+NO_FACTS_VIOLATION = (
+    "No controller evidence was recorded for this finding; only inconclusive is allowed."
+)
+
+
 def validate_verdict(ctx: RunContext[AgentDeps], output: Verdict) -> Verdict:
     facts = ctx.deps.facts
     if facts is None:
-        return output
-    problems = verdict_violations(output, facts)
+        problems = [] if output.label == VerdictLabel.inconclusive else [NO_FACTS_VIOLATION]
+    else:
+        problems = verdict_violations(output, facts)
     if problems:
         raise ModelRetry("Verdict violates the evidence contract:\n- " + "\n- ".join(problems))
     return output
@@ -360,14 +371,13 @@ def validate_environment_spec(
 ) -> EnvironmentSpec:
     repo_path = _repo_path(ctx)
     framework = repo_jvm_test_framework(repo_path)
-    warmup_problems = offline_warmup_violations(output, framework, targeted_feedback=True)
     problems = (
         environment_spec_violations(output)
         + install_path_violations(output)
         # Repo-aware, unlike the two above: the binding constraints are what the project
         # declares -- its test framework and its language level -- which no amount of
         # inspecting the spec alone can reveal.
-        + warmup_problems
+        + offline_warmup_violations(output, framework)
         + jdk_compatibility_violations(output.base_image, repo_java_release(repo_path))
         + js_runner_choice_violations(output.test_command or "", repo_js_runners(repo_path))
     )

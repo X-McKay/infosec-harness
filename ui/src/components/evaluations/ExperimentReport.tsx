@@ -8,11 +8,8 @@ import { asRecord, type JsonRecord } from "@/lib/json";
 import { CaseTable, ResourceDistribution, Scatter } from "./ExperimentCharts";
 
 import {
-  accuracyOf,
   comparisonPoints,
-  costPerCaseOf,
   gateObservations,
-  metricNumber,
   qualityFraction,
 } from "@/lib/evaluation";
 
@@ -29,9 +26,8 @@ export function ExperimentContent({
 }) {
   const detail = detailQuery.data;
   const points = comparisonPoints(experiments, selected);
-  const confusion = asRecord(
-    (detail?.metrics || selected?.metrics || {}).confusion,
-  );
+  // Full metrics come with the selected experiment's detail, not with the list.
+  const confusion = asRecord(detail?.metrics.confusion);
   return (
     <>
       <ExperimentTable
@@ -188,12 +184,12 @@ function ExperimentRow({
       <td>
         <Badge variant="outline">{experiment.status ?? "unknown"}</Badge>
       </td>
-      <td className="text-right">{percent(accuracyOf(experiment.metrics))}</td>
+      <td className="text-right">{percent(experiment.accuracy)}</td>
       <td className="text-right font-mono text-xs">
-        {money(costPerCaseOf(experiment.metrics))}
+        {money(experiment.cost_usd_per_case)}
       </td>
       <td className="text-right font-mono text-xs">
-        {seconds(metricNumber(experiment.metrics, "p95_latency_s"))}
+        {seconds(experiment.p95_latency_s)}
       </td>
     </tr>
   );
@@ -214,20 +210,20 @@ function SelectedMetrics({
         <CardContent className="grid grid-cols-2 gap-4">
           <Metric
             label="Accuracy"
-            value={percent(accuracyOf(experiment.metrics))}
-            detail={qualityFraction(experiment.metrics)}
+            value={percent(experiment.accuracy)}
+            detail={qualityFraction(experiment)}
           />
           <Metric
             label="Cost / case"
-            value={money(costPerCaseOf(experiment.metrics))}
+            value={money(experiment.cost_usd_per_case)}
           />
           <Metric
             label="p50 latency"
-            value={seconds(metricNumber(experiment.metrics, "p50_latency_s"))}
+            value={seconds(experiment.p50_latency_s)}
           />
           <Metric
             label="p95 latency"
-            value={seconds(metricNumber(experiment.metrics, "p95_latency_s"))}
+            value={seconds(experiment.p95_latency_s)}
           />
         </CardContent>
       </Card>

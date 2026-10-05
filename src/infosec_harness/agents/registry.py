@@ -19,8 +19,8 @@ from typing import Any
 
 from pydantic import BaseModel
 from pydantic_ai import Agent
-from pydantic_ai.agent.spec import AgentSpec
-from pydantic_ai.capabilities import PrepareOutputTools, ResolveModelId
+from pydantic_ai.agent.spec import AgentSpec, CapabilitySpec
+from pydantic_ai.capabilities import PrepareOutputTools, PrepareTools, ResolveModelId
 from pydantic_ai.durable_exec.temporal import TemporalDurability
 from pydantic_ai_harness.compaction import ClearToolResults
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
@@ -33,8 +33,8 @@ from infosec_harness.agents import governance
 from infosec_harness.agents import models as model_factory
 from infosec_harness.agents.budgets import (
     BudgetResolution,
-    resolve_budget,
     resolve_declared_budget,
+    run_budget,
 )
 from infosec_harness.agents.capabilities import CUSTOM_CAPABILITIES
 from infosec_harness.agents.deps import AgentDeps
@@ -45,7 +45,14 @@ from infosec_harness.agents.intake_claims import (
     ReferenceError,
     reconstruct,
 )
-from infosec_harness.agents.intake_evidence import INTAKE_EVIDENCE_POLICY_VERSION
+from infosec_harness.agents.intake_evidence import (
+    INTAKE_EVIDENCE_POLICY_VERSION,
+    LITERAL_LINE_MISSING,
+    LITERAL_LOCATION_MISSING,
+    POSITIVE_SUPPORT_MISSING,
+    evidence_retry_message,
+    extraction_evidence_diagnostics,
+)
 from infosec_harness.agents.outputs import (
     VERDICT_OUTPUTS,
     ContextOutput,
@@ -59,7 +66,6 @@ from infosec_harness.agents.validators import (
     OutputValidator,
     bind_install_source_validator,
     validate_environment_spec,
-    validate_intake_evidence,
     validate_partial_build_scope,
     validate_probe,
     validate_verdict,
@@ -232,24 +238,41 @@ def load_spec(name: str, overlay: Mapping[str, Any] | None = None) -> AgentSpec:
     return spec
 
 
-def _skills_hash(spec: AgentSpec) -> str:
-    """Content hash of every skill directory the spec can load."""
-    h = hashlib.sha256()
+def _skill_roots(cap: CapabilitySpec) -> list[Path]:
+    """The library directories one Skills capability loads from, resolved against the package.
+
+    The one reading of a Skills capability's arguments: hashing, governance and the
+    absolutized spec the agent is built from all go through it.
+    """
+    dirs = cap.kwargs.get("directories") or (cap.args[0] if cap.args else "skills")
+    return [_abs(d) for d in ([dirs] if isinstance(dirs, str) else dirs)]
+
+
+def _skill_dirs(spec: AgentSpec) -> list[tuple[Path, Path]]:
+    """(library root, skill directory) for every skill the spec's Skills capabilities load.
+
+    Only skills that exist are returned, so a spec including a skill that is absent cannot
+    match its ``metadata.enabled_skills``.
+    """
+    found: list[tuple[Path, Path]] = []
     for cap in spec.capabilities:
         if cap.name != "Skills":
             continue
-        args = dict(cap.kwargs or {})
-        dirs = args.get("directories") or (cap.args[0] if cap.args else "skills")
-        include = set(args.get("include") or [])
-        for d in [dirs] if isinstance(dirs, str) else dirs:
-            root = _abs(d)
-            for skill_md in sorted(root.glob("*/SKILL.md")):
-                if include and skill_md.parent.name not in include:
-                    continue
-                for f in sorted(skill_md.parent.rglob("*")):
-                    if f.is_file():
-                        h.update(str(f.relative_to(root)).encode())
-                        h.update(f.read_bytes())
+        include = set(cap.kwargs.get("include") or ())
+        for root in _skill_roots(cap):
+            found += [(root, skill_md.parent) for skill_md in sorted(root.glob("*/SKILL.md"))
+                      if not include or skill_md.parent.name in include]
+    return found
+
+
+def _skills_hash(spec: AgentSpec) -> str:
+    """Content hash of every skill directory the spec can load."""
+    h = hashlib.sha256()
+    for root, skill in _skill_dirs(spec):
+        for f in sorted(skill.rglob("*")):
+            if f.is_file():
+                h.update(str(f.relative_to(root)).encode())
+                h.update(f.read_bytes())
     return h.hexdigest()
 
 
@@ -293,9 +316,9 @@ def resolve_agent_config(
         durable=durable,
         atomic_intake=binding.atomic_intake,
     )
-    budget = resolve_budget(
+    budget = resolve_declared_budget(
         name,
-        effective.metadata,
+        run_budget(name, effective.metadata),
         source_files=source_files,
         provider_output_floor=model.provider_output_floor,
     )
@@ -327,33 +350,18 @@ def _absolutize_skill_dirs(spec: AgentSpec) -> AgentSpec:
     """Resolve a spec's skill directories against the package, not the working directory.
 
     ``agent.yaml`` writes ``directories: skills`` because a spec should name the library, not
-    the deployment's filesystem. Left relative, ``load_skill_libraries`` resolves it against
-    the process CWD -- so the agents loaded their skills only when something happened to
-    launch the worker from the repository root, and raised ``Skill library directory does not
-    exist: skills`` from anywhere else. That is exactly the working-directory assumption
-    agent-playbook 02 rules out, and an installed wheel is where it surfaces.
-
-    The shape matters: ``model_dump(by_alias=True)`` renders a capability as
-    ``{"name": "Skills", "arguments": {...}}``, never as the ``{"Skills": {...}}`` shorthand
-    that appears in the YAML source. An earlier version of this function looked only for the
-    shorthand, matched nothing, and silently rewrote no spec at all.
+    the deployment's filesystem. Left relative, the Skills capability resolves it against the
+    process CWD, which agent-playbook 02 rules out and an installed wheel exposes.
     """
-    data = spec.model_dump(by_alias=True, exclude_none=True, mode="json")
-    for cap in data.get("capabilities", []):
-        if not isinstance(cap, dict):
-            continue
-        # Both renderings, so this keeps working whichever one a caller hands us.
-        if cap.get("name") == "Skills":
-            arguments = cap.setdefault("arguments", {})
-        elif isinstance(cap.get("Skills"), dict):
-            arguments = cap["Skills"]
-        else:
-            continue
-        dirs = arguments.get("directories", "skills")
-        arguments["directories"] = (
-            str(_abs(dirs)) if isinstance(dirs, str) else [str(_abs(d)) for d in dirs]
-        )
-    return AgentSpec.from_dict(data)
+    def absolute(cap: CapabilitySpec) -> CapabilitySpec:
+        if cap.name != "Skills":
+            return cap
+        roots = [str(root) for root in _skill_roots(cap)]
+        single = isinstance(cap.kwargs.get("directories", "skills"), str) and len(roots) == 1
+        arguments = {**cap.kwargs, "directories": roots[0] if single else roots}
+        return cap.model_copy(update={"arguments": arguments})
+
+    return spec.model_copy(update={"capabilities": [absolute(c) for c in spec.capabilities]})
 
 
 def _apply_backend_token_floor(name: str, spec: AgentSpec) -> AgentSpec:
@@ -378,11 +386,6 @@ def _apply_backend_token_floor(name: str, spec: AgentSpec) -> AgentSpec:
     return spec.model_copy(update={"model_settings": floored})
 
 
-def effective_spec(name: str, spec: AgentSpec) -> AgentSpec:
-    """Apply backend adjustments visible to PydanticAI before building an agent."""
-    return _apply_backend_token_floor(name, spec)
-
-
 
 # Capability name -> the toolset policy (tools/<id>/tool.yaml) that governs it.
 TOOLSET_CAPABILITIES: dict[str, str] = {
@@ -397,29 +400,8 @@ def _capability_toolsets(spec: AgentSpec) -> list[str]:
 
 
 def _capability_skills(spec: AgentSpec) -> set[str]:
-    """The skill names a spec's Skills capabilities can load."""
-    names: set[str] = set()
-    for cap in spec.capabilities:
-        if cap.name != "Skills":
-            continue
-        args = dict(cap.kwargs or {})
-        include = args.get("include")
-        if include:
-            names.update(include)
-            continue
-        dirs = args.get("directories") or (cap.args[0] if cap.args else "skills")
-        for d in [dirs] if isinstance(dirs, str) else dirs:
-            names.update(p.parent.name for p in _abs(d).glob("*/SKILL.md"))
-    return names
-
-
-def _resolve_agent_model(
-    name: str, tier: str, *, durable: bool, atomic_intake: bool, deps: AgentDeps | None = None,
-):
-    broker = ({"broker_binding": deps.broker_binding, "broker_contract": deps.broker_contract}
-              if deps is not None and deps.broker_binding else {})
-    resolver = model_factory.resolve_intake_atomic if atomic_intake else model_factory.resolve
-    return resolver(name, tier, durable=durable, **broker)
+    """The skill names a spec's Skills capabilities load."""
+    return {skill.name for _, skill in _skill_dirs(spec)}
 
 
 _INTAKE_LITERAL_LINE_REPAIR = (
@@ -429,10 +411,7 @@ _INTAKE_LITERAL_LINE_REPAIR = (
     "start_line or end_line claim to null, including its value, source and confidence. "
     "Keep other supported claims unchanged; do not invent a code line or supporting text."
 )
-_UNSUPPORTED_CLAIM_EVIDENCE_ERRORS = frozenset({
-    "A literal location value is absent from its evidence quote.",
-    "Every nonempty extraction field requires positive grounded evidence.",
-})
+_UNSUPPORTED_CLAIM_EVIDENCE = frozenset({LITERAL_LOCATION_MISSING, POSITIVE_SUPPORT_MISSING})
 _UNSUPPORTED_CLAIM_REPAIR = (
     "\nFix only unsupported claims: for symbol or file_path, the referenced report source "
     "must literally contain the claimed value. Cite actual supporting source lines with "
@@ -473,15 +452,16 @@ def _validate_atomic_intake(ctx: Any, output: AtomicFinding) -> ExtractedFinding
         finding = reconstruct(ctx.deps.report_text, output)
     except ReferenceError as error:
         raise ModelRetry(_reference_feedback(error)) from None
-    try:
-        return validate_intake_evidence(ctx, finding)
-    except ModelRetry as error:
-        # The guard emits closed diagnostics; never interpolate claim/report data here.
-        if "\n- A literal line number is absent from its evidence quote." in error.message:
-            raise ModelRetry(error.message + _INTAKE_LITERAL_LINE_REPAIR) from None
-        if any(f"\n- {problem}" in error.message for problem in _UNSUPPORTED_CLAIM_EVIDENCE_ERRORS):
-            raise ModelRetry(error.message + _UNSUPPORTED_CLAIM_REPAIR) from None
-        raise
+    problems = extraction_evidence_diagnostics(ctx.deps.report_text, finding.model_dump(mode="json"))
+    if not problems:
+        return finding
+    # Closed diagnostics only, selected by code; never interpolate claim/report data here.
+    message = evidence_retry_message(problems)
+    if LITERAL_LINE_MISSING in problems:
+        message += _INTAKE_LITERAL_LINE_REPAIR
+    elif _UNSUPPORTED_CLAIM_EVIDENCE.intersection(problems):
+        message += _UNSUPPORTED_CLAIM_REPAIR
+    raise ModelRetry(message)
 
 
 def _install_source_validator(config: ResolvedAgentConfig) -> OutputValidator:
@@ -493,7 +473,7 @@ def _planning_window(spec: AgentSpec) -> list[Any]:
     planning = PlanningWindow.from_metadata(spec.metadata or {})
     if planning is None:
         raise ValueError("Build repair requires its frozen planning window")
-    return [planning.capability(), PlanningWindowTelemetry(planning)]
+    return [PrepareTools(planning.prepare_tools), PlanningWindowTelemetry(planning)]
 
 
 def _intake_output_validation() -> dict[str, str]:
@@ -586,48 +566,40 @@ def _assert_intake_protocol(name: str, spec: AgentSpec) -> None:
             f"Agent {name!r} intake_output.execution must be {execution_name(name)!r}")
 
 
-def build_agent(
-    name: str,
-    overlay: Mapping[str, Any] | None = None,
-    *,
-    durable: bool = True,
-    production_transport: bool | None = None,
-) -> Agent[AgentDeps, Any]:
-    """Build an agent with independently selected execution and transport layers.
+def _assert_spec_governed(name: str, spec: AgentSpec, binding: AgentBinding, *,
+                          overlay: bool) -> None:
+    """A spec that cannot be governed must not become a running agent (§3).
 
-    Evals execute outside Temporal, but their provider request contract must match production.
-    ``production_transport=True`` selects production's reduced provider retry profile without
-    attaching Temporal activities. Ordinary callers leave it unset, preserving the existing
-    rule that durable execution owns transport retries.
+    Owner, execution class, risk tier and assessment, model policy, budget, skills and toolsets
+    are all required and must describe the capabilities the spec actually attaches. A committed
+    spec's model policy must resolve to the tier it runs; an overlay may substitute the model.
     """
-    binding = binding_for(name)
-    spec = load_spec(name, overlay)
-    # A spec that cannot be governed must not become a running agent: owner, execution class,
-    # risk tier, risk assessment, model policy, budget, skills, and toolsets are all required,
-    # and the spec's risk tier must match its assessment's governance tier (§3).
-    assert_governed(name, spec.metadata)
+    assert_governed(name, spec.metadata, tier=None if overlay else _spec_tier(name, spec))
     governance.assert_tools_are_declared(
-        name, [(cap.kwargs or {}).get("tools") for cap in spec.capabilities
-               if cap.name == "RepoReadOnly"])
+        name, [cap.kwargs.get("tools") for cap in spec.capabilities if cap.name == "RepoReadOnly"])
     toolsets = _capability_toolsets(spec)
     governance.assert_capabilities_match_metadata(
         name, spec.metadata, toolsets=toolsets, skills=_capability_skills(spec))
     governance.assert_execution_class_covers_tools(name, spec.metadata, toolsets)
-    if overlay is None:
-        governance.assert_model_policy(name, spec.metadata, _spec_tier(name, spec))
     if binding.atomic_intake:
         _assert_intake_protocol(name, spec)
-    spec = _absolutize_skill_dirs(effective_spec(name, spec))
-    transport = durable if production_transport is None else production_transport
+
+
+def _code_capabilities(name: str, spec: AgentSpec, binding: AgentBinding, *, durable: bool,
+                       transport: bool) -> list[Any]:
+    """The capabilities attached in code rather than named in the spec."""
     capabilities: list[Any] = [
         ResolveModelId(
-            lambda ctx, model_id, _n=name, _d=transport, _a=binding.atomic_intake:
-                _resolve_agent_model(_n, model_id, durable=_d, atomic_intake=_a, deps=ctx.deps)
+            lambda ctx, model_id: model_factory.resolve(
+                name, model_id, durable=transport, atomic_intake=binding.atomic_intake,
+                **({"broker_binding": ctx.deps.broker_binding,
+                    "broker_contract": ctx.deps.broker_contract}
+                   if ctx.deps is not None and ctx.deps.broker_binding else {}))
         )
     ]
     if model_factory.get_settings().model_mode == "live":
         cfg = model_factory.load_models_config()
-        if cfg.backends[cfg.backend_for(name)].transport == "brokered":
+        if cfg.backends[cfg.selected_backend()].transport == "brokered":
             from infosec_harness.inference.identity import BrokerRequestIdentity
             capabilities.append(BrokerRequestIdentity())
     # Cross-cutting robustness, attached in code (see ALLOWED_CAPABILITIES note).
@@ -648,12 +620,35 @@ def build_agent(
                 model_activity_config=MODEL_ACTIVITY, toolset_activity_config=TOOL_ACTIVITY
             )
         )
+    return capabilities
+
+
+def build_agent(
+    name: str,
+    overlay: Mapping[str, Any] | None = None,
+    *,
+    durable: bool = True,
+    production_transport: bool | None = None,
+) -> Agent[AgentDeps, Any]:
+    """Build an agent with independently selected execution and transport layers.
+
+    Evals execute outside Temporal, but their provider request contract must match production.
+    ``production_transport=True`` selects production's reduced provider retry profile without
+    attaching Temporal activities. Ordinary callers leave it unset, preserving the existing
+    rule that durable execution owns transport retries.
+    """
+    binding = binding_for(name)
+    spec = load_spec(name, overlay)
+    _assert_spec_governed(name, spec, binding, overlay=overlay is not None)
+    transport = durable if production_transport is None else production_transport
+    runnable = _absolutize_skill_dirs(_apply_backend_token_floor(name, spec))
     agent = Agent.from_spec(
-        spec,
+        runnable,
         deps_type=AgentDeps,
         output_type=binding.model_output_type,
         custom_capability_types=ALLOWED_CAPABILITIES,
-        capabilities=capabilities,
+        capabilities=_code_capabilities(name, runnable, binding, durable=durable,
+                                        transport=transport),
         # The logical name still owns model routing, governance, budgets, telemetry and the
         # persisted AgentOutcome; only the durable activity identity carries the generation.
         name=execution_name(name) if durable else name,
@@ -680,19 +675,6 @@ def durable_agents() -> dict[str, Agent[AgentDeps, Any]]:
 
 
 @lru_cache
-def agent_usage_limits() -> dict[str, Any]:
-    """Each agent's run budget as UsageLimits, resolved once on the host."""
-    from infosec_harness.agents.budgets import usage_limits_for
-
-    return {name: usage_limits_for(name, load_spec(name).metadata) for name in BINDINGS}
-
-
-@lru_cache
-def agent_config_hashes() -> dict[str, str]:
-    return {name: config.digest for name, config in resolved_agent_configs().items()}
-
-
-@lru_cache
 def resolved_agent_configs() -> dict[str, ResolvedAgentConfig]:
     """Durable base configs loaded outside workflow execution."""
     return {name: resolve_agent_config(name, load_spec(name), durable=True) for name in BINDINGS}
@@ -704,14 +686,10 @@ def resolved_model_names() -> dict[str, str]:
     return {name: config.model.resolved_model for name, config in resolved_agent_configs().items()}
 
 
-def spec_names_on_disk() -> set[str]:
-    return {p.parent.name for p in get_settings().agents_dir.glob("*/agent.yaml")}
-
-
 def validate_all() -> list[str]:
     """CI gate (`just agents-validate`): bindings <-> specs, allowlist, cache-safe prompts."""
     problems: list[str] = []
-    on_disk = spec_names_on_disk()
+    on_disk = {p.parent.name for p in get_settings().agents_dir.glob("*/agent.yaml")}
     for missing in sorted(set(BINDINGS) - on_disk):
         problems.append(f"{missing}: binding has no agents/{missing}/agent.yaml")
     for extra in sorted(on_disk - set(BINDINGS)):

@@ -417,5 +417,30 @@ def test_a_narrowed_toolset_exposes_exactly_what_it_names():
 
 
 def test_selecting_a_tool_that_does_not_exist_fails_loudly():
-    with pytest.raises(ValueError, match="selects no known tool"):
+    with pytest.raises(ValueError, match="Unknown repo-read-only tools"):
         cap.RepoReadOnly(tools=["read_everything"]).get_toolset()
+
+
+def test_an_unknown_tool_beside_known_ones_fails_at_toolset_construction():
+    """Regression: the capability dropped unknown names silently when any known one remained,
+    so a typo narrowed the agent's tools and only build_agent's governance check caught it."""
+    with pytest.raises(ValueError, match=r"Unknown repo-read-only tools: \['read_fiels'\]"):
+        cap.RepoReadOnly(tools=["read_file", "read_fiels"]).get_toolset()
+
+
+def test_an_empty_selection_fails_rather_than_exposing_nothing():
+    with pytest.raises(ValueError, match="selects no tool"):
+        cap.RepoReadOnly(tools=[]).get_toolset()
+
+
+def test_clip_bytes_keeps_each_callers_model_visible_marker_byte_for_byte():
+    """One helper serves every byte clip; the markers the model sees must not change."""
+    from infosec_harness.agents.repo_tools import clip_bytes
+
+    assert clip_bytes("abc", 3) == "abc"
+    assert clip_bytes("abcdef", 3) == "abc\n... truncated at 3 bytes"
+    assert clip_bytes("abcdef", 3, "\n... truncated") == "abc\n... truncated"
+    assert (clip_bytes("abcdef", 3, "\n[truncated: request a smaller range]")
+            == "abc\n[truncated: request a smaller range]")
+    # Never cut inside a character.
+    assert clip_bytes("éé", 3) == "é\n... truncated at 3 bytes"

@@ -1,4 +1,8 @@
-"""Single-class selector consistency from rendering to probe invocation."""
+"""Single-class selector consistency from rendering to probe invocation.
+
+One parser (``policy.jvm_class_selector``) decides the class: the Dockerfile validation and the
+control-test writer both read it, so they cannot disagree.
+"""
 from types import SimpleNamespace
 
 import pytest
@@ -29,7 +33,6 @@ def environment(command):
 async def test_render_and_probe_keep_one_named_class_without_substituting_path(candidate, monkeypatch, command):
     selected = 'OtherTest' if 'OtherTest' in command else 'HarnessProbeTest'
     assert candidate.jvm_class_selector(command) == selected
-    assert canary.selector_class_name(command, default='') == selected
     assert docker.render_dockerfile(environment(command)).startswith('FROM maven:')
     path, content = canary.canary_for('java', command)
     assert path == f'src/test/java/{selected}.java'
@@ -80,6 +83,9 @@ async def test_render_and_probe_keep_one_named_class_without_substituting_path(c
 def test_invalid_jvm_selectors_never_render(candidate, command):
     with pytest.raises(candidate.InvalidEnvironmentSpec):
         docker.render_dockerfile(environment(command))
+    # Nor is a control test written under a guessed class name.
+    with pytest.raises(candidate.InvalidEnvironmentSpec):
+        canary.canary_for('java', command)
 
 
 @pytest.mark.parametrize('command', ['pytest -q {test_file}', 'prove -v {test_file}', 'npx jest --runTestsByPath {test_file}'])

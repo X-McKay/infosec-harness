@@ -15,11 +15,11 @@ from infosec_harness.domain.models import (
     RepoRef,
     TriageRunOutput,
 )
+from infosec_harness.graph.failures import classify_pipeline_failure, describe_failure
 from infosec_harness.graph.manifests import execution_manifest, source_manifest
-from infosec_harness.graph.ops import LocalOps, classify_pipeline_failure
+from infosec_harness.graph.ops import LocalOps
 from infosec_harness.graph.pipeline import (
     dedupe_by_fingerprint,
-    describe_failure,
     group_by_repository,
     inconclusive_output,
     split_components,

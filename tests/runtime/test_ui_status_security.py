@@ -10,9 +10,10 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from infosec_harness.agents.registry import AGENT_BINDINGS
-from infosec_harness.api import broker_observation, evidence_io, qualification_evidence, status
+from infosec_harness.api import broker_observation, evidence_io, status
 from infosec_harness.api.evidence_io import read_bytes
 from infosec_harness.persistence import db
+from infosec_harness.persistence.run_telemetry import RunTelemetry
 
 
 def safe(value):
@@ -27,12 +28,11 @@ def ref(tmp_path, name, value):
     return {"file": str(path), "sha256": hashlib.sha256(data).hexdigest()}
 
 
-def test_component_qualification_is_never_claimed_by_the_service():
-    result = qualification_evidence.qualification_status().model_dump()
-    assert result["status"] == "not_checked"
-    assert len(result["components"]) == 11
-    assert all(row["status"] == "not_checked" for row in result["components"])
-    safe(result)
+def test_component_qualification_is_not_served():
+    """The service cannot measure component qualification, so it publishes no such view."""
+    from infosec_harness.api.app import app
+
+    assert "/api/qualification" not in app.openapi()["paths"]
 
 
 @pytest.mark.parametrize("kind", ["duplicate", "symlink", "drift"])
@@ -127,7 +127,7 @@ async def population_client(tmp_path, monkeypatch):
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     monkeypatch.setattr(db, "session", sessions)
     async with sessions() as session:
-        for population in ("operational", "demo", "legacy"):
+        for population in ("operational", "demo", "unmeasured"):
             session.add(db.Batch(id=population, finding_count=1))
             session.add(
                 db.TriageRun(
@@ -137,7 +137,8 @@ async def population_client(tmp_path, monkeypatch):
                     repo_url="/test/repo",
                     revision="test",
                     title=population,
-                    telemetry={} if population == "legacy" else {"population": population},
+                    telemetry=None if population == "unmeasured" else RunTelemetry.accepted(
+                        population, datetime.now(UTC)).stored(),
                 )
             )
         await session.commit()
@@ -153,20 +154,22 @@ async def population_client(tmp_path, monkeypatch):
 async def test_operational_population_filters_list_count_and_details(population_client):
     client = population_client
     params = {"population": "operational"}
-    for endpoint in ("/api/runs", "/api/batches"):
-        response = await client.get(endpoint, params=params)
-        assert response.status_code == 200
-        assert [row["id"] for row in response.json()] == ["operational"]
+    response = await client.get("/api/batches", params=params)
+    assert response.status_code == 200
+    assert [row["id"] for row in response.json()] == ["operational"]
     page = (await client.get("/api/run-page", params=params)).json()
     assert page["total"] == 1
     assert [row["id"] for row in page["items"]] == ["operational"]
-    for population in ("demo", "legacy"):
+    for population in ("demo", "unmeasured"):
         for endpoint in (f"/api/runs/{population}", f"/api/batches/{population}"):
             assert (await client.get(endpoint, params=params)).status_code == 404
     assert (await client.get("/api/runs/operational", params=params)).status_code == 200
     assert [
-        row["id"] for row in (await client.get("/api/runs", params={"population": "demo"})).json()
+        row["id"] for row in (await client.get("/api/run-page", params={"population": "demo"})
+                              ).json()["items"]
     ] == ["demo"]
+    # Unfiltered reads still return a run stored without telemetry.
+    assert (await client.get("/api/runs/unmeasured")).json()["telemetry"] is None
 
 
 async def test_stale_measurement_does_not_promote_reachable_channel(monkeypatch):
@@ -509,14 +512,10 @@ async def test_extracted_projections_share_fail_closed_file_reader(tmp_path, mon
 
     monkeypatch.setattr(db, "session", Session)
     monkeypatch.setattr(broker_observation, "admission_reachable", unexpected_probe)
-    qualification = qualification_evidence.qualification_status()
     broker = await broker_observation.broker_status()
-    assert qualification.status == broker.status == "not_checked"
-    assert len(qualification.components) == 11
-    assert all(row.status == "not_checked" for row in qualification.components)
+    assert broker.status == "not_checked"
     assert broker.unresolved_requests == 16
     assert broker.checked_at is None
-    safe(qualification.model_dump())
     safe(broker.model_dump())
 
 

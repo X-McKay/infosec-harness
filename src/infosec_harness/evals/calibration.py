@@ -12,9 +12,9 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from infosec_harness.agents import models as model_factory
 from infosec_harness.agents.budgets import MAX_SIZE_FACTOR, run_budget
 from infosec_harness.agents.registry import (
-    ResolvedAgentConfig,
     config_hash,
     deep_merge,
     load_spec,
@@ -25,7 +25,7 @@ from infosec_harness.evals.coverage import scenario_coverage
 from infosec_harness.evals.dataset import Case, case_group, load_dataset
 from infosec_harness.evals.gates import ReleasePolicy, load_policy
 from infosec_harness.evals.provenance import CodeVersion, code_version
-from infosec_harness.evals.run import run_experiment
+from infosec_harness.evals.run import load_experiment, run_experiment, run_with_timeout
 
 _SAFE_VARIABLE_PREFIXES = (
     "model",
@@ -182,16 +182,25 @@ def _validate_groups(
     return len(selections["calibration"]), len(selections["held_out"])
 
 
-def _request_ceiling(spec: CalibrationSpec, calibration_n: int, held_out_n: int) -> int:
-    candidate_limits: list[int] = []
-    base = load_spec(spec.subject)
-    for candidate in spec.candidates:
-        agent_overlay = _agent_overlay(spec, candidate)[spec.subject]
-        merged = deep_merge(
-            base.model_dump(by_alias=True, exclude_none=True, mode="json"), agent_overlay
-        )
-        candidate_spec = type(base).from_dict(merged)
-        candidate_limits.append(run_budget(spec.subject, candidate_spec.metadata).max_requests)
+class CalibrationDeadline(TimeoutError):
+    """The experiment's own wall-clock budget ran out."""
+
+    def __init__(self) -> None:
+        super().__init__("calibration experiment deadline exhausted")
+
+
+def _candidate_spec(spec: CalibrationSpec, base: Any, candidate: object) -> Any:
+    """The subject's spec with one candidate value applied, exactly as its trial will run it."""
+    overlay = _agent_overlay(spec, candidate)[spec.subject]
+    merged = deep_merge(base.model_dump(by_alias=True, exclude_none=True, mode="json"), overlay)
+    return type(base).from_dict(merged)
+
+
+def _request_ceiling(spec: CalibrationSpec, base: Any, calibration_n: int, held_out_n: int) -> int:
+    candidate_limits = [
+        run_budget(spec.subject, _candidate_spec(spec, base, candidate).metadata).max_requests
+        for candidate in spec.candidates
+    ]
     # All calibration candidates run; only the selected candidate reaches held-out data.
     return int(
         spec.repetitions
@@ -200,26 +209,16 @@ def _request_ceiling(spec: CalibrationSpec, calibration_n: int, held_out_n: int)
     )
 
 
-def _candidate_config(
-    experiment: CalibrationSpec, base: Any, candidate: object
-) -> ResolvedAgentConfig:
-    overlay = _agent_overlay(experiment, candidate)[experiment.subject]
-    merged = deep_merge(base.model_dump(by_alias=True, exclude_none=True, mode="json"), overlay)
-    candidate_spec = type(base).from_dict(merged)
-    return resolve_agent_config(experiment.subject, candidate_spec, durable=True)
-
-
 def _cost_ceiling(
     spec: CalibrationSpec, base: Any, calibration_n: int, held_out_n: int
 ) -> tuple[float, set[str]]:
     """Reserve the full enforceable per-run exposure before any model call begins."""
-    from infosec_harness.agents.models import pricing_source
-
     candidate_costs: list[float] = []
     sources: set[str] = set()
     for candidate in spec.candidates:
-        resolved = _candidate_config(spec, base, candidate)
-        source = pricing_source(resolved.model.resolved_model)
+        resolved = resolve_agent_config(
+            spec.subject, _candidate_spec(spec, base, candidate), durable=True)
+        source = model_factory.pricing_source(resolved.model.resolved_model)
         sources.add(source)
         if source in {"stub", "custom-zero"}:
             candidate_costs.append(0.0)
@@ -236,6 +235,19 @@ def _cost_ceiling(
         calibration_n * sum(candidate_costs) + held_out_n * max(candidate_costs)
     )
     return round(ceiling, 6), sources
+
+
+def _check_cost_cap(spec: CalibrationSpec, spent: float, cost_is_unknown: bool,
+                    stage: str) -> None:
+    """Stop the experiment once its declared cost cap can no longer be shown to hold."""
+    cap = spec.constraints.maximum_cost_usd
+    if cap is None:
+        return
+    if cost_is_unknown:
+        raise RuntimeError(
+            f"{stage} cost is unknown; the experiment cost cap cannot be enforced")
+    if spent > cap:
+        raise RuntimeError(f"experiment cost ${spent:.6f} crossed maximum_cost_usd=${cap:.6f}")
 
 
 def admissible(policy: ReleasePolicy, metrics: dict[str, Any] | None) -> bool:
@@ -287,25 +299,18 @@ def _promotion_eligible(
     )
 
 
-async def _experiment_row(experiment_id: str) -> object:
-    from infosec_harness.persistence import db
-
-    async with db.session() as session:
-        return await session.get(db.EvalExperiment, experiment_id)
-
-
 async def run_calibration(spec: CalibrationSpec) -> CalibrationReport:
     """Run calibration candidates, select an admissible one, then run grouped holdouts."""
     policy = load_policy(spec.subject)
     calibration_n, held_out_n = _validate_groups(spec, load_dataset(spec.subject).cases, policy)
-    ceiling = _request_ceiling(spec, calibration_n, held_out_n)
+    base_spec = load_spec(spec.subject)
+    ceiling = _request_ceiling(spec, base_spec, calibration_n, held_out_n)
     if ceiling > spec.constraints.maximum_model_requests:
         raise ValueError(
             f"planned worst-case model requests {ceiling} exceed "
             f"maximum_model_requests={spec.constraints.maximum_model_requests}"
         )
 
-    base_spec = load_spec(spec.subject)
     baseline_digest = config_hash(spec.subject, base_spec, durable=True)
     if spec.baseline_manifest and spec.baseline_manifest != baseline_digest:
         raise ValueError(
@@ -313,8 +318,6 @@ async def run_calibration(spec: CalibrationSpec) -> CalibrationReport:
             f"configuration {baseline_digest!r}"
         )
     code = code_version()
-    from infosec_harness.agents import models as model_factory
-
     resolved_model = model_factory.resolve_config(
         spec.subject,
         spec.model or base_spec.model or "sonnet",
@@ -348,21 +351,25 @@ async def run_calibration(spec: CalibrationSpec) -> CalibrationReport:
     ) -> tuple[str, dict[str, Any]]:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            raise TimeoutError("calibration experiment deadline exhausted")
-        async with asyncio.timeout(remaining):
-            experiment_id = await run_experiment(
+            raise CalibrationDeadline()
+        experiment_id = await run_with_timeout(
+            run_experiment(
                 spec.subject,
                 overlay=_agent_overlay(spec, candidate),
                 repeat=spec.repetitions,
                 groups=groups,
                 split=split,
-            )
-        row = await _experiment_row(experiment_id)
+            ),
+            remaining,
+            expired=CalibrationDeadline,
+        )
+        row = await load_experiment(experiment_id)
         return experiment_id, dict(row.metrics or {})
 
     for candidate in spec.candidates:
-        resolved = _candidate_config(spec, base_spec, candidate)
-        digest = resolved.effective_digest
+        digest = resolve_agent_config(
+            spec.subject, _candidate_spec(spec, base_spec, candidate), durable=True,
+        ).effective_digest
         if digest in first_by_digest:
             trials.append(
                 TrialResult(
@@ -400,20 +407,9 @@ async def run_calibration(spec: CalibrationSpec) -> CalibrationReport:
             )
         )
         measured_cost = metrics.get("cost_usd_total")
-        if measured_cost is None:
-            cost_is_unknown = True
-        else:
-            spent += float(measured_cost)
-        if spec.constraints.maximum_cost_usd is not None:
-            if cost_is_unknown:
-                raise RuntimeError(
-                    "cost became unknown; the experiment cost cap cannot be enforced"
-                )
-            if spent > spec.constraints.maximum_cost_usd:
-                raise RuntimeError(
-                    f"experiment cost ${spent:.6f} crossed maximum_cost_usd="
-                    f"${spec.constraints.maximum_cost_usd:.6f}"
-                )
+        cost_is_unknown = cost_is_unknown or measured_cost is None
+        spent += float(measured_cost or 0.0)
+        _check_cost_cap(spec, spent, cost_is_unknown, "calibration")
 
     candidates = [
         trial
@@ -429,18 +425,8 @@ async def run_calibration(spec: CalibrationSpec) -> CalibrationReport:
         )
         held_out_cost = held_out_metrics.get("cost_usd_total")
         cost_is_unknown = cost_is_unknown or held_out_cost is None
-        if held_out_cost is not None:
-            spent += float(held_out_cost)
-        if spec.constraints.maximum_cost_usd is not None:
-            if cost_is_unknown:
-                raise RuntimeError(
-                    "held-out cost is unknown; the experiment cost cap cannot be enforced"
-                )
-            if spent > spec.constraints.maximum_cost_usd:
-                raise RuntimeError(
-                    f"experiment cost ${spent:.6f} crossed maximum_cost_usd="
-                    f"${spec.constraints.maximum_cost_usd:.6f}"
-                )
+        spent += float(held_out_cost or 0.0)
+        _check_cost_cap(spec, spent, cost_is_unknown, "held-out")
 
     limitations: list[str] = []
     if cost_is_unknown:

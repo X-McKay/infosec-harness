@@ -62,15 +62,12 @@ export function FindingDetail() {
   if (!run) return null;
 
   const verdict = asRecord(run.result?.verdict);
-  const evidence = asRecord(run.evidence);
-  const executions = Array.isArray(evidence.executions)
-    ? evidence.executions
-    : [];
-  const telemetry = run.telemetry ?? {};
+  const executions = run.evidence?.executions ?? [];
+  const telemetry = run.telemetry;
   const hasTelemetry =
-    telemetry.cost_usd != null ||
-    telemetry.total_tokens != null ||
-    telemetry.wall_time_s != null;
+    telemetry?.cost_usd != null ||
+    telemetry?.total_tokens != null ||
+    telemetry?.wall_time_s != null;
 
   return (
     <div className="space-y-6">
@@ -175,19 +172,22 @@ export function FindingDetail() {
             <CardTitle>Telemetry</CardTitle>
           </CardHeader>
           <CardContent className="grid grid-cols-3 gap-3 text-sm">
-            <Metric label="Cost" value={money(telemetry.cost_usd)} />
-            <Metric label="Tokens" value={integer(telemetry.total_tokens)} />
-            <Metric label="Wall time" value={seconds(telemetry.wall_time_s)} />
+            <Metric label="Cost" value={money(telemetry?.cost_usd)} />
+            <Metric label="Tokens" value={integer(telemetry?.total_tokens)} />
+            <Metric label="Wall time" value={seconds(telemetry?.wall_time_s)} />
             {!hasTelemetry && (
               <p className="col-span-3 text-xs text-muted-foreground">
-                Durable telemetry is not recorded for this run. Legacy aggregate
-                fields are retained below for context.
+                {telemetry
+                  ? "Usage is not fully accounted for this run, so totals are unavailable."
+                  : "No telemetry is recorded for this run."}
               </p>
             )}
-            {!hasTelemetry && (
+            {!hasTelemetry && telemetry && (
               <p className="col-span-3 text-xs text-muted-foreground">
-                Legacy aggregate: {money(run.cost_usd)} ·{" "}
-                {integer(run.total_tokens)} tokens · {seconds(run.latency_s)}
+                Recorded calls (a lower bound):{" "}
+                {money(telemetry.known_cost_usd)} ·{" "}
+                {integer(telemetry.known_tokens)} tokens ·{" "}
+                {seconds(telemetry.agent_time_s)} agent time
               </p>
             )}
           </CardContent>

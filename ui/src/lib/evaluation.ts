@@ -4,29 +4,18 @@ import { asRecord, numeric, text, type JsonRecord } from "./json.ts";
 
 export type Gate = { label: string; status: string; detail: string };
 
-/** A recorded metric, read directly or from the report's distributions block. */
-export function metricNumber(metrics: JsonRecord, ...keys: string[]) {
-  for (const key of keys) {
-    const value =
-      numeric(metrics[key]) ?? numeric(asRecord(metrics.distributions)[key]);
-    if (value != null) return value;
-  }
-  return null;
-}
-export const accuracyOf = (metrics: JsonRecord) =>
-  metricNumber(metrics, "accuracy", "accuracy_mean");
-export const costPerCaseOf = (metrics: JsonRecord) =>
-  metricNumber(metrics, "cost_usd_per_case");
-
+/**
+ * Gate observations from an experiment's headline measurements. The API reads each from the
+ * stored report and reports null for anything not recorded as a finite number.
+ */
 export function gateObservations(experiment: ExperimentSummary): Gate[] {
-  const metrics = experiment.metrics;
-  const total = metricNumber(metrics, "n", "cases_completed");
-  const passed = metricNumber(metrics, "passed");
-  const accuracy = accuracyOf(metrics);
-  const planned = metricNumber(metrics, "n_planned");
+  const total = experiment.cases_completed;
+  const passed = experiment.passed;
+  const accuracy = experiment.accuracy;
+  const planned = experiment.cases_planned;
   const status = experiment.status ?? "";
-  const exhausted = metricNumber(metrics, "budget_exhausted_count");
-  const gates = text(asRecord(metrics.gate_evaluation).status);
+  const exhausted = experiment.budget_exhausted_count;
+  const gates = experiment.gate_status ?? "";
   return [
     {
       label: "Quality evidence",
@@ -67,9 +56,8 @@ export function gateObservations(experiment: ExperimentSummary): Gate[] {
   ];
 }
 
-export function qualityFraction(metrics: JsonRecord) {
-  const passed = metricNumber(metrics, "passed");
-  const total = metricNumber(metrics, "n", "cases_completed");
+export function qualityFraction(experiment: ExperimentSummary) {
+  const { passed, cases_completed: total } = experiment;
   return passed != null && total != null
     ? `${passed} / ${total} cases`
     : undefined;
@@ -96,8 +84,8 @@ export function comparisonPoints(
   return cohort
     .map((experiment) => ({
       experiment,
-      accuracy: accuracyOf(experiment.metrics),
-      cost: costPerCaseOf(experiment.metrics),
+      accuracy: experiment.accuracy,
+      cost: experiment.cost_usd_per_case,
     }))
     .filter(
       (item): item is ComparisonPoint =>

@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -45,7 +46,7 @@ SCHEMA_VERSION = 1
 # contract, and one that absorbs every new key silently changes what it promises.
 BASELINE_METRICS = (
     "task_success_rate", "schema_validity_rate", "average_cost_usd",
-    "p95_model_requests", "budget_exhausted_count", "accuracy", "n", "n_planned",
+    "p95_model_requests", "budget_exhausted_count", "n", "n_planned",
 )
 
 
@@ -120,8 +121,6 @@ def from_experiment(row: Any) -> Baseline:
     if not row.git_sha:
         raise BaselineRefused(
             f"experiment {row.id} carries no commit, so there is nothing to tie the result to.")
-    from datetime import UTC, datetime
-
     return Baseline(
         agent=row.agent,
         model_tier=row.model_tier or "unknown",
@@ -145,13 +144,15 @@ def save(baseline: Baseline) -> Path:
     return path
 
 
-def load(agent: str, tier: str) -> Baseline | None:
-    path = baseline_path(agent, tier)
-    if not path.is_file():
-        return None
+def _read(path: Path) -> Baseline:
     data = json.loads(path.read_text())
     data.pop("schema_version", None)
     return Baseline(**data)
+
+
+def load(agent: str, tier: str) -> Baseline | None:
+    path = baseline_path(agent, tier)
+    return _read(path) if path.is_file() else None
 
 
 def load_all(agent: str | None = None) -> list[Baseline]:
@@ -162,14 +163,8 @@ def load_all(agent: str | None = None) -> list[Baseline]:
         return []
     if not root.is_dir():
         return []
-    found = []
-    for path in sorted(root.glob("*/*.json")):
-        if agent and path.parent.name != agent:
-            continue
-        data = json.loads(path.read_text())
-        data.pop("schema_version", None)
-        found.append(Baseline(**data))
-    return found
+    return [_read(path) for path in sorted(root.glob("*/*.json"))
+            if not agent or path.parent.name == agent]
 
 
 def drift(baseline: Baseline, metrics: dict) -> list[tuple[str, Any, Any]]:

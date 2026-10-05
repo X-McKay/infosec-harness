@@ -11,16 +11,14 @@ import { api, type ReviewRequest } from "./client.ts";
 export const ACTIVE_REFRESH_MS = 2000;
 export const EVALUATION_REFRESH_MS = 10000;
 export const IDLE_REFRESH_MS = 30000;
-// New batches can arrive from the CLI; the batch list is capped server-side.
-export const BATCH_IDLE_REFRESH_MS = 10000;
 export const METRICS_REFRESH_MS = 60000;
+export const EXPERIMENT_PAGE_SIZE = 25;
 
 export const queryKeys = {
   runtime: ["runtime-status"] as const,
-  qualification: ["qualification"] as const,
   config: ["config"] as const,
   batches: ["batches"] as const,
-  experiments: ["experiments"] as const,
+  experiments: (offset: number) => ["experiments", offset] as const,
   metrics: ["metrics"] as const,
   run: (id: string) => ["run", id] as const,
   runPage: (search: FindingSearch) => ["run-page", search] as const,
@@ -38,14 +36,9 @@ export const queries = {
       queryFn: api.runtimeStatus,
       refetchInterval: IDLE_REFRESH_MS,
     }),
-  qualification: () =>
-    queryOptions({
-      queryKey: queryKeys.qualification,
-      queryFn: api.qualification,
-      refetchInterval: IDLE_REFRESH_MS,
-    }),
   config: () =>
     queryOptions({ queryKey: queryKeys.config, queryFn: api.config }),
+  // Polls only while a recorded batch is active; an idle list refreshes on demand.
   batches: () =>
     queryOptions({
       queryKey: queryKeys.batches,
@@ -53,15 +46,15 @@ export const queries = {
       refetchInterval: (query) =>
         query.state.data?.some((batch) => batchActive(batch.status))
           ? ACTIVE_REFRESH_MS
-          : BATCH_IDLE_REFRESH_MS,
+          : false,
     }),
-  // Evaluation summaries are unpaginated and can be large: poll only while one is running.
-  experiments: () =>
+  // One page of headline summaries; full metrics are read per experiment.
+  experiments: (offset = 0) =>
     queryOptions({
-      queryKey: queryKeys.experiments,
-      queryFn: api.experiments,
+      queryKey: queryKeys.experiments(offset),
+      queryFn: () => api.experiments({ offset, limit: EXPERIMENT_PAGE_SIZE }),
       refetchInterval: (query) =>
-        query.state.data?.some((item) => experimentActive(item.status))
+        query.state.data?.items.some((item) => experimentActive(item.status))
           ? EVALUATION_REFRESH_MS
           : false,
     }),

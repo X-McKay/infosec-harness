@@ -4,6 +4,11 @@ An experiment = dataset x agent config x repetitions. Each (case, repetition) be
 attempt record; the experiment's metrics are computed from those records alone
 (:mod:`infosec_harness.evals.metrics`) and persisted to the experiment store after every case,
 so ``harness eval compare`` can read a model/prompt/skill change one variable at a time.
+
+An experiment overlay records one variable against a committed spec. Applied to a later spec it
+measures something else -- an overlay that replaces ``instructions`` silently reverts every
+instruction change made since -- so each agent entry declares the ``base_version`` (the spec's
+``metadata.version``) it was authored against, and a mismatch is refused rather than run.
 """
 
 from __future__ import annotations
@@ -15,36 +20,47 @@ import sys
 import time
 import traceback
 import uuid
-from collections.abc import Mapping
+from collections.abc import Awaitable, Mapping
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import yaml
 from pydantic import BaseModel
 from pydantic_ai import capture_run_messages
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
 
+from infosec_harness.agents import models as model_factory
+from infosec_harness.agents import registry
 from infosec_harness.agents.intake_contracts import render_intake_prompt
 from infosec_harness.agents.planning_window import planning_window_diagnostic
 from infosec_harness.agents.render import render_prompt
 from infosec_harness.domain.models import ExperimentStatus
-from infosec_harness.evals.adapters import ADAPTERS, defines_unevidenced_safety, is_unevidenced_safe
+from infosec_harness.evals.adapters import (
+    ADAPTERS,
+    AdaptedCase,
+    defines_unevidenced_safety,
+    is_unevidenced_safe,
+)
 from infosec_harness.evals.budget_stop import budget_stop_diagnostic
-from infosec_harness.evals.coverage import scenario_coverage
+from infosec_harness.evals.coverage import ScenarioCoverage, scenario_coverage
 from infosec_harness.evals.dataset import Dataset, case_group, case_set_identity, load_dataset
 from infosec_harness.evals.errors import failure_diagnostic
-from infosec_harness.evals.gates import load_policy
+from infosec_harness.evals.execution_checks import run_execution_check
+from infosec_harness.evals.gates import ReleasePolicy, load_policy
 from infosec_harness.evals.intake_fields import intake_field_summary
-from infosec_harness.evals.invocation import AgentRunTimeout, run_with_timeout
 from infosec_harness.evals.metrics import RunPlan, experiment_metrics
 from infosec_harness.evals.output_retries import output_retry_summary
-from infosec_harness.evals.overlays import load_overlay
-from infosec_harness.evals.pricing import pricing_status
-from infosec_harness.evals.provenance import code_version
-from infosec_harness.evals.release_report import write_release_report
+from infosec_harness.evals.pricing import PricingStatus, pricing_status
+from infosec_harness.evals.probe_execution import evaluate_probe_execution
+from infosec_harness.evals.provenance import CodeVersion, code_version
+from infosec_harness.evals.release_report import report_provenance, write_release_report
 from infosec_harness.evals.trajectory import summarize_calls
+from infosec_harness.inference.invocations import eval_invocation
 from infosec_harness.inference.protocol import BrokerError
+from infosec_harness.inference.provenance import runtime_evidence
+from infosec_harness.persistence import db
 from infosec_harness.settings import get_settings
 
 EVALUATOR_VERSION = "deterministic-agent-output-v12"
@@ -78,6 +94,67 @@ class TruncatedExperiment(RuntimeError):
         )
 
 
+class AgentRunTimeout(TimeoutError):
+    """The evaluator stopped an agent at its declared wall-clock limit."""
+
+    def __init__(self, message: str = "Agent exceeded its configured time budget") -> None:
+        super().__init__(message)
+
+
+async def run_with_timeout[T](invocation: Awaitable[T], seconds: float, *,
+                              expired: type[TimeoutError] = AgentRunTimeout) -> T:
+    """Await ``invocation`` under the evaluator's own deadline.
+
+    Only the expiry of *this* deadline raises ``expired``; a timeout raised inside the
+    invocation (a transport timeout, say) propagates unchanged, so it is never mislabelled as
+    the evaluator stopping the run.
+    """
+    deadline = asyncio.timeout(seconds)
+    try:
+        async with deadline:
+            return await invocation
+    except TimeoutError as exc:
+        if deadline.expired():
+            raise expired() from exc
+        raise
+
+
+class StaleOverlay(ValueError):
+    """The overlay was written against a different version of the agent's spec."""
+
+
+def load_overlay(path: Path) -> dict[str, dict[str, Any]]:
+    """Read an overlay file and check every entry against the current spec version."""
+    document = yaml.safe_load(Path(path).read_text())
+    if not isinstance(document, Mapping) or not document:
+        raise ValueError(f"{path}: an overlay maps agent names to spec fragments")
+    overlay: dict[str, dict[str, Any]] = {}
+    for agent, fragment in document.items():
+        if not isinstance(fragment, Mapping):
+            raise ValueError(f"{path}: the overlay for {agent!r} must be a mapping")
+        fragment = dict(fragment)
+        declared = fragment.pop("base_version", None)
+        current = str((registry.load_spec(str(agent)).metadata or {}).get("version"))
+        if declared is None:
+            raise StaleOverlay(
+                f"{path}: the overlay for {agent!r} declares no base_version, so it cannot be "
+                f"checked against the current spec ({current})")
+        if str(declared) != current:
+            raise StaleOverlay(
+                f"{path}: the overlay for {agent!r} was written against spec version "
+                f"{declared}, but the current spec is {current}. Re-derive the overlay from "
+                "the current spec before running it; applied as-is it measures a different "
+                "change than the one it records")
+        overlay[str(agent)] = fragment
+    return overlay
+
+
+async def load_experiment(experiment_id: str) -> db.EvalExperiment | None:
+    """One stored experiment row, ``None`` when there is no such experiment."""
+    async with db.session() as session:
+        return await session.get(db.EvalExperiment, experiment_id)
+
+
 class _BrokerBudgetStop(UsageLimitExceeded):
     """An evaluator disposition only; it grants no retry or dispatch authority."""
 
@@ -99,26 +176,28 @@ _SENSITIVE_OUTPUT_KEYS = {
     "api_key", "authorization", "credential", "credentials", "password", "secret",
     "access_token", "refresh_token",
 }
+# The experiment row's `dataset` column width: the tail of a long path is the informative part.
+_DATASET_COLUMN_CHARS = db.EvalExperiment.__table__.c.dataset.type.length
+
+
+def _redact(item: Any) -> Any:
+    if isinstance(item, dict):
+        return {
+            str(key): "[REDACTED]"
+            if str(key).lower().replace("-", "_").replace(" ", "_") in _SENSITIVE_OUTPUT_KEYS
+            else _redact(child)
+            for key, child in item.items()
+        }
+    if isinstance(item, list):
+        return [_redact(child) for child in item]
+    return item
 
 
 def _bounded_typed_output(output: Any) -> dict[str, Any]:
     """Retain bounded typed evidence under the eval store's existing classification."""
     if not isinstance(output, BaseModel):
         return {"type": type(output).__name__, "truncated": False, "unsupported": True}
-
-    def redact(item: Any) -> Any:
-        if isinstance(item, dict):
-            return {
-                str(key): "[REDACTED]"
-                if str(key).lower().replace("-", "_").replace(" ", "_") in _SENSITIVE_OUTPUT_KEYS
-                else redact(child)
-                for key, child in item.items()
-            }
-        if isinstance(item, list):
-            return [redact(child) for child in item]
-        return item
-
-    value = redact(output.model_dump(mode="json"))
+    value = _redact(output.model_dump(mode="json"))
     encoded = json.dumps(value, sort_keys=True, default=repr)
     if len(encoded) > _DIAGNOSTIC_OUTPUT_LIMIT:
         return {"type": type(output).__name__, "truncated": True, "original_chars": len(encoded),
@@ -132,98 +211,137 @@ def _no_output_check(case: Mapping[str, Any], reason: str) -> dict[str, Any]:
             "execution_mode": "not-run-no-typed-output-v1"}
 
 
-@dataclass(frozen=True)
-class _Subject:
-    """Everything fixed for one experiment that each case invocation reads."""
+@dataclass
+class _Experiment:
+    """Everything fixed for one experiment, plus the attempts it has scored so far."""
 
     agent: str
     experiment_id: str
     built: Any
     spec: Any
     base_config: Any
+    model_tier: str
     model_name: str
     pricing: str
+    cfg_hash: str
+    overlay_label: str
+    data: Dataset
+    plan: RunPlan
+    coverage: ScenarioCoverage
+    identity: dict[str, Any]
+    code: CodeVersion
+    policy: ReleasePolicy
+    provenance: dict[str, Any]
+    attempts: list[dict] = field(default_factory=list)
+    completed_cases: int = 0
+
+    @property
+    def stub(self) -> bool:
+        return self.pricing == PricingStatus.STUB
 
     @property
     def cost_known_zero(self) -> bool:
-        return self.pricing in {"stub", "zero_priced"}
-
-    @property
-    def intake_protocol(self) -> str | None:
-        return ((self.spec.metadata or {}).get("intake_output") or {}).get("protocol")
+        return self.pricing in {PricingStatus.STUB, PricingStatus.ZERO_PRICED}
 
 
-async def _run_case(subject: _Subject, case: dict, adapted: tuple, rep: int,
-                    attempts: list[dict]) -> Any:
+def _observations(experiment: _Experiment, adapted: AdaptedCase,
+                  messages: list) -> dict[str, object]:
+    return {
+        "call_summary": summarize_calls(messages),
+        "output_retry_summary": output_retry_summary(messages, agent=experiment.agent),
+        "intake_field_summary": intake_field_summary(
+            messages, report=adapted.deps.report_text, agent=experiment.agent),
+    }
+
+
+def _attempt(case: Mapping[str, Any], rep: int, config: Any, **fields: object) -> dict[str, object]:
+    return {
+        "case": case["name"], "group": case_group(case), "repetition": rep,
+        "expected": case["expected"], **fields,
+        "effective_config_digest": config.digest,
+        "effective_budget_digest": config.budget.digest,
+    }
+
+
+async def _score_output(experiment: _Experiment, case: Mapping[str, Any],
+                        adapted: AdaptedCase, output: Any) -> tuple[str, str, dict[str, Any]]:
+    """(predicted, outcome, diagnostic) for a typed answer, execution evidence included."""
+    predicted, outcome = adapted.predict(output), "answered"
+    diagnostic: dict[str, Any] = {"typed_output": _bounded_typed_output(output)}
+    execution = await run_execution_check(dict(case), output, stub=experiment.stub)
+    if execution is not None:
+        predicted = execution.predicted
+        diagnostic["execution_check"] = execution.as_score()
+        if execution.status in {"not_checked", "failed"}:
+            outcome = f"execution_{execution.status}"
+    probe = await evaluate_probe_execution(experiment.agent, dict(case), output,
+                                           stub=experiment.stub)
+    if probe is not None:
+        # Same-process tracing is useful diagnostic evidence, but candidate code can tamper
+        # with or forge it. It must not change the structural score or satisfy
+        # release-grade execution gates.
+        diagnostic["probe_observation"] = probe.as_score()
+    return predicted, outcome, diagnostic
+
+
+def _stopped(exc: BaseException, case: Mapping[str, Any], config: Any,
+             messages: list) -> tuple[str, dict[str, Any]]:
+    """(outcome, diagnostic) for a run with no accepted answer that is still a scored outcome."""
+    if isinstance(exc, UsageLimitExceeded | AgentRunTimeout):
+        # The run hit its declared budget: it was stopped, not answered. That is a hard gate,
+        # so it is its own outcome rather than a wrong answer.
+        diagnostic: dict[str, Any] = {
+            "error_type": ("UsageLimitExceeded" if isinstance(exc, UsageLimitExceeded)
+                           else "AgentRunTimeout"),
+            "error_category": "budget_exhausted",
+            "budget_stop": budget_stop_diagnostic(exc, config.budget, messages),
+        }
+        if isinstance(exc, _BrokerBudgetStop):
+            diagnostic.update(failure_diagnostic(BrokerError("budget")))
+        outcome, reason = "budget_exhausted", "budget stop"
+    else:
+        # This also covers exhausted function-tool retries and provider protocol failures. No
+        # typed answer was accepted; do not claim the output schema itself was the cause, and
+        # omit exception/provider text, which may contain sensitive content.
+        diagnostic = {"error_type": "UnexpectedModelBehavior",
+                      "error_category": "no_accepted_output", "provider_body_retained": False}
+        outcome, reason = "invalid_output", "no accepted output"
+    if case.get("execution_check"):
+        diagnostic["execution_check"] = _no_output_check(case, reason)
+    return outcome, diagnostic
+
+
+async def _run_case(experiment: _Experiment, case: dict, adapted: AdaptedCase,
+                    rep: int) -> db.EvalCaseResult:
     """Invoke the agent on one case once; append its attempt record and return its row.
 
     Budget stops and outputs that never validated are scored outcomes. Anything else is the
     run falling over: its attempt is recorded as ``failed`` and the exception propagates.
     """
-    from infosec_harness.agents import models as model_factory
-    from infosec_harness.agents.registry import resolve_agent_config
-    from infosec_harness.evals.execution_checks import run_execution_check
-    from infosec_harness.evals.probe_execution import evaluate_probe_execution
-    from infosec_harness.inference.invocations import eval_invocation
-    from infosec_harness.persistence import db
-
-    agent = subject.agent
-    task_text, payload, deps, predict, expected = adapted
-    prompt = (render_intake_prompt(task_text, payload)
-              if agent == "intake" else render_prompt(task_text, payload))
-    config = resolve_agent_config(agent, subject.spec, source_files=deps.source_files,
-                                  durable=True)
-    stub = subject.pricing == "stub"
+    agent, expected = experiment.agent, case["expected"]
+    render = render_intake_prompt if agent == "intake" else render_prompt
+    prompt = render(adapted.task, adapted.payload)
+    config = registry.resolve_agent_config(agent, experiment.spec,
+                                           source_files=adapted.deps.source_files, durable=True)
+    metadata = experiment.spec.metadata or {}
     started = time.monotonic()
     usage: dict[str, object] | None = None
-    cost: float | None = 0.0 if subject.cost_known_zero else None
-    outcome = "answered"
-    diagnostic: dict[str, object] = {}
+    cost: float | None = 0.0 if experiment.cost_known_zero else None
     messages: list = []
-
-    def observations() -> dict[str, object]:
-        return {
-            "call_summary": summarize_calls(messages),
-            "output_retry_summary": output_retry_summary(messages, agent=agent),
-            "intake_field_summary": intake_field_summary(
-                messages, report=deps.report_text, agent=agent,
-                protocol=subject.intake_protocol),
-        }
-
-    def record(**fields: object) -> dict[str, object]:
-        return {
-            "case": case["name"], "group": case_group(case), "repetition": rep,
-            "expected": expected, **fields,
-            "effective_config_digest": config.digest,
-            "effective_budget_digest": config.budget.digest,
-        }
-
     try:
         async with (_broker_budget_as_usage_stop(),
-                    eval_invocation(agent, deps, config,
-                                    configuration_digest=subject.base_config.digest) as live):
+                    eval_invocation(agent, adapted.deps, config,
+                                    configuration_digest=experiment.base_config.digest) as live):
             with capture_run_messages() as messages:
                 result = await run_with_timeout(
-                    subject.built.run(prompt, deps=live,
-                                      usage_limits=config.budget.to_usage_limits()),
+                    experiment.built.run(prompt, deps=live,
+                                         usage_limits=config.budget.to_usage_limits()),
                     seconds=get_settings().agent_run_timeout_s,
                 )
-        predicted = predict(result.output)
-        diagnostic["typed_output"] = _bounded_typed_output(result.output)
-        execution = await run_execution_check(case, result.output, stub=stub)
-        if execution is not None:
-            predicted = execution.predicted
-            diagnostic["execution_check"] = execution.as_score()
-            if execution.status in {"not_checked", "failed"}:
-                outcome = f"execution_{execution.status}"
-        probe = await evaluate_probe_execution(agent, case, result.output, stub=stub)
-        if probe is not None:
-            # Same-process tracing is useful diagnostic evidence, but candidate code can tamper
-            # with or forge it. It must not change the structural score or satisfy
-            # release-grade execution gates.
-            diagnostic["probe_observation"] = probe.as_score()
+        predicted, outcome, diagnostic = await _score_output(experiment, case, adapted,
+                                                             result.output)
         messages = result.all_messages()
-        estimated, _ = model_factory.estimate_cost(subject.model_name, result.usage)
+        estimated, _ = model_factory.estimate_cost(experiment.model_name, result.usage)
         cost = estimated if estimated is not None else cost
         usage = {
             "requests": result.usage.requests or 0,
@@ -232,59 +350,38 @@ async def _run_case(subject: _Subject, case: dict, adapted: tuple, rep: int,
             "cache_read_tokens": result.usage.cache_read_tokens or 0,
             "cache_write_tokens": result.usage.cache_write_tokens or 0,
         }
-    except (UsageLimitExceeded, AgentRunTimeout) as exc:
-        # The run hit its declared budget: it was stopped, not answered. That is a hard gate,
-        # so it is its own outcome rather than a wrong answer.
-        diagnostic = {
-            "error_type": ("UsageLimitExceeded" if isinstance(exc, UsageLimitExceeded)
-                           else "AgentRunTimeout"),
-            "error_category": "budget_exhausted",
-            "budget_stop": budget_stop_diagnostic(exc, config.budget, messages),
-        }
-        if isinstance(exc, _BrokerBudgetStop):
-            diagnostic.update(failure_diagnostic(BrokerError("budget")))
-        predicted = outcome = "budget_exhausted"
-        if case.get("execution_check"):
-            diagnostic["execution_check"] = _no_output_check(case, "budget stop")
-    except UnexpectedModelBehavior:
-        # This also covers exhausted function-tool retries and provider protocol failures. No
-        # typed answer was accepted; do not claim the output schema itself was the cause, and
-        # omit exception/provider text, which may contain sensitive content.
-        diagnostic = {"error_type": "UnexpectedModelBehavior",
-                      "error_category": "no_accepted_output", "provider_body_retained": False}
-        predicted = outcome = "invalid_output"
-        if case.get("execution_check"):
-            diagnostic["execution_check"] = _no_output_check(case, "no accepted output")
+    except (UsageLimitExceeded, AgentRunTimeout, UnexpectedModelBehavior) as exc:
+        outcome, diagnostic = _stopped(exc, case, config, messages)
+        predicted = outcome
     except BaseException as exc:
-        attempts.append(record(
-            outcome="failed", **observations(), **failure_diagnostic(exc),
-            latency_s=time.monotonic() - started, usage=None, usage_status="unknown",
+        experiment.attempts.append(_attempt(
+            case, rep, config, outcome="failed", **_observations(experiment, adapted, messages),
+            **failure_diagnostic(exc), latency_s=time.monotonic() - started, usage=None,
+            usage_status="unknown",
             planning_window=planning_window_diagnostic(
-                subject.spec.metadata or {}, config.budget.effective.max_requests, None),
+                metadata, config.budget.effective.max_requests, None),
             cost_usd=cost, cost_status="known_zero" if cost == 0.0 else "unknown",
         ))
         raise
     diagnostic["planning_window"] = planning_window_diagnostic(
-        subject.spec.metadata or {}, config.budget.effective.max_requests,
+        metadata, config.budget.effective.max_requests,
         usage["requests"] if usage is not None else None)
     if config.model.broker_contract is not None:
-        from infosec_harness.inference.provenance import runtime_evidence
-
         diagnostic["inference_runtime"] = runtime_evidence(messages)
-    diagnostic.update(observations())
+    diagnostic.update(_observations(experiment, adapted, messages))
     latency = time.monotonic() - started
     passed = predicted == expected
     usage_status = "observed" if usage is not None else "unknown"
-    cost_status = ("known_zero" if cost == 0.0 and subject.cost_known_zero
+    cost_status = ("known_zero" if cost == 0.0 and experiment.cost_known_zero
                    else "observed" if cost is not None else "unknown")
-    attempts.append(record(
-        predicted=predicted, passed=passed, outcome=outcome,
+    experiment.attempts.append(_attempt(
+        case, rep, config, predicted=predicted, passed=passed, outcome=outcome,
         unevidenced_safe=is_unevidenced_safe(agent, case, predicted),
         latency_s=latency, usage=usage, usage_status=usage_status, cost_usd=cost,
         cost_status=cost_status, **diagnostic,
     ))
     return db.EvalCaseResult(
-        experiment_id=subject.experiment_id, case_name=case["name"], repetition=rep,
+        experiment_id=experiment.experiment_id, case_name=case["name"], repetition=rep,
         passed=passed,
         scores={
             "expected": expected, "predicted": predicted, "outcome": outcome, "usage": usage,
@@ -307,6 +404,102 @@ def _agent_overlay(agent: str, overlay: Path | Mapping[str, object] | None,
         # overlay. It is applied after any --overlay file, being the more specific instruction.
         fragment = {**(fragment or {}), "model": model}
     return fragment
+
+
+def _metrics(experiment: _Experiment, status: ExperimentStatus,
+             truncation: dict | None = None) -> dict[str, Any]:
+    metrics = experiment_metrics(experiment.attempts, experiment.plan, status=status,
+                                 cases_completed=experiment.completed_cases)
+    metrics.update(
+        scenario_coverage=experiment.coverage.as_report(),
+        comparison_identity=experiment.identity,
+        effective_configuration=experiment.base_config.model_dump(mode="json"),
+        code_identity=experiment.code.as_dict(),
+    )
+    if truncation is not None:
+        metrics["truncated"] = truncation
+    if status is ExperimentStatus.complete:
+        # The policy verdict travels with the stored run, so a reader of the experiment
+        # store sees the same gate status the release report records.
+        metrics["gate_evaluation"] = experiment.policy.evaluate(
+            metrics, provenance=experiment.provenance).as_report()
+    return metrics
+
+
+async def _persist(experiment: _Experiment, status: ExperimentStatus, rows: list,
+                   truncation: dict | None = None) -> dict[str, Any]:
+    """Upsert the experiment with the metrics so far and append the new case rows."""
+    metrics = _metrics(experiment, status, truncation)
+    code, model_name = experiment.code, experiment.model_name
+    async with db.session() as session:
+        await session.merge(db.EvalExperiment(
+            id=experiment.experiment_id, agent=experiment.agent,
+            dataset=experiment.data.display_path[-_DATASET_COLUMN_CHARS:],
+            dataset_version=experiment.data.version, git_sha=code.git_commit,
+            git_dirty=code.git_dirty, harness_version=code.harness_version,
+            overlay=experiment.overlay_label, config_hash=experiment.cfg_hash,
+            model_tier=experiment.model_tier, model_name=model_name,
+            backend=model_name.split(":", 1)[0] if ":" in model_name else "",
+            pricing=experiment.pricing, repetitions=experiment.plan.repetitions,
+            metrics=metrics,
+        ))
+        session.add_all(rows)
+        await session.commit()
+    return metrics
+
+
+def _prepare(agent: str, *, overlay: Path | Mapping[str, object] | None, repeat: int,
+             model: str | None, groups: set[str] | None, split: str | None,
+             dataset: Path | None) -> tuple[_Experiment, list[dict]]:
+    """Resolve everything an experiment fixes before its first case, and the cases it runs."""
+    data = load_dataset(agent, dataset)
+    cases = data.select(groups)
+    fragment = _agent_overlay(agent, overlay, model)
+    # The runner itself is local, while the model/provider contract intentionally mirrors the
+    # durable worker, so transport retry settings stay aligned with production.
+    built = registry.build_agent(agent, fragment, durable=False, production_transport=True)
+    spec = registry.load_spec(agent, fragment)
+    cfg_hash = registry.config_hash(agent, spec, durable=True)
+    model_tier = spec.model or "sonnet"
+    model_name = model_factory.resolved_model_name(agent, model_tier)
+    pricing = pricing_status(model_name).value
+    code = code_version()
+    overlay_label = str(overlay) if isinstance(overlay, Path) else "inline" if overlay else ""
+    experiment_id = "exp-" + hashlib.sha256(
+        f"{agent}:{data.version}:{cfg_hash}:{overlay_label}:{uuid.uuid4()}".encode()
+    ).hexdigest()[:16]
+    coverage = scenario_coverage(agent, cases)
+    identity = {
+        **case_set_identity(cases),
+        "evaluator_version": EVALUATOR_VERSION,
+        "execution_mode": EVAL_EXECUTION_MODE,
+        "dataset_version": data.version,
+        "dataset": data.display_path,
+        "repetitions": repeat,
+        # "full" means the agent's own packaged dataset, all of it. A named dataset (a sealed
+        # held-out set, say) is a different denominator and is labelled so by default.
+        "split": split or ("full" if dataset is None else "external"),
+    }
+    experiment = _Experiment(
+        agent=agent, experiment_id=experiment_id, built=built, spec=spec,
+        base_config=registry.resolve_agent_config(agent, spec, durable=True),
+        model_tier=model_tier, model_name=model_name, pricing=pricing, cfg_hash=cfg_hash,
+        overlay_label=overlay_label, data=data,
+        plan=RunPlan(
+            cases=len(cases), repetitions=repeat,
+            execution_checks=sum(bool(case.get("execution_check")) for case in cases) * repeat,
+            unevidenced_safety=defines_unevidenced_safety(agent),
+            uncovered_material_scenarios=len(coverage.uncovered_material),
+        ),
+        coverage=coverage, identity=identity, code=code, policy=load_policy(agent),
+        provenance=report_provenance(
+            code_identity=code.as_dict(), comparison_identity=identity,
+            agent_version=str((spec.metadata or {}).get("version", "0.0.0")),
+            cfg_hash=cfg_hash, model_name=model_name, pricing=pricing,
+            experiment_id=experiment_id, spec=spec,
+        ),
+    )
+    return experiment, cases
 
 
 async def run_experiment(
@@ -334,92 +527,13 @@ async def run_experiment(
     """
     if agent not in ADAPTERS:
         raise SystemExit(f"No eval adapter for agent {agent!r}. Available: {sorted(ADAPTERS)}")
-    from infosec_harness.agents import models as model_factory
-    from infosec_harness.agents.registry import (
-        build_agent,
-        config_hash,
-        load_spec,
-        resolve_agent_config,
-    )
-    from infosec_harness.persistence import db
-
-    data: Dataset = load_dataset(agent, dataset)
-    cases = data.select(groups)
-    fragment = _agent_overlay(agent, overlay, model)
-    # The runner itself is local, while the model/provider contract intentionally mirrors the
-    # durable worker, so transport retry settings stay aligned with production.
-    built = build_agent(agent, fragment, durable=False, production_transport=True)
-    spec = load_spec(agent, fragment)
-    cfg_hash = config_hash(agent, spec, durable=True)
-    base_config = resolve_agent_config(agent, spec, durable=True)
-    model_tier = spec.model or "sonnet"
-    model_name = model_factory.resolved_model_name(agent, model_tier)
-    pricing = pricing_status(model_name).value
-    code = code_version()
-    overlay_label = str(overlay) if isinstance(overlay, Path) else "inline" if overlay else ""
-    exp_id = "exp-" + hashlib.sha256(
-        f"{agent}:{data.version}:{cfg_hash}:{overlay_label}:{uuid.uuid4()}".encode()
-    ).hexdigest()[:16]
-    coverage = scenario_coverage(agent, cases)
-    plan = RunPlan(
-        cases=len(cases), repetitions=repeat,
-        execution_checks=sum(bool(case.get("execution_check")) for case in cases) * repeat,
-        unevidenced_safety=defines_unevidenced_safety(agent),
-        uncovered_material_scenarios=len(coverage.uncovered_material),
-    )
-    identity = {
-        **case_set_identity(cases),
-        "evaluator_version": EVALUATOR_VERSION,
-        "execution_mode": EVAL_EXECUTION_MODE,
-        "dataset_version": data.version,
-        "dataset": data.display_path,
-        "repetitions": repeat,
-        # "full" means the agent's own packaged dataset, all of it. A named dataset (a sealed
-        # held-out set, say) is a different denominator and is labelled so by default.
-        "split": split or ("full" if dataset is None else "external"),
-    }
-    subject = _Subject(agent=agent, experiment_id=exp_id, built=built, spec=spec,
-                       base_config=base_config, model_name=model_name, pricing=pricing)
-    attempts: list[dict] = []
-    completed_cases = 0
-
-    def metrics_now(status: ExperimentStatus, truncation: dict | None = None) -> dict[str, Any]:
-        metrics = experiment_metrics(attempts, plan, status=status,
-                                     cases_completed=completed_cases)
-        metrics.update(
-            scenario_coverage=coverage.as_report(),
-            comparison_identity=identity,
-            effective_configuration=base_config.model_dump(mode="json"),
-            code_identity=code.as_dict(),
-        )
-        if truncation is not None:
-            metrics["truncated"] = truncation
-        if status is ExperimentStatus.complete:
-            # The policy verdict travels with the stored run, so a reader of the experiment
-            # store sees the same gate status the release report records.
-            metrics["gate_evaluation"] = load_policy(agent).evaluate(metrics).as_report()
-        return metrics
-
-    async def persist(status: ExperimentStatus, rows: list, truncation: dict | None = None) -> dict:
-        """Upsert the experiment with the metrics so far and append the new case rows."""
-        metrics = metrics_now(status, truncation)
-        async with db.session() as session:
-            await session.merge(db.EvalExperiment(
-                id=exp_id, agent=agent, dataset=data.display_path[-128:],
-                dataset_version=data.version, git_sha=code.git_commit, git_dirty=code.git_dirty,
-                harness_version=code.harness_version, overlay=overlay_label,
-                config_hash=cfg_hash, model_tier=model_tier, model_name=model_name,
-                backend=model_name.split(":", 1)[0] if ":" in model_name else "",
-                pricing=pricing, repetitions=repeat, metrics=metrics,
-            ))
-            session.add_all(rows)
-            await session.commit()
-        return metrics
-
+    experiment, cases = _prepare(agent, overlay=overlay, repeat=repeat, model=model,
+                                 groups=groups, split=split, dataset=dataset)
+    exp_id, plan = experiment.experiment_id, experiment.plan
     await db.create_all()
     # Claim the row before the first model call: a run that dies on case 1 is still a visible
     # `status=running` experiment rather than nothing at all.
-    await persist(ExperimentStatus.running, [])
+    await _persist(experiment, ExperimentStatus.running, [])
     case_name, rep = "", 0
     # Rows scored but not yet committed: never more than one case's worth, and flushed on the
     # way out too, so the persisted rows always match the persisted counters.
@@ -429,21 +543,21 @@ async def run_experiment(
             case_name = case["name"]
             adapted = ADAPTERS[agent](case)
             for rep in range(repeat):
-                pending.append(await _run_case(subject, case, adapted, rep, attempts))
-            completed_cases += 1
-            await persist(ExperimentStatus.running, pending)
+                pending.append(await _run_case(experiment, case, adapted, rep))
+            experiment.completed_cases += 1
+            await _persist(experiment, ExperimentStatus.running, pending)
             pending = []
     except BaseException as exc:
         # Anything the per-case handlers did not classify is not an answer about the model:
         # it is the run falling over (transport error, a cancelled or hung request, Ctrl-C, an
         # adapter bug). Record where it stopped, keep the scored cases, then fail.
-        scored = sum(attempt["outcome"] != "failed" for attempt in attempts)
+        scored = sum(attempt["outcome"] != "failed" for attempt in experiment.attempts)
         truncation = {
             **failure_diagnostic(exc), "failed_case": case_name, "failed_repetition": rep,
             "completed_runs": scored, "planned_runs": plan.runs,
-            "completed_cases": completed_cases, "planned_cases": plan.cases,
+            "completed_cases": experiment.completed_cases, "planned_cases": plan.cases,
         }
-        await persist(ExperimentStatus.truncated, pending, truncation)
+        await _persist(experiment, ExperimentStatus.truncated, pending, truncation)
         # The persisted record is sanitized; the operator running this still needs the
         # actual failure, so the full traceback goes to this process's stderr only.
         traceback.print_exception(exc, file=sys.stderr)
@@ -460,14 +574,15 @@ async def run_experiment(
             raise  # an interrupt or a cancellation keeps its own semantics
         raise TruncatedExperiment(exp_id, truncation) from exc
 
-    metrics = await persist(ExperimentStatus.complete, pending)
+    metrics = await _persist(experiment, ExperimentStatus.complete, pending)
+    code = experiment.code
     cost_label = (f"${metrics['cost_usd_per_case']:.4f}"
                   if metrics["cost_usd_per_case"] is not None else "unknown")
     cache_label = (f"{metrics['cache_hit_ratio']:.2%}"
                    if metrics["cache_hit_ratio"] is not None else "unknown")
-    print(f"experiment {exp_id}: accuracy={metrics['accuracy']:.2%} cost/case={cost_label} "
-          f"cache_hit={cache_label} (model {model_name} [{pricing}], config {cfg_hash}, "
-          f"code {code.label()})")
+    print(f"experiment {exp_id}: task_success_rate={metrics['task_success_rate']:.2%} "
+          f"cost/case={cost_label} cache_hit={cache_label} (model {experiment.model_name} "
+          f"[{experiment.pricing}], config {experiment.cfg_hash}, code {code.label()})")
     if code.git_dirty:
         # Said once, where the number is produced: this result cannot be filed against a
         # commit, so it is not a baseline and is not reproducible from the SHA it carries.
@@ -475,9 +590,6 @@ async def run_experiment(
               f"{code.git_commit[:12] or 'any commit'} -- commit before recording a baseline")
     target = report or (report_dir / f"{exp_id}.json" if report_dir is not None else None)
     if target is not None:
-        write_release_report(
-            target, agent=agent, metrics=metrics, cfg_hash=cfg_hash, model_name=model_name,
-            pricing=pricing, dataset_path=data.display_path, experiment_id=exp_id, spec=spec,
-            agent_version=str((spec.metadata or {}).get("version", "0.0.0")),
-        )
+        write_release_report(target, agent=agent, metrics=metrics,
+                             provenance=experiment.provenance, policy=experiment.policy)
     return exp_id

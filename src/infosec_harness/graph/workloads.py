@@ -12,6 +12,7 @@ import time
 from infosec_harness.domain.models import (
     BuildResult,
     EnvironmentSpec,
+    ExecutionOrigins,
     ProbeExecution,
     ProbeSource,
     RepoSnapshot,
@@ -19,6 +20,11 @@ from infosec_harness.domain.models import (
 )
 from infosec_harness.persistence.artifacts import get_store
 from infosec_harness.sandbox import canary, docker, evidence
+from infosec_harness.sandbox.errors import (
+    DisallowedBaseImage,
+    InvalidEnvironmentSpec,
+    SandboxUnavailable,
+)
 
 
 async def build_environment(snapshot: RepoSnapshot, spec: EnvironmentSpec) -> BuildResult:
@@ -28,17 +34,10 @@ async def build_environment(snapshot: RepoSnapshot, spec: EnvironmentSpec) -> Bu
     that exists is not evidence that this host can still run it under isolation. The build
     validates the base image against the allowlist; build egress is the operator's proxy
     allowlist (not anything derived from the repository) on an internal network (D2/D14)."""
-    from infosec_harness.sandbox.policy import (
-        DisallowedBaseImage,
-        InvalidEnvironmentSpec,
-        SandboxUnavailable,
-        ensure_runtime_available,
-    )
-
     tag = docker.image_tag_for(snapshot.content_hash, spec)
     store = get_store()
     try:
-        await ensure_runtime_available("build the target environment")
+        await docker.ensure_runtime_available("build the target environment")
     except SandboxUnavailable as e:
         return BuildResult(ok=False, spec=spec, error_excerpt=str(e))
     if await docker.image_exists(tag):
@@ -155,10 +154,8 @@ async def execute_probe(image_tag: str, probe: ProbeSource, spec: EnvironmentSpe
                         attempt: int) -> ProbeExecution:
     """Run a probe in the built image with no network (F5)."""
     store = get_store()
-    from infosec_harness.sandbox.policy import SandboxUnavailable, ensure_runtime_available
-
     try:
-        await ensure_runtime_available("execute a probe")
+        await docker.ensure_runtime_available("execute a probe")
     except SandboxUnavailable as e:
         return ProbeExecution(attempt=attempt, exit_code=None, oracle_fired=False,
                               precondition_reached=False, stderr_tail=str(e))
@@ -200,4 +197,8 @@ async def execute_probe(image_tag: str, probe: ProbeSource, spec: EnvironmentSpe
         duration_s=res.duration_s,
         log_artifact=store.put_text(artifact_body),
         source_artifact=store.put_text(probe.content, media_type="text/plain"),
+        # Persisted with the execution so readers need not decode the log artifact to learn
+        # which parts of this record the controller observed and which the probe printed.
+        origins=ExecutionOrigins.model_validate(
+            {section: record[section] for section in ExecutionOrigins.model_fields}),
     )

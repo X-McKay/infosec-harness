@@ -1,4 +1,4 @@
-"""Field-targeted Maven feedback preserves warmup requirements and historical retry text."""
+"""Field-targeted Maven feedback preserves warmup requirements and its retry text."""
 
 from types import SimpleNamespace
 
@@ -37,21 +37,30 @@ def spec(installs):
 def test_missing_warmup_rejection_equivalence_and_preserved_prerequisites(framework, installs):
     candidate = spec(installs)
     before = candidate.model_dump(mode="json")
-    legacy = contract.offline_warmup_violations(candidate, framework)
-    new = contract.offline_warmup_violations(candidate, framework, targeted_feedback=True)
-    assert len(legacy) == len(new) == 1
+    new = contract.offline_warmup_violations(candidate, framework)
+    assert len(new) == 1
     assert new[0].startswith("install_commands ")
     assert contract.MAVEN_WARMUP_COMMANDS[framework] in new[0].replace("\\'", "'")
     assert len(new[0]) < 1000
     assert candidate.model_dump(mode="json") == before
 
 
+def test_the_missing_warmup_message_is_byte_stable():
+    """The only form of this retry text; production has sent exactly these bytes since the
+    field-targeted wording was introduced, so a change here is a retry-bytes provenance change."""
+    assert contract.offline_warmup_violations(spec([COMPILE]), "junit4") == [
+        "install_commands must include a build-time test that warms the declared Surefire "
+        "provider. Keep prerequisite install commands and append this framework-specific "
+        f"warm-up command: {contract.MAVEN_WARMUP_COMMANDS['junit4']!r}. An empty test "
+        "directory still requires creating, running, and removing the temporary test; an empty "
+        "install_commands list cannot warm the provider."
+    ]
+
+
 @pytest.mark.parametrize("framework", sorted(contract.MAVEN_WARMUP_COMMANDS))
-@pytest.mark.parametrize("targeted", [False, True])
-def test_canonical_matching_command_accepted_by_combined_guards(framework, targeted):
+def test_canonical_matching_command_accepted_by_combined_guards(framework):
     output = spec([COMPILE, contract.MAVEN_WARMUP_COMMANDS[framework]])
     assert contract.offline_warmup_violations(output, framework) == []
-    assert contract.offline_warmup_violations(output, framework, targeted_feedback=targeted) == []
     assert contract.environment_spec_violations(output) == []
     assert contract.install_path_violations(output) == []
 
@@ -60,10 +69,8 @@ def test_canonical_matching_command_accepted_by_combined_guards(framework, targe
 def test_wrong_framework_still_rejected_with_exact_old_text(framework):
     other = next(x for x in contract.MAVEN_WARMUP_COMMANDS if x != framework)
     output = spec([COMPILE, contract.MAVEN_WARMUP_COMMANDS[other]])
-    assert contract.offline_warmup_violations(
-        output, framework, targeted_feedback=True
-    ) == contract.offline_warmup_violations(output, framework)
-    assert contract.offline_warmup_violations(output, framework)
+    [problem] = contract.offline_warmup_violations(output, framework)
+    assert problem.startswith(f"the warm-up's throwaway test is written in {other}")
 
 
 @pytest.mark.parametrize("command", [contract.PYTEST_TEST_COMMAND, contract.GRADLE_TEST_COMMAND])
@@ -73,11 +80,7 @@ def test_nonmaven_feedback_unchanged(command):
         install_commands=[],
         test_command=command,
     )
-    assert (
-        contract.offline_warmup_violations(output, targeted_feedback=True)
-        == contract.offline_warmup_violations(output)
-        == []
-    )
+    assert contract.offline_warmup_violations(output) == []
     validators.validate_environment_spec(None, output)
 
 
@@ -112,7 +115,7 @@ def test_good_warmup_is_accepted():
 )
 def test_independent_command_and_failure_guards_remain_rejections(monkeypatch, mutation):
     output = mutation(spec([COMPILE, contract.MAVEN_WARMUP_COMMAND]))
-    assert contract.offline_warmup_violations(output, targeted_feedback=True) == []
+    assert contract.offline_warmup_violations(output) == []
     with pytest.raises(ModelRetry):
         validators.validate_environment_spec(None, output)
 

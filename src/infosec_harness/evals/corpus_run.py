@@ -5,9 +5,21 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+from infosec_harness.domain.models import Finding, InconclusiveReason
 from infosec_harness.evals._json import write_json
+from infosec_harness.evals.corpus import approve_corpus_root, corpus_path, load_corpus
+from infosec_harness.evals.corpus import languages as corpus_languages
 from infosec_harness.evals.provenance import code_version
-from infosec_harness.evals.trajectory import scores_skills
+from infosec_harness.evals.trajectory import (
+    AGENT_EXPECTATIONS,
+    TrajectoryExpectation,
+    check_expectations,
+    cwe_skill_prefix,
+    scores_skills,
+)
+from infosec_harness.graph.local import triage_batch_local
+from infosec_harness.sandbox import docker
+from infosec_harness.settings import get_settings
 
 
 def _spread(values: list[float]) -> str:
@@ -82,9 +94,6 @@ async def score_corpus(*, language: str = "python", sandbox: bool | None = None,
     ``report`` writes the metrics, with the code and corpus they were measured on, as JSON.
     """
     code = code_version()
-    from infosec_harness.evals.corpus import approve_corpus_root, load_corpus
-    from infosec_harness.evals.corpus import languages as corpus_languages
-
     approve_corpus_root(manifest_path)
 
     if language == "all" and manifest_path is not None:
@@ -147,9 +156,6 @@ def _write_corpus_report(path: Path | None, metrics: dict, *, code, language: st
                          repeat: int) -> None:
     if path is None:
         return
-    from infosec_harness.evals.corpus import corpus_path
-    from infosec_harness.settings import get_settings
-
     write_json(path, {
         "schema_version": 1,
         "subject": {"kind": "corpus", "name": dataset},
@@ -177,16 +183,6 @@ async def _score_corpus_once(*, language: str, sandbox: bool | None,
                              manifest_path: Path | None = None, dataset: str = "seed",
                              limit: int = 0) -> dict:
     """One pass over the corpus. See :func:`score_corpus`."""
-    from infosec_harness.domain.models import Finding, InconclusiveReason
-    from infosec_harness.evals.corpus import load_corpus
-    from infosec_harness.evals.trajectory import (
-        AGENT_EXPECTATIONS,
-        TrajectoryExpectation,
-        check_expectations,
-        cwe_skill_prefix,
-    )
-    from infosec_harness.graph.local import triage_batch_local
-
     cases = load_corpus(language, manifest_path=manifest_path, dataset=dataset)
     if limit:
         # Harvested manifests run to hundreds of cases against real repositories; a bounded
@@ -195,7 +191,6 @@ async def _score_corpus_once(*, language: str, sandbox: bool | None,
         keep = {c.name.rsplit("-", 1)[0] for c in cases[:limit]}
         cases = [c for c in cases if c.name.rsplit("-", 1)[0] in keep]
     if sandbox is None:
-        from infosec_harness.sandbox import docker
         sandbox = await docker.docker_available() and await docker.runtime_available()
     prepare_sink: dict[tuple[str, str], list] = {}
     # A harvested case ships the PoV test that established its ground truth, and on a `-fixed`

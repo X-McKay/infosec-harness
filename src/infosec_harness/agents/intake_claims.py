@@ -94,11 +94,14 @@ class ReferenceError(ValueError):
         super().__init__(rule)
 
 
-def _source_index(report_text: str | None) -> dict[str, tuple[int, int]]:
-    """Index original Python string codepoints using ``splitlines(keepends=True)``."""
+def _report(report_text: str | None) -> str:
     if report_text is None:
         raise ReferenceError("source_unavailable")
+    return report_text
 
+
+def _source_index(report_text: str) -> dict[str, tuple[int, int]]:
+    """Index original Python string codepoints using ``splitlines(keepends=True)``."""
     result: dict[str, tuple[int, int]] = {}
     offset = 0
     for number, line in enumerate(report_text.splitlines(keepends=True), start=1):
@@ -110,24 +113,15 @@ def _source_index(report_text: str | None) -> dict[str, tuple[int, int]]:
 
 def report_source_lines(report_text: str | None) -> list[dict[str, str]]:
     """Return the original lines and stable IDs without trimming or newline conversion."""
-    index = _source_index(report_text)
-    if report_text is None:
-        raise ReferenceError("source_unavailable")
+    text = _report(report_text)
     return [
-        {"id": source_id, "text": report_text[start:end]}
-        for source_id, (start, end) in index.items()
+        {"id": source_id, "text": text[start:end]}
+        for source_id, (start, end) in _source_index(text).items()
     ]
 
 
-def invalid_source_references(
-    report_text: str | None, claims: AtomicFinding
-) -> tuple[tuple[str, ReferenceRule], ...]:
-    """Every authored-field reference failure, in field order, without report/claim text."""
-    return _resolve(report_text, claims)[1]
-
-
 def _resolve(
-    report_text: str | None, claims: AtomicFinding
+    report_text: str, claims: AtomicFinding
 ) -> tuple[list[tuple[str, Claim, int, int]], tuple[tuple[str, ReferenceRule], ...]]:
     """Resolve every claim's reference to a codepoint slice, collecting closed failures."""
     index = _source_index(report_text)
@@ -158,11 +152,11 @@ def reconstruct(report_text: str | None, claims: AtomicFinding) -> ExtractedFind
     normalize values; the existing whole-output guard remains the acceptance decision. Every
     reference failure is carried on the raised :class:`ReferenceError` (the first is its rule).
     """
-    resolved, errors = _resolve(report_text, claims)
+    text = _report(report_text)
+    resolved, errors = _resolve(text, claims)
     if errors:
         field, rule = errors[0]
         raise ReferenceError(rule, field=field, failures=errors)
-    assert report_text is not None  # _source_index raised source_unavailable otherwise
 
     data: dict[str, object] = {}
     evidence: list[dict[str, object]] = []
@@ -171,7 +165,7 @@ def reconstruct(report_text: str | None, claims: AtomicFinding) -> ExtractedFind
         evidence.append(
             {
                 "field": field_name,
-                "quote": report_text[start:end],
+                "quote": text[start:end],
                 "confidence": claim.confidence,
             }
         )

@@ -11,6 +11,9 @@ the probe compiles, runs, prints nothing, and the case is recorded as having rea
 import pytest
 
 from infosec_harness.sandbox import canary
+from infosec_harness.sandbox.errors import InvalidEnvironmentSpec
+from infosec_harness.sandbox.markers import PRECONDITION_PREFIX
+from infosec_harness.sandbox.process import ProcessResult
 
 
 def test_a_canary_exists_for_every_language_the_corpus_covers():
@@ -39,9 +42,12 @@ def test_the_java_canary_is_named_what_the_selector_will_look_for():
     assert "class MyProbeTest" in content
     _, content = canary.canary_for("java", "./gradlew test --tests '*OtherTest'")
     assert "class OtherTest" in content
-    # No selector: fall back to the name the skills use.
-    path, _ = canary.canary_for("java", "mvn -B -o test")
-    assert path.endswith("HarnessProbeTest.java")
+    # A command that is not a JVM runner selects no class: the name the skills use.
+    path, _ = canary.canary_for("java", "pytest -q -s {test_file}")
+    assert path.endswith(f"{canary.DEFAULT_JVM_CLASS}.java")
+    # A JVM command that selects no class is not a valid spec, so nothing is guessed for it.
+    with pytest.raises(InvalidEnvironmentSpec):
+        canary.canary_for("java", "mvn -B -o test")
 
 
 def test_the_java_canary_has_no_package_so_every_provider_discovers_it():
@@ -52,7 +58,7 @@ def test_the_java_canary_has_no_package_so_every_provider_discovers_it():
 def test_swallowed_output_is_reported_as_missing_markers():
     """The exact false negative: the test ran and exited 0, and nothing was heard."""
     assert canary.missing_markers("") == ["precondition", "sink_returned", "oracle"]
-    partial = f"HARNESS_PRECONDITION::{canary.CANARY_NONCE}\n"
+    partial = f"{PRECONDITION_PREFIX}{canary.CANARY_NONCE}\n"
     assert canary.missing_markers(partial) == ["sink_returned", "oracle"]
 
 
@@ -86,46 +92,44 @@ def test_the_explanation_blames_the_environment_rather_than_a_probe():
 
 
 async def test_the_smoke_test_fails_when_the_canary_is_not_heard(monkeypatch):
-    """End to end through the activity: a runner that answers --version but reports nothing."""
+    """End to end through the smoke workload: a runner that answers --version but reports nothing."""
+    from infosec_harness.graph.workloads import smoke_test
     from infosec_harness.sandbox import docker
-    from infosec_harness.workflows.activities import smoke_test_activity
 
     async def ok_shell(image, command, *, timeout=None, **_ignored):
-        return docker.ProcResult(exit_code=0, stdout="harness-smoke-ok\npytest 8.0.0",
+        return ProcessResult(exit_code=0, stdout="harness-smoke-ok\npytest 8.0.0",
                                  stderr="", timed_out=False, duration_s=0.0)
 
     async def silent_probe(image, path, content, test_command, nonce, module_path=""):
         # Exit 0, no markers: the shape a framework mismatch actually produces.
-        return docker.ProcResult(exit_code=0, stdout="1 passed", stderr="",
+        return ProcessResult(exit_code=0, stdout="1 passed", stderr="",
                                  timed_out=False, duration_s=0.1)
 
     monkeypatch.setattr(docker, "run_shell", ok_shell, raising=True)
     monkeypatch.setattr(docker, "run_probe", silent_probe, raising=True)
-    result = await smoke_test_activity({"image_tag": "img", "test_command": "pytest -q -s {test_file}",
-                                       "language": "python"})
+    result = await smoke_test("img", "pytest -q -s {test_file}", language="python")
     assert not result.ok, "a runner that reports nothing must fail preparation"
     assert "did not reach stdout" in result.output_excerpt
 
 
 async def test_the_smoke_test_passes_when_the_canary_is_heard(monkeypatch):
+    from infosec_harness.graph.workloads import smoke_test
     from infosec_harness.sandbox import canary as canary_mod
     from infosec_harness.sandbox import docker
-    from infosec_harness.workflows.activities import smoke_test_activity
 
     async def ok_shell(image, command, *, timeout=None, **_ignored):
-        return docker.ProcResult(exit_code=0, stdout="harness-smoke-ok\npytest 8.0.0",
+        return ProcessResult(exit_code=0, stdout="harness-smoke-ok\npytest 8.0.0",
                                  stderr="", timed_out=False, duration_s=0.0)
 
     async def heard_probe(image, path, content, test_command, nonce, module_path=""):
         out = f"HARNESS_PRECONDITION::{nonce}\nHARNESS_SINK_RETURNED::{nonce}\n"
         if nonce == canary_mod.CANARY_NONCE:
             out += f"HARNESS_ORACLE::{nonce}\n"
-        return docker.ProcResult(exit_code=0, stdout=out, stderr="", timed_out=False, duration_s=0.1)
+        return ProcessResult(exit_code=0, stdout=out, stderr="", timed_out=False, duration_s=0.1)
 
     monkeypatch.setattr(docker, "run_shell", ok_shell, raising=True)
     monkeypatch.setattr(docker, "run_probe", heard_probe, raising=True)
-    result = await smoke_test_activity({"image_tag": "img", "test_command": "pytest -q -s {test_file}",
-                                       "language": "python"})
+    result = await smoke_test("img", "pytest -q -s {test_file}", language="python")
     assert result.ok
     assert "canary positive and negative controls observed" in result.output_excerpt
     controls = canary_mod.parse_control_result(result.output_excerpt)

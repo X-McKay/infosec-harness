@@ -79,8 +79,13 @@ class TriageRun(Base):
     evidence: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     batch: Mapped[Batch] = relationship(back_populates="runs")
-    invocations: Mapped[list[AgentInvocation]] = relationship(back_populates="run")
+    invocations: Mapped[list[AgentInvocation]] = relationship(
+        back_populates="run", order_by=lambda: AgentInvocation.seq)
     review: Mapped[VerdictReview | None] = relationship(back_populates="run", uselist=False)
+    events: Mapped[list[RunEventRecord]] = relationship(
+        order_by=lambda: [RunEventRecord.created_at, RunEventRecord.id], viewonly=True)
+    review_history: Mapped[list[ReviewHistory]] = relationship(
+        order_by=lambda: ReviewHistory.id, viewonly=True)
 
 
 class AgentInvocation(Base):

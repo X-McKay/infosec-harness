@@ -30,12 +30,19 @@ def minimal_env(**values: str) -> dict[str, str]:
 
 @dataclass(frozen=True)
 class ProcessResult:
-    returncode: int | None  # None when the run timed out and the group was killed.
-    stdout: bytes
-    stderr: bytes
+    """The one result shape for every owned child (Docker, Git, native CLIs).
+
+    Output is decoded with replacement characters: it is untrusted text for display and
+    parsing, never bytes the harness re-executes. A caller that needs strict decoding has no
+    business reading child output.
+    """
+
+    exit_code: int | None  # None when the run timed out and the group was killed.
+    stdout: str
+    stderr: str
     timed_out: bool
-    truncated: bool  # A stream exceeded capture_limit; only its tail was kept.
     duration_s: float
+    truncated: bool = False  # A stream exceeded capture_limit; only its tail was kept.
 
 
 class _Tail:
@@ -148,10 +155,10 @@ async def run_bounded(
         await _reap(waiter, [feeder, *readers])
         raise
     return ProcessResult(
-        returncode=None if timed_out else process.returncode,
-        stdout=bytes(out.data),
-        stderr=bytes(err.data),
+        exit_code=None if timed_out else process.returncode,
+        stdout=out.data.decode(errors="replace"),
+        stderr=err.data.decode(errors="replace"),
         timed_out=timed_out,
-        truncated=out.truncated or err.truncated,
         duration_s=time.monotonic() - start,
+        truncated=out.truncated or err.truncated,
     )

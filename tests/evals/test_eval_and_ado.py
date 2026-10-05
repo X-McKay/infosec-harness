@@ -19,7 +19,7 @@ async def test_eval_probe_diagnosis_scores():
     from infosec_harness.persistence import db
     async with db.session() as s:
         exp = await s.get(db.EvalExperiment, exp_id)
-    assert exp.metrics["accuracy"] == 1.0  # stub reads exit code + oracle deterministically
+    assert exp.metrics["task_success_rate"] == 1.0  # stub reads exit code + oracle deterministically
     # Every case in the dataset, including the ones carrying the plan and probe source the
     # graph really sends. The stub decides from the execution record alone, so a new case
     # failing here means the record itself is ambiguous.

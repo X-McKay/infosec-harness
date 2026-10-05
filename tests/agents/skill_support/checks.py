@@ -369,5 +369,3 @@ def body_substance_problems(skill: SkillDoc) -> list[str]:
         ]
     return []
 
-
-# --- Extracting the recipes a skill shows --------------------------------------------------

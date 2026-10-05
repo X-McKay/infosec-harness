@@ -87,7 +87,7 @@ def test_every_repo_a_case_names_exists(agent):
 
 def _recon_predict():
     case = next(case for case in _cases("recon") if case["name"] == "java-junit5")
-    return ADAPTERS["recon"](case)[3]
+    return ADAPTERS["recon"](case).predict
 
 
 @pytest.mark.parametrize("framework", [

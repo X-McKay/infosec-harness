@@ -40,14 +40,9 @@ class CorpusCase:
     dataset: str = "seed"
 
     @property
-    def is_vendored(self) -> bool:
-        """True when the case's code is checked in here rather than cloned from a remote."""
-        return not _is_remote(self.finding.repo_url)
-
-    @property
     def repo_path(self) -> Path:
         """Only meaningful for a vendored case; a harvested one is cloned at run time."""
-        if not self.is_vendored:
+        if is_remote(self.finding.repo_url):
             raise ValueError(
                 f"{self.name} is a harvested case cloned from {self.finding.repo_url}; it has "
                 "no path in this repository until checkout() runs."
@@ -59,7 +54,8 @@ def corpus_path() -> Path:
     return REPO_ROOT / "eval-corpus" / "manifest.json"
 
 
-def _is_remote(repo_url: str) -> bool:
+def is_remote(repo_url: str) -> bool:
+    """A harvested case names a git URL; a vendored one names a directory in this repo."""
     return repo_url.startswith(("http://", "https://", "git@"))
 
 
@@ -97,7 +93,7 @@ def load_corpus(language: str | None = None, *, manifest_path: Path | None = Non
         # A vendored case names a directory in this repository and is resolved against the repo
         # root; a harvested one names a remote git URL, which checkout() clones as-is. Resolving
         # a URL against the root would produce `<repo>/https:/github.com/...`.
-        if not _is_remote(finding.repo_url):
+        if not is_remote(finding.repo_url):
             local = (REPO_ROOT / finding.repo_url).resolve()
             if not local.is_relative_to(manifest_file.parent):
                 raise ValueError(

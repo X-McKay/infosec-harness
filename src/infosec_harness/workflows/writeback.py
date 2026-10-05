@@ -7,10 +7,8 @@ second short transaction.
 
 from __future__ import annotations
 
-from sqlalchemy import select
-
 from infosec_harness.domain.models import TriageRunOutput
-from infosec_harness.persistence import db, store
+from infosec_harness.persistence import store
 from infosec_harness.settings import get_settings
 
 
@@ -25,20 +23,9 @@ async def write_back(outputs: list[TriageRunOutput], run_ids: dict[str, str]) ->
             continue
         text = ado.render_comment(out, settings.ui_base_url)
         digest = store.payload_hash(text)
-        async with db.session() as session:
-            row = (await session.execute(select(db.AdoSync).where(
-                db.AdoSync.work_item_id == work_item))).scalar_one_or_none()
-            previous = (row.comment_id, row.payload_hash) if row is not None else None
+        previous = await store.ado_sync(work_item)
         if previous is not None and previous[1] == digest:
             continue  # nothing changed since the last write-back
         comment_id = await ado.post_or_update_comment(
             work_item, text, previous[0] if previous is not None else None)
-        async with db.session() as session:
-            row = (await session.execute(select(db.AdoSync).where(
-                db.AdoSync.work_item_id == work_item))).scalar_one_or_none()
-            if row is None:
-                row = db.AdoSync(run_id=run_ids[out.finding.fingerprint], work_item_id=work_item)
-                session.add(row)
-            row.comment_id = comment_id
-            row.payload_hash = digest
-            await session.commit()
+        await store.record_ado_sync(run_ids[out.finding.fingerprint], work_item, comment_id, digest)

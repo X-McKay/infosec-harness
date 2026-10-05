@@ -15,6 +15,22 @@ import pytest
 pytestmark = pytest.mark.requires_temporal
 
 
+def _batch(batch_id, findings):
+    """A workflow start payload exactly as acceptance records it."""
+    from infosec_harness.workflows.payloads import BatchArgs
+
+    return BatchArgs(batch_id=batch_id, findings=findings,
+                     per_repo_concurrency=4).model_dump(mode="json")
+
+
+async def _accept(batch_id, findings, label, payload):
+    from infosec_harness.persistence import lifecycle
+    from infosec_harness.workflows.submission import accepted_agent_config_digests
+
+    await lifecycle.accept_batch(batch_id, findings, label, payload,
+                                 agent_config_digests=accepted_agent_config_digests())
+
+
 @pytest.fixture
 def fixture_repo(tmp_path):
     repo = str(tmp_path / "harness-itest")
@@ -100,12 +116,18 @@ async def test_batch_workflow_end_to_end(temporal_cli, fixture_repo, monkeypatch
                                       plugins=[PydanticAIPlugin()])
         finding = FindingInput(title="SQLi in lookup", repo_url=fixture_repo, revision="HEAD",
                                file_path="app.py", start_line=2, cwe="CWE-89", severity="high")
+        # Every batch is durable: there is no batch-less, unaccounted workflow input.
+        from infosec_harness.persistence import db
+
+        await db.create_all()
+        batch_id = f"itest-{uuid.uuid4().hex[:12]}"
+        payload = _batch(batch_id, [finding])
+        await _accept(batch_id, [finding], "End to end", payload)
         async with Worker(client, task_queue="triage", workflows=WORKFLOWS, activities=ALL_ACTIVITIES):
             from infosec_harness.workflows.workflows import TriageBatchWorkflow
 
             out = await client.execute_workflow(
-                TriageBatchWorkflow.run, {"findings": [finding.model_dump()]},
-                id=f"itest-{uuid.uuid4()}", task_queue="triage",
+                TriageBatchWorkflow.run, payload, id=f"batch:{batch_id}", task_queue="triage",
             )
         assert len(out) == 1
         run = out[0]
@@ -114,6 +136,12 @@ async def test_batch_workflow_end_to_end(temporal_cli, fixture_repo, monkeypatch
         agents = [i.agent for i in run.invocations]
         assert "context" in agents and "verdict" in agents
         assert run.result.fingerprint == run.finding.fingerprint
+        # Stub calls settle exactly against the batch ledger, so the stored usage is whole.
+        from infosec_harness.persistence import store
+
+        detail = await store.get_run(store.run_id(batch_id, run.finding.fingerprint))
+        assert detail["telemetry"]["accounting_complete"] is True
+        assert detail["telemetry"]["total_tokens"] is not None
     finally:
         await env.shutdown()
 
@@ -130,7 +158,7 @@ async def test_durable_acceptance_restart_results_and_history_replay(temporal_cl
     from temporalio.worker import Replayer, Worker
 
     from infosec_harness.domain.models import FindingInput
-    from infosec_harness.persistence import db, lifecycle, store
+    from infosec_harness.persistence import db, store
     from infosec_harness.sandbox import docker
     from infosec_harness.settings import get_settings
     from infosec_harness.workflows.activities import ALL_ACTIVITIES
@@ -148,8 +176,8 @@ async def test_durable_acceptance_restart_results_and_history_replay(temporal_cl
     batch_id = f"recovery-{uuid.uuid4().hex[:10]}"
     finding = FindingInput(title="Recovery fixture", repo_url=fixture_repo, file_path="app.py",
                            start_line=2, cwe="CWE-89", severity="high")
-    payload = {"batch_id": batch_id, "findings": [finding.model_dump(mode="json")]}
-    await lifecycle.accept_batch(batch_id, [finding, finding], "Recovery", payload)
+    payload = _batch(batch_id, [finding])
+    await _accept(batch_id, [finding, finding], "Recovery", payload)
     env = await WorkflowEnvironment.start_local(dev_server_existing_path=temporal_cli)
     try:
         client = await Client.connect(env.client.service_client.config.target_host,
@@ -187,11 +215,11 @@ async def test_finding_failure_preserves_completed_invocations_and_budget_reason
 
     from infosec_harness.domain.models import FindingInput, InconclusiveReason
     from infosec_harness.integrations import ado
-    from infosec_harness.persistence import db, lifecycle, store
+    from infosec_harness.persistence import db, store
     from infosec_harness.sandbox import docker
     from infosec_harness.settings import get_settings
+    from infosec_harness.workflows import temporal_ops
     from infosec_harness.workflows.activities import ALL_ACTIVITIES
-    from infosec_harness.workflows.temporal_ops import TemporalOps
     from infosec_harness.workflows.worker import WORKFLOWS
     from infosec_harness.workflows.workflows import TriageBatchWorkflow
 
@@ -208,20 +236,20 @@ async def test_finding_failure_preserves_completed_invocations_and_budget_reason
         return 9002
 
     monkeypatch.setattr(ado, "post_or_update_comment", fake_post)
-    original = TemporalOps._run_agent
+    original = temporal_ops.run_recorded
 
-    async def fail_verdict(self, name, prompt, deps):
+    async def fail_verdict(agent, name, *args, **kwargs):
         if name == "verdict":
             raise UsageLimitExceeded("finding-stage root budget exhausted")
-        return await original(self, name, prompt, deps)
+        return await original(agent, name, *args, **kwargs)
 
-    monkeypatch.setattr(TemporalOps, "_run_agent", fail_verdict)
+    monkeypatch.setattr(temporal_ops, "run_recorded", fail_verdict)
     await db.create_all()
     batch_id = f"partial-{uuid.uuid4().hex[:10]}"
     finding = FindingInput(title="Partial finding", repo_url=fixture_repo, file_path="app.py",
                            start_line=2, cwe="CWE-89", severity="high", ado_work_item_id=43)
-    payload = {"batch_id": batch_id, "findings": [finding.model_dump(mode="json")]}
-    await lifecycle.accept_batch(batch_id, [finding], "Partial failure", payload)
+    payload = _batch(batch_id, [finding])
+    await _accept(batch_id, [finding], "Partial failure", payload)
     env = await WorkflowEnvironment.start_local(dev_server_existing_path=temporal_cli)
     try:
         client = await Client.connect(env.client.service_client.config.target_host,
@@ -250,7 +278,7 @@ async def test_cancellation_during_optional_writeback_cancels_batch(temporal_cli
 
     from infosec_harness.domain.models import FindingInput
     from infosec_harness.integrations import ado
-    from infosec_harness.persistence import db, lifecycle, store
+    from infosec_harness.persistence import db, store
     from infosec_harness.sandbox import docker
     from infosec_harness.settings import get_settings
     from infosec_harness.workflows.activities import ALL_ACTIVITIES
@@ -276,8 +304,8 @@ async def test_cancellation_during_optional_writeback_cancels_batch(temporal_cli
     batch_id = f"writeback-cancel-{uuid.uuid4().hex[:10]}"
     finding = FindingInput(title="Blocked writeback", repo_url=fixture_repo, file_path="app.py",
                            start_line=2, cwe="CWE-89", severity="high", ado_work_item_id=44)
-    payload = {"batch_id": batch_id, "findings": [finding.model_dump(mode="json")]}
-    await lifecycle.accept_batch(batch_id, [finding], "Blocked writeback", payload)
+    payload = _batch(batch_id, [finding])
+    await _accept(batch_id, [finding], "Blocked writeback", payload)
     env = await WorkflowEnvironment.start_local(dev_server_existing_path=temporal_cli)
     try:
         client = await Client.connect(env.client.service_client.config.target_host,
@@ -304,7 +332,7 @@ async def test_durable_polyglot_components_prepare_independent_environments(temp
     from temporalio.worker import Worker
 
     from infosec_harness.domain.models import FindingInput
-    from infosec_harness.persistence import db, lifecycle, store
+    from infosec_harness.persistence import db, store
     from infosec_harness.sandbox import docker
     from infosec_harness.settings import get_settings
     from infosec_harness.workflows.activities import ALL_ACTIVITIES
@@ -328,8 +356,8 @@ async def test_durable_polyglot_components_prepare_independent_environments(temp
     findings = [FindingInput(title=path, repo_url=fixture_repo, file_path=path, start_line=1,
                               cwe="CWE-89", severity="high")
                 for path in ("services/api/app.py", "web/app.js")]
-    payload = {"batch_id": batch_id, "findings": [f.model_dump(mode="json") for f in findings]}
-    await lifecycle.accept_batch(batch_id, findings, "Component fixture", payload)
+    payload = _batch(batch_id, findings)
+    await _accept(batch_id, findings, "Component fixture", payload)
     env = await WorkflowEnvironment.start_local(dev_server_existing_path=temporal_cli)
     try:
         client = await Client.connect(env.client.service_client.config.target_host,

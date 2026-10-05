@@ -16,6 +16,7 @@ from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedMode
 from pydantic_ai.messages import ModelResponse, TextPart
 from test_broker_executor import request_fixture, signed
 
+from infosec_harness.inference import diagnostics
 from infosec_harness.inference import executor as module
 from infosec_harness.inference.codec import encode_response
 from infosec_harness.inference.executor import Executor, OpenAIInference
@@ -51,14 +52,14 @@ async def test_postclaim_failure_logs_only_fixed_stage_category_and_never_retrie
         raise BrokerError("invalid_response", SECRET)
 
     core = Executor(settings, ledger=SimpleNamespace(claim=claim, complete=complete), infer=infer, clock=lambda: 100)
-    caplog.set_level(logging.WARNING, logger=module.__name__)
+    caplog.set_level(logging.WARNING, logger=diagnostics.__name__)
     body, headers = signed(request, settings)
     with pytest.raises(BrokerError) as error:
         await core.handle("/v1/infer", body, headers)
     assert error.value.code == "completion_unknown"
     assert calls == (["claim", "infer"] if stage == "inference" else ["claim", "infer", "complete"])
-    assert [record.getMessage() for record in caplog.records if record.name == module.__name__] == [
-        f"IH_INFERENCE_FAILURE stage={stage} category={category}"]
+    assert [record.getMessage() for record in caplog.records if record.name == diagnostics.__name__] == [
+        f"IH_INFERENCE_FAILURE boundary={stage} category={category}"]
     assert SECRET not in caplog.text
     assert request.request_id not in caplog.text
     assert settings.ingress_key_hex not in caplog.text
@@ -90,7 +91,7 @@ async def test_actual_sdk_failure_stage_is_distinguished_without_secret_leakage(
 
     if failure == "codec":
         monkeypatch.setattr(module, "encode_response", reject_codec)
-    caplog.set_level(logging.WARNING, logger=module.__name__)
+    caplog.set_level(logging.WARNING, logger=diagnostics.__name__)
     inference = OpenAIInference(request.contract, "openshell:resolve:env:MOCK_TOKEN",
                                http_transport=httpx2.MockTransport(respond))
     with pytest.raises((APIConnectionError, APIResponseValidationError, ValidationError,
@@ -98,8 +99,8 @@ async def test_actual_sdk_failure_stage_is_distinguished_without_secret_leakage(
         await inference(request)
     assert calls == ["provider"]
     stage = "response_codec" if failure == "codec" else "provider_request"
-    assert [record.getMessage() for record in caplog.records if record.name == module.__name__] == [
-        f"IH_INFERENCE_FAILURE stage={stage} category={category}"]
+    assert [record.getMessage() for record in caplog.records if record.name == diagnostics.__name__] == [
+        f"IH_INFERENCE_FAILURE boundary={stage} category={category}"]
     assert SECRET not in caplog.text
     assert request.request_id not in caplog.text
     assert all(record.exc_info is None for record in caplog.records)
@@ -109,7 +110,7 @@ def test_unrecognized_secret_exception_stays_internal():
     class SecretException(RuntimeError):
         pass
 
-    assert module._failure_category(SecretException(SECRET), "inference") == "internal"
+    assert diagnostics.failure_category("inference", SecretException(SECRET)) == "internal"
 
 
 @pytest.mark.parametrize("failure,category", [("read", "read_timeout"), ("wall", "wall_timeout")])
@@ -220,11 +221,11 @@ async def test_postclaim_cancellation_is_recorded_then_propagates(caplog):
 
     core = Executor(settings, ledger=SimpleNamespace(claim=claim, complete=complete), infer=infer,
                     clock=lambda: 100)
-    caplog.set_level(logging.WARNING, logger=module.__name__)
+    caplog.set_level(logging.WARNING, logger=diagnostics.__name__)
     body, headers = signed(request, settings)
     with pytest.raises(asyncio.CancelledError):
         await core.handle("/v1/infer", body, headers)
     assert calls == ["claim", "infer"]
-    assert [record.getMessage() for record in caplog.records if record.name == module.__name__] == [
-        "IH_INFERENCE_FAILURE stage=inference category=cancelled"]
+    assert [record.getMessage() for record in caplog.records if record.name == diagnostics.__name__] == [
+        "IH_INFERENCE_FAILURE boundary=inference category=cancelled"]
     assert SECRET not in caplog.text

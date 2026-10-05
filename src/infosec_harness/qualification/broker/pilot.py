@@ -12,36 +12,22 @@ import subprocess
 import sys
 import time
 import uuid
-from contextlib import suppress
 from pathlib import Path
 
 from infosec_harness.qualification.broker.runner import phase_environment, prepare_case
+from infosec_harness.qualification.broker.support import private_write, reap
 from infosec_harness.qualification.broker.validators import (
     CASES,
     ROOT,
+    SELECTOR_FOR_PHASE,
     RealProviderManifest,
     claim_phase,
-    private_write,
     selected_phases,
     sha256_file,
     verify_baseline_report,
     verify_configuration,
     verify_source,
 )
-
-SELECTORS = {"direct": "direct", "native-local": "local", "native-temporal": "temporal"}
-
-
-def reap(process: subprocess.Popen) -> bool:
-    with suppress(ProcessLookupError):
-        process.terminate()
-    try:
-        process.wait(timeout=20)
-    except subprocess.TimeoutExpired:
-        with suppress(ProcessLookupError):
-            process.kill()
-        process.wait(timeout=5)
-    return process.poll() is not None
 
 
 def run_phase(phase: str, frozen_path: Path, phase_path: Path, values: dict, deadline: float) -> dict:
@@ -53,7 +39,7 @@ def run_phase(phase: str, frozen_path: Path, phase_path: Path, values: dict, dea
         with log_path.open("wb") as log:
             log_path.chmod(0o600)
             process = subprocess.Popen([sys.executable, "-m", "infosec_harness.qualification.broker.runner",
-                SELECTORS[phase], "--manifest", str(frozen_path), "--report", str(phase_path)],
+                SELECTOR_FOR_PHASE[phase], "--manifest", str(frozen_path), "--report", str(phase_path)],
                 cwd=ROOT, env=values, stdout=log, stderr=log)
             entry["exit_code"] = process.wait(timeout=max(1, deadline - time.monotonic()))
         phase_report = json.loads(phase_path.read_text()) if phase_path.exists() else {}
@@ -64,7 +50,7 @@ def run_phase(phase: str, frozen_path: Path, phase_path: Path, values: dict, dea
         entry["failure_type"] = "QualificationInterrupted"
     finally:
         if process is not None:
-            entry["child_reaped"] = reap(process) if process.poll() is None else True
+            entry["child_reaped"] = reap(process, grace=20) if process.poll() is None else True
     return entry
 
 

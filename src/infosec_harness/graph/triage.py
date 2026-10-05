@@ -33,8 +33,10 @@ from infosec_harness.domain.models import (
     Verdict,
     VerdictFacts,
     VerdictLabel,
+    inconclusive_verdict,
 )
 from infosec_harness.graph.ops import Ops
+from infosec_harness.graph.prepare import revise_environment, smoke_test
 from infosec_harness.graph.scoring import PreFilterResult, pre_filter, priority_band, priority_score
 from infosec_harness.repo.access import RepositoryAccessError, validate_code_ref
 from infosec_harness.sandbox.canary import parse_control_result
@@ -95,18 +97,6 @@ class TriageState:
     def deps(self, facts: VerdictFacts | None = None) -> AgentDeps:
         return AgentDeps(repo_path=self.prepared.snapshot.path, sandbox_image=self.image_tag,
                          facts=facts, source_files=self.source_files)
-
-
-def failed_outcome(error: BaseException, agent: str) -> AgentOutcome:
-    """The record of an agent call that raised: the outcome its Ops attached, or a bare one.
-
-    Ops implementations attach the partial accounting they could observe (requests, tokens,
-    tools) as ``error.agent_outcome``; without it the call is still recorded, as unmeasured.
-    """
-    attached = getattr(error, "agent_outcome", None)
-    if isinstance(attached, AgentOutcome):
-        return attached
-    return AgentOutcome(output=None, agent=agent, failure=type(error).__name__)
 
 
 def _validate_context_citations(state: TriageState, context: FindingContext) -> FindingContext:
@@ -189,8 +179,7 @@ class GatherContext(BaseNode[TriageState, TriageDeps, TriageResult]):
             "reachability, and the target callable a unit test should drive.",
             {"finding": s.finding}, stack=s.stack, profile=s.profile,
         )
-        outcome = await ctx.deps.ops.run_agent("context", prompt, s.deps())
-        s.invocations.append(outcome)
+        outcome = await ctx.deps.ops.run_agent("context", prompt, s.deps(), record=s.invocations)
         s.context = _validate_context_citations(s, outcome.output)
         return PlanProbe()
 
@@ -205,8 +194,8 @@ class PlanProbe(BaseNode[TriageState, TriageDeps, TriageResult]):
             "Plan a targeted unit-test probe and define its deterministic oracle.",
             {"finding": s.finding, "finding_context": s.context}, stack=s.stack, profile=s.profile,
         )
-        outcome = await ctx.deps.ops.run_agent("probe-planner", prompt, s.deps())
-        s.invocations.append(outcome)
+        outcome = await ctx.deps.ops.run_agent("probe-planner", prompt, s.deps(),
+                                               record=s.invocations)
         s.plan = outcome.output
         return AuthorProbe()
 
@@ -223,8 +212,8 @@ class AuthorProbe(BaseNode[TriageState, TriageDeps, TriageResult]):
             {"finding": s.finding, "finding_context": s.context, "probe_plan": s.plan,
              "oracle_nonce": s.nonce}, stack=s.stack, profile=s.profile,
         )
-        outcome = await ctx.deps.ops.run_agent("probe-author", prompt, s.deps())
-        s.invocations.append(outcome)
+        outcome = await ctx.deps.ops.run_agent("probe-author", prompt, s.deps(),
+                                               record=s.invocations)
         s.probe = outcome.output
         return ExecuteProbe()
 
@@ -329,8 +318,8 @@ class DiagnoseProbe(BaseNode[TriageState, TriageDeps, TriageResult]):
             {"probe_plan": s.plan, "probe_source": s.probe, "probe_execution": execution},
             stack=s.stack, profile=s.profile,
         )
-        outcome = await ctx.deps.ops.run_agent("probe-diagnosis", prompt, s.deps())
-        s.invocations.append(outcome)
+        outcome = await ctx.deps.ops.run_agent("probe-diagnosis", prompt, s.deps(),
+                                               record=s.invocations)
         s.last_diagnosis = _ground_zero_test_diagnosis(
             _correct_unsupported_negative(outcome.output, execution), execution)
         if (s.last_diagnosis.kind == DiagnosisKind.probe_defect
@@ -359,8 +348,8 @@ class RepairProbe(BaseNode[TriageState, TriageDeps, TriageResult]):
              "probe_execution": s.executions[-1], "diagnosis": s.last_diagnosis,
              "oracle_nonce": s.nonce}, stack=s.stack, profile=s.profile,
         )
-        outcome = await ctx.deps.ops.run_agent("probe-repair", prompt, s.deps())
-        s.invocations.append(outcome)
+        outcome = await ctx.deps.ops.run_agent("probe-repair", prompt, s.deps(),
+                                               record=s.invocations)
         s.probe = outcome.output
         return ExecuteProbe()
 
@@ -383,26 +372,16 @@ class RepairEnvironment(BaseNode[TriageState, TriageDeps, TriageResult]):
         s = ctx.state
         s.environment_repairs += 1
         execution = s.executions[-1]
-        outcome = await ctx.deps.ops.run_agent(
-            "build-repair",
-            render_prompt(
-                "The image built and smoke-tested clean, but running the probe showed the "
-                "environment is missing something the test needs. Return a revised "
-                "EnvironmentSpec that installs it. Keep the test command's selector, flags and "
-                "paths as they are: the probe is not at fault and will be re-run unchanged.",
-                {"failed_spec": s.spec, "build_error": execution.stderr_tail or execution.stdout_tail,
-                 "probe_source": s.probe, "diagnosis": s.last_diagnosis,
-                 "previous_attempts": [s.spec.model_dump()]},
-                stack=s.stack, profile=s.profile,
-            ),
-            AgentDeps(repo_path=s.prepared.snapshot.path, sandbox_image=s.spec.base_image,
-                      source_files=s.source_files),
-        )
-        s.invocations.append(outcome)
-        if outcome.output == s.spec:
+        revised = await revise_environment(
+            ctx.deps.ops, "build-repair", _PROBE_ENVIRONMENT_REPAIR,
+            {"build_error": execution.stderr_tail or execution.stdout_tail,
+             "probe_source": s.probe, "diagnosis": s.last_diagnosis},
+            failed_spec=s.spec, tried=[s.spec], snapshot=s.prepared.snapshot, stack=s.stack,
+            profile=s.profile, record=s.invocations)
+        if revised is None:
             s.early_exit = "environment_repair_no_progress"
             return Decide()
-        build = await ctx.deps.ops.build_environment(s.prepared.snapshot, outcome.output)
+        build = await ctx.deps.ops.build_environment(s.prepared.snapshot, revised)
         if not build.ok:
             # Nothing is retried from here. The prepared environment stays as it was, so the
             # recorded spec still describes the image the probe actually ran in.
@@ -410,14 +389,19 @@ class RepairEnvironment(BaseNode[TriageState, TriageDeps, TriageResult]):
             return Decide()
         # The runner is re-verified because a revised spec may change the base image, and a
         # missing runner at probe time reads as exit 127 -- a probe defect that is not one.
-        smoke = await ctx.deps.ops.smoke_test(build.image_tag, build.spec.test_command,
-                                              language=s.stack.top_language,
-                                              module_path=build.spec.module_path or "")
+        smoke = await smoke_test(ctx.deps.ops, build, s.stack)
         if not smoke.ok:
             s.early_exit = "environment_repair_failed"
             return Decide()
         s.prepared = s.prepared.model_copy(update={"build": build, "smoke": smoke})
         return ExecuteProbe()
+
+
+_PROBE_ENVIRONMENT_REPAIR = (
+    "The image built and smoke-tested clean, but running the probe showed the environment is "
+    "missing something the test needs. Return a revised EnvironmentSpec that installs it. Keep "
+    "the test command's selector, flags and paths as they are: the probe is not at fault and "
+    "will be re-run unchanged.")
 
 
 @dataclass
@@ -438,12 +422,10 @@ class Decide(BaseNode[TriageState, TriageDeps, TriageResult]):
         )
         # Deterministic inconclusive when the probe never ran honestly within budget.
         if diagnosis and diagnosis.kind == DiagnosisKind.probe_defect:
-            verdict = Verdict(
-                label=VerdictLabel.inconclusive, confidence=0.3,
-                rationale="The probe could not be made to run honestly within the repair budget: "
-                + diagnosis.explanation,
-                inconclusive_reason=InconclusiveReason.probe_unrepairable,
-            )
+            verdict = inconclusive_verdict(
+                InconclusiveReason.probe_unrepairable,
+                "The probe could not be made to run honestly within the repair budget: "
+                + diagnosis.explanation, confidence=0.3)
             s.early_exit = "probe_unrepairable"
             return End(_finalize(s, verdict, reachability))
         prompt = render_prompt(
@@ -454,22 +436,19 @@ class Decide(BaseNode[TriageState, TriageDeps, TriageResult]):
             stack=s.stack, profile=s.profile,
         )
         try:
-            outcome = await ctx.deps.ops.run_agent("verdict", prompt, s.deps(facts=facts))
+            outcome = await ctx.deps.ops.run_agent("verdict", prompt, s.deps(facts=facts),
+                                                   record=s.invocations)
         except UnexpectedModelBehavior as e:
             # The judge could not produce a verdict the evidence contract accepts within its
             # retry budget. `inconclusive` is precisely the answer the three-way contract
             # reserves for "the evidence does not support a call", so return it rather than
             # failing the finding — and, in a batch, every finding behind it. The failed call
-            # still spent requests and tokens, so it is recorded, with whatever usage it had.
-            s.invocations.append(failed_outcome(e, "verdict"))
-            verdict = Verdict(
-                label=VerdictLabel.inconclusive, confidence=0.0,
-                rationale=f"The verdict agent could not satisfy the evidence contract: {e}",
-                inconclusive_reason=InconclusiveReason.error,
-            )
+            # is already in the record, with whatever usage it had.
+            verdict = inconclusive_verdict(
+                InconclusiveReason.error,
+                f"The verdict agent could not satisfy the evidence contract: {e}")
             s.early_exit = "verdict_contract_unsatisfied"
             return End(_finalize(s, verdict, reachability))
-        s.invocations.append(outcome)
         verdict = _validate_verdict_citations(s, outcome.output)
         # Fail closed: a missing or unparseable control record is not a passed control.
         controls = parse_control_result(s.prepared.smoke.output_excerpt) if s.prepared.smoke else None
@@ -478,15 +457,11 @@ class Decide(BaseNode[TriageState, TriageDeps, TriageResult]):
                 and (diagnosis is None or diagnosis.kind is not DiagnosisKind.valid_negative
                      or not last_exec or not last_exec.sink_returned
                      or not controls_passed)):
-            verdict = Verdict(
-                label=VerdictLabel.inconclusive,
-                confidence=0.0,
-                rationale=("A negative security judgment was rejected because the run did not "
-                           "have both a valid negative execution that completed the sink call "
-                           "and passing versioned positive/negative adapter controls."),
-                inconclusive_reason=InconclusiveReason.conflicting_evidence,
-                evidence=verdict.evidence,
-            )
+            verdict = inconclusive_verdict(
+                InconclusiveReason.conflicting_evidence,
+                "A negative security judgment was rejected because the run did not have both a "
+                "valid negative execution that completed the sink call and passing versioned "
+                "positive/negative adapter controls.", evidence=verdict.evidence)
             s.early_exit = "unsupported_negative"
         return End(_finalize(s, verdict, reachability))
 

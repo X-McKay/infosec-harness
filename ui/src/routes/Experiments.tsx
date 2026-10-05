@@ -1,4 +1,4 @@
-import { queries } from "@/api/queries";
+import { EXPERIMENT_PAGE_SIZE, queries } from "@/api/queries";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "@tanstack/react-router";
@@ -7,8 +7,10 @@ import { Freshness, QueryState } from "@/components/QueryState";
 import { ExperimentContent } from "@/components/evaluations/ExperimentReport";
 
 export function Experiments() {
-  const listQuery = useQuery(queries.experiments());
-  const experiments = listQuery.data || [];
+  const [offset, setOffset] = useState(0);
+  const listQuery = useQuery(queries.experiments(offset));
+  const page = listQuery.data;
+  const experiments = page?.items || [];
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = selectedId
     ? experiments.find((item) => item.id === selectedId)
@@ -58,7 +60,8 @@ export function Experiments() {
           </p>
           <p className="mt-2">
             Evaluation results appear here when an evaluation writes to this
-            API’s database. Qualification evidence is available separately in{" "}
+            API’s database. Accepted agent qualification evidence is committed
+            under <code>evals/baselines/</code>; runtime observations are under{" "}
             <Link to="/qualification" className="text-primary underline">
               Qualification
             </Link>
@@ -67,6 +70,39 @@ export function Experiments() {
           <p className="mt-2 text-xs">
             Use Refresh to check for new evaluations.
           </p>
+        </div>
+      )}
+      {page && page.total > page.limit && (
+        <div className="flex items-center justify-between gap-3 text-sm">
+          <p className="text-muted-foreground">
+            Experiments {page.offset + 1}–{page.offset + experiments.length} of{" "}
+            {page.total}, newest first. Comparisons use this page only.
+          </p>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              disabled={offset === 0 || listQuery.isFetching}
+              onClick={() => {
+                setSelectedId(null);
+                setOffset(Math.max(0, offset - EXPERIMENT_PAGE_SIZE));
+              }}
+            >
+              Newer
+            </Button>
+            <Button
+              variant="outline"
+              disabled={
+                page.offset + experiments.length >= page.total ||
+                listQuery.isFetching
+              }
+              onClick={() => {
+                setSelectedId(null);
+                setOffset(offset + EXPERIMENT_PAGE_SIZE);
+              }}
+            >
+              Older
+            </Button>
+          </div>
         </div>
       )}
       {experiments.length > 0 && (

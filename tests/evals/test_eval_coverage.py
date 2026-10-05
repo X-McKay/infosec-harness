@@ -12,23 +12,28 @@ case whose tag is a typo, fails the ordinary test run rather than surfacing at r
 import pytest
 import yaml
 
-from infosec_harness.evals.coverage import (
-    CATEGORIES,
-    coverage_for,
-    scenario_coverage,
-    scenarios_for,
-)
-from infosec_harness.evals.dataset import agents_with_datasets, default_dataset_path, load_dataset
-from infosec_harness.evals.gates import load_policy, policy_problems
+from infosec_harness.evals.coverage import scenario_coverage, scenarios_for
+from infosec_harness.evals.dataset import load_dataset
+from infosec_harness.settings import get_settings
 
-AGENTS = agents_with_datasets()
+AGENTS = sorted(p.parents[1].name
+                for p in get_settings().agents_dir.glob("*/evals/dataset.yaml"))
+# The dataset categories the playbook names. Every case declares exactly one, so a dataset can
+# be read for what it actually exercises rather than inferred from case names.
+CATEGORIES = ("smoke", "regression", "capability", "safety", "adversarial", "durability")
 
 
 def load_cases(agent):
     return load_dataset(agent).cases
 
 
-dataset_path = default_dataset_path
+def coverage_for(agent):
+    """Coverage of the agent's own packaged dataset, exactly as a full run computes it."""
+    return scenario_coverage(agent, load_cases(agent))
+
+
+def dataset_path(agent):
+    return load_dataset(agent).path
 
 
 def test_every_agent_has_a_dataset():
@@ -116,13 +121,6 @@ def test_the_dataset_declares_the_schema_version_the_loader_expects(agent):
 def test_case_names_are_unique_within_a_dataset(agent):
     names = [c["name"] for c in load_cases(agent)]
     assert len(names) == len(set(names)), f"{agent}: duplicate case names"
-
-
-@pytest.mark.parametrize("agent", AGENTS)
-def test_every_check_in_the_release_policy_can_be_measured_and_can_fail(agent):
-    """A gate on a metric the run never publishes, or on execution evidence the dataset never
-    declares, is compared against nothing or against a constant zero."""
-    assert policy_problems(load_policy(agent), load_cases(agent)) == []
 
 
 def test_coverage_is_of_the_cases_a_run_used_not_the_whole_dataset():

@@ -153,8 +153,8 @@ async def test_canonical_registry_resolves_current_atomic_spec_through_mock_open
     import openai
 
     from infosec_harness.agents import models as model_factory
-    from infosec_harness.agents.intake_contracts import render_intake_prompt
     from infosec_harness.agents.registry import build_agent
+    from infosec_harness.agents.render import render_intake_prompt
     from infosec_harness.settings import get_settings
 
     report = 'file: "src\\app.py"\n'

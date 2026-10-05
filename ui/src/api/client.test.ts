@@ -24,7 +24,7 @@ test("API read methods enforce operational data even for caller overrides", asyn
   await api.runPage({ ...override, limit: 25, batch_id: null });
   await api.run("run / id");
   await api.batches();
-  await api.experiments();
+  await api.experiments({ offset: 25, limit: 25 });
   await api.experiment("experiment / id");
   assert.equal(paths.length, 7);
   for (const path of paths) {
@@ -36,12 +36,15 @@ test("API read methods enforce operational data even for caller overrides", asyn
   const page = new URL(paths[2], "http://test.invalid");
   assert.equal(page.searchParams.get("limit"), "25");
   assert.equal(page.searchParams.has("batch_id"), false);
+  const experiments = new URL(paths[5], "http://test.invalid");
+  assert.equal(experiments.pathname, "/api/experiments");
+  assert.equal(experiments.searchParams.get("offset"), "25");
+  assert.equal(experiments.searchParams.get("limit"), "25");
 });
 
 test("unscoped status reads and review writes carry no population parameter", async () => {
   const paths = record();
   await api.runtimeStatus();
-  await api.qualification();
   await api.config();
   await api.review("run / id", {
     reviewer: "analyst",
@@ -50,7 +53,6 @@ test("unscoped status reads and review writes carry no population parameter", as
   });
   assert.deepEqual(paths, [
     "/api/runtime-status",
-    "/api/qualification",
     "/api/config",
     "/api/runs/run%20%2F%20id/review",
   ]);

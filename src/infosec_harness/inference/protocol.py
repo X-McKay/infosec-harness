@@ -5,18 +5,21 @@ Canonical digests include payloads, never authentication or provider secret mate
 """
 from __future__ import annotations
 
-import json
+import importlib.metadata
 import re
-import unicodedata
-from typing import Any, Literal, get_args
+from enum import StrEnum
+from functools import cache
+from typing import Annotated, Any, ClassVar, Literal, get_args
 from urllib.parse import urlsplit
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     ConfigDict,
     Field,
     StrictBool,
     StrictInt,
+    ValidationError,
     field_validator,
     model_validator,
 )
@@ -27,8 +30,23 @@ PROTOCOL_VERSION = "ih-inference-v1"
 MAX_BODY_BYTES = 4 * 1024 * 1024
 DIGEST_PATTERN = SHA256_PATTERN
 IMAGE_DIGEST_PATTERN = r"^sha256:[0-9a-f]{64}$"
+ENV_NAME_PATTERN = r"^[A-Za-z_][A-Za-z0-9_]*$"
+LOGICAL_NAME_PATTERN = r"^[a-z][a-z0-9._-]{0,63}$"
+NATIVE_NAME_PATTERN = r"^[A-Za-z0-9._-]{1,128}$"
 OpenShellVersion = Literal["0.1.2"]
 OPENSHELL_VERSION: str = get_args(OpenShellVersion)[0]
+
+# Worker paths are HMAC-signed (``auth.sign_request``); ledger paths carry only the native
+# lease Bearer key and are never signed.
+INFER_PATH = "/v1/infer"
+INVOCATIONS_PATH = "/v1/invocations"
+RESULTS_PATH = "/v1/results"
+RUN_CLOSE_PATH = "/v1/runs/close"
+LEDGER_CLAIM_PATH = "/v1/ledger/claim"
+LEDGER_COMPLETE_PATH = "/v1/ledger/complete"
+SIGNED_PATHS: frozenset[str] = frozenset({INFER_PATH, INVOCATIONS_PATH, RESULTS_PATH, RUN_CLOSE_PATH})
+# The executor's environment name for its native ledger credential placeholder.
+LEDGER_CREDENTIAL_ENV = "IH_LEDGER_TOKEN"
 
 
 def fixed_https_url(value: str, *, require_origin: bool = False,
@@ -59,8 +77,46 @@ def fixed_https_url(value: str, *, require_origin: bool = False,
     return value.rstrip("/")
 
 
+# The shared field vocabulary of contracts, profiles, settings and provenance.
+EnvName = Annotated[str, Field(pattern=ENV_NAME_PATTERN)]
+LogicalName = Annotated[str, Field(pattern=LOGICAL_NAME_PATTERN)]
+NativeName = Annotated[str, Field(pattern=NATIVE_NAME_PATTERN)]
+Sha256 = Annotated[str, Field(pattern=DIGEST_PATTERN)]
+ImageDigest = Annotated[str, Field(pattern=IMAGE_DIGEST_PATTERN)]
+HttpsOrigin = Annotated[str, AfterValidator(lambda value: fixed_https_url(value, require_origin=True))]
+ProviderEndpoint = Annotated[str, AfterValidator(lambda value: fixed_https_url(value, require_path="/v1"))]
+
+
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
+
+
+def parse_model[M: BaseModel](cls: type[M], value: Any) -> M:
+    """Validate an untrusted wire object; any schema failure is a caller identity failure."""
+    try:
+        return cls.model_validate(value)
+    except ValidationError:
+        raise BrokerError("identity") from None
+
+
+# Closed diagnostic vocabulary: error responses may relay exactly this two-field object.
+DiagnosticBoundary = Literal["worker_controller", "json_channel", "provider_request", "server",
+                             "controller", "response_codec", "inference", "ledger_complete"]
+DiagnosticCategory = Literal["cancelled", "tls", "read_timeout", "connect_timeout", "remote_protocol",
+                             "wall_timeout", "network", "provider_status", "provider_schema", "codec",
+                             "ledger", "internal"]
+DIAGNOSTIC_BOUNDARIES: frozenset[str] = frozenset(get_args(DiagnosticBoundary))
+DIAGNOSTIC_CATEGORIES: frozenset[str] = frozenset(get_args(DiagnosticCategory))
+
+
+def sanitize_diagnostic(value: object) -> dict[str, str] | None:
+    """Untrusted observability only; no coercion, extra fields, or authority."""
+    if (type(value) is not dict or set(value) != {"boundary", "category"}
+            or type(value["boundary"]) is not str or type(value["category"]) is not str
+            or value["boundary"] not in DIAGNOSTIC_BOUNDARIES
+            or value["category"] not in DIAGNOSTIC_CATEGORIES):
+        return None
+    return {"boundary": value["boundary"], "category": value["category"]}
 
 
 class ExtensionBinding(StrictModel):
@@ -86,42 +142,56 @@ def validate_thinking_token_budget(
         raise ValueError("Thinking token budget must be below the effective output cap")
 
 
-class ExecutorContract(StrictModel):
-    protocol: Literal["ih-inference-v1"] = PROTOCOL_VERSION
-    backend: str = Field(min_length=1, max_length=64)
-    model: str = Field(min_length=1, max_length=256)
-    profile: str = Field(min_length=1, max_length=64)
-    profile_digest: str = Field(pattern=DIGEST_PATTERN)
-    endpoint: str
-    provider_binding: str = Field(min_length=1, max_length=64)
-    executor_image: str = Field(pattern=IMAGE_DIGEST_PATTERN)
-    supervisor_image: str = Field(pattern=IMAGE_DIGEST_PATTERN)
-    openshell_version: OpenShellVersion = OPENSHELL_VERSION
-    sdk_version: Literal["pydantic-ai-2.49.0"] = "pydantic-ai-2.49.0"
-    policy_digest: str = Field(pattern=DIGEST_PATTERN)
-    model_settings: dict[str, Any]
-    merge_system_messages: StrictBool = True
-    min_max_tokens: int = Field(default=0, ge=0, strict=True)
-    atomic_intake: StrictBool = False
+class ProviderAdaptation(BaseModel):
+    """Opt-in request adaptations shared by operator profiles and executor contracts.
+
+    Defaults are omitted from serialized identities, so profiles and contracts that never
+    opted in keep their historical digests.
+    """
+
     strict_closed_output_tools: StrictBool = Field(default=False, exclude_if=lambda value: value is False)
     enable_thinking: StrictBool | None = Field(default=None, exclude_if=lambda value: value is None)
     thinking_token_budget: int | None = Field(
         default=None, gt=0, strict=True, exclude_if=lambda value: value is None)
+
+    # A contract knows its effective output cap; a profile template does not.
+    _requires_output_cap: ClassVar[bool] = False
+
+    def _output_cap(self) -> Any:
+        return None
+
+    @model_validator(mode="after")
+    def thinking_budget_leaves_answer_room(self):
+        validate_thinking_token_budget(self.thinking_token_budget, self.enable_thinking,
+                                       self._output_cap(), require_output_cap=self._requires_output_cap)
+        return self
+
+
+class ExecutorContract(StrictModel, ProviderAdaptation):
+    protocol: Literal["ih-inference-v1"] = PROTOCOL_VERSION
+    backend: str = Field(min_length=1, max_length=64)
+    model: str = Field(min_length=1, max_length=256)
+    profile: str = Field(min_length=1, max_length=64)
+    profile_digest: Sha256
+    endpoint: ProviderEndpoint
+    provider_binding: str = Field(min_length=1, max_length=64)
+    executor_image: ImageDigest
+    supervisor_image: ImageDigest
+    openshell_version: OpenShellVersion = OPENSHELL_VERSION
+    sdk_version: Literal["pydantic-ai-2.49.0"] = "pydantic-ai-2.49.0"
+    policy_digest: Sha256
+    model_settings: dict[str, Any]
+    merge_system_messages: StrictBool = True
+    min_max_tokens: int = Field(default=0, ge=0, strict=True)
+    atomic_intake: StrictBool = False
     provider_retries: Literal[0] = 0
     credential_driver: Literal["native"] = "native"
     inspection: tuple[ExtensionBinding, ...] = ()
 
-    @model_validator(mode="after")
-    def thinking_budget_leaves_answer_room(self):
-        validate_thinking_token_budget(
-            self.thinking_token_budget, self.enable_thinking,
-            self.model_settings.get("max_tokens"), require_output_cap=True)
-        return self
+    _requires_output_cap: ClassVar[bool] = True
 
-    @field_validator("endpoint")
-    @classmethod
-    def endpoint_is_fixed_https(cls, value: str) -> str:
-        return fixed_https_url(value, require_path="/v1")
+    def _output_cap(self) -> Any:
+        return self.model_settings.get("max_tokens")
 
     @field_validator("inspection")
     @classmethod
@@ -142,7 +212,7 @@ class ReservationBinding(StrictModel):
     invocation_id: str = Field(min_length=1, max_length=255)
     operation_id: str = Field(min_length=1, max_length=512)
     agent: str = Field(min_length=1, max_length=48)
-    contract_digest: str = Field(pattern=DIGEST_PATTERN)
+    contract_digest: Sha256
     expires_at: float = Field(gt=0, strict=True)
 
 
@@ -161,11 +231,11 @@ class InferencePayload(StrictModel):
 
 class InferenceRequest(StrictModel):
     protocol: Literal["ih-inference-v1"] = PROTOCOL_VERSION
-    request_id: str = Field(pattern=DIGEST_PATTERN)
+    request_id: Sha256
     binding: ReservationBinding
     contract: ExecutorContract
     payload: InferencePayload
-    payload_digest: str = Field(pattern=DIGEST_PATTERN)
+    payload_digest: Sha256
 
     @model_validator(mode="after")
     def consistent(self) -> InferenceRequest:
@@ -178,40 +248,63 @@ class InferenceRequest(StrictModel):
         return self
 
 
-RequestState = Literal["accepted", "dispatch_intent", "completed", "failed_before_dispatch",
-                       "completion_unknown"]
+class RequestState(StrEnum):
+    """Persisted ledger states. Values are the stored strings; never rename them."""
+
+    ACCEPTED = "accepted"
+    DISPATCH_INTENT = "dispatch_intent"
+    COMPLETED = "completed"
+    FAILED_BEFORE_DISPATCH = "failed_before_dispatch"
+    COMPLETION_UNKNOWN = "completion_unknown"
+
+
 ErrorCode = Literal["auth", "policy", "identity", "budget", "expired", "conflict", "pending",
                     "completion_unknown", "unavailable", "invalid_response"]
 ERROR_CODES: frozenset[str] = frozenset(get_args(ErrorCode))
+# Infrastructure and in-flight dispositions: the identical request may be retried, bounded.
+RETRYABLE_CODES: frozenset[str] = frozenset({"unavailable", "pending"})
+# HTTP status of each disposition; anything unlisted is served as 503.
+ERROR_STATUS: dict[str, int] = {"auth": 401, "policy": 403, "identity": 400, "conflict": 409,
+                                "pending": 409, "completion_unknown": 409, "expired": 410}
 
 
 class BrokerError(RuntimeError):
     """Sanitized typed disposition: unknown completion is never retried as a fresh request."""
     def __init__(self, code: ErrorCode, message: str | None = None, *, diagnostic: object = None):
-        from .diagnostics import sanitize_diagnostic
-
         self.code = code
         self.diagnostic = sanitize_diagnostic(diagnostic)
         super().__init__(f"Inference broker: {code}" + (f"; {message}" if message else ""))
 
+    @staticmethod
+    def of(code: str, *, diagnostic: object = None) -> BrokerError:
+        """The worker-visible error: retryable codes keep their distinct activity-retry type."""
+        if code in RETRYABLE_CODES:
+            return TransientBrokerError(code, diagnostic=diagnostic)  # type: ignore[arg-type]
+        return BrokerError(code, diagnostic=diagnostic)  # type: ignore[arg-type]
+
 
 class TransientBrokerError(BrokerError):
-    """Bounded activity retry of the identical request; never a fresh dispatch identity."""
-    def __init__(self, code: Literal["unavailable", "pending"]):
-        if code not in {"unavailable", "pending"}:
+    """Bounded activity retry of the identical request; never a fresh dispatch identity.
+
+    Temporal classifies activity failures by exception type name, and ``BrokerError`` is a
+    non-retryable model-activity error type. This distinct type is what lets an unavailable
+    or pending model request retry within ``ACTIVITY_RETRY``.
+    """
+    def __init__(self, code: Literal["unavailable", "pending"], *, diagnostic: object = None):
+        if code not in RETRYABLE_CODES:
             raise ValueError("Only infrastructure/pending dispositions may retry")
-        super().__init__(code)
+        super().__init__(code, diagnostic=diagnostic)
 
 
 class DispatchPermit(StrictModel):
-    request_id: str = Field(pattern=DIGEST_PATTERN)
+    request_id: Sha256
     fence: str = Field(min_length=1, max_length=128)
     lease_id: str = Field(min_length=1, max_length=128)
 
 
 class InferenceResult(StrictModel):
     protocol: Literal["ih-inference-v1"] = PROTOCOL_VERSION
-    request_id: str = Field(pattern=DIGEST_PATTERN)
+    request_id: Sha256
     response: dict[str, Any]
     usage: dict[str, StrictInt] = Field(default_factory=dict)
     provenance: dict[str, Any] = Field(default_factory=dict)
@@ -225,76 +318,6 @@ def logical_request_id(binding: ReservationBinding, request_identity: str) -> st
                    "request": request_identity, "protocol": PROTOCOL_VERSION})
 
 
-def _ascii_normalized_size(value: Any, _depth: int = 0) -> int:
-    """Sum without normalizing mapping keys into collisions.
-
-    NFD decomposes every canonical equivalent before ASCII escaping. Taking the
-    larger original/NFD size covers original Jinja JSON and NFC UTF-8 bytes. JSON
-    punctuation/spacing and HTML-safe escaping are included, not guessed.
-    """
-    if _depth > 64:
-        raise BrokerError("policy", "Admission rendering exceeds nesting bound")
-    if isinstance(value, str):
-        sizes = []
-        # Some supplementary CJK compatibility characters decompose to one BMP
-        # character: NFD alone would shrink Jinja's original surrogate-pair JSON.
-        for text in (value, unicodedata.normalize("NFD", value)):
-            encoded = json.dumps(text, ensure_ascii=True)
-            for character, escape in (("<", "\\u003c"), (">", "\\u003e"),
-                                      ("&", "\\u0026"), ("'", "\\u0027")):
-                encoded = encoded.replace(character, escape)
-            sizes.append(len(encoded))
-        return max(sizes)
-    if isinstance(value, dict):
-        return 2 + sum(_ascii_normalized_size(key, _depth + 1) + 2 + _ascii_normalized_size(item, _depth + 1)
-                       for key, item in value.items()) + 2 * max(0, len(value) - 1)
-    if isinstance(value, (list, tuple)):
-        return 2 + sum(_ascii_normalized_size(item, _depth + 1) for item in value) + 2 * max(0, len(value) - 1)
-    try:
-        return len(json.dumps(value, ensure_ascii=True, allow_nan=False))
-    except (ValueError, TypeError, RecursionError) as exc:
-        raise BrokerError("policy", "Admission value cannot be rendered") from exc
-
-
-async def required_input_reserve(payload: InferencePayload, contract: ExecutorContract) -> int:
-    """Byte-BPE bound over actual SDK shaping, without provider I/O.
-
-    Requires operator qualification of the tokenizer AND chat template. This covers
-    the published Qwen3.6 tokenizer/template at revision
-    6c7f09d4036e97393f82e9f9ecd1a5c35ca5ee92: NFC + byte-level BPE gives at most
-    one token per normalized byte; all 26 special-token literals consume fewer tokens
-    than their byte lengths. The template's fixed tools/system/generation literals
-    total <2048 bytes, each role/thinking/tool-response envelope <128 bytes, each
-    function-call envelope <128 bytes, and each parameter envelope <64 bytes.
-    Content is emitted once; stripping/thinking extraction cannot increase it.
-
-    SDK schema expansion, return-schema descriptions, and retry formatting are
-    measured AFTER transformation. Jinja HTML-safe ASCII JSON is bounded by the larger original/NFD
-    escaped size. Parsed call arguments are additionally counted because vLLM
-    decodes their JSON before XML rendering. Unknown templates/tokenizers need
-    separate qualification; a model name is never runtime execution evidence.
-    Wire digests/identities remain unchanged. Existing held allocations must not be
-    released or dispatched under a different executor image/contract.
-    """
-    from .compat import input_wire
-
-    wire = await input_wire(payload, contract)
-    messages = wire["messages"]
-    reserve = _ascii_normalized_size(wire) + 2048 + 128 * len(messages)
-    for message in messages:
-        for call in message.get("tool_calls", []) or []:
-            function = call.get("function", {})
-            arguments = function.get("arguments", {})
-            try:
-                arguments = json.loads(arguments) if isinstance(arguments, str) else arguments
-            except (ValueError, TypeError, RecursionError) as exc:
-                raise BrokerError("policy", "Tool-call arguments cannot be rendered") from exc
-            if not isinstance(arguments, dict):
-                raise BrokerError("policy", "Tool-call arguments must be an object")
-            reserve += 128 + 64 * len(arguments) + _ascii_normalized_size(arguments)
-    return reserve
-
-
 class InvocationRequest(StrictModel):
     mode: Literal["local", "temporal", "eval"]
     root_id: str = Field(min_length=1, max_length=64)
@@ -306,8 +329,8 @@ class InvocationRequest(StrictModel):
     contract: ExecutorContract
 
 
-
+@cache
 def verify_sdk_version() -> None:
-    import importlib.metadata
+    """The installed SDK cannot change within a process; only a passing check is cached."""
     if importlib.metadata.version("pydantic-ai-slim") != "2.49.0":
         raise BrokerError("policy", "Broker protocol v1 requires PydanticAI 2.49.0")

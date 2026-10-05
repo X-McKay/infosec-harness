@@ -7,13 +7,10 @@ from pathlib import Path
 import pytest
 
 from infosec_harness.evals.adapters import defines_unevidenced_safety
-from infosec_harness.evals.dataset import load_dataset
 from infosec_harness.evals.gates import (
     agents_gated_on,
-    load_policy,
     parse_policy,
     policies,
-    policy_problems,
 )
 
 PATH = Path("release-policy.yaml")
@@ -77,13 +74,36 @@ def test_execution_evidence_is_gated_only_where_it_is_declared():
     assert agents_gated_on("execution_not_checked_count") == ("build-repair",)
 
 
-def test_policy_problems_name_gates_that_cannot_be_measured_or_cannot_fail():
-    recon = load_dataset("recon").cases
-    problems = policy_problems(
-        policy("recon", hard_gates={"unevidenced_safe_verdicts": 0,
-                                    "execution_failed_count": 0},
-               thresholds={"cache_hit_rate": {"min": 0.3}}), recon)
-    assert any("unevidenced_safe_verdicts is not a metric" in p for p in problems)
-    assert any("cache_hit_rate is not a metric" in p for p in problems)
-    assert any("execution_failed_count gates execution evidence" in p for p in problems)
-    assert policy_problems(load_policy("build-repair"), load_dataset("build-repair").cases) == []
+PROVENANCE = {"git_commit": "a" * 40, "agent_version": "1.0.0", "config_hash": "h",
+              "model": "m", "dataset_version": "3"}
+
+
+def test_required_provenance_must_be_present_for_any_verdict_but_failed():
+    """A pass nobody can attribute is not a pass: missing provenance fails closed."""
+    gate = policy(hard_gates={"a": 0}, required_provenance=list(PROVENANCE))
+    assert gate.evaluate({"a": 0}, provenance=PROVENANCE).status == "passed"
+    for key in PROVENANCE:
+        for absent in ({k: v for k, v in PROVENANCE.items() if k != key},
+                       {**PROVENANCE, key: None}, {**PROVENANCE, key: ""}):
+            missing = gate.evaluate({"a": 0}, provenance=absent)
+            assert missing.status == "not_checked"
+            assert missing.missing_provenance == (key,)
+            assert missing.as_report()["missing_provenance"] == [key]
+    assert gate.evaluate({"a": 0}).status == "not_checked", "no provenance at all is not a pass"
+    # A measured failure is still reported as a failure.
+    assert gate.evaluate({"a": 1}).status == "failed"
+    # Admissibility asks only about the hard gates.
+    assert gate.evaluate({"a": 0}, hard_gates_only=True).passed
+
+
+def test_every_shipped_policy_enforces_its_required_provenance():
+    for agent, shipped in policies().items():
+        assert shipped.required_provenance, agent
+        values = {metric: 0 for metric in shipped.metrics_named}
+        assert shipped.evaluate(values).missing_provenance == shipped.required_provenance
+
+
+@pytest.mark.parametrize("value", [["git_commit", 3], "git_commit", [""]])
+def test_malformed_required_provenance_is_refused(value):
+    with pytest.raises(ValueError, match="required_provenance"):
+        parse_policy("verdict", {"required_provenance": value}, PATH)

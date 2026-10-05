@@ -8,13 +8,18 @@ playbook's rules, now that nothing regenerates them.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 import yaml
 
 from infosec_harness.agents.registry import AGENT_BINDINGS
 from infosec_harness.evals.adapters import defines_unevidenced_safety, is_unevidenced_safe
 from infosec_harness.evals.dataset import load_dataset
-from infosec_harness.evals.gates import agents_gated_on, load_policy, policy_problems
+from infosec_harness.evals.gates import ReleasePolicy, agents_gated_on, load_policy, parse_policy
+from infosec_harness.evals.metrics import GATEABLE_METRICS, UNEVIDENCED_SAFETY_METRIC
+from infosec_harness.evals.provenance import CodeVersion
+from infosec_harness.evals.release_report import report_provenance
 from infosec_harness.resources import agents_dir
 
 POLICIES = {name: agents_dir() / name / "evals" / "release-policy.yaml" for name in AGENT_BINDINGS}
@@ -28,6 +33,38 @@ def _policy(name: str) -> dict:
     return yaml.safe_load(POLICIES[name].read_text())
 
 
+def _policy_problems(policy: ReleasePolicy, cases) -> list[str]:
+    """Checks in ``policy`` that the agent's eval cannot measure, or cannot fail.
+
+    A gate on a metric the run never publishes is compared against nothing; a gate on
+    execution evidence for a dataset that declares no execution check is a constant zero. Both
+    read as coverage and enforce nothing. The run reports the first kind again, per report, as
+    an inert METRIC_ABSENT check; this catches both before any run.
+    """
+    published = GATEABLE_METRICS | (
+        {UNEVIDENCED_SAFETY_METRIC} if defines_unevidenced_safety(policy.agent) else set())
+    problems = [f"{policy.agent}: {metric} is not a metric the eval run publishes"
+                for metric in sorted(policy.metrics_named - published)]
+    if not any(case.get("execution_check") for case in cases):
+        problems += [
+            f"{policy.agent}: {metric} gates execution evidence but no case declares an "
+            "execution_check, so it is always 0"
+            for metric in ("execution_not_checked_count", "execution_failed_count")
+            if metric in policy.hard_gates
+        ]
+    return problems
+
+
+def _report_provenance_keys() -> set[str]:
+    """Every provenance key a release report records."""
+    code = CodeVersion(git_commit="a" * 40, git_dirty=False, harness_version="1", python="3")
+    spec = SimpleNamespace(metadata={}, model_settings={})
+    keys = report_provenance(
+        code_identity=code.as_dict(), comparison_identity={}, agent_version="1",
+        cfg_hash="h", model_name="m", pricing="priced", experiment_id="e", spec=spec)
+    return set(keys) | {"recorded_at"}
+
+
 @pytest.mark.parametrize("name", sorted(AGENT_BINDINGS))
 def test_every_agent_has_a_release_policy(name):
     assert POLICIES[name].exists(), f"{name} declares evaluation_policy but the file is absent"
@@ -37,7 +74,18 @@ def test_every_agent_has_a_release_policy(name):
 def test_every_check_the_policy_names_is_measurable_and_can_fail(name):
     """A gate on a metric the run never publishes, or on execution evidence the dataset never
     produces, silently never applies."""
-    assert policy_problems(load_policy(name), load_dataset(name).cases) == []
+    assert _policy_problems(load_policy(name), load_dataset(name).cases) == []
+
+
+def test_the_policy_check_names_gates_that_cannot_be_measured_or_cannot_fail():
+    recon = load_dataset("recon").cases
+    problems = _policy_problems(parse_policy("recon", {
+        "hard_gates": {"unevidenced_safe_verdicts": 0, "execution_failed_count": 0},
+        "thresholds": {"cache_hit_rate": {"min": 0.3}},
+    }, POLICIES["recon"]), recon)
+    assert any("unevidenced_safe_verdicts is not a metric" in p for p in problems)
+    assert any("cache_hit_rate is not a metric" in p for p in problems)
+    assert any("execution_failed_count gates execution evidence" in p for p in problems)
 
 
 @pytest.mark.parametrize("name", sorted(AGENT_BINDINGS))
@@ -80,6 +128,13 @@ def test_every_agent_uses_the_owner_approved_success_floor(name):
 @pytest.mark.parametrize("name", sorted(AGENT_BINDINGS))
 def test_every_policy_requires_the_provenance_that_makes_a_number_attributable(name):
     assert set(_policy(name)["required_provenance"]) >= REQUIRED_PROVENANCE, name
+
+
+@pytest.mark.parametrize("name", sorted(AGENT_BINDINGS))
+def test_required_provenance_names_keys_a_report_records(name):
+    """Required provenance is enforced, so a key no report records would leave every
+    evaluation of the policy not_checked forever."""
+    assert set(load_policy(name).required_provenance) <= _report_provenance_keys(), name
 
 
 # --- The unevidenced-safety predicate ---------------------------------------------------

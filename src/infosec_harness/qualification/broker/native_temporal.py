@@ -19,7 +19,7 @@ import subprocess
 import sys
 import time
 import uuid
-from contextlib import suppress
+from contextlib import nullcontext, suppress
 from pathlib import Path
 
 from pydantic import Field
@@ -32,7 +32,7 @@ with workflow.unsafe.imports_passed_through():
     from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, TemporalDurability
     from pydantic_ai.messages import ModelResponse
     from temporalio.client import Client, WorkflowExecutionStatus
-    from temporalio.worker import Replayer, Worker
+    from temporalio.worker import Replayer
     from temporalio.workflow import ActivityConfig
 
     from infosec_harness.agents.registry import ACTIVITY_RETRY
@@ -40,6 +40,12 @@ with workflow.unsafe.imports_passed_through():
     from infosec_harness.inference.transport import BrokerModel
     from infosec_harness.inference.unbound import UnboundBrokerModel
     from infosec_harness.qualification.broker import native
+    from infosec_harness.qualification.broker.support import (
+        forbid_io,
+        private_write,
+        read_private_key,
+        serve_worker,
+    )
 
 
 class NativeOperatorConfig(StrictModel):
@@ -109,19 +115,12 @@ def ack_barrier_markers() -> tuple[Path, Path]:
 
 
 def worker_credentials(config: NativeOperatorConfig) -> None:
-    path = Path(config.secret_file)
-    if path.stat().st_mode & 0o077:
-        raise RuntimeError("Native worker credential file must be owner-only")
-    key = path.read_text().strip()
-    if not key or len(key) > 4096:
-        raise RuntimeError("Invalid private native worker credential")
-    os.environ[config.secret_env] = key
+    os.environ[config.secret_env] = read_private_key(config.secret_file)
 
 
 async def run_worker(config: NativeOperatorConfig, queue: str) -> None:
     worker_credentials(config)
-    client = await Client.connect(config.temporal_address, plugins=[PydanticAIPlugin()])
-    await Worker(client, task_queue=queue, workflows=[workflow_class()]).run()
+    await serve_worker(config.temporal_address, queue, [workflow_class()])
 
 
 def count_provider(config: NativeOperatorConfig) -> int:
@@ -222,15 +221,8 @@ async def qualify(config_path: Path, *, replay_forbidden=True) -> dict:
         history_path = report_path.with_suffix(".history.json")
         history_path.write_text(history.to_json())
         history_path.chmod(0o600)
-        original = BrokerModel.request
-        async def forbidden(*_args, **_kwargs):
-            raise AssertionError("Native history replay attempted runtime broker I/O")
-        if replay_forbidden:
-            BrokerModel.request = forbidden
-        try:
+        with forbid_io() if replay_forbidden else nullcontext():
             await Replayer(workflows=[workflow_class()], plugins=[PydanticAIPlugin()]).replay_workflow(history)
-        finally:
-            BrokerModel.request = original
         if count_provider(config) != before + 1:
             raise RuntimeError("Native history replay dispatched upstream")
         secret = Path(config.secret_file).read_text().strip()
@@ -259,9 +251,7 @@ async def qualify(config_path: Path, *, replay_forbidden=True) -> dict:
             await stop_worker(second)
         report["worker_cleanup"] = "passed" if all(process is None or process.poll() is not None
                                                    for process in (first, second)) else "failed"
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n")
-        report_path.chmod(0o600)
+        private_write(report_path, report)
     return report
 
 

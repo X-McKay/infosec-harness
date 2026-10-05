@@ -259,6 +259,8 @@ class Explorer:
     _listed: list[str] = field(default_factory=list)
     _known_files: list[str] = field(default_factory=list)
     _done: set[str] = field(default_factory=set)
+    _digest_seen: list[str] = field(default_factory=list)
+    _dirs_seen: set[str] = field(default_factory=set)
 
     # -- steps ---------------------------------------------------------------------------
     def _digest_step(self, tools: set[str]) -> list[ToolCallPart] | None:
@@ -268,7 +270,7 @@ class Explorer:
         self._done |= {"digest", "tree", "manifests", "tests"}
         return [ToolCallPart("repo_digest", {})]
 
-    def _tree_step(self, tools: set[str], last: tuple[str, str] | None) -> list[ToolCallPart] | None:
+    def _tree_step(self, tools: set[str]) -> list[ToolCallPart] | None:
         """Establish the tree, descending wherever the flat listing's cap truncated it.
 
         `list_files` is recursive but capped at `MAX_LIST` entries, so on a large repository
@@ -377,9 +379,6 @@ class Explorer:
         tests = sorted(p for p in self.discovered() if p.endswith("Test.java"))
         return mains[: self.need.source_files] + tests[: self.need.test_files]
 
-    _digest_seen: list[str] = field(default_factory=list)
-    _dirs_seen: set[str] = field(default_factory=set)
-
     def discovered(self) -> set[str]:
         """Every repository path this run was ever told about, however it learned it."""
         return set(self._known_files) | set(self._digest_seen)
@@ -387,12 +386,10 @@ class Explorer:
     # -- the model function --------------------------------------------------------------
     def __call__(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         trip = Trip(history_tokens=estimate_token_count(messages))
-        last = _last_return(messages)
-        if last:
-            trip.result_bytes = 0  # accounted against the trip that produced it, below
-            self._absorb(last)
+        if last := _last_return(messages):
+            self._absorb(last)  # its bytes are accounted against the trip that produced it
         tools = _tool_names(info)
-        parts = self._next(tools, last)
+        parts = self._next(tools)
         if parts is None:
             parts = [ToolCallPart(info.output_tools[0].name, self.output_args)]
         trip.calls = [p.tool_name for p in parts]
@@ -410,14 +407,14 @@ class Explorer:
         elif name == "list_files" and self._listed:
             self._absorb_listing(self._listed[-1], content)
 
-    def _next(self, tools: set[str], last: tuple[str, str] | None) -> list[ToolCallPart] | None:
+    def _next(self, tools: set[str]) -> list[ToolCallPart] | None:
         if self._plan is not None:
             try:
                 return next(self._plan)
             except StopIteration:
                 self._plan = None
         for step in (lambda: self._digest_step(tools),
-                     lambda: self._tree_step(tools, last),
+                     lambda: self._tree_step(tools),
                      lambda: self._manifest_step(tools),
                      lambda: self._tests_step(tools),
                      lambda: self._names_step(tools),

@@ -16,6 +16,7 @@ from sqlalchemy.orm import load_only
 
 from infosec_harness.persistence import db
 from infosec_harness.persistence.population import Population, run_population
+from infosec_harness.persistence.run_telemetry import MetricField, RunTelemetry
 
 
 class Bin(BaseModel):
@@ -89,9 +90,9 @@ def distribution(values: list[float | None], bins: int = 12) -> Distribution:
     return result
 
 
-def _value(run: db.TriageRun, field: str) -> float | None:
-    value = (run.telemetry or {}).get(field)
-    return value if isinstance(value, (int, float)) and math.isfinite(value) else None
+def _value(telemetry: RunTelemetry | None, field: MetricField) -> float | None:
+    value = getattr(telemetry, field) if telemetry is not None else None
+    return float(value) if value is not None and math.isfinite(value) else None
 
 
 async def aggregate_metrics(*, batch_id: str | None = None, population: Population = "operational",
@@ -114,12 +115,17 @@ async def aggregate_metrics(*, batch_id: str | None = None, population: Populati
                 db.AgentInvocation.agent, db.AgentInvocation.latency_s,
                 db.AgentInvocation.input_tokens, db.AgentInvocation.output_tokens,
                 db.AgentInvocation.cost_usd)))).scalars().all()
+    telemetry = {row.id: RunTelemetry.read(row.telemetry) for row in rows}
     days: dict[str, list[db.TriageRun]] = defaultdict(list)
     for row in rows:
         days[row.created_at.date().isoformat()].append(row)
-    def day_mean(group: list[db.TriageRun], key: str) -> float | None:
-        values = [v for r in group if (v := _value(r, key)) is not None]
-        return mean(values) if values else None
+
+    def values(group: list[db.TriageRun], key: MetricField) -> list[float | None]:
+        return [_value(telemetry[r.id], key) for r in group]
+
+    def day_mean(group: list[db.TriageRun], key: MetricField) -> float | None:
+        known = [v for v in values(group, key) if v is not None]
+        return mean(known) if known else None
     stages: dict[str, list[db.AgentInvocation]] = defaultdict(list)
     for inv in invocations:
         stages[inv.agent].append(inv)
@@ -127,12 +133,12 @@ async def aggregate_metrics(*, batch_id: str | None = None, population: Populati
         as_of=datetime.now(UTC).isoformat(), population=population, total_runs=len(rows),
         status_counts=dict(Counter(r.status for r in rows)),
         verdict_counts=dict(Counter(r.verdict or "unassessed" for r in rows)),
-        tokens=distribution([_value(r, "total_tokens") for r in rows]),
-        input_tokens=distribution([_value(r, "input_tokens") for r in rows]),
-        output_tokens=distribution([_value(r, "output_tokens") for r in rows]),
-        cost_usd=distribution([_value(r, "cost_usd") for r in rows]),
-        wall_time_s=distribution([_value(r, "wall_time_s") for r in rows]),
-        agent_time_s=distribution([_value(r, "agent_time_s") for r in rows]),
+        tokens=distribution(values(rows, "total_tokens")),
+        input_tokens=distribution(values(rows, "input_tokens")),
+        output_tokens=distribution(values(rows, "output_tokens")),
+        cost_usd=distribution(values(rows, "cost_usd")),
+        wall_time_s=distribution(values(rows, "wall_time_s")),
+        agent_time_s=distribution(values(rows, "agent_time_s")),
         trends=[TrendPoint(date=day, runs=len(group), tokens=day_mean(group, "total_tokens"),
                     cost_usd=day_mean(group, "cost_usd"), wall_time_s=day_mean(group, "wall_time_s"))
                 for day, group in sorted(days.items())],
@@ -146,5 +152,4 @@ async def aggregate_metrics(*, batch_id: str | None = None, population: Populati
             "coverage": "Observed values / all selected runs, including active, failed and cancelled.",
             "cost": "Only runs with complete invocation cost enter cost mean; unknown is not zero.",
             "time": "Wall time is acceptance to terminal. Agent time sums calls and can overlap.",
-            "preparation": "Shared preparation is attributed once, to the first finding in each repository group.",
-            "legacy": "Historical records without measurement metadata are a separate legacy population."})
+            "preparation": "Shared preparation is attributed once, to the first finding in each repository group."})

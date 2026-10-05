@@ -11,14 +11,14 @@ from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.tools import ToolDefinition
 from test_broker_executor import request_fixture
-from test_broker_profiles import _config
+from test_broker_profiles import _config, backend
 
 from infosec_harness.agents import models
 from infosec_harness.inference.codec import encode_payload
-from infosec_harness.inference.compat import input_wire
 from infosec_harness.inference.executor import OpenAIInference
 from infosec_harness.inference.profiles import BrokerConfig, ExecutorProfile
 from infosec_harness.inference.protocol import BrokerError, digest
+from infosec_harness.inference.rendering import input_wire
 
 
 def test_omitted_thinking_preserves_existing_identities_and_explicit_values_change_them():
@@ -57,9 +57,9 @@ def test_thinking_requires_exact_operator_profile_match(enabled):
     for mismatched in (None, not enabled):
         with pytest.raises(ValueError):
             catalog.resolve_contract('recon', 'gateway', 'model', {'max_tokens': 16},
-                backend_endpoint='https://provider.example/v1', enable_thinking=mismatched)
+                backend=backend(enable_thinking=mismatched))
     contract = catalog.resolve_contract('recon', 'gateway', 'model', {'max_tokens': 16},
-        backend_endpoint='https://provider.example/v1', enable_thinking=enabled)
+        backend=backend(enable_thinking=enabled))
     assert contract.enable_thinking is enabled
 
 
@@ -103,7 +103,7 @@ async def test_direct_executor_and_admission_match_constrained_thinking_wire(mon
     monkeypatch.setattr(models, 'load_models_config', lambda: cfg)
     monkeypatch.setattr(openai, 'AsyncOpenAI', client)
     try:
-        direct = models._build_live('thinking-offline', contract.model)
+        direct = models._build_live('thinking-offline', contract.model, False, False)
         await direct.request(messages, contract.model_settings, params)
     finally:
         models._build_live.cache_clear()

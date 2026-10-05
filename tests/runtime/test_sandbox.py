@@ -2,7 +2,8 @@ import json
 import sys
 
 from infosec_harness.domain.models import EnvironmentSpec
-from infosec_harness.sandbox import docker
+from infosec_harness.sandbox import docker, engine, image
+from infosec_harness.sandbox.process import ProcessResult
 
 
 def _spec(**kw):
@@ -24,13 +25,13 @@ def test_partial_scope_sets_module_workdir():
 
 
 async def test_process_output_is_bounded_while_it_is_streamed():
-    result = await docker._run(
+    result = await engine.run_docker(
         [sys.executable, "-c", "import sys; sys.stdout.write('x' * 250000 + 'TAIL')"],
         timeout=10,
     )
     assert result.exit_code == 0
-    assert len(result.stdout.encode()) <= docker.MAX_CAPTURE
-    assert result.stdout.endswith("TAIL")
+    assert len(result.stdout.encode()) <= engine.MAX_CAPTURE
+    assert result.stdout.endswith("TAIL") and result.truncated
 
 
 def test_oracle_signals_match_nonce():
@@ -41,22 +42,26 @@ def test_oracle_signals_match_nonce():
     assert docker.oracle_signals(f"{docker.ORACLE_PREFIX}other", n) == (False, False)
 
 
-def test_controller_execution_record_labels_marker_trust_and_unknown_counts():
+def test_controller_execution_record_labels_each_section_with_its_origin():
     from infosec_harness.sandbox import evidence
 
-    record = evidence.execution_record(
-        image_tag="img", test_file_path="tests/p.py", test_command="pytest {test_file}",
-        content="probe", nonce="n", attempt=1, exit_code=0, timed_out=False,
-        duration_s=0.2, oracle_fired=False, precondition_reached=True,
-        sink_returned=True, no_tests=None,
-    )
-    encoded = evidence.encode_execution_record(record)
+    def record(no_tests):
+        return evidence.execution_record(
+            image_tag="img", test_file_path="tests/p.py", test_command="pytest {test_file}",
+            content="probe", nonce="n", attempt=1, exit_code=0, timed_out=False,
+            duration_s=0.2, oracle_fired=False, precondition_reached=True,
+            sink_returned=True, no_tests=no_tests,
+        )
+
+    encoded = evidence.encode_execution_record(record(None))
     assert encoded.startswith(evidence.EXECUTION_RECORD_PREFIX)
     decoded = json.loads(encoded.removeprefix(evidence.EXECUTION_RECORD_PREFIX))
+    assert decoded["version"] == evidence.EXECUTION_PROTOCOL
     assert decoded["process"]["origin"] == "controller"
     assert decoded["observations"]["origin"] == "self_reported_marker"
-    assert decoded["runner"]["discovered_count"] is None
-    assert decoded["runner"]["executed_count"] is None
+    # The runner section is parsed from untrusted output whether or not a phrase was found.
+    assert decoded["runner"] == {"zero_test_signal": None, "origin": "parsed_untrusted_output"}
+    assert record("pytest: no tests ran")["runner"]["origin"] == "parsed_untrusted_output"
 
 
 def test_image_tag_changes_with_spec():
@@ -92,39 +97,37 @@ def test_an_unrecognised_runner_does_not_fail_preparation():
 
 
 async def test_smoke_test_fails_when_the_runner_is_missing(monkeypatch):
+    from infosec_harness.graph.workloads import smoke_test
     from infosec_harness.sandbox import docker
-    from infosec_harness.workflows.activities import smoke_test_activity
 
     calls = []
 
     async def fake_shell(image, command, *, timeout=None, **_ignored):
         calls.append(command)
         if "harness-smoke-ok" in command:
-            return docker.ProcResult(exit_code=0, stdout="harness-smoke-ok\n", stderr="",
+            return ProcessResult(exit_code=0, stdout="harness-smoke-ok\n", stderr="",
                                      timed_out=False, duration_s=0.1)
-        return docker.ProcResult(exit_code=127, stdout="", stderr="pytest: not found",
+        return ProcessResult(exit_code=127, stdout="", stderr="pytest: not found",
                                  timed_out=False, duration_s=0.1)
 
     monkeypatch.setattr(docker, "run_shell", fake_shell, raising=True)
-    result = await smoke_test_activity({"image_tag": "img",
-                                        "test_command": "python -m pytest -q -s {test_file}"})
+    result = await smoke_test("img", "python -m pytest -q -s {test_file}")
     assert result.ok is False
     assert "test runner is not installed" in result.output_excerpt
     assert any("--version" in c for c in calls), "the runner was never actually invoked"
 
 
 async def test_smoke_test_passes_when_the_runner_answers(monkeypatch):
+    from infosec_harness.graph.workloads import smoke_test
     from infosec_harness.sandbox import docker
-    from infosec_harness.workflows.activities import smoke_test_activity
 
     async def fake_shell(image, command, *, timeout=None, **_ignored):
         out = "harness-smoke-ok\n" if "harness-smoke-ok" in command else "pytest 9.1.1\n"
-        return docker.ProcResult(exit_code=0, stdout=out, stderr="", timed_out=False,
+        return ProcessResult(exit_code=0, stdout=out, stderr="", timed_out=False,
                                  duration_s=0.1)
 
     monkeypatch.setattr(docker, "run_shell", fake_shell, raising=True)
-    result = await smoke_test_activity({"image_tag": "img",
-                                        "test_command": "python -m pytest -q -s {test_file}"})
+    result = await smoke_test("img", "python -m pytest -q -s {test_file}")
     assert result.ok is True
 
 
@@ -214,7 +217,7 @@ def test_the_node_runners_that_were_unsmoke_testable_now_have_checks():
 
 def test_image_format_changes_invalidate_prepared_image_cache(monkeypatch):
     original = docker.image_tag_for("repohash", _spec())
-    monkeypatch.setattr(docker, "IMAGE_FORMAT_VERSION", "next-format")
+    monkeypatch.setattr(image, "IMAGE_FORMAT_VERSION", "next-format")
     assert docker.image_tag_for("repohash", _spec()) != original
 
 
@@ -238,7 +241,7 @@ async def test_probe_can_write_disposable_copy_of_sealed_snapshot(tmp_path, monk
     async def execute_fixture_script(argv, *, name, stdin, timeout):
         # Execute the actual staging script against a controlled local fixture. The real
         # runtime check separately verifies its container isolation boundary.
-        return await docker._run(["sh", "-c", argv[-1]], stdin=stdin, timeout=timeout)
+        return await engine.run_docker(["sh", "-c", argv[-1]], stdin=stdin, timeout=timeout)
 
     monkeypatch.setattr(docker, "_run_container", execute_fixture_script)
     try:

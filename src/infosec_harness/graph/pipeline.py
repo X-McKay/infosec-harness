@@ -17,7 +17,8 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai.messages import ModelResponse
+from pydantic_ai import capture_run_messages
+from pydantic_ai.messages import ModelResponse, UserContent
 from pydantic_ai.usage import RunUsage
 
 from infosec_harness.agents.deps import AgentDeps
@@ -31,17 +32,18 @@ from infosec_harness.domain.models import (
     FindingInput,
     InconclusiveReason,
     PreparedEnvironment,
+    Reachability,
     SourceMode,
     StackFingerprint,
     TriageResult,
     TriageRunOutput,
-    Verdict,
-    VerdictLabel,
+    inconclusive_verdict,
 )
+from infosec_harness.graph.failures import classify_pipeline_failure, describe_failure
 from infosec_harness.graph.manifests import execution_manifest
-from infosec_harness.graph.ops import Ops, classify_pipeline_failure
+from infosec_harness.graph.ops import Ops
 from infosec_harness.graph.prepare import PrepareFailed, prepare_resolved_component
-from infosec_harness.graph.scoring import priority_for_inconclusive
+from infosec_harness.graph.scoring import priority
 from infosec_harness.graph.triage import TRIAGE_GRAPH, PreFilter, TriageDeps, TriageState
 from infosec_harness.inference.provenance import runtime_evidence
 from infosec_harness.intake import adapters
@@ -129,9 +131,8 @@ def inconclusive_output(finding: Finding, reason: InconclusiveReason, rationale:
                         manifest: dict | None = None, *, context=None,
                         executions=None) -> TriageRunOutput:
     """The recorded outcome of a finding that never reached a supported security judgment."""
-    verdict = Verdict(label=VerdictLabel.inconclusive, confidence=0.0, rationale=rationale,
-                      inconclusive_reason=reason)
-    score, band = priority_for_inconclusive(finding)
+    verdict = inconclusive_verdict(reason, rationale)
+    score, band = priority(finding, verdict, Reachability.unknown)
     result = TriageResult(fingerprint=finding.fingerprint, verdict=verdict, priority_score=score,
                           priority=band, environment_scope="none", early_exit=reason.value)
     return TriageRunOutput(finding=finding, result=result, prepared_status=status,
@@ -140,13 +141,29 @@ def inconclusive_output(finding: Finding, reason: InconclusiveReason, rationale:
                            needs_info=(reason == InconclusiveReason.needs_info))
 
 
-def failure_cause(exc: BaseException) -> BaseException:
-    """The underlying failure; Temporal wraps a child/activity failure's cause."""
-    return getattr(exc, "cause", None) or exc
+async def run_recorded(agent: Any, name: str, prompt: Sequence[UserContent], deps: AgentDeps,
+                       config: Any, record: list[AgentOutcome], *, clock: Callable[[], float],
+                       timeout: float | None = None) -> AgentOutcome:
+    """Run one agent call and append its outcome to ``record`` before returning or raising.
 
-
-def describe_failure(exc: BaseException) -> str:
-    return f"{type(exc).__name__}: {exc}"
+    The one place both ``Ops`` implementations run an agent. A call that raises is recorded
+    too, with the usage its completed requests reported, and the exception propagates
+    unchanged: a failed call spent requests and tokens, so it is never recorded as free and
+    never silently dropped. ``clock`` is the caller's time source (workflow time inside a
+    workflow, a monotonic clock in process).
+    """
+    started = clock()
+    with capture_run_messages() as messages:
+        try:
+            async with asyncio.timeout(timeout):
+                result = await agent.run(list(prompt), deps=deps,
+                                         usage_limits=config.budget.to_usage_limits())
+        except Exception as exc:
+            record.append(partial_outcome(name, messages, config, clock() - started, exc))
+            raise
+    outcome = agent_outcome(name, result, config, clock() - started)
+    record.append(outcome)
+    return outcome
 
 
 def agent_outcome(name: str, result: Any, config: Any, latency_s: float) -> AgentOutcome:
@@ -236,8 +253,8 @@ async def triage_finding(ops: Ops, inp: FindingInput, prepared: PreparedEnvironm
                 "intake",
                 render_intake_prompt(INTAKE_TASK, {"report": finding.description,
                                                    "known": finding}),
-                AgentDeps(repo_path=prepared.snapshot.path, report_text=finding.description))
-            invocations.append(outcome)
+                AgentDeps(repo_path=prepared.snapshot.path, report_text=finding.description),
+                record=invocations)
             finding = adapters.merge_extraction(finding, outcome.output)
         resolved = await ops.resolve_location(finding, prepared.snapshot.path)
         if resolved is None:

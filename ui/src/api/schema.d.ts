@@ -38,6 +38,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/experiments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Experiments
+         * @description Newest first. Summaries carry headline measurements; full metrics are per experiment.
+         */
+        get: operations["experiments_api_experiments_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/experiments/{experiment_id}": {
         parameters: {
             query?: never;
@@ -47,23 +67,6 @@ export interface paths {
         };
         /** Experiment Detail */
         get: operations["experiment_detail_api_experiments__experiment_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/qualification": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Qualification */
-        get: operations["qualification_api_qualification_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -141,23 +144,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/runs": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Runs */
-        get: operations["runs_api_runs_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/runs/{run_id}": {
         parameters: {
             query?: never;
@@ -186,23 +172,6 @@ export interface paths {
         put?: never;
         /** Review */
         post: operations["review_api_runs__run_id__review_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/experiments": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Experiments */
-        get: operations["experiments_api_experiments_get"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -419,6 +388,62 @@ export interface components {
             /** Bins */
             bins?: components["schemas"]["Bin"][];
         };
+        /**
+         * ExecutionObservations
+         * @description The exploit markers the probe printed.
+         */
+        ExecutionObservations: {
+            /** Precondition Reached */
+            precondition_reached: boolean;
+            /** Sink Returned */
+            sink_returned: boolean;
+            /** Oracle Fired */
+            oracle_fired: boolean;
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "controller" | "self_reported_marker" | "parsed_untrusted_output";
+        };
+        /**
+         * ExecutionOrigins
+         * @description The origin-labelled sections of the controller's execution record (sandbox.evidence).
+         */
+        ExecutionOrigins: {
+            process: components["schemas"]["ExecutionProcess"];
+            observations: components["schemas"]["ExecutionObservations"];
+            runner: components["schemas"]["ExecutionRunner"];
+        };
+        /**
+         * ExecutionProcess
+         * @description The probe process as the controller observed it.
+         */
+        ExecutionProcess: {
+            /** Exit Code */
+            exit_code: number | null;
+            /** Timed Out */
+            timed_out: boolean;
+            /** Duration S */
+            duration_s: number;
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "controller" | "self_reported_marker" | "parsed_untrusted_output";
+        };
+        /**
+         * ExecutionRunner
+         * @description The runner's own zero-test phrase, or None when its output contained none.
+         */
+        ExecutionRunner: {
+            /** Zero Test Signal */
+            zero_test_signal: string | null;
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "controller" | "self_reported_marker" | "parsed_untrusted_output";
+        };
         /** ExperimentCase */
         ExperimentCase: {
             /** Case Name */
@@ -449,13 +474,29 @@ export interface components {
             /** Cases */
             cases: components["schemas"]["ExperimentCase"][];
         };
+        /** ExperimentPage */
+        ExperimentPage: {
+            /** Items */
+            items: components["schemas"]["ExperimentSummary"][];
+            /** Total */
+            total: number;
+            /** Offset */
+            offset: number;
+            /** Limit */
+            limit: number;
+        };
         /**
          * ExperimentStatus
          * @description Persisted lifecycle of one eval experiment (`evals.run.run_experiment`).
          * @enum {string}
          */
         ExperimentStatus: "running" | "complete" | "truncated";
-        /** ExperimentSummary */
+        /**
+         * ExperimentSummary
+         * @description One experiment's identity and headline measurements; full metrics are per experiment.
+         *
+         *     Every measurement is None when the stored report did not record it as a finite number.
+         */
         ExperimentSummary: {
             /** Id */
             id: string;
@@ -472,10 +513,6 @@ export interface components {
             overlay: string;
             /** Repetitions */
             repetitions: number;
-            /** Metrics */
-            metrics: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
             /** Config Hash */
             config_hash: string;
             /** Git Dirty */
@@ -490,6 +527,24 @@ export interface components {
             harness_version: string;
             /** Created At */
             created_at: string;
+            /** Accuracy */
+            accuracy: number | null;
+            /** Cost Usd Per Case */
+            cost_usd_per_case: number | null;
+            /** P50 Latency S */
+            p50_latency_s: number | null;
+            /** P95 Latency S */
+            p95_latency_s: number | null;
+            /** Passed */
+            passed: number | null;
+            /** Cases Completed */
+            cases_completed: number | null;
+            /** Cases Planned */
+            cases_planned: number | null;
+            /** Budget Exhausted Count */
+            budget_exhausted_count: number | null;
+            /** Gate Status */
+            gate_status: string | null;
         };
         /**
          * FindingInput
@@ -647,59 +702,48 @@ export interface components {
              */
             detail: string;
         };
-        /** QualificationStatus */
-        QualificationStatus: {
+        /** ProbeExecution */
+        ProbeExecution: {
+            /** Attempt */
+            attempt: number;
+            /** Exit Code */
+            exit_code: number | null;
             /**
-             * Active Profile Status
-             * @default not_checked
-             * @enum {string}
+             * Timed Out
+             * @default false
              */
-            active_profile_status: "passed" | "failed" | "not_checked";
+            timed_out: boolean;
+            /** Oracle Fired */
+            oracle_fired: boolean;
+            /** Precondition Reached */
+            precondition_reached: boolean;
             /**
-             * Active Profile Detail
-             * @default Retained component evidence does not establish qualification of the active model and transport profile.
+             * Sink Returned
+             * @default false
              */
-            active_profile_detail: string;
-            /** As Of */
-            as_of: string;
-            /** Candidate Commit */
-            candidate_commit?: string | null;
+            sink_returned: boolean;
+            /** Runner Reported No Tests */
+            runner_reported_no_tests?: string | null;
             /**
-             * Status
-             * @enum {string}
+             * Stdout Tail
+             * @default
              */
-            status: "passed" | "failed" | "not_checked";
-            /** Detail */
-            detail: string;
-            /** Components */
-            components: components["schemas"]["QualifiedComponent"][];
-            /** Limitations */
-            limitations: string[];
-        };
-        /** QualifiedComponent */
-        QualifiedComponent: {
-            /** Agent */
-            agent: string;
-            /** Scope */
-            scope: string;
+            stdout_tail: string;
             /**
-             * Status
-             * @enum {string}
+             * Stderr Tail
+             * @default
              */
-            status: "passed" | "failed" | "not_checked";
-            /** Measured Commit */
-            measured_commit?: string | null;
+            stderr_tail: string;
             /**
-             * Freshness
-             * @enum {string}
+             * Duration S
+             * @default 0
              */
-            freshness: "fresh" | "reused" | "stale" | "unavailable";
-            /** Reason */
-            reason: string;
-            /** Cases */
-            cases?: number | null;
-            /** Passed Cases */
-            passed_cases?: number | null;
+            duration_s: number;
+            /** Log Artifact */
+            log_artifact?: string | null;
+            /** Source Artifact */
+            source_artifact?: string | null;
+            origins?: components["schemas"]["ExecutionOrigins"] | null;
         };
         /** ReviewRecord */
         ReviewRecord: {
@@ -790,10 +834,7 @@ export interface components {
             telemetry: components["schemas"]["RunTelemetry"] | null;
             /** Phase */
             phase: string;
-            /** Evidence */
-            evidence: {
-                [key: string]: components["schemas"]["JsonValue"];
-            } | null;
+            evidence: components["schemas"]["RunEvidence"] | null;
             /** Events */
             events: components["schemas"]["RunEvent"][];
             /** Review History */
@@ -820,6 +861,28 @@ export interface components {
             detail: string;
             /** Created At */
             created_at: string;
+        };
+        /**
+         * RunEvidence
+         * @description The per-stage evidence persisted with a run's output.
+         */
+        RunEvidence: {
+            /** Schema Version */
+            schema_version: number;
+            /** Manifest */
+            manifest: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Context */
+            context: {
+                [key: string]: components["schemas"]["JsonValue"];
+            } | null;
+            /** Executions */
+            executions: components["schemas"]["ProbeExecution"][];
+            /** Invocations */
+            invocations: {
+                [key: string]: components["schemas"]["JsonValue"];
+            }[];
         };
         /** RunPage */
         RunPage: {
@@ -889,12 +952,26 @@ export interface components {
         };
         /** RunTelemetry */
         RunTelemetry: {
-            /** Schema Version */
-            schema_version?: number | null;
+            /**
+             * Schema Version
+             * @default 2
+             * @constant
+             */
+            schema_version: 2;
+            /**
+             * Population
+             * @enum {string}
+             */
+            population: "operational" | "demo";
             /** Phase */
-            phase?: string | null;
-            /** Accepted At */
-            accepted_at?: string | null;
+            phase: string;
+            /**
+             * Accepted At
+             * Format: date-time
+             */
+            accepted_at: string;
+            /** Updated At */
+            updated_at?: string | null;
             /** Completed At */
             completed_at?: string | null;
             /** Wall Time S */
@@ -919,8 +996,6 @@ export interface components {
             cost_coverage?: number | null;
             /** Total Tokens */
             total_tokens?: number | null;
-        } & {
-            [key: string]: unknown;
         };
         /** RuntimeStatus */
         RuntimeStatus: {
@@ -1039,8 +1114,8 @@ export interface operations {
             query?: {
                 batch_id?: string | null;
                 verdict?: string | null;
-                population?: ("operational" | "demo" | "legacy") | null;
-                metric?: ("total_tokens" | "input_tokens" | "output_tokens" | "cost_usd" | "wall_time_s") | null;
+                population?: ("operational" | "demo") | null;
+                metric?: ("total_tokens" | "input_tokens" | "output_tokens" | "cost_usd" | "wall_time_s" | "agent_time_s") | null;
                 lower?: number | null;
                 upper?: number | null;
                 upper_inclusive?: boolean;
@@ -1078,7 +1153,7 @@ export interface operations {
         parameters: {
             query?: {
                 batch_id?: string | null;
-                population?: "operational" | "demo" | "legacy";
+                population?: "operational" | "demo";
                 since?: string | null;
                 until?: string | null;
             };
@@ -1108,10 +1183,43 @@ export interface operations {
             };
         };
     };
+    experiments_api_experiments_get: {
+        parameters: {
+            query?: {
+                population?: ("operational" | "demo") | null;
+                offset?: number;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExperimentPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     experiment_detail_api_experiments__experiment_id__get: {
         parameters: {
             query?: {
-                population?: ("operational" | "demo" | "legacy") | null;
+                population?: ("operational" | "demo") | null;
             };
             header?: never;
             path: {
@@ -1141,26 +1249,6 @@ export interface operations {
             };
         };
     };
-    qualification_api_qualification_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["QualificationStatus"];
-                };
-            };
-        };
-    };
     runtime_status_api_runtime_status_get: {
         parameters: {
             query?: never;
@@ -1184,7 +1272,7 @@ export interface operations {
     batches_api_batches_get: {
         parameters: {
             query?: {
-                population?: ("operational" | "demo" | "legacy") | null;
+                population?: ("operational" | "demo") | null;
             };
             header?: never;
             path?: never;
@@ -1281,7 +1369,7 @@ export interface operations {
     batch_api_batches__batch_id__get: {
         parameters: {
             query?: {
-                population?: ("operational" | "demo" | "legacy") | null;
+                population?: ("operational" | "demo") | null;
             };
             header?: never;
             path: {
@@ -1311,44 +1399,10 @@ export interface operations {
             };
         };
     };
-    runs_api_runs_get: {
-        parameters: {
-            query?: {
-                batch_id?: string | null;
-                verdict?: string | null;
-                limit?: number;
-                population?: ("operational" | "demo" | "legacy") | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RunSummary"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     run_api_runs__run_id__get: {
         parameters: {
             query?: {
-                population?: ("operational" | "demo" | "legacy") | null;
+                population?: ("operational" | "demo") | null;
             };
             header?: never;
             path: {
@@ -1400,37 +1454,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReviewSaved"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    experiments_api_experiments_get: {
-        parameters: {
-            query?: {
-                population?: ("operational" | "demo" | "legacy") | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ExperimentSummary"][];
                 };
             };
             /** @description Validation Error */

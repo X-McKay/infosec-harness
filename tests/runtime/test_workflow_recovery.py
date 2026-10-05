@@ -9,6 +9,22 @@ import pytest
 pytestmark = pytest.mark.requires_temporal
 
 
+def _batch(batch_id, findings):
+    """A workflow start payload exactly as acceptance records it."""
+    from infosec_harness.workflows.payloads import BatchArgs
+
+    return BatchArgs(batch_id=batch_id, findings=findings,
+                     per_repo_concurrency=4).model_dump(mode="json")
+
+
+async def _accept(batch_id, findings, label, payload):
+    from infosec_harness.persistence import lifecycle
+    from infosec_harness.workflows.submission import accepted_agent_config_digests
+
+    await lifecycle.accept_batch(batch_id, findings, label, payload,
+                                 agent_config_digests=accepted_agent_config_digests())
+
+
 @pytest.mark.parametrize("started", [False, True])
 async def test_cancellation_survives_pending_and_running_workflows(temporal_cli, started, tmp_path, monkeypatch):
     from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
@@ -25,8 +41,8 @@ async def test_cancellation_survives_pending_and_running_workflows(temporal_cli,
     await db.create_all()
     finding = FindingInput(title="Cancellation fixture", repo_url=str(tmp_path), file_path="a.py")
     batch_id = f"cancel-{uuid.uuid4().hex[:12]}"
-    payload = {"batch_id": batch_id, "findings": [finding.model_dump(mode="json")]}
-    await lifecycle.accept_batch(batch_id, [finding], "Cancellation fixture", payload)
+    payload = _batch(batch_id, [finding])
+    await _accept(batch_id, [finding], "Cancellation fixture", payload)
     entered = asyncio.Event()
 
     async def blocked_checkout(ref):
@@ -71,7 +87,7 @@ async def test_root_budget_stop_keeps_a_structured_reason(temporal_cli, tmp_path
     from temporalio.worker import Worker
 
     from infosec_harness.domain.models import FindingInput
-    from infosec_harness.persistence import db, lifecycle, store
+    from infosec_harness.persistence import db, store
     from infosec_harness.settings import get_settings
     from infosec_harness.workflows import activities, worker
     from infosec_harness.workflows.workflows import TriageBatchWorkflow
@@ -82,8 +98,8 @@ async def test_root_budget_stop_keeps_a_structured_reason(temporal_cli, tmp_path
     finding = FindingInput(title="Budget fixture", repo_url=str(tmp_path), file_path="a.py",
                            start_line=1, severity="critical")
     batch_id = f"budget-stop-{uuid.uuid4().hex[:12]}"
-    payload = {"batch_id": batch_id, "findings": [finding.model_dump(mode="json")]}
-    await lifecycle.accept_batch(batch_id, [finding], "Budget fixture", payload)
+    payload = _batch(batch_id, [finding])
+    await _accept(batch_id, [finding], "Budget fixture", payload)
     env = await WorkflowEnvironment.start_local(dev_server_existing_path=temporal_cli)
     try:
         client = await Client.connect(env.client.service_client.config.target_host,
@@ -110,7 +126,7 @@ async def test_worker_replacement_resumes_accepted_batch(temporal_cli, tmp_path,
     from temporalio.worker import Worker
 
     from infosec_harness.domain.models import FindingInput
-    from infosec_harness.persistence import db, lifecycle, store
+    from infosec_harness.persistence import db, store
     from infosec_harness.sandbox import docker
     from infosec_harness.settings import get_settings
     from infosec_harness.workflows import activities, worker
@@ -122,8 +138,8 @@ async def test_worker_replacement_resumes_accepted_batch(temporal_cli, tmp_path,
     finding = FindingInput(title="Worker replacement fixture", repo_url=str(tmp_path),
                            file_path="a.py", start_line=1)
     batch_id = f"worker-restart-{uuid.uuid4().hex[:12]}"
-    payload = {"batch_id": batch_id, "findings": [finding.model_dump(mode="json")]}
-    await lifecycle.accept_batch(batch_id, [finding], "Worker replacement", payload)
+    payload = _batch(batch_id, [finding])
+    await _accept(batch_id, [finding], "Worker replacement", payload)
     entered = asyncio.Event()
     original_checkout = activities.checkout
     attempts = 0
@@ -181,8 +197,8 @@ async def test_terminal_persistence_retries_past_transient_database_outage(tempo
 
     await db.create_all()
     batch_id = f"terminal-retry-{uuid.uuid4().hex[:12]}"
-    payload = {"batch_id": batch_id, "findings": []}
-    await lifecycle.accept_batch(batch_id, [], "Terminal retry", payload)
+    payload = _batch(batch_id, [])
+    await _accept(batch_id, [], "Terminal retry", payload)
     original = lifecycle.finish_pending
     attempts = 0
 
@@ -218,7 +234,7 @@ async def test_root_elapsed_deadline_cancels_inflight_work_and_persists_failure(
     from temporalio.worker import Worker
 
     from infosec_harness.domain.models import FindingInput
-    from infosec_harness.persistence import db, lifecycle, store
+    from infosec_harness.persistence import db, store
     from infosec_harness.settings import get_settings
     from infosec_harness.workflows import activities, worker
     from infosec_harness.workflows.workflows import TriageBatchWorkflow
@@ -239,8 +255,8 @@ async def test_root_elapsed_deadline_cancels_inflight_work_and_persists_failure(
                                       plugins=[PydanticAIPlugin()])
         finding = FindingInput(title='Root deadline fixture', repo_url=str(tmp_path), file_path='a.py')
         batch_id = f'deadline-{uuid.uuid4().hex[:12]}'
-        payload = {'batch_id': batch_id, 'findings': [finding.model_dump(mode='json')]}
-        await lifecycle.accept_batch(batch_id, [finding], 'Deadline fixture', payload)
+        payload = _batch(batch_id, [finding])
+        await _accept(batch_id, [finding], 'Deadline fixture', payload)
         async with Worker(client, task_queue='deadline-test', workflows=worker.WORKFLOWS,
                           activities=activities.ALL_ACTIVITIES,
                           max_heartbeat_throttle_interval=timedelta(seconds=1)):

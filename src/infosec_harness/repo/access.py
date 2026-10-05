@@ -17,6 +17,8 @@ DEPENDENCY_DIRS = frozenset({".git", "node_modules", ".venv", "venv", "__pycache
 # Generated build output and tool state. A snapshot keeps them (a directory name cannot prove
 # they are irrelevant, and size limits bound them); detection and agent reads skip them.
 BUILD_OUTPUT_DIRS = frozenset({"target", "build", "dist", ".idea", ".tox"})
+# What detection and agent reads skip. Snapshot capture and hashing skip only DEPENDENCY_DIRS.
+NON_SOURCE_DIRS = DEPENDENCY_DIRS | BUILD_OUTPUT_DIRS
 
 
 class RepositoryAccessError(ValueError):

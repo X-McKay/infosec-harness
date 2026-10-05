@@ -7,7 +7,7 @@ from pydantic import ValidationError
 from pydantic_ai import ModelRetry
 
 from infosec_harness.agents import registry
-from infosec_harness.agents.intake_claims import AtomicFinding, invalid_source_references
+from infosec_harness.agents.intake_claims import AtomicFinding, ReferenceError, reconstruct
 
 REPORT = "CWE-89\nSQL injection\n"
 
@@ -27,6 +27,15 @@ def claims():
             },
         }
     )
+
+
+def invalid_source_references(report, output):
+    """Every reference failure ``reconstruct`` carries on its ReferenceError (none: ())."""
+    try:
+        reconstruct(report, output)
+    except ReferenceError as error:
+        return error.failures
+    return ()
 
 
 def ctx(report=REPORT):

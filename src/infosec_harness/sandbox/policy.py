@@ -1,8 +1,8 @@
-"""Sandbox policy: fail-closed runtime checks, base-image allowlist and build-spec validation.
+"""Sandbox policy: base-image allowlist, JVM selector grammar and build-spec validation.
 
-Pure, deterministic helpers (except the runtime probe), unit-tested without a daemon. Build
-egress is confined by the operator's allowlisting proxy and internal build network, which
-``docker.ensure_build_egress_boundary`` verifies; repository declarations never widen it (D14).
+Pure and deterministic, unit-tested without a daemon. The runtime probe and the build-egress
+boundary are checked against the live daemon in ``docker`` and ``boundary``; repository
+declarations never widen build egress (D14).
 """
 
 from __future__ import annotations
@@ -12,67 +12,97 @@ import shlex
 from pathlib import PurePosixPath
 
 from infosec_harness.domain.models import EnvironmentSpec
+from infosec_harness.sandbox.errors import (
+    DisallowedBaseImage,
+    InvalidEnvironmentSpec,
+    SandboxUnavailable,
+)
 from infosec_harness.settings import get_settings
 
+__all__ = [
+    "DisallowedBaseImage",
+    "InvalidEnvironmentSpec",
+    "SandboxUnavailable",
+    "image_repository",
+    "jvm_class_selector",
+    "validate_base_image",
+    "validate_environment_spec",
+]
 
-class SandboxUnavailable(RuntimeError):
-    """Raised when the required isolation runtime is not available and not overridden."""
+DOCKER_HUB = "docker.io"
+# Docker's reference grammar, lowercase only. Anything that does not parse is rejected rather
+# than guessed at: the allowlist decision is only as good as this normalization.
+_HOST = re.compile(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*"
+                   r"(?::[0-9]+)?")
+_PATH_COMPONENT = re.compile(r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*")
+_TAG = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}")
+_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 
 
-class DisallowedBaseImage(ValueError):
-    """Raised when an EnvironmentSpec names a base image outside the allowlist."""
+def image_repository(image: str) -> tuple[str, tuple[str, ...]]:
+    """Normalize an image reference to ``(registry host, repository path)``.
 
-
-class InvalidEnvironmentSpec(ValueError):
-    """Raised when generated build fields could change Dockerfile structure or escape scope."""
-
-
-_IMAGE_RE = re.compile(r"^(?:(?P<registry>[a-z0-9.\-]+(?::\d+)?)/)?(?P<repo>[a-z0-9._/\-]+)"
-                       r"(?::(?P<tag>[\w.\-]+))?(?:@sha256:[0-9a-f]{64})?$", re.I)
-
-
-def _registry_of(image: str) -> str:
-    """Return the registry portion of an image ref, defaulting to docker.io/library.
-
-    Docker's implicit rules: a single-segment repo (``python``) is ``docker.io/library``;
-    a two-segment repo (``org/app``) is ``docker.io/org``; an explicit host (contains a dot
-    or colon before the first slash) is used as-is.
+    Docker's implicit rules: the first component is a registry host only when it contains a dot
+    or a port or is ``localhost``; otherwise the image is on Docker Hub, and a single-component
+    Docker Hub name (``python``) is an official image under ``library``.
     """
-    m = _IMAGE_RE.match(image.strip())
-    if not m:
+    ref = image.strip()
+    name, at, digest = ref.partition("@")
+    if at and not _DIGEST.fullmatch(digest):
         raise DisallowedBaseImage(f"unparseable image reference: {image!r}")
-    registry = m.group("registry")
-    if registry and ("." in registry or ":" in registry):
-        return registry
-    # No explicit host: it was part of the repo path.
-    full = image.strip()
-    segments = full.split("/")
-    if len(segments) == 1:
-        return "docker.io/library"
-    return f"docker.io/{segments[0]}"
+    head, slash, last = name.rpartition("/")
+    last, colon, tag = last.partition(":")
+    if colon and not _TAG.fullmatch(tag):
+        raise DisallowedBaseImage(f"unparseable image reference: {image!r}")
+    parts = [*(head.split("/") if slash else ()), last]
+    host = DOCKER_HUB
+    if len(parts) > 1 and ("." in parts[0] or ":" in parts[0] or parts[0] == "localhost"):
+        host = parts.pop(0)
+    if not _HOST.fullmatch(host) or not all(_PATH_COMPONENT.fullmatch(p) for p in parts):
+        raise DisallowedBaseImage(f"unparseable image reference: {image!r}")
+    if host == DOCKER_HUB and len(parts) == 1:
+        parts.insert(0, "library")
+    return host, tuple(parts)
+
+
+def _entry(value: str) -> tuple[str, tuple[str, ...]] | None:
+    parts = [part for part in value.strip().lower().split("/") if part]
+    return (parts[0], tuple(parts[1:])) if parts else None
 
 
 def validate_base_image(image: str, allowlist: list[str] | None = None) -> str:
-    """Return the image if its registry is allowlisted, else raise DisallowedBaseImage."""
+    """Return the image if an allowlist entry covers it, else raise DisallowedBaseImage.
+
+    An entry is a registry host (``public.ecr.aws``: every repository on it) or a host plus a
+    namespace (``docker.io/library``: Docker official images only, not every Docker Hub
+    account). Namespaces match whole path components, so ``docker.io/library`` never admits
+    ``docker.io/library-evil/x``.
+    """
     allowed = allowlist if allowlist is not None else get_settings().allowed_base_registries
-    registry = _registry_of(image)
-    # docker.io/library is a subset of docker.io; match either exactly or by host prefix.
-    if registry in allowed or registry.split("/")[0] in allowed:
-        return image
+    host, path = image_repository(image)
+    for value in allowed:
+        entry = _entry(value)
+        if entry is not None and entry[0] == host and path[:len(entry[1])] == entry[1]:
+            return image
     raise DisallowedBaseImage(
-        f"base image {image!r} is from registry {registry!r}, not in the allowlist {allowed}")
+        f"base image {image!r} resolves to {host}/{'/'.join(path)}, which no allowlist entry "
+        f"covers: {allowed}")
 
 
 _ENV_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _PACKAGE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9+._:@/~=\-]*$")
-
-
 _JVM_RUNNERS = frozenset({"mvn", "mvnw", "gradle", "gradlew"})
 _TEST_CLASS = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 
 
 def jvm_class_selector(command: str) -> str | None:
-    """Recognize the existing single-class JVM form, never an arbitrary shell command."""
+    """The one test class a JVM command selects, None for a non-JVM command.
+
+    The only parser of the selector: the Dockerfile validation and the control-test writer in
+    ``canary`` both use it, so the class a control test is written as is by construction the
+    class the command runs. A JVM command that does not select exactly one literal simple class
+    with its own runner's selector is rejected, never an arbitrary shell command.
+    """
     try:
         tokens = shlex.split(command)
     except ValueError as error:
@@ -88,7 +118,10 @@ def jvm_class_selector(command: str) -> str | None:
     selectors = [i for i, token in enumerate(tokens)
                  if token == "-Dtest" or token.startswith("-Dtest=")
                  or token == "--tests" or token.startswith("--tests=")]
-    if len(selectors) != 1:
+    mentions = [token for token in tokens if "-Dtest" in token or "--tests" in token]
+    if len(selectors) != 1 or len(mentions) != 1:
+        # A selector buried in another argument (``-Dother=-Dtest=X``) is as ambiguous to a
+        # reader of the command as a second selector is to the runner.
         raise InvalidEnvironmentSpec("JVM test command must contain exactly one class selector")
     index = selectors[0]
     runner = tokens[0].rsplit("/", 1)[-1]
@@ -101,10 +134,10 @@ def jvm_class_selector(command: str) -> str | None:
         raise InvalidEnvironmentSpec("JVM test command requires its runner's class selector")
     if not _TEST_CLASS.fullmatch(selected):
         raise InvalidEnvironmentSpec("JVM selector must name one simple test class")
-    from infosec_harness.sandbox.canary import selector_class_name
-
-    if selector_class_name(command, default="") != selected:
-        raise InvalidEnvironmentSpec("JVM selector must agree with the canary class name")
+    # The class must be written literally after its selector, not assembled by shell quoting
+    # inside the value (``-Dtest='X'``): the command text then says exactly what runs.
+    if not re.search(rf"(?:-Dtest=|--tests\s+['\"]?\*?){selected}(?![\w$])", command):
+        raise InvalidEnvironmentSpec("JVM selector must name its class literally")
     return selected
 
 
@@ -133,29 +166,3 @@ def validate_environment_spec(spec: EnvironmentSpec) -> EnvironmentSpec:
         if spec.scope != "partial":
             raise InvalidEnvironmentSpec("module_path is only valid for a partial environment")
     return spec
-
-
-REQUIRED_RUNTIME = "runsc"
-
-
-async def ensure_runtime_available(purpose: str) -> None:
-    """Fail closed unless gVisor (runsc) is configured, registered and the daemon default.
-
-    Only the explicit development override may select or skip the runtime. The configured name
-    is not evidence by itself: the daemon must advertise it and select it as its default.
-    """
-    from infosec_harness.sandbox import docker
-
-    s = get_settings()
-    if s.allow_insecure_runtime:
-        return
-    if s.sandbox_runtime != REQUIRED_RUNTIME:
-        raise SandboxUnavailable(
-            f"cannot {purpose}: sandbox runtime {s.sandbox_runtime!r} is not gVisor "
-            f"({REQUIRED_RUNTIME!r}); only HARNESS_ALLOW_INSECURE_RUNTIME=true may select a "
-            f"weaker runtime for local development.")
-    if not await docker.runtime_available(s.sandbox_runtime):
-        raise SandboxUnavailable(
-            f"cannot {purpose}: sandbox runtime {s.sandbox_runtime!r} is not available on this "
-            f"host. Install gVisor (runsc), or set HARNESS_ALLOW_INSECURE_RUNTIME=true for local "
-            f"development (weaker isolation).")

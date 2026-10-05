@@ -3,58 +3,35 @@
 from __future__ import annotations
 
 import os
-import ssl
+import re
 import time
 from collections.abc import Callable
 from typing import Any
 
 import httpx
-from pydantic import Field
 from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestParameters
-from pydantic_ai.profiles import ModelProfileSpec
-from pydantic_ai.providers.openai import OpenAIProvider
 
-from infosec_harness.agents.intake_schema import intake_openai_profile
 from infosec_harness.inference.auth import AUTH_HEADER, sign_request
 from infosec_harness.inference.codec import decode_response, encode_payload
-from infosec_harness.inference.diagnostics import report_transport_failure
-from infosec_harness.inference.http_service import (
-    TRANSPORT_ERRORS,
-    parse_response,
-    post_bounded,
-    response_error,
-)
+from infosec_harness.inference.compat import contract_profile
+from infosec_harness.inference.http_service import JsonChannel
 from infosec_harness.inference.protocol import (
-    DIGEST_PATTERN,
-    IMAGE_DIGEST_PATTERN,
+    ENV_NAME_PATTERN,
+    INFER_PATH,
+    RESULTS_PATH,
     BrokerError,
     ExecutorContract,
     InferenceRequest,
     InferenceResult,
     ReservationBinding,
-    StrictModel,
-    TransientBrokerError,
     canonical_bytes,
     digest,
     fixed_https_url,
     logical_request_id,
 )
+from infosec_harness.inference.provenance import TrustedBrokerProvenance
 from infosec_harness.inference.timing import WORKER_TIMEOUT_S, remaining_timeout
-
-INFER_PATH = "/v1/infer"
-RESULTS_PATH = "/v1/results"
-class _TrustedBrokerProvenance(StrictModel):
-    """Only the native observations emitted after controller-side verification."""
-
-    native_id: str = Field(pattern=r"^[A-Za-z0-9._-]{1,128}$")
-    policy_digest: str = Field(pattern=DIGEST_PATTERN)
-    executor_image: str = Field(pattern=IMAGE_DIGEST_PATTERN)
-    supervisor_image: str = Field(pattern=IMAGE_DIGEST_PATTERN)
-    profile: str = Field(pattern=r"^[a-z][a-z0-9._-]{0,63}$")
-    credential_revision: str = Field(pattern=r"^[A-Za-z0-9._-]{1,128}$")
-    contract_digest: str = Field(pattern=DIGEST_PATTERN)
-    lease_id: str = Field(pattern=r"^[A-Za-z0-9._-]{1,128}$")
 
 
 def _durable_request_identity(callback: Callable[[], str] | None) -> str:
@@ -82,16 +59,6 @@ def _durable_request_identity(callback: Callable[[], str] | None) -> str:
     return identity
 
 
-def _response_error(status: int, body: bytes) -> BrokerError:
-    """Worker view of a non-200 response: infrastructure/pending dispositions may retry."""
-    error = response_error(status, body)
-    if error.code in {"unavailable", "pending"}:
-        transient = TransientBrokerError(error.code)
-        transient.diagnostic = error.diagnostic
-        return transient
-    return error
-
-
 class BrokerModel(Model):
     """A static-profile PydanticAI model with no provider client or direct fallback.
 
@@ -115,7 +82,7 @@ class BrokerModel(Model):
     ) -> None:
         if binding.contract_digest != contract.digest:
             raise BrokerError("identity")
-        if not secret_env or not secret_env.replace("_", "a").isalnum():
+        if not secret_env or not re.fullmatch(ENV_NAME_PATTERN, secret_env):
             raise BrokerError("auth")
         if (client_cert is None) != (client_key is None):
             raise BrokerError("policy")
@@ -124,9 +91,7 @@ class BrokerModel(Model):
         except ValueError:
             raise BrokerError("policy") from None
         try:
-            profile: ModelProfileSpec = OpenAIProvider.model_profile(contract.model) or {}
-            if contract.atomic_intake:
-                profile = intake_openai_profile(profile)
+            profile = contract_profile(contract.model, atomic_intake=contract.atomic_intake)
         except Exception:
             raise BrokerError("policy") from None
 
@@ -149,6 +114,20 @@ class BrokerModel(Model):
     @property
     def system(self) -> str:
         return "openai"
+
+    def _corroborated(self, result: InferenceResult) -> dict[str, Any]:
+        """Controller observations are mandatory and must match the admitted contract."""
+        provenance = TrustedBrokerProvenance.model_validate(result.provenance)
+        if (
+            provenance.contract_digest != self.contract.digest
+            or provenance.policy_digest != self.contract.policy_digest
+            or provenance.executor_image != self.contract.executor_image
+            or provenance.supervisor_image != self.contract.supervisor_image
+            or provenance.profile != self.contract.profile
+        ):
+            raise ValueError("Controller provenance differs from the admitted contract")
+        return {"state": "completed", "request_id": result.request_id,
+                **provenance.model_dump(mode="json")}
 
     async def request(
         self,
@@ -189,45 +168,22 @@ class BrokerModel(Model):
         except Exception:
             raise BrokerError("policy") from None
 
+        timeout = (self.timeout if request_path == RESULTS_PATH
+                   else remaining_timeout(request.binding.expires_at, self.timeout))
+        channel = JsonChannel(
+            ca_file=self.ca_file,
+            cert=(self.client_cert, self.client_key) if self.client_cert and self.client_key else None,
+            transport=self.http_transport, boundary="worker_controller",
+        )
+        value = await channel.post(self.controller_url + request_path, body,
+                                   {AUTH_HEADER: authorization}, timeout=timeout)
         try:
-            context = ssl.create_default_context(cafile=self.ca_file)
-            if self.client_cert and self.client_key:
-                context.load_cert_chain(self.client_cert, self.client_key)
-            timeout = (self.timeout if request_path == RESULTS_PATH
-                       else remaining_timeout(request.binding.expires_at, self.timeout))
-            status, response_body = await post_bounded(
-                self.controller_url + request_path, body, {AUTH_HEADER: authorization},
-                timeout=timeout, verify=context, transport=self.http_transport,
-            )
-        except TRANSPORT_ERRORS as error:
-            report_transport_failure("worker_controller", error)
-            raise TransientBrokerError("unavailable") from None
-        if status != 200:
-            raise _response_error(status, response_body)
-
-        try:
-            result = InferenceResult.model_validate(parse_response(response_body))
+            result = InferenceResult.model_validate(value)
             if result.request_id != request_id:
-                raise ValueError
+                raise ValueError("Controller returned a different request")
             response = decode_response(result.response)
-            if result.provenance:
-                provenance = _TrustedBrokerProvenance.model_validate(result.provenance)
-                if (
-                    provenance.contract_digest != self.contract.digest
-                    or provenance.policy_digest != self.contract.policy_digest
-                    or provenance.executor_image != self.contract.executor_image
-                    or provenance.supervisor_image != self.contract.supervisor_image
-                    or provenance.profile != self.contract.profile
-                ):
-                    raise ValueError
-                response.metadata = {
-                    **(response.metadata or {}),
-                    "harness_broker": {
-                        "state": "completed",
-                        "request_id": result.request_id,
-                        **provenance.model_dump(mode="json"),
-                    },
-                }
+            response.metadata = {**(response.metadata or {}),
+                                 "harness_broker": self._corroborated(result)}
             return response
         except Exception:
             raise BrokerError("invalid_response") from None

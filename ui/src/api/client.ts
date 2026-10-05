@@ -19,10 +19,15 @@ export type RunPageQuery = Omit<
   Query<"run_page_api_run_page_get">,
   "population"
 >;
+export type ExperimentPageQuery = Omit<
+  Query<"experiments_api_experiments_get">,
+  "population"
+>;
 
 export type RunDetail = Schemas["RunDetail"];
 export type Batch = Schemas["BatchSummary"];
 export type ExperimentSummary = Schemas["ExperimentSummary"];
+export type ExperimentPage = Schemas["ExperimentPage"];
 export type ExperimentDetail = Schemas["ExperimentDetail"];
 export type ExperimentCase = Schemas["ExperimentCase"];
 export type MetricsResponse = Schemas["MetricsResponse"];
@@ -35,7 +40,6 @@ export type VerdictLabel = Schemas["VerdictLabel"];
 export type RuntimeStatus = Schemas["RuntimeStatus"];
 export type BrokerStatus = Schemas["BrokerStatus"];
 export type ModelConnectivity = Schemas["ModelConnectivity"];
-export type QualificationStatus = Schemas["QualificationStatus"];
 
 /** Builds an operational-population URL; a caller-supplied population is overridden. */
 function operational(path: string, params: object = {}): string {
@@ -53,8 +57,6 @@ export const api = {
     req<Success<"runtime_status_api_runtime_status_get">>(
       "/api/runtime-status",
     ),
-  qualification: () =>
-    req<Success<"qualification_api_qualification_get">>("/api/qualification"),
   config: () => req<Success<"config_api_config_get">>("/api/config"),
   metrics: () =>
     req<Success<"metrics_api_metrics_get">>(operational("/api/metrics")),
@@ -73,9 +75,9 @@ export const api = {
     ),
   batches: () =>
     req<Success<"batches_api_batches_get">>(operational("/api/batches")),
-  experiments: () =>
+  experiments: (params: ExperimentPageQuery = {}) =>
     req<Success<"experiments_api_experiments_get">>(
-      operational("/api/experiments"),
+      operational("/api/experiments", params),
     ),
   experiment: (id: string) =>
     req<Success<"experiment_detail_api_experiments__experiment_id__get">>(

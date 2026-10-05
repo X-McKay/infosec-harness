@@ -12,6 +12,7 @@ from pydantic_ai.models import ModelRequestParameters
 from test_openshell_controller import controller_fixture
 
 from infosec_harness.inference.codec import encode_response
+from infosec_harness.inference.controller import Completion
 from infosec_harness.inference.protocol import (
     BrokerError,
     InferenceRequest,
@@ -39,7 +40,8 @@ def setup_boundary(tmp_path, monkeypatch, *, saved, detached=False):
         if saved:
             result = InferenceResult(request_id=request.request_id,
                 response=encode_response(ModelResponse(parts=[TextPart('saved response')], model_name=template.contract.model)))
-            await core.ledger.complete(result, permit=permit)
+            # The controller attaches its corroborated provenance to the saved result.
+            await core._complete(lease, Completion(permit=permit, result=result))
         # Simulate native ACK loss after the ledger decision, never an upstream retry.
         raise BrokerError('unavailable')
     core.channel = SimpleNamespace(post=native_post)

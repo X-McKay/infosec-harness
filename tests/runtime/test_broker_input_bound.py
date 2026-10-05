@@ -9,10 +9,10 @@ from pydantic_ai.models import ModelRequestParameters, OutputObjectDefinition
 from pydantic_ai.tools import ToolDefinition
 from test_broker_executor import request_fixture
 
-from infosec_harness.inference.codec import encode_payload
-from infosec_harness.inference.compat import input_wire
+from infosec_harness.inference.codec import ascii_normalized_size, encode_payload
 from infosec_harness.inference.executor import OpenAIInference
-from infosec_harness.inference.protocol import BrokerError, canonical_bytes, required_input_reserve
+from infosec_harness.inference.protocol import BrokerError, canonical_bytes
+from infosec_harness.inference.rendering import input_wire, required_input_reserve
 
 
 def payload(text="hi", params=None):
@@ -125,10 +125,9 @@ async def test_decoded_tool_arguments_have_separate_normalization_reserve():
         ModelResponse(parts=[ToolCallPart("read", arguments, tool_call_id="call")])],
         {"max_tokens": 16}, ModelRequestParameters())
     wire = await input_wire(value, request.contract)
-    from infosec_harness.inference.protocol import _ascii_normalized_size
 
     required = await required_input_reserve(value, request.contract)
-    assert required >= _ascii_normalized_size(wire) + 128 * 2 + 2048 + 60_000
+    assert required >= ascii_normalized_size(wire) + 128 * 2 + 2048 + 60_000
 
 
 async def test_ascii_tool_rich_input_remains_practical():
@@ -179,11 +178,10 @@ async def test_cached_schema_expansion_height_cannot_bypass_depth_limit(monkeypa
 async def test_supplementary_cjk_normalization_cannot_shrink_json_escape_bound():
     import unicodedata
 
-    from infosec_harness.inference.protocol import _ascii_normalized_size
 
     text = "\U0002f800" * 5000
     assert len(json.dumps(unicodedata.normalize("NFD", text))) < len(json.dumps(text))
-    assert _ascii_normalized_size(text) >= len(json.dumps(text))
+    assert ascii_normalized_size(text) >= len(json.dumps(text))
     request, _ = request_fixture()
     value = payload(params=ModelRequestParameters(function_tools=[ToolDefinition(
         name="read", description=text, parameters_json_schema={"type": "object"})]))

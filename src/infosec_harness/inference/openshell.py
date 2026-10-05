@@ -23,15 +23,17 @@ from pydantic import Field
 
 from infosec_harness.sandbox.process import MINIMAL_PATH, ProcessResult, run_bounded
 
-from .executor import ExecutorSettings
+from .executor import ExecutorSettings, read_private, require_private
 from .http_service import https_origin
 from .policy import canonical_policy, policy_digest
 from .protocol import (
-    DIGEST_PATTERN,
+    INFER_PATH,
+    LEDGER_CREDENTIAL_ENV,
     MAX_BODY_BYTES,
     OPENSHELL_VERSION,
     BrokerError,
     ExecutorContract,
+    Sha256,
     StrictModel,
     canonical_bytes,
     digest,
@@ -41,7 +43,7 @@ _LOG = logging.getLogger(__name__)
 # Acknowledgement wait leaves cleanup authority/time for exact-owned destruction.
 _DETACH_ACK_TIMEOUT_S = 30.0
 _ABSENCE_TIMEOUT_S = 30.0
-_LEDGER_CREDENTIAL_KEYS = ["IH_LEDGER_TOKEN"]
+_LEDGER_CREDENTIAL_KEYS = [LEDGER_CREDENTIAL_ENV]
 _ROLE_LABEL = "openshell.ai/isolation-role"
 
 
@@ -77,9 +79,8 @@ def _private_directory(directory: Path) -> Path:
     if directory.is_symlink():
         raise BrokerError("identity")
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-    status = directory.stat()
-    if status.st_uid != os.getuid() or status.st_mode & 0o077:
-        raise BrokerError("identity", "Lease store must be private and controller-owned")
+    require_private(directory, directory=True,
+                    message="Lease store must be private and controller-owned")
     return directory
 
 
@@ -124,7 +125,7 @@ class NativeDeploymentConfig(StrictModel):
 
     deployment: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,62}$")
     binary: Path
-    binary_sha256: str = Field(pattern=DIGEST_PATTERN)
+    binary_sha256: Sha256
     gateway: str
     service_domain: str = Field(default="openshell.localhost", pattern=r"^[a-z0-9][a-z0-9.-]+$")
     workspace: str
@@ -272,7 +273,10 @@ class LeaseStore:
 
     def is_retired(self, lease_id: str) -> bool:
         path = self.archive / f"{lease_id}.json"
-        return path.is_file() and not path.is_symlink()
+        if not path.exists() and not path.is_symlink():
+            return False
+        require_private(path)
+        return True
 
     def _run_tombstone(self, run_id: str) -> Path:
         if not isinstance(run_id, str) or not run_id or len(run_id) > 128:
@@ -283,9 +287,7 @@ class LeaseStore:
         path = self._run_tombstone(run_id)
         if not path.exists() and not path.is_symlink():
             return False
-        if path.is_symlink() or path.stat().st_uid != os.getuid() or path.stat().st_mode & 0o077:
-            raise BrokerError("identity")
-        if path.read_bytes() != run_id.encode():
+        if read_private(path) != run_id.encode():
             raise BrokerError("identity")
         return True
 
@@ -296,14 +298,9 @@ class LeaseStore:
     def load(self) -> list[Lease]:
         leases = []
         for path in sorted(self.directory.glob("*.json")):
-            if (
-                path.is_symlink()
-                or path.stat().st_mode & 0o077
-                or path.stat().st_uid != os.getuid()
-            ):
-                raise BrokerError("identity")
+            raw = read_private(path)
             try:
-                values = json.loads(path.read_bytes())
+                values = json.loads(raw)
                 values["contract"] = ExecutorContract.model_validate(values["contract"])
                 lease = Lease(**values)
                 if str(uuid.UUID(lease.lease_id)) != path.stem:
@@ -387,7 +384,7 @@ class NativeCLI:
         except OSError:
             raise BrokerError("unavailable") from None
         # Native errors may contain credential material. Never echo stderr or argv.
-        if result.timed_out or result.truncated or result.returncode:
+        if result.timed_out or result.truncated or result.exit_code != 0:
             raise BrokerError("unavailable")
         return result
 
@@ -412,7 +409,7 @@ class NativeCLI:
         result = await self._execute(
             argv, env={**self.environment, **(extra_env or {})}, timeout=timeout
         )
-        return result.stdout.decode()
+        return result.stdout
 
     async def containers(self, native_id: str) -> list[dict]:
         docker = [self.docker_binary, "--host", self.docker_socket]
@@ -421,7 +418,7 @@ class NativeCLI:
             env=self.environment,
             timeout=15,
         )
-        ids = listed.stdout.decode().split()
+        ids = listed.stdout.split()
         if not ids:
             return []
         inspected = await self._execute([*docker, "inspect", *ids], env=self.environment,
@@ -439,7 +436,57 @@ def _incomplete() -> BrokerError:
     return BrokerError("policy", "Native observations are incomplete")
 
 
-class OpenShellAdapter:
+class OwnedLeases:
+    """Lease ownership shared by every adapter: one deployment, a private store and one lock.
+
+    Subclasses provide ``leases``, ``deployment``, ``store``, ``lock`` and ``revoke``. Only
+    leases of this deployment are ever used, authenticated or revoked.
+    """
+
+    leases: dict[str, Lease]
+    deployment: str
+    store: LeaseStore
+    lock: asyncio.Lock
+
+    async def revoke(self, lease: Lease) -> None:
+        raise NotImplementedError
+
+    def owned_leases(self) -> dict[str, Lease]:
+        return {identity: lease for identity, lease in self.leases.items()
+                if lease.deployment == self.deployment}
+
+    def lease_for_token(self, token: str) -> Lease:
+        """The one ready owned lease whose native ledger key is exactly ``token``."""
+        if not token.isascii():
+            raise BrokerError("auth")
+        presented = token.encode()
+        matches = [lease for lease in self.owned_leases().values()
+                   if lease.status is LeaseState.READY
+                   and secrets.compare_digest(lease.ledger_key.encode(), presented)]
+        if len(matches) != 1:
+            raise BrokerError("auth")
+        return matches[0]
+
+    def is_deleted(self, lease_id: str) -> bool:
+        """A lease absent from the active table is deleted only if its retirement is recorded."""
+        return lease_id not in self.leases and self.store.is_retired(lease_id)
+
+    def fence_run(self, run_id: str) -> None:
+        """Persist the run tombstone: no lease of the run may be created after this returns."""
+        self.store.revoke_run(run_id)
+
+    def is_run_fenced(self, run_id: str) -> bool:
+        return self.store.is_run_revoked(run_id)
+
+    async def revoke_run(self, run_id: str) -> None:
+        """Delete every owned lease of a fenced run; waits for its in-flight provisioning."""
+        async with self.lock:
+            for lease in list(self.owned_leases().values()):
+                if lease.run_id == run_id and lease.status is not LeaseState.DELETED:
+                    await self.revoke(lease)
+
+
+class OpenShellAdapter(OwnedLeases):
     def __init__(
         self,
         cli: NativeOperations,
@@ -533,21 +580,16 @@ class OpenShellAdapter:
     def service_url(self, lease: Lease) -> str:
         if not lease.service_endpoint:
             raise BrokerError("unavailable")
-        return lease.service_endpoint + "v1/infer"
-
-    def is_deleted(self, lease_id: str) -> bool:
-        """A lease absent from the active table is deleted only if its retirement is recorded."""
-        return lease_id not in self.leases and self.store.is_retired(lease_id)
+        return lease.service_endpoint + INFER_PATH.removeprefix("/")
 
     async def ensure(self, run_id: str, contract: ExecutorContract) -> Lease:
         spec = self.spec(contract)
         async with self.lock:
             self._check_fence(run_id)
             current, stale = None, []
-            for lease in self.leases.values():
+            for lease in self.owned_leases().values():
                 if (
-                    lease.deployment != self.deployment
-                    or lease.run_id != run_id
+                    lease.run_id != run_id
                     or lease.contract != contract
                     or lease.status is not LeaseState.READY
                 ):
@@ -620,8 +662,8 @@ class OpenShellAdapter:
         # Native credential create resolves the profile's declared env var, never secret argv.
         await self.cli.run(
             ["provider", "create", "--name", lease.ledger_name, "--type", spec.ledger_profile,
-             "--credential", "IH_LEDGER_TOKEN"],
-            extra_env={"IH_LEDGER_TOKEN": lease.ledger_key},
+             "--credential", LEDGER_CREDENTIAL_ENV],
+            extra_env={LEDGER_CREDENTIAL_ENV: lease.ledger_key},
         )
         inventory = await self._inventory(
             ["provider", "list"], "providers", boundary="native_create",
@@ -696,6 +738,24 @@ class OpenShellAdapter:
             raise _incomplete() from None
 
     async def _verify(self, lease: Lease, spec: NativeSpec) -> dict:
+        """Every native observation is re-read; a configured name is never evidence."""
+        detail = await self._verify_sandbox(lease, spec)
+        await self._verify_providers(lease, spec)
+        await self._verify_attachments(lease, spec)
+        await self._verify_service(lease)
+        workload, supervisor = await self._verify_containers(lease)
+        await self._verify_process(lease)
+        return {
+            "native_id": lease.native_id,
+            "policy_digest": policy_digest(detail["policy"]),
+            "executor_image": workload["Image"],
+            "supervisor_image": supervisor["Image"],
+            "profile": lease.contract.profile,
+            "credential_revision": lease.credential_revision,
+        }
+
+    async def _verify_sandbox(self, lease: Lease, spec: NativeSpec) -> dict:
+        """Exact identity, ready phase and the admitted sandbox policy."""
         detail = await self._json(["sandbox", "get", lease.name, "-o", "json"])
         admission = detail.get("configuration_admission") or {}
         if (
@@ -708,6 +768,12 @@ class OpenShellAdapter:
             raise BrokerError("policy")
         if lease.credential_revision != spec.credential_revision:
             raise _identity_failure("native_verify", "credential_revision")
+        if canonical_policy(detail["policy"]) != canonical_policy(spec.approved_policy):
+            raise BrokerError("policy")
+        return detail
+
+    async def _verify_providers(self, lease: Lease, spec: NativeSpec) -> None:
+        """Approved profile contents, and exactly one provider record of each expected identity."""
         for profile, approved in (
             (spec.provider_profile, spec.provider_profile_digest),
             (spec.ledger_profile, spec.ledger_profile_digest),
@@ -719,33 +785,37 @@ class OpenShellAdapter:
             ["provider", "list"], "providers", boundary="native_verify",
             category="provider_inventory",
         )
-        named = {}
-        for item in inventory:
-            named.setdefault(item.get("name"), item)
-        provider = named.get(lease.contract.provider_binding)
-        if provider is None or not _matches_provider(
-            provider, profile=spec.provider_profile, workspace=self.cli.workspace,
-            native_id=spec.provider_native_id, resource_version=spec.provider_resource_version,
+        for name, category, expected in (
+            (lease.contract.provider_binding, "provider_identity",
+             {"profile": spec.provider_profile, "native_id": spec.provider_native_id,
+              "resource_version": spec.provider_resource_version}),
+            (lease.ledger_name, "ledger_provider_identity",
+             {"profile": spec.ledger_profile, "native_id": lease.ledger_native_id,
+              "resource_version": 1, "credential_keys": _LEDGER_CREDENTIAL_KEYS}),
         ):
-            raise _identity_failure("native_verify", "provider_identity")
-        ledger_provider = named.get(lease.ledger_name)
-        if ledger_provider is None or not _matches_provider(
-            ledger_provider, profile=spec.ledger_profile, workspace=self.cli.workspace,
-            native_id=lease.ledger_native_id, resource_version=1,
-            credential_keys=_LEDGER_CREDENTIAL_KEYS,
-        ):
-            raise _identity_failure("native_verify", "ledger_provider_identity")
+            named = [item for item in inventory if item.get("name") == name]
+            # A duplicate name is ambiguous: never pick the first match.
+            if len(named) != 1 or not _matches_provider(
+                named[0], workspace=self.cli.workspace, **expected
+            ):
+                raise _identity_failure("native_verify", category)
+
+    async def _verify_attachments(self, lease: Lease, spec: NativeSpec) -> None:
+        """Exactly the two expected providers are attached, identified by native ID."""
         attached = await self._inventory(
             ["sandbox", "provider", "list", lease.name], "providers",
             boundary="native_verify", category="attachment_inventory", failure="policy",
         )
-        if {item["name"]: item["type"] for item in attached} != {
-            lease.contract.provider_binding: spec.provider_profile,
-            lease.ledger_name: spec.ledger_profile,
-        }:
+        observed = sorted((item.get("name"), item.get("type"), item.get("id")) for item in attached)
+        expected = sorted([
+            (lease.contract.provider_binding, spec.provider_profile, spec.provider_native_id),
+            (lease.ledger_name, spec.ledger_profile, lease.ledger_native_id),
+        ])
+        if not lease.ledger_native_id or observed != expected:
             raise BrokerError("policy")
-        if canonical_policy(detail["policy"]) != canonical_policy(spec.approved_policy):
-            raise BrokerError("policy")
+
+    async def _verify_service(self, lease: Lease) -> None:
+        """The one exposed inference service, at its exact gateway URL."""
         services = await self._inventory(
             ["service", "list", lease.name], "services",
             boundary="native_verify", category="service_inventory", failure="policy",
@@ -763,6 +833,9 @@ class OpenShellAdapter:
         }]:
             raise BrokerError("policy")
         lease.service_endpoint = expected_url
+
+    async def _verify_containers(self, lease: Lease) -> tuple[dict, dict]:
+        """Exactly one confined workload and one supervisor, at the contract's images."""
         containers = await self.cli.containers(lease.native_id)
         roles = [item["Config"]["Labels"].get(_ROLE_LABEL) for item in containers]
         # Exactly one workload and one supervisor: an extra or duplicate container is unverified.
@@ -788,6 +861,10 @@ class OpenShellAdapter:
             )
         ):
             raise BrokerError("policy")
+        return workload, supervisor
+
+    async def _verify_process(self, lease: Lease) -> None:
+        """The running executor's own uid, no-new-privileges and seccomp mode."""
         proof = await self._json(
             [
                 "sandbox", "exec", "--name", lease.name, "--no-login-shell", "--no-tty",
@@ -798,20 +875,12 @@ class OpenShellAdapter:
         )
         if proof != {"uid": 65532, "nnp": "1", "seccomp": "2"}:
             raise BrokerError("policy", "Native process confinement proof failed")
-        return {
-            "native_id": lease.native_id,
-            "policy_digest": policy_digest(detail["policy"]),
-            "executor_image": workload["Image"],
-            "supervisor_image": supervisor["Image"],
-            "profile": lease.contract.profile,
-            "credential_revision": lease.credential_revision,
-        }
 
     async def revoke(self, lease: Lease) -> None:
         """Idempotent exact-owned cleanup; every caller serializes on the lease lock."""
         if lease.status is LeaseState.DELETED and self.is_deleted(lease.lease_id):
             return
-        if self.leases.get(lease.lease_id) is not lease or lease.deployment != self.deployment:
+        if self.owned_leases().get(lease.lease_id) is not lease:
             raise _identity_failure("native_revoke", "lease_ownership")
         async with self._lease_lock(lease.lease_id):
             if lease.status is LeaseState.DELETED:
@@ -906,8 +975,8 @@ class OpenShellAdapter:
         Ready leases of open runs remain usable and are re-verified before each use.
         """
         for lease_id in self._recovered:
-            lease = self.leases.get(lease_id)
-            if lease is None or lease.deployment != self.deployment:
+            lease = self.owned_leases().get(lease_id)
+            if lease is None:
                 continue
             if lease.status is LeaseState.READY and not self.store.is_run_revoked(lease.run_id):
                 continue

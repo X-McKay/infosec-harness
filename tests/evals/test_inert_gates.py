@@ -9,21 +9,20 @@ report never emits (inert, and a defect).
 
 from __future__ import annotations
 
-import json
+from pathlib import Path
 
 import pytest
-import yaml
 
+from infosec_harness.agents import models
+from infosec_harness.evals.gates import load_policy, parse_policy
 from infosec_harness.evals.inert_gates import (
     InertReason,
-    audit_report_file,
     find_inert_checks,
     format_inert_notice,
 )
-from infosec_harness.evals.pricing import PricingStatus, pricing_status
-from infosec_harness.resources import agents_dir
+from infosec_harness.evals.pricing import PricingStatus, pricing_label, pricing_status
 
-POLICY = {
+RAW_POLICY = {
     "schema_version": 1,
     "hard_gates": {"schema_validity_rate": 1.0, "budget_exhausted_count": 0},
     "thresholds": {
@@ -32,6 +31,13 @@ POLICY = {
         "p95_model_requests": {"max": 12},
     },
 }
+
+
+def _policy(**changes):
+    return parse_policy("context", {**RAW_POLICY, **changes}, Path("release-policy.yaml"))
+
+
+POLICY = _policy()
 
 
 def _report(*, model: str, cost: float | None = 0.0, metrics: dict | None = None,
@@ -97,12 +103,11 @@ def test_stub_mode_says_no_model_was_called_rather_than_blaming_the_report():
     assert "stub mode" in check.detail
 
 
-@pytest.mark.parametrize("status", [PricingStatus.UNKNOWN_MODEL, PricingStatus.UNDETERMINED])
-def test_an_unpriced_model_reporting_no_cost_is_an_environment_fact_not_a_defect(status):
+def test_an_unpriced_model_reporting_no_cost_is_an_environment_fact_not_a_defect():
     """An unpriced model reports cost as unknown (None), not 0.0. That absence is the same
     environment fact as a zero price, and must not be filed as a broken report."""
     report = _report(model="gateway:no-such-model", cost=None)
-    (check,) = find_inert_checks(report, POLICY, pricing=lambda _m: status)
+    (check,) = find_inert_checks(report, POLICY, pricing=_unpriced)
     assert check.reason is InertReason.COST_UNPRICED_MODEL
     assert not check.is_defect
     assert check.value is None
@@ -134,8 +139,7 @@ def test_zero_cost_under_a_priced_model_is_reported_as_a_defect():
 # --- a policy naming a metric nobody emits ----------------------------------------------
 
 def test_a_threshold_on_a_metric_the_report_never_emits_is_an_inert_defect():
-    policy = {**POLICY, "thresholds": {**POLICY["thresholds"],
-                                       "cache_hit_ratio": {"min": 0.30}}}
+    policy = _policy(thresholds={**RAW_POLICY["thresholds"], "cache_hit_ratio": {"min": 0.30}})
     report = _report(model="anthropic:claude-sonnet-5", cost=0.12)
     (check,) = find_inert_checks(report, policy, pricing=_priced)
     assert (check.kind, check.metric, check.bound) == ("threshold", "cache_hit_ratio", "min")
@@ -145,8 +149,8 @@ def test_a_threshold_on_a_metric_the_report_never_emits_is_an_inert_defect():
 
 
 def test_a_hard_gate_on_a_metric_the_report_never_emits_is_an_inert_defect():
-    policy = {**POLICY, "hard_gates": {**POLICY["hard_gates"],
-                                       "unevidenced_exploitable_verdicts": 0}}
+    policy = _policy(hard_gates={**RAW_POLICY["hard_gates"],
+                                 "unevidenced_exploitable_verdicts": 0})
     (check,) = find_inert_checks(_report(model="m", cost=0.2), policy, pricing=_priced)
     assert check.kind == "hard_gate"
     assert check.metric == "unevidenced_exploitable_verdicts"
@@ -154,15 +158,18 @@ def test_a_hard_gate_on_a_metric_the_report_never_emits_is_an_inert_defect():
     assert check.is_defect
 
 
-def test_a_non_numeric_metric_cannot_be_compared_and_is_inert():
-    report = _report(model="m", cost=0.2, metrics={"task_success_rate": None})
+@pytest.mark.parametrize("value", [None, "0.9", True, float("nan"), float("inf")])
+def test_a_non_numeric_metric_cannot_be_compared_and_is_inert(value):
+    """Exactly what the gate evaluation cannot compare, non-finite numbers included."""
+    report = _report(model="m", cost=0.2, metrics={"task_success_rate": value})
     reasons = {c.reason for c in find_inert_checks(report, POLICY, pricing=_priced)}
     assert reasons == {InertReason.METRIC_NOT_NUMERIC}
+    assert POLICY.evaluate({**report["metrics"], **report["hard_gates"]}).status == "not_checked"
 
 
 def test_a_bound_no_run_could_violate_is_reported_as_vacuous():
-    policy = {**POLICY, "thresholds": {"task_success_rate": {"min": 0.0},
-                                       "schema_validity_rate": {"max": 1.0}}}
+    policy = _policy(thresholds={"task_success_rate": {"min": 0.0},
+                                 "schema_validity_rate": {"max": 1.0}})
     report = _report(model="m", cost=0.2, metrics={"schema_validity_rate": 1.0})
     checks = find_inert_checks(report, policy, pricing=_priced)
     assert {c.reason for c in checks} == {InertReason.BOUND_VACUOUS}
@@ -183,7 +190,7 @@ def test_the_notice_is_unmissable_and_says_it_is_not_a_gate():
 
 
 def test_the_notice_flags_defects_separately_from_environment_facts():
-    policy = {**POLICY, "thresholds": {**POLICY["thresholds"], "made_up": {"min": 1}}}
+    policy = _policy(thresholds={**RAW_POLICY["thresholds"], "made_up": {"min": 1}})
     report = _report(model="gateway:unpriced")
     text = format_inert_notice(find_inert_checks(report, policy, pricing=_unpriced),
                               subject="context", policy=policy)
@@ -198,48 +205,44 @@ def test_an_all_live_policy_still_prints_a_confirming_line():
     assert text == "inert-gate audit: all 5 policy checks for context were live for this run."
 
 
-def test_the_audit_reads_a_report_and_its_policy_from_disk(tmp_path):
-    path = tmp_path / "report.json"
-    path.write_text(json.dumps(_report(model="stub:context:sonnet")))
-    policy = tmp_path / "release-policy.yaml"
-    policy.write_text(yaml.safe_dump(POLICY))
-    lines: list[str] = []
-    checks = audit_report_file(path, policy_path=policy, echo=lines.append)
-    assert [c.reason for c in checks] == [InertReason.COST_STUB_MODEL]
-    assert "INERT RELEASE GATES" in lines[0]
-
-
-def test_the_audit_defaults_to_the_reports_own_agent_policy(tmp_path):
-    path = tmp_path / "report.json"
-    path.write_text(json.dumps(_report(model="stub:context:sonnet",
-                                       gates={"unevidenced_safe_verdicts": 0})))
-    checks = audit_report_file(path, echo=lambda _line: None)
-    assert [c.reason for c in checks] == [InertReason.COST_STUB_MODEL]
-
-
-def test_a_report_naming_no_agent_needs_an_explicit_policy(tmp_path):
-    path = tmp_path / "report.json"
-    path.write_text(json.dumps({"metrics": {}}))
-    with pytest.raises(ValueError, match="names no agent"):
-        audit_report_file(path, echo=lambda _line: None)
-
-
 # --- the real pricing probe, and the real policies --------------------------------------
 
-def test_the_pricing_probe_agrees_with_the_deployments_own_estimator():
-    assert pricing_status("stub:context:sonnet") is PricingStatus.STUB
-    assert pricing_status("gpt-4o") is PricingStatus.PRICED
+# One model per price source the deployment can report, with the label every experiment row
+# and report has recorded for it. The labels are persisted and compared, so they must not move.
+PRICE_SOURCES = [
+    ("stub:context:sonnet", "stub", "stub"),
+    ("gpt-4o", "genai-prices", "priced"),
+    ("gateway:claude-sonnet-5", "custom", "priced"),
     # config/models.yaml prices the self-hosted vLLM model at zero on purpose.
-    assert pricing_status("gateway:Qwen3.6-35B-A3B-NVFP4") is PricingStatus.ZERO_PRICED
-    assert pricing_status("gateway:no-such-model-anywhere") is PricingStatus.UNKNOWN_MODEL
+    ("gateway:Qwen3.6-35B-A3B-NVFP4", "custom-zero", "zero_priced"),
+    ("gateway:no-such-model-anywhere", "unknown", "unknown_model"),
+]
+
+
+@pytest.mark.parametrize(("model", "source", "label"), PRICE_SOURCES)
+def test_the_pricing_label_is_the_deployments_own_price_source(model, source, label):
+    assert models.pricing_source(model) == source
+    assert pricing_status(model).value == label
+    assert pricing_label(label) is pricing_status(model)
+
+
+@pytest.mark.parametrize(("model", "source", "label"), PRICE_SOURCES)
+def test_the_pricing_label_agrees_with_what_the_estimator_charges(model, source, label):
+    """A model labelled priced is charged; any other label never yields a nonzero cost."""
+    class Million:
+        input_tokens = output_tokens = 1_000_000
+        cache_read_tokens = cache_write_tokens = None
+
+    cost, _ = models.estimate_cost(model, Million())
+    assert bool(cost) is pricing_status(model).can_move
+    assert (cost is None) is (pricing_status(model) is PricingStatus.UNKNOWN_MODEL)
 
 
 @pytest.mark.parametrize("agent", ["context", "verdict", "intake"])
 def test_the_shipped_policies_audit_cleanly_against_a_priced_report(agent):
     """The shipped thresholds are all live *given* a priced model — the inertness is the
     deployment's, not the policy's. This is what makes the cost ceiling worth keeping."""
-    policy = yaml.safe_load(
-        (agents_dir() / agent / "evals" / "release-policy.yaml").read_text())
+    policy = load_policy(agent)
     report = _report(model="anthropic:claude-sonnet-5", cost=0.08,
                      gates={"unevidenced_safe_verdicts": 0})
     assert find_inert_checks(report, policy, pricing=_priced) == []

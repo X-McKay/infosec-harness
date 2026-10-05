@@ -3,7 +3,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import type { RunDetail } from "@/api/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { integer, money, seconds } from "@/lib/format";
-import { asRecord, isRecord, type JsonRecord } from "@/lib/json";
+import { asRecord, type JsonRecord } from "@/lib/json";
 import { executionProvenance, originSummary } from "@/lib/provenance";
 
 function Json({ value }: { value: unknown }) {
@@ -69,11 +69,9 @@ export function EvidenceBasis({ executions }: { executions: unknown[] }) {
 }
 
 export function FindingEvidence({ run }: { run: RunDetail }) {
-  const evidence = asRecord(run.evidence);
-  const manifest = isRecord(evidence.manifest) ? evidence.manifest : null;
-  const executions = Array.isArray(evidence.executions)
-    ? evidence.executions
-    : [];
+  const evidence = run.evidence;
+  const manifest = evidence?.manifest ?? null;
+  const executions = evidence?.executions ?? [];
   return (
     <>
       <Card>
@@ -82,7 +80,7 @@ export function FindingEvidence({ run }: { run: RunDetail }) {
         </CardHeader>
         <CardContent className="space-y-4">
           <ManifestSummary manifest={manifest} />
-          <EvidenceSection title="Context" value={evidence.context} />
+          <EvidenceSection title="Context" value={evidence?.context} />
           <EvidenceSection title="Executions" value={executions} />
           <JsonDetails summary="Raw evidence JSON" value={evidence} />
         </CardContent>

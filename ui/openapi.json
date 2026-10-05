@@ -51,8 +51,7 @@
                 {
                   "enum": [
                     "operational",
-                    "demo",
-                    "legacy"
+                    "demo"
                   ],
                   "type": "string"
                 },
@@ -75,7 +74,8 @@
                     "input_tokens",
                     "output_tokens",
                     "cost_usd",
-                    "wall_time_s"
+                    "wall_time_s",
+                    "agent_time_s"
                   ],
                   "type": "string"
                 },
@@ -214,8 +214,7 @@
             "schema": {
               "enum": [
                 "operational",
-                "demo",
-                "legacy"
+                "demo"
               ],
               "type": "string",
               "default": "operational",
@@ -281,6 +280,80 @@
         }
       }
     },
+    "/api/experiments": {
+      "get": {
+        "summary": "Experiments",
+        "description": "Newest first. Summaries carry headline measurements; full metrics are per experiment.",
+        "operationId": "experiments_api_experiments_get",
+        "parameters": [
+          {
+            "name": "population",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "operational",
+                    "demo"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Population"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExperimentPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/experiments/{experiment_id}": {
       "get": {
         "summary": "Experiment Detail",
@@ -304,8 +377,7 @@
                 {
                   "enum": [
                     "operational",
-                    "demo",
-                    "legacy"
+                    "demo"
                   ],
                   "type": "string"
                 },
@@ -334,24 +406,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/qualification": {
-      "get": {
-        "summary": "Qualification",
-        "operationId": "qualification_api_qualification_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/QualificationStatus"
                 }
               }
             }
@@ -427,8 +481,7 @@
                 {
                   "enum": [
                     "operational",
-                    "demo",
-                    "legacy"
+                    "demo"
                   ],
                   "type": "string"
                 },
@@ -529,8 +582,7 @@
                 {
                   "enum": [
                     "operational",
-                    "demo",
-                    "legacy"
+                    "demo"
                   ],
                   "type": "string"
                 },
@@ -549,105 +601,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/BatchDetail"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/runs": {
-      "get": {
-        "summary": "Runs",
-        "operationId": "runs_api_runs_get",
-        "parameters": [
-          {
-            "name": "batch_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Batch Id"
-            }
-          },
-          {
-            "name": "verdict",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Verdict"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 1000,
-              "minimum": 1,
-              "default": 200,
-              "title": "Limit"
-            }
-          },
-          {
-            "name": "population",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "enum": [
-                    "operational",
-                    "demo",
-                    "legacy"
-                  ],
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Population"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/RunSummary"
-                  },
-                  "title": "Response Runs Api Runs Get"
                 }
               }
             }
@@ -688,8 +641,7 @@
                 {
                   "enum": [
                     "operational",
-                    "demo",
-                    "legacy"
+                    "demo"
                   ],
                   "type": "string"
                 },
@@ -757,61 +709,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ReviewSaved"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/experiments": {
-      "get": {
-        "summary": "Experiments",
-        "operationId": "experiments_api_experiments_get",
-        "parameters": [
-          {
-            "name": "population",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "enum": [
-                    "operational",
-                    "demo",
-                    "legacy"
-                  ],
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Population"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/ExperimentSummary"
-                  },
-                  "title": "Response Experiments Api Experiments Get"
                 }
               }
             }
@@ -1374,6 +1271,137 @@
         ],
         "title": "Distribution"
       },
+      "ExecutionObservations": {
+        "properties": {
+          "precondition_reached": {
+            "type": "boolean",
+            "title": "Precondition Reached"
+          },
+          "sink_returned": {
+            "type": "boolean",
+            "title": "Sink Returned"
+          },
+          "oracle_fired": {
+            "type": "boolean",
+            "title": "Oracle Fired"
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "controller",
+              "self_reported_marker",
+              "parsed_untrusted_output"
+            ],
+            "title": "Origin"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "precondition_reached",
+          "sink_returned",
+          "oracle_fired",
+          "origin"
+        ],
+        "title": "ExecutionObservations",
+        "description": "The exploit markers the probe printed."
+      },
+      "ExecutionOrigins": {
+        "properties": {
+          "process": {
+            "$ref": "#/components/schemas/ExecutionProcess"
+          },
+          "observations": {
+            "$ref": "#/components/schemas/ExecutionObservations"
+          },
+          "runner": {
+            "$ref": "#/components/schemas/ExecutionRunner"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "process",
+          "observations",
+          "runner"
+        ],
+        "title": "ExecutionOrigins",
+        "description": "The origin-labelled sections of the controller's execution record (sandbox.evidence)."
+      },
+      "ExecutionProcess": {
+        "properties": {
+          "exit_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Code"
+          },
+          "timed_out": {
+            "type": "boolean",
+            "title": "Timed Out"
+          },
+          "duration_s": {
+            "type": "number",
+            "title": "Duration S"
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "controller",
+              "self_reported_marker",
+              "parsed_untrusted_output"
+            ],
+            "title": "Origin"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "exit_code",
+          "timed_out",
+          "duration_s",
+          "origin"
+        ],
+        "title": "ExecutionProcess",
+        "description": "The probe process as the controller observed it."
+      },
+      "ExecutionRunner": {
+        "properties": {
+          "zero_test_signal": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Zero Test Signal"
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "controller",
+              "self_reported_marker",
+              "parsed_untrusted_output"
+            ],
+            "title": "Origin"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "zero_test_signal",
+          "origin"
+        ],
+        "title": "ExecutionRunner",
+        "description": "The runner's own zero-test phrase, or None when its output contained none."
+      },
       "ExperimentCase": {
         "properties": {
           "case_name": {
@@ -1463,6 +1491,37 @@
         ],
         "title": "ExperimentDetail"
       },
+      "ExperimentPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ExperimentSummary"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "offset",
+          "limit"
+        ],
+        "title": "ExperimentPage"
+      },
       "ExperimentStatus": {
         "type": "string",
         "enum": [
@@ -1513,13 +1572,6 @@
             "type": "integer",
             "title": "Repetitions"
           },
-          "metrics": {
-            "additionalProperties": {
-              "$ref": "#/components/schemas/JsonValue"
-            },
-            "type": "object",
-            "title": "Metrics"
-          },
           "config_hash": {
             "type": "string",
             "title": "Config Hash"
@@ -1547,6 +1599,105 @@
           "created_at": {
             "type": "string",
             "title": "Created At"
+          },
+          "accuracy": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accuracy"
+          },
+          "cost_usd_per_case": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Usd Per Case"
+          },
+          "p50_latency_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P50 Latency S"
+          },
+          "p95_latency_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P95 Latency S"
+          },
+          "passed": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passed"
+          },
+          "cases_completed": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cases Completed"
+          },
+          "cases_planned": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cases Planned"
+          },
+          "budget_exhausted_count": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Budget Exhausted Count"
+          },
+          "gate_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gate Status"
           }
         },
         "type": "object",
@@ -1559,16 +1710,25 @@
           "git_sha",
           "overlay",
           "repetitions",
-          "metrics",
           "config_hash",
           "git_dirty",
           "model_name",
           "backend",
           "pricing",
           "harness_version",
-          "created_at"
+          "created_at",
+          "accuracy",
+          "cost_usd_per_case",
+          "p50_latency_s",
+          "p95_latency_s",
+          "passed",
+          "cases_completed",
+          "cases_planned",
+          "budget_exhausted_count",
+          "gate_status"
         ],
-        "title": "ExperimentSummary"
+        "title": "ExperimentSummary",
+        "description": "One experiment's identity and headline measurements; full metrics are per experiment.\n\nEvery measurement is None when the stored report did not record it as a finite number."
       },
       "FindingInput": {
         "properties": {
@@ -1965,121 +2125,13 @@
         "type": "object",
         "title": "ModelConnectivity"
       },
-      "QualificationStatus": {
+      "ProbeExecution": {
         "properties": {
-          "active_profile_status": {
-            "type": "string",
-            "enum": [
-              "passed",
-              "failed",
-              "not_checked"
-            ],
-            "title": "Active Profile Status",
-            "default": "not_checked"
+          "attempt": {
+            "type": "integer",
+            "title": "Attempt"
           },
-          "active_profile_detail": {
-            "type": "string",
-            "title": "Active Profile Detail",
-            "default": "Retained component evidence does not establish qualification of the active model and transport profile."
-          },
-          "as_of": {
-            "type": "string",
-            "title": "As Of"
-          },
-          "candidate_commit": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Candidate Commit"
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "passed",
-              "failed",
-              "not_checked"
-            ],
-            "title": "Status"
-          },
-          "detail": {
-            "type": "string",
-            "title": "Detail"
-          },
-          "components": {
-            "items": {
-              "$ref": "#/components/schemas/QualifiedComponent"
-            },
-            "type": "array",
-            "title": "Components"
-          },
-          "limitations": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Limitations"
-          }
-        },
-        "type": "object",
-        "required": [
-          "as_of",
-          "status",
-          "detail",
-          "components",
-          "limitations"
-        ],
-        "title": "QualificationStatus"
-      },
-      "QualifiedComponent": {
-        "properties": {
-          "agent": {
-            "type": "string",
-            "title": "Agent"
-          },
-          "scope": {
-            "type": "string",
-            "title": "Scope"
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "passed",
-              "failed",
-              "not_checked"
-            ],
-            "title": "Status"
-          },
-          "measured_commit": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Measured Commit"
-          },
-          "freshness": {
-            "type": "string",
-            "enum": [
-              "fresh",
-              "reused",
-              "stale",
-              "unavailable"
-            ],
-            "title": "Freshness"
-          },
-          "reason": {
-            "type": "string",
-            "title": "Reason"
-          },
-          "cases": {
+          "exit_code": {
             "anyOf": [
               {
                 "type": "integer"
@@ -2088,29 +2140,94 @@
                 "type": "null"
               }
             ],
-            "title": "Cases"
+            "title": "Exit Code"
           },
-          "passed_cases": {
+          "timed_out": {
+            "type": "boolean",
+            "title": "Timed Out",
+            "default": false
+          },
+          "oracle_fired": {
+            "type": "boolean",
+            "title": "Oracle Fired"
+          },
+          "precondition_reached": {
+            "type": "boolean",
+            "title": "Precondition Reached"
+          },
+          "sink_returned": {
+            "type": "boolean",
+            "title": "Sink Returned",
+            "default": false
+          },
+          "runner_reported_no_tests": {
             "anyOf": [
               {
-                "type": "integer"
+                "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Passed Cases"
+            "title": "Runner Reported No Tests"
+          },
+          "stdout_tail": {
+            "type": "string",
+            "title": "Stdout Tail",
+            "default": ""
+          },
+          "stderr_tail": {
+            "type": "string",
+            "title": "Stderr Tail",
+            "default": ""
+          },
+          "duration_s": {
+            "type": "number",
+            "title": "Duration S",
+            "default": 0.0
+          },
+          "log_artifact": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Log Artifact"
+          },
+          "source_artifact": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Artifact"
+          },
+          "origins": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExecutionOrigins"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
-          "agent",
-          "scope",
-          "status",
-          "freshness",
-          "reason"
+          "attempt",
+          "exit_code",
+          "oracle_fired",
+          "precondition_reached"
         ],
-        "title": "QualifiedComponent"
+        "title": "ProbeExecution"
       },
       "ReviewRecord": {
         "properties": {
@@ -2359,16 +2476,12 @@
           "evidence": {
             "anyOf": [
               {
-                "additionalProperties": {
-                  "$ref": "#/components/schemas/JsonValue"
-                },
-                "type": "object"
+                "$ref": "#/components/schemas/RunEvidence"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Evidence"
+            ]
           },
           "events": {
             "items": {
@@ -2485,6 +2598,62 @@
           "created_at"
         ],
         "title": "RunEvent"
+      },
+      "RunEvidence": {
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "title": "Schema Version"
+          },
+          "manifest": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Manifest"
+          },
+          "context": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context"
+          },
+          "executions": {
+            "items": {
+              "$ref": "#/components/schemas/ProbeExecution"
+            },
+            "type": "array",
+            "title": "Executions"
+          },
+          "invocations": {
+            "items": {
+              "additionalProperties": {
+                "$ref": "#/components/schemas/JsonValue"
+              },
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Invocations"
+          }
+        },
+        "type": "object",
+        "required": [
+          "schema_version",
+          "manifest",
+          "context",
+          "executions",
+          "invocations"
+        ],
+        "title": "RunEvidence",
+        "description": "The per-stage evidence persisted with a run's output."
       },
       "RunPage": {
         "properties": {
@@ -2722,42 +2891,45 @@
       "RunTelemetry": {
         "properties": {
           "schema_version": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
+            "type": "integer",
+            "const": 2,
+            "title": "Schema Version",
+            "default": 2
+          },
+          "population": {
+            "type": "string",
+            "enum": [
+              "operational",
+              "demo"
             ],
-            "title": "Schema Version"
+            "title": "Population"
           },
           "phase": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "string",
             "title": "Phase"
           },
           "accepted_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Accepted At"
+          },
+          "updated_at": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "format": "date-time"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Accepted At"
+            "title": "Updated At"
           },
           "completed_at": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "format": "date-time"
               },
               {
                 "type": "null"
@@ -2887,8 +3059,13 @@
             "title": "Total Tokens"
           }
         },
-        "additionalProperties": true,
+        "additionalProperties": false,
         "type": "object",
+        "required": [
+          "population",
+          "phase",
+          "accepted_at"
+        ],
         "title": "RunTelemetry"
       },
       "RuntimeStatus": {

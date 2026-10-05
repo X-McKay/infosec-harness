@@ -1,7 +1,6 @@
 """Trusted catalog policy and controller-only reservation binding issuance."""
 from __future__ import annotations
 
-import logging
 import math
 import time
 from collections.abc import Callable
@@ -10,16 +9,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 
-from infosec_harness.inference.ledger import CAS_ATTEMPTS, cas_root
-from infosec_harness.inference.protocol import (
-    BrokerError,
-    InferenceRequest,
-    ReservationBinding,
-    required_input_reserve,
-)
+from infosec_harness.inference.diagnostics import budget_guard
+from infosec_harness.inference.ledger import RETRY, cas_retry, cas_root
+from infosec_harness.inference.protocol import BrokerError, InferenceRequest, ReservationBinding
+from infosec_harness.inference.rendering import check_request_bounds
 from infosec_harness.persistence import db
 
-_LOG = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class ReservationPolicy:
@@ -60,15 +55,9 @@ async def authorize(request: InferenceRequest, policy: ReservationPolicy) -> dic
     if (request.binding.agent != policy.agent or request.contract.profile != policy.profile
             or request.contract.digest != policy.contract_digest):
         raise BrokerError("identity", "Request differs from the trusted admission catalog")
-    output = request.contract.model_settings.get("max_tokens")
-    if isinstance(output, bool) or not isinstance(output, int) or not 0 < output <= policy.max_output_tokens:
-        _LOG.warning("IH_BUDGET_GUARD boundary=admission category=output_cap")
-        raise BrokerError("budget", "Provider output cap is missing or exceeds trusted bounds")
-    input_reserve = await required_input_reserve(request.payload, request.contract)
-    if input_reserve > policy.max_input_tokens:
-        _LOG.warning("IH_BUDGET_GUARD boundary=admission category=input_reserve reserve=%d limit=%d",
-                     input_reserve, policy.max_input_tokens)
-        raise BrokerError("budget", "Serialized input exceeds the trusted tokenizer/context bound")
+    input_reserve, output = await check_request_bounds(
+        request, max_input_tokens=policy.max_input_tokens,
+        max_output_tokens=policy.max_output_tokens, boundary="admission")
     cost = 0.0
     if policy.input_per_mtok is not None and policy.output_per_mtok is not None:
         # Exact decimal arithmetic plus an upward float step preserves a conservative
@@ -77,8 +66,8 @@ async def authorize(request: InferenceRequest, policy: ReservationPolicy) -> dic
                    + Decimal(output) * Decimal(str(policy.output_per_mtok))) / Decimal(1_000_000)
         cost = math.nextafter(float(ceiling), math.inf) if ceiling else 0.0
     if not math.isfinite(cost) or cost > policy.max_cost_usd:
-        _LOG.warning("IH_BUDGET_GUARD boundary=admission category=price_ceiling")
-        raise BrokerError("budget", "Request price ceiling exceeds the trusted invocation cap")
+        raise budget_guard("admission", "price_ceiling",
+                           "Request price ceiling exceeds the trusted invocation cap")
     return {"requests": 1, "tokens": input_reserve + output, "cost_usd": cost}
 
 
@@ -90,39 +79,40 @@ async def bind_reservation(binding: ReservationBinding, *, configuration_digest:
     Legacy operation JSON does not record run ownership, so worker-selected first bindings
     are not authorization evidence. Existing bindings and optional explicit owners are immutable.
     """
-    for _ in range(CAS_ATTEMPTS):
+    encoded = binding.model_dump(mode="json")
+
+    async def attempt(session):
         now = clock()
-        async with db.session() as session:
-            root = await session.get(db.BudgetLedger, binding.root_id)
-            if root is None:
-                raise BrokerError("identity", "Root reservation does not exist")
-            state = deepcopy(root.state)
-            operation = state.get("operations", {}).get(binding.operation_id)
-            if (operation is None or operation.get("agent") != binding.agent
-                    or operation.get("kind", "agent") != "agent"
-                    or operation.get("status") in {"settled", "closed_unknown"}
-                    or state.get("agent_config_digests", {}).get(binding.agent) != configuration_digest):
-                raise BrokerError("identity", "Invocation does not match the accepted root configuration")
-            encoded = binding.model_dump(mode="json")
-            existing = operation.get("broker_binding")
-            if existing is not None:
-                if existing != encoded or operation.get("broker_configuration_digest") != configuration_digest:
-                    raise BrokerError("conflict", "Reservation is already bound to another invocation")
-                return
-            if (operation.get("run_id", binding.run_id) != binding.run_id
-                    or operation.get("invocation_id", binding.invocation_id) != binding.invocation_id):
-                raise BrokerError("identity", "Invocation ownership differs from the reserved operation")
-            if operation.get("broker_revoked") or binding.run_id in state.get("broker_revoked_runs", []):
-                raise BrokerError("policy", "Inference run revoked")
-            deadline = state.get("deadline_at")
-            if (binding.expires_at <= now or deadline is None
-                    or binding.expires_at > datetime.fromisoformat(deadline).timestamp()
-                    or datetime.fromisoformat(deadline).timestamp() <= now):
-                raise BrokerError("expired", "Reservation exceeds the root deadline")
-            operation.update(broker_binding=encoded, broker_owned=True,
-                             broker_configuration_digest=configuration_digest)
-            if not await cas_root(session, root, state):
-                continue
-            await session.commit()
-            return
-    raise BrokerError("unavailable", "Bounded reservation binding contention exhausted")
+        root = await session.get(db.BudgetLedger, binding.root_id)
+        if root is None:
+            raise BrokerError("identity", "Root reservation does not exist")
+        state = deepcopy(root.state)
+        operation = state.get("operations", {}).get(binding.operation_id)
+        if (operation is None or operation.get("agent") != binding.agent
+                or operation.get("kind", "agent") != "agent"
+                or operation.get("status") in {"settled", "closed_unknown"}
+                or state.get("agent_config_digests", {}).get(binding.agent) != configuration_digest):
+            raise BrokerError("identity", "Invocation does not match the accepted root configuration")
+        existing = operation.get("broker_binding")
+        if existing is not None:
+            if existing != encoded or operation.get("broker_configuration_digest") != configuration_digest:
+                raise BrokerError("conflict", "Reservation is already bound to another invocation")
+            return None
+        if (operation.get("run_id", binding.run_id) != binding.run_id
+                or operation.get("invocation_id", binding.invocation_id) != binding.invocation_id):
+            raise BrokerError("identity", "Invocation ownership differs from the reserved operation")
+        if operation.get("broker_revoked") or binding.run_id in state.get("broker_revoked_runs", []):
+            raise BrokerError("policy", "Inference run revoked")
+        deadline = state.get("deadline_at")
+        if (binding.expires_at <= now or deadline is None
+                or binding.expires_at > datetime.fromisoformat(deadline).timestamp()
+                or datetime.fromisoformat(deadline).timestamp() <= now):
+            raise BrokerError("expired", "Reservation exceeds the root deadline")
+        operation.update(broker_binding=encoded, broker_owned=True,
+                         broker_configuration_digest=configuration_digest)
+        if not await cas_root(session, root, state):
+            return RETRY
+        await session.commit()
+        return None
+
+    await cas_retry(attempt, exhausted="Bounded reservation binding contention exhausted")

@@ -139,3 +139,43 @@ def test_bootstrap_refuses_unversioned_tables():
             engine.dispose()
         with pytest.raises(SchemaNotAtHead, match="no migration version"):
             _bootstrap_sync(path)
+
+
+def test_run_telemetry_v2_keeps_measured_records_and_nulls_unattributable_ones():
+    """0006: telemetry with an accepted population becomes schema 2; telemetry recorded without
+    one was never attributable to a measured population and becomes NULL (unmeasured)."""
+    import json
+
+    from infosec_harness.persistence.run_telemetry import RunTelemetry
+
+    measured = {"schema_version": 1, "population": "demo", "phase": "complete",
+                "accepted_at": "2026-10-01T00:00:00+00:00", "wall_time_s": 3.0,
+                "total_tokens": None}
+    rows = {"measured": measured, "legacy": {"schema_version": 1, "cost_usd": 0.0},
+            "no-phase": {"population": "operational", "accepted_at": "2026-10-01T00:00:00+00:00"}}
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "telemetry.db"
+        command.upgrade(_config(path), "0005")
+        engine = create_engine(f"sqlite:///{path}")
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("INSERT INTO batches (id, created_at, source_kind, label, "
+                                  "status, finding_count) VALUES ('b', CURRENT_TIMESTAMP, "
+                                  "'generic_json', '', 'complete', 3)"))
+                for identity, telemetry in rows.items():
+                    conn.execute(text(
+                        "INSERT INTO triage_runs (id, batch_id, fingerprint, created_at, repo_url,"
+                        " revision, title, severity, status, environment_scope, finding, "
+                        "cost_usd, total_tokens, cache_read_tokens, latency_s, telemetry) VALUES "
+                        "(:id, 'b', :id, CURRENT_TIMESTAMP, 'r', 'HEAD', '', 'unknown', "
+                        "'complete', 'none', '{}', 0, 0, 0, 0, :telemetry)"),
+                        {"id": identity, "telemetry": json.dumps(telemetry)})
+            command.upgrade(_config(path), "head")
+            with engine.connect() as conn:
+                stored = dict(conn.execute(text("SELECT id, telemetry FROM triage_runs")).all())
+        finally:
+            engine.dispose()
+    assert stored["legacy"] is None and stored["no-phase"] is None
+    upgraded = RunTelemetry.model_validate(json.loads(stored["measured"]))
+    assert upgraded.schema_version == 2 and upgraded.population == "demo"
+    assert upgraded.wall_time_s == 3.0

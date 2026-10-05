@@ -4,8 +4,8 @@ Captured messages carry model- and provider-controlled content, so a diagnostic 
 them must be bounded in how much it scans and must never echo what it reads. The limits live
 here, once; each diagnostic decides what to count, not how far to look.
 
-A :class:`Walk` records whether a bound cut the scan short. Runtime trajectory records
-(``agents.trajectory``) scan the whole run instead, because they describe it, not a sample.
+A :class:`Walk` records whether a bound cut the scan short. Tool-call accounting
+(``agents.trajectory``) scans the whole run instead, because it describes the run, not a sample.
 """
 
 from __future__ import annotations
@@ -25,15 +25,24 @@ from pydantic_ai.messages import (
     ToolCallPart,
 )
 
-from infosec_harness.agents.trajectory import OUTPUT_TOOL, is_function_tool
+from infosec_harness.agents.trajectory import OUTPUT_TOOL
 
+# How much of a captured history one diagnostic scans.
 MAX_MESSAGES = 128
 MAX_PARTS = 512
 MAX_PROPOSALS = 32
+MAX_RETRY_PARTS = 32
+# How large a decoded argument tree may be before a diagnostic refuses to look inside it.
 MAX_TEXT_CHARS = 131_072
 MAX_NODES = 2048
 MAX_DEPTH = 8
 MAX_INT_BITS = 4096
+# The longest retry feedback text classified against the guard's closed sentences.
+MAX_RETRY_CONTENT_CHARS = 4096
+# How much of a tool trajectory a persisted call summary keeps: distinct tools and sequence
+# entries recorded, and the characters of a model-chosen name or label retained or parsed.
+MAX_RECORDED_CALLS = 128
+MAX_NAME_CHARS = 128
 
 ArgumentProblem = Literal["bounded_out", "unsupported_shape", "malformed_json"]
 
@@ -42,13 +51,9 @@ ArgumentProblem = Literal["bounded_out", "unsupported_shape", "malformed_json"]
 class Walk:
     """Bounds for one scan over a message history, and whether they were hit."""
 
-    max_messages: int | None = MAX_MESSAGES
-    max_parts: int | None = MAX_PARTS
+    max_messages: int = MAX_MESSAGES
+    max_parts: int = MAX_PARTS
     truncated: bool = False
-
-    @classmethod
-    def unbounded(cls) -> Walk:
-        return cls(max_messages=None, max_parts=None)
 
     def parts[P: (ModelRequestPart, ModelResponsePart)](
         self, messages: Iterable[ModelMessage], kind: type[ModelRequest] | type[ModelResponse]
@@ -60,13 +65,13 @@ class Walk:
         """
         scanned = 0
         for number, message in enumerate(messages):
-            if self.max_messages is not None and number >= self.max_messages:
+            if number >= self.max_messages:
                 self.truncated = True
                 return
             if not isinstance(message, kind):
                 continue
             for part in message.parts:
-                if self.max_parts is not None and scanned >= self.max_parts:
+                if scanned >= self.max_parts:
                     self.truncated = True
                     return
                 scanned += 1
@@ -79,16 +84,6 @@ class Walk:
                 self.truncated = True
                 return
             yield item
-
-
-def iter_tool_calls(
-    messages: Sequence[ModelMessage], walk: Walk | None = None
-) -> Iterator[ToolCallPart]:
-    """Calls to function tools (not output or internal tools). Unbounded unless told."""
-    walk = walk if walk is not None else Walk.unbounded()
-    for part in walk.parts(messages, ModelResponse):
-        if isinstance(part, ToolCallPart) and is_function_tool(part.tool_name):
-            yield part
 
 
 def iter_output_proposals(
@@ -113,8 +108,11 @@ def iter_retry_prompts(
     yield from walk.limit(retries, maximum)
 
 
-def bounded_shape(value: object) -> Literal["unsupported_shape", "bounded_out"] | None:
-    """Check a decoded argument tree against the bounds without serializing any of it."""
+def measure_shape(value: object) -> tuple[int, int] | Literal["unsupported_shape", "bounded_out"]:
+    """``(nodes, string characters)`` of a decoded argument tree, or why it is out of bounds.
+
+    One traversal both enforces the bounds and sizes the tree, without serializing any of it.
+    """
     stack, nodes, chars = [(value, 0)], 0, 0
     while stack:
         item, depth = stack.pop()
@@ -140,21 +138,6 @@ def bounded_shape(value: object) -> Literal["unsupported_shape", "bounded_out"] 
                 return "bounded_out"
         elif item is not None and not isinstance(item, float):
             return "unsupported_shape"
-    return None
-
-
-def shape_size(value: object) -> tuple[int, int]:
-    """(nodes, string characters) of a tree that already passed :func:`bounded_shape`."""
-    stack, nodes, chars = [value], 0, 0
-    while stack:
-        item = stack.pop()
-        nodes += 1
-        if isinstance(item, str):
-            chars += len(item)
-        elif isinstance(item, dict):
-            stack.extend(child for pair in item.items() for child in pair)
-        elif isinstance(item, list):
-            stack.extend(item)
     return nodes, chars
 
 
@@ -171,5 +154,5 @@ def decode_arguments(args: object) -> tuple[dict | None, ArgumentProblem | None]
             return None, "unsupported_shape"
     if not isinstance(args, dict):
         return None, "unsupported_shape"
-    problem = bounded_shape(args)
-    return (None, problem) if problem is not None else (args, None)
+    measured = measure_shape(args)
+    return (None, measured) if isinstance(measured, str) else (args, None)

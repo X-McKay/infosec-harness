@@ -7,13 +7,16 @@ agent -- the release report, calibration's admissibility check, which agents car
 unevidenced-safety gate -- reads the policy here rather than keeping its own list.
 
 A check whose metric is missing or not a number is ``not_checked``, never ``passed``: a gate
-that could not be measured has not been cleared.
+that could not be measured has not been cleared. The same holds for the policy's
+``required_provenance``: a result that cannot be attributed to a commit, agent version, config,
+model and dataset version is not evidence, so a missing key leaves the whole evaluation
+``not_checked``.
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -43,20 +46,25 @@ class Check:
 @dataclass(frozen=True)
 class GateEvaluation:
     checks: tuple[Check, ...]
+    missing_provenance: tuple[str, ...] = ()
+    """Required provenance keys the result did not carry; any one leaves it ``not_checked``."""
 
     @property
     def status(self) -> CheckStatus:
         statuses = {check.status for check in self.checks}
         if "failed" in statuses:
             return "failed"
-        return "not_checked" if "not_checked" in statuses else "passed"
+        if "not_checked" in statuses or self.missing_provenance:
+            return "not_checked"
+        return "passed"
 
     @property
     def passed(self) -> bool:
         return self.status == "passed"
 
     def as_report(self) -> dict[str, Any]:
-        return {"status": self.status, "checks": [asdict(check) for check in self.checks]}
+        return {"status": self.status, "checks": [asdict(check) for check in self.checks],
+                "missing_provenance": list(self.missing_provenance)}
 
 
 def _number(value: object) -> float | None:
@@ -72,11 +80,17 @@ class ReleasePolicy:
     hard_gates: Mapping[str, float]
     thresholds: Mapping[str, Mapping[str, float]]
     required_provenance: tuple[str, ...]
-    raw: Mapping[str, Any]
 
-    def evaluate(self, values: Mapping[str, object], *, hard_gates_only: bool = False
-                 ) -> GateEvaluation:
-        """Evaluate a run's metrics (or a report's gate/metric values) against this policy."""
+    def evaluate(self, values: Mapping[str, object], *,
+                 provenance: Mapping[str, object] | None = None,
+                 hard_gates_only: bool = False) -> GateEvaluation:
+        """Evaluate a run's metrics (or a report's gate/metric values) against this policy.
+
+        The full evaluation also requires every ``required_provenance`` key to be present and
+        non-empty in ``provenance``; omitting it fails closed. ``hard_gates_only`` asks only
+        whether the hard gates hold (calibration's admissibility), so it checks neither the
+        thresholds nor provenance.
+        """
         checks: list[Check] = []
         for metric, limit in self.hard_gates.items():
             value = _number(values.get(metric))
@@ -94,7 +108,12 @@ class ReleasePolicy:
                     else:
                         status = "passed" if value <= limit else "failed"
                     checks.append(Check("threshold", metric, bound, limit, value, status))
-        return GateEvaluation(tuple(checks))
+        if hard_gates_only:
+            return GateEvaluation(tuple(checks))
+        recorded = provenance or {}
+        missing = tuple(key for key in self.required_provenance
+                        if recorded.get(key) is None or recorded.get(key) == "")
+        return GateEvaluation(tuple(checks), missing)
 
     @property
     def metrics_named(self) -> set[str]:
@@ -121,9 +140,13 @@ def parse_policy(agent: str, raw: Mapping[str, Any], path: Path) -> ReleasePolic
         if any(_number(limit) is None for limit in bounds.values()):
             raise ValueError(f"{path}: threshold {metric!r} needs numeric bounds")
         bounded[str(metric)] = {str(b): float(limit) for b, limit in bounds.items()}
+    provenance = raw.get("required_provenance") or []
+    if not isinstance(provenance, list) or not all(
+            isinstance(key, str) and key for key in provenance):
+        raise ValueError(f"{path}: required_provenance must be a list of key names")
     return ReleasePolicy(
         agent=agent, path=path, hard_gates=hard, thresholds=bounded,
-        required_provenance=tuple(raw.get("required_provenance") or ()), raw=dict(raw),
+        required_provenance=tuple(provenance),
     )
 
 
@@ -143,26 +166,3 @@ def agents_gated_on(metric: str) -> tuple[str, ...]:
     """The agents whose policy names ``metric`` as a hard gate."""
     return tuple(sorted(agent for agent, policy in policies().items()
                         if metric in policy.hard_gates))
-
-
-def policy_problems(policy: ReleasePolicy, cases: Iterable[Mapping[str, Any]]) -> list[str]:
-    """Checks in ``policy`` that the agent's eval cannot measure, or cannot fail.
-
-    A gate on a metric the run never publishes is compared against nothing; a gate on
-    execution evidence for a dataset that declares no execution check is a constant zero. Both
-    read as coverage and enforce nothing.
-    """
-    from infosec_harness.evals.adapters import defines_unevidenced_safety
-    from infosec_harness.evals.metrics import gateable_metrics
-
-    emitted = gateable_metrics(unevidenced_safety=defines_unevidenced_safety(policy.agent))
-    problems = [f"{policy.agent}: {metric} is not a metric the eval run publishes"
-                for metric in sorted(policy.metrics_named - emitted)]
-    if not any(case.get("execution_check") for case in cases):
-        problems += [
-            f"{policy.agent}: {metric} gates execution evidence but no case declares an "
-            "execution_check, so it is always 0"
-            for metric in ("execution_not_checked_count", "execution_failed_count")
-            if metric in policy.hard_gates
-        ]
-    return problems

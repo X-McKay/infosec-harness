@@ -1,8 +1,9 @@
 # Model backends and tiers (spec §6.1, D9/D15/D16). No secrets in this file.
 #
-# Every agent.yaml names a tier (`model: sonnet`); the worker resolves it here.
-# Switch the whole deployment with `default_backend`, or one agent via `agents.<name>.backend`.
-# HARNESS_MODEL_BACKEND overrides `default_backend` at runtime.
+# Every agent.yaml names a tier (`model: sonnet`); the worker resolves it here. A tier that is
+# not in `model_catalog` fails; it is never taken as a literal provider model id.
+# Every agent runs on one backend: `default_backend`, overridden at runtime by
+# HARNESS_MODEL_BACKEND. Unknown top-level keys are rejected.
 backends:
   bedrock:
     kind: bedrock
@@ -50,7 +51,3 @@ model_policies:
   fast-v1: haiku          # low-latency, low-cost
   balanced-v1: sonnet     # default production policy
   reasoning-v1: opus      # high-complexity, stricter budget
-
-# Per-agent backend overrides, e.g. `intake: {backend: gateway}`. The tier itself lives in
-# each agent.yaml (and in experiment overlays).
-agents: {}

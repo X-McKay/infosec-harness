@@ -36,7 +36,7 @@ async def test_build_adapter_sandbox_tool_receives_failed_specs_image(adapter, m
         return docker.ProcResult(0, "available", "", False, 0.01)
 
     monkeypatch.setattr(docker, "run_shell", fake_run_shell)
-    deps = adapter(_case())[2]
+    deps = adapter(_case()).deps
     ctx = SimpleNamespace(deps=deps, run_id="eval-run", tool_call_id="probe-1")
 
     result = await run_in_sandbox(ctx, "perl -MDBI -e 1")

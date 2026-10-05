@@ -12,20 +12,20 @@ from __future__ import annotations
 import pytest
 
 from infosec_harness.agents import governance
-from infosec_harness.agents.registry import AGENT_BINDINGS, load_spec
+from infosec_harness.agents.registry import BINDINGS, load_spec
 from infosec_harness.agents.risk import MATRIX, TIER_ORDER, library, max_tier, parse, tier_for
 
 LIB = library()
 
 
 def test_every_bound_agent_is_assessed_and_nothing_else_is():
-    assert set(LIB.agents) == set(AGENT_BINDINGS), (
-        f"only in library {sorted(set(LIB.agents) - set(AGENT_BINDINGS))}, "
-        f"only in graph {sorted(set(AGENT_BINDINGS) - set(LIB.agents))}"
+    assert set(LIB.agents) == set(BINDINGS), (
+        f"only in library {sorted(set(LIB.agents) - set(BINDINGS))}, "
+        f"only in graph {sorted(set(BINDINGS) - set(LIB.agents))}"
     )
 
 
-@pytest.mark.parametrize("agent", sorted(AGENT_BINDINGS))
+@pytest.mark.parametrize("agent", sorted(BINDINGS))
 def test_spec_risk_tier_equals_the_tier_its_scenarios_establish(agent):
     """§3: the spec and its assessment cannot drift apart silently."""
     assert load_spec(agent).metadata["risk_tier"] == LIB.governance_tier(agent)
@@ -44,7 +44,7 @@ def test_governance_refuses_an_agent_with_no_assessed_risk():
     assert problems and "unassessed" in problems[0]
 
 
-@pytest.mark.parametrize("agent", sorted(AGENT_BINDINGS))
+@pytest.mark.parametrize("agent", sorted(BINDINGS))
 def test_governance_tier_is_the_highest_of_inherent_and_any_floor(agent):
     scenarios = LIB.scenarios_for(agent)
     inherent = max_tier([s.inherent.tier for s in scenarios])

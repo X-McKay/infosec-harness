@@ -6,19 +6,15 @@ module builds the durable agents.
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from temporalio import workflow
 
 with workflow.unsafe.imports_passed_through():
-    from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
-    from temporalio.client import Client
-    from temporalio.worker import Worker
-
     from infosec_harness.agents.deps import AgentDeps
     from infosec_harness.agents.durable import AGENT_LIST
     from infosec_harness.qualification.broker.service import AGENTS
+    from infosec_harness.qualification.broker.support import serve_worker as serve
     from infosec_harness.workflows.activities import ALL_ACTIVITIES
     from infosec_harness.workflows.temporal_ops import TemporalOps
 
@@ -53,8 +49,5 @@ class BrokerQualificationWorkflow:
 
 
 async def serve_worker(manifest: dict) -> None:
-    client = await Client.connect(manifest["temporal_address"], plugins=[PydanticAIPlugin()])
-    worker = Worker(client, task_queue=manifest["task_queue"], workflows=[BrokerQualificationWorkflow],
-                    activities=ALL_ACTIVITIES)
-    (Path(manifest["directory"]) / "temporal-worker-ready").write_text(str(os.getpid()))
-    await worker.run()
+    await serve(manifest["temporal_address"], manifest["task_queue"], [BrokerQualificationWorkflow],
+                activities=ALL_ACTIVITIES, ready=Path(manifest["directory"]) / "temporal-worker-ready")

@@ -10,6 +10,8 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any
 
+from infosec_harness.agents import models
+
 
 class PricingStatus(StrEnum):
     PRICED = "priced"
@@ -24,52 +26,29 @@ class PricingStatus(StrEnum):
     ZERO_PRICED = "zero_priced"
     """Prices are configured and are zero -- e.g. self-hosted vLLM with no per-token billing."""
 
-    UNDETERMINED = "undetermined"
-    """The pricing lookup itself failed; treat cost as unverified rather than live."""
-
     @property
     def can_move(self) -> bool:
         """True only when a cost metric derived from this model can be nonzero."""
         return self is PricingStatus.PRICED
 
 
-class _ProbeUsage:
-    """A usage record large enough that any real price table yields a nonzero cost."""
-
-    input_tokens = 1_000_000
-    output_tokens = 1_000_000
-    cache_read_tokens = None
-    cache_write_tokens = None
+_BY_SOURCE: dict[str, PricingStatus] = {
+    "stub": PricingStatus.STUB,
+    "genai-prices": PricingStatus.PRICED,
+    "custom": PricingStatus.PRICED,
+    "custom-zero": PricingStatus.ZERO_PRICED,
+    "unknown": PricingStatus.UNKNOWN_MODEL,
+}
 
 
 def pricing_status(model_name: str) -> PricingStatus:
-    """Ask the deployment's own cost estimator whether ``model_name`` can be priced.
+    """Classify ``model_name`` by the price source :func:`models.estimate_cost` would use.
 
-    Routed through :func:`infosec_harness.agents.models.estimate_cost` -- the function the eval
-    loop uses -- so this cannot drift from what a run measured. A million tokens in and out is
-    priced; if that comes back ``None`` or ``0.0``, no real run of the model could produce a
-    nonzero cost either.
+    :func:`infosec_harness.agents.models.pricing_source` answers which table prices a model --
+    the same lookup order the cost estimator follows -- so this cannot drift from what a run
+    measures.
     """
-    if model_name.startswith("stub:"):
-        return PricingStatus.STUB
-    try:
-        from infosec_harness.agents.models import estimate_cost
-
-        candidates = [model_name]
-        # `resolved_model_name` records "<backend>:<model_id>"; price tables are keyed by
-        # the bare model id, so try that too before declaring a model unpriced.
-        if ":" in model_name:
-            candidates.append(model_name.split(":", 1)[1])
-        best = None
-        for name in candidates:
-            cost, _ = estimate_cost(name, _ProbeUsage())
-            if cost:
-                return PricingStatus.PRICED
-            if cost == 0.0:
-                best = PricingStatus.ZERO_PRICED
-        return best or PricingStatus.UNKNOWN_MODEL
-    except Exception:
-        return PricingStatus.UNDETERMINED
+    return _BY_SOURCE[models.pricing_source(model_name)]
 
 
 def pricing_label(value: Any) -> PricingStatus | None:

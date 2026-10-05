@@ -6,27 +6,18 @@ import hashlib
 import hmac
 import re
 import time
+from collections.abc import Mapping
 
-from .protocol import MAX_BODY_BYTES, BrokerError
+from .protocol import MAX_BODY_BYTES, SIGNED_PATHS, BrokerError
 
 AUTH_HEADER = "X-Harness-Admission"
+# Credential headers: a request may carry each at most once.
+CREDENTIAL_HEADERS = ("Authorization", AUTH_HEADER)
 MAX_AUTH_LIFETIME = 60
 
 
 def _material(method: str, path: str, body: bytes, expires_at: int) -> bytes:
-    if (
-        method != "POST"
-        or path
-        not in {
-            "/v1/infer",
-            "/v1/invocations",
-            "/v1/results",
-            "/v1/runs/close",
-            "/v1/ledger/claim",
-            "/v1/ledger/complete",
-        }
-        or len(body) > MAX_BODY_BYTES
-    ):
+    if method != "POST" or path not in SIGNED_PATHS or len(body) > MAX_BODY_BYTES:
         raise BrokerError("auth")
     return (
         b"ih-auth-v1\n"
@@ -62,3 +53,15 @@ def verify_request(
     expected = sign_request(secret, method, path, body, expiry)
     if not hmac.compare_digest(expected, header):
         raise BrokerError("auth")
+
+
+def header_value(headers: Mapping[str, str], name: str) -> str:
+    """The single value of a case-insensitive header; absent or repeated is empty."""
+    values = [value for key, value in headers.items() if key.lower() == name.lower()]
+    return values[0] if len(values) == 1 else ""
+
+
+def verify_headers(secret: bytes, path: str, body: bytes, headers: Mapping[str, str], *,
+                   now: int) -> None:
+    """Authenticate one signed POST from its admission header."""
+    verify_request(secret, "POST", path, body, header_value(headers, AUTH_HEADER), now=now)

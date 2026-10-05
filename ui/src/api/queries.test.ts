@@ -38,27 +38,19 @@ test("shared runtime observers use one cache entry", async () => {
 
 test("status and metrics views refresh slowly", () => {
   assert.equal(interval(queries.runtime(), undefined), 30000);
-  assert.equal(interval(queries.qualification(), undefined), 30000);
   assert.equal(interval(queries.metrics(), undefined), 60000);
   assert.equal(interval(queries.config(), undefined), undefined);
 });
 
 test("evaluation lists and reports poll only while an evaluation is running", () => {
   const list = queries.experiments();
+  const page = (...statuses: (string | null)[]) => ({
+    items: statuses.map((status) => ({ status })),
+  });
   assert.equal(interval(list, undefined), false);
-  assert.equal(interval(list, []), false);
-  assert.equal(
-    interval(list, [
-      { status: "complete" },
-      { status: "truncated" },
-      { status: null },
-    ]),
-    false,
-  );
-  assert.equal(
-    interval(list, [{ status: "complete" }, { status: "running" }]),
-    10000,
-  );
+  assert.equal(interval(list, page()), false);
+  assert.equal(interval(list, page("complete", "truncated", null)), false);
+  assert.equal(interval(list, page("complete", "running")), 10000);
   const detail = queries.experiment("id");
   assert.equal(interval(detail, { metrics: { status: "running" } }), 10000);
   assert.equal(interval(detail, { metrics: { status: "complete" } }), false);
@@ -82,10 +74,37 @@ test("finding queries use the run policy, never the batch policy", () => {
   assert.equal(interval(run, undefined), false);
 });
 
-test("batch lists keep refreshing for unknown batch states", () => {
+test("batch lists poll while a batch is active and stop when idle", () => {
   const batches = queries.batches();
   assert.equal(interval(batches, [{ status: "cancellation_requested" }]), 2000);
-  assert.equal(interval(batches, [{ status: "complete" }]), 10000);
+  assert.equal(
+    interval(batches, [{ status: "running" }, { status: "complete" }]),
+    2000,
+  );
+  // Regression: an idle list kept polling every 10 s.
+  assert.equal(interval(batches, [{ status: "complete" }]), false);
+  assert.equal(interval(batches, []), false);
+  assert.equal(interval(batches, undefined), false);
+});
+
+test("evaluation pages request one bounded page of summaries", async () => {
+  const client = new QueryClient();
+  const urls: URL[] = [];
+  try {
+    globalThis.fetch = async (path) => {
+      urls.push(new URL(String(path), "http://localhost"));
+      return Response.json({ items: [], total: 0, offset: 25, limit: 25 });
+    };
+    await client.fetchQuery(queries.experiments(25));
+    const [url] = urls;
+    assert.equal(url.pathname, "/api/experiments");
+    assert.equal(url.searchParams.get("offset"), "25");
+    assert.equal(url.searchParams.get("limit"), "25");
+    assert.equal(url.searchParams.get("population"), "operational");
+    assert.notDeepEqual(queryKeys.experiments(0), queryKeys.experiments(25));
+  } finally {
+    client.clear();
+  }
 });
 
 test("review saves to one run and invalidates only that run's cache", async () => {

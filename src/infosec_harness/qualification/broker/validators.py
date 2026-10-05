@@ -8,7 +8,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import shlex
 import subprocess
 from pathlib import Path
 from typing import Literal
@@ -28,7 +27,9 @@ CASES = {
     "verdict": "valid_positive_sqli",
 }
 PHASES = ("direct", "native-local", "native-temporal")
+# CLI selector -> declared manifest phase, and the runner selector of each declared phase.
 PHASE_SELECTORS = {"direct": "direct", "local": "native-local", "temporal": "native-temporal"}
+SELECTOR_FOR_PHASE = {phase: selector for selector, phase in PHASE_SELECTORS.items()}
 WORKFLOW_NAME = "BrokerRealProviderQualificationWorkflow"
 ROOT_PREFIX = "broker-real-"
 
@@ -110,30 +111,6 @@ def sha256_file(path: str | Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def private_write(path: Path, value) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as stream:
-        json.dump(value, stream, sort_keys=True, indent=2)
-        stream.write("\n")
-    temporary.replace(path)
-
-
-def read_private_environment(path: str | Path) -> dict[str, str]:
-    source = Path(path)
-    if source.stat().st_mode & 0o077:
-        raise ValueError("Credential reference must be owner-only")
-    result = {}
-    for line in source.read_text().splitlines():
-        if line.strip() and not line.lstrip().startswith("#") and "=" in line:
-            name, value = line.split("=", 1)
-            parts = shlex.split(value)
-            if len(parts) == 1:
-                result[name.strip()] = parts[0]
-    return result
-
-
 def selected_phases(manifest: RealProviderManifest, phase: str) -> tuple[str, ...]:
     """Map a CLI selector to the declared manifest phases it authorizes."""
     if phase == "validate":
@@ -195,13 +172,13 @@ def _same_endpoint(left: str | None, right: str) -> bool:
 def verify_configuration(manifest: RealProviderManifest) -> dict[str, dict[str, str]]:
     """Resolve every case's direct and native route from the frozen files; no client is built."""
     from infosec_harness.agents.models import ModelsConfig
-    from infosec_harness.agents.registry import load_spec
+    from infosec_harness.agents.registry import AGENT_BINDINGS, load_spec
     from infosec_harness.inference.profiles import BrokerConfig
 
     configs = {"direct": ModelsConfig.model_validate(_load_yaml(manifest.direct_models_config)),
                "native": ModelsConfig.model_validate(_load_yaml(manifest.broker_models_config))}
     transports = {"direct": "direct", "native": "brokered"}
-    catalog = BrokerConfig.model_validate(_load_yaml(manifest.broker_config))
+    catalog = BrokerConfig.model_validate(_load_yaml(manifest.broker_config)).require_agents(AGENT_BINDINGS)
     if not catalog.enabled:
         raise ValueError("Broker catalog must be enabled for native phases")
     routes = {}
@@ -210,7 +187,7 @@ def verify_configuration(manifest: RealProviderManifest) -> dict[str, dict[str, 
         names = {}
         for label, config in configs.items():
             # Ambient HARNESS_MODEL_BACKEND is deliberately ignored: only frozen files route.
-            name = config.agents.get(agent, {}).get("backend") or config.default_backend
+            name = config.default_backend
             backend = config.backends.get(name)
             if backend is None:
                 raise ValueError(f"{label} configuration has no backend {name!r} for {agent}")
@@ -234,25 +211,32 @@ def verify_configuration(manifest: RealProviderManifest) -> dict[str, dict[str, 
     return routes
 
 
+def _require_direct_baseline(baseline: dict, cases: dict[str, str],
+                             case_digests: dict[str, str]) -> dict[str, dict]:
+    """A passed direct report covering every frozen case once, with the named case contents."""
+    rows = baseline.get("cases", [])
+    if baseline.get("phase") != "direct":
+        raise ValueError("Baseline report is not a direct phase report")
+    if baseline.get("status") != "passed":
+        raise ValueError("Baseline direct phase did not pass")
+    if sorted(row.get("agent") for row in rows) != sorted(cases):
+        raise ValueError("Baseline report must cover every frozen case exactly once")
+    by_agent = {row["agent"]: row for row in rows}
+    for agent, case_digest in case_digests.items():
+        if by_agent[agent].get("case") != cases[agent]:
+            raise ValueError(f"Baseline case for {agent} differs from the manifest")
+        if by_agent[agent].get("case_digest") != case_digest:
+            raise ValueError(f"Baseline case content for {agent} differs")
+    return by_agent
+
+
 def verify_baseline_report(manifest: RealProviderManifest, manifest_sha256: str,
                            report_path: Path, case_digests: dict[str, str]) -> None:
     """A native phase compares against a passed direct phase of the same frozen manifest."""
     frozen = report_path.parent / "manifest.json"
     if not frozen.is_file() or sha256_file(frozen) != manifest_sha256:
         raise ValueError("Baseline report was not produced by this frozen manifest")
-    baseline = json.loads(report_path.read_bytes())
-    rows = baseline.get("cases", [])
-    if baseline.get("phase") != "direct":
-        raise ValueError("Baseline report is not a direct phase report")
-    if baseline.get("status") != "passed":
-        raise ValueError("Baseline direct phase did not pass")
-    if sorted(row.get("agent") for row in rows) != sorted(manifest.cases):
-        raise ValueError("Baseline report must cover every frozen case exactly once")
-    for row in rows:
-        if row.get("case") != manifest.cases[row["agent"]]:
-            raise ValueError(f"Baseline case for {row['agent']} differs from the manifest")
-        if row.get("case_digest") != case_digests[row["agent"]]:
-            raise ValueError(f"Baseline case content for {row['agent']} differs")
+    _require_direct_baseline(json.loads(report_path.read_bytes()), manifest.cases, case_digests)
 
 
 def _pricing_catalog_difference(previous: object, current: object) -> dict | None:
@@ -275,19 +259,7 @@ def compare_baseline(agent: str, config: dict, case_digest: str, *,
     if not path:
         raise ValueError("Native qualification requires a completed direct baseline")
     baseline = json.loads(Path(path).read_text())
-    rows = baseline.get("cases", [])
-    if baseline.get("phase") != "direct":
-        raise ValueError("Baseline report is not a direct phase report")
-    if baseline.get("status") != "passed":
-        raise ValueError("Baseline direct phase did not pass")
-    if sorted(row.get("agent") for row in rows) != sorted(cases):
-        raise ValueError("Baseline report must cover every frozen case exactly once")
-    previous = next(row for row in rows if row["agent"] == agent)
-    if previous.get("case") != cases[agent]:
-        raise ValueError("Baseline case differs from the manifest")
-    if previous.get("case_digest") != case_digest:
-        raise ValueError("Baseline case content differs")
-    old = previous["config"]
+    old = _require_direct_baseline(baseline, cases, {agent: case_digest})[agent]["config"]
     if old["model"].get("capability_profile") != config["model"].get("capability_profile"):
         raise ValueError("Baseline capability profile differs")
     if old["budget"] != config["budget"]:

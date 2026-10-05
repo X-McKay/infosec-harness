@@ -2,23 +2,36 @@
 
 from __future__ import annotations
 
-import hashlib
 import re
 from datetime import UTC, datetime
 from typing import Literal, TypedDict
 
 from infosec_harness.agents.registry import AGENT_BINDINGS
 from infosec_harness.api.contracts import ModelConnectivity
-from infosec_harness.api.evidence_io import COMMIT, read_bytes, read_evidence
+from infosec_harness.api.evidence_io import (
+    STRICT,
+    Commit,
+    Sha256,
+    Timestamp,
+    Version1,
+    file_sha256,
+    read_evidence,
+    validated,
+)
 from infosec_harness.settings import get_settings
+
+RECEIPT_LIFETIME_SECONDS = 3600
 
 
 class ModelConnectionReceipt(TypedDict):
-    version: int
-    checked_at: str
-    source_commit: str
-    model_config_sha256: str
-    broker_config_sha256: str | None
+    """One operator-recorded inference check of an exact model and transport profile."""
+
+    __pydantic_config__ = STRICT  # type: ignore[misc]
+    version: Version1
+    checked_at: Timestamp
+    source_commit: Commit
+    model_config_sha256: Sha256
+    broker_config_sha256: Sha256 | None
     mode: Literal["live"]
     transport: Literal["direct", "brokered"]
     status: Literal["passed", "failed"]
@@ -45,48 +58,28 @@ def model_runtime() -> tuple[list[str], ModelConnectivity]:
     if path is None or settings.model_mode != "live":
         return names, observation
     try:
-        value: ModelConnectionReceipt = read_evidence(path)
-        required = {
-            "version",
-            "checked_at",
-            "source_commit",
-            "model_config_sha256",
-            "broker_config_sha256",
-            "mode",
-            "transport",
-            "status",
+        receipt = validated(ModelConnectionReceipt, read_evidence(path))
+        profile = {
+            "source_commit": settings.git_commit_sha,
+            "mode": settings.model_mode,
+            "transport": "brokered" if settings.broker_config else "direct",
+            "model_config_sha256": file_sha256(settings.models_config),
+            "broker_config_sha256": (file_sha256(settings.broker_config)
+                                     if settings.broker_config else None),
         }
-        if (
-            not isinstance(value, dict)
-            or set(value) != required
-            or type(value["version"]) is not int
-            or value["version"] != 1
-            or value["status"] not in {"passed", "failed"}
-            or value["source_commit"] != settings.git_commit_sha
-            or not COMMIT.fullmatch(value["source_commit"])
-            or value["mode"] != settings.model_mode
-            or value["transport"] != ("brokered" if settings.broker_config else "direct")
-            or value["model_config_sha256"]
-            != hashlib.sha256(read_bytes(settings.models_config)).hexdigest()
-            or value["broker_config_sha256"]
-            != (
-                hashlib.sha256(read_bytes(settings.broker_config)).hexdigest()
-                if settings.broker_config
-                else None
-            )
-        ):
+        if any(receipt[key] != expected for key, expected in profile.items()):
             raise ValueError("profile evidence mismatch")
-        checked = datetime.fromisoformat(value["checked_at"])
+        checked = datetime.fromisoformat(receipt["checked_at"])
         now = datetime.now(UTC)
-        if checked.tzinfo is None or checked > now:
+        if checked > now:
             raise ValueError("invalid check time")
         observation.checked_at = checked.isoformat()
-        if (now - checked).total_seconds() > 3600:
+        if (now - checked).total_seconds() > RECEIPT_LIFETIME_SECONDS:
             observation.detail = (
                 "Recorded inference check has expired; current connectivity is not checked."
             )
         else:
-            observation.status = value["status"]
+            observation.status = receipt["status"]
             observation.detail = "Operator-recorded inference check for this exact profile; this is not a continuous health probe."
     except (OSError, ValueError, TypeError, KeyError, AttributeError):
         observation = ModelConnectivity(

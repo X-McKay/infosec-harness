@@ -1,9 +1,31 @@
 """Controller-corroborated request observations, separated from behavior identity."""
-from infosec_harness.inference.protocol import BrokerError
+from __future__ import annotations
 
-_ALLOWED = {"native_id", "policy_digest", "executor_image", "supervisor_image", "profile",
-            "credential_revision", "contract_digest", "lease_id", "request_id", "disposition",
-            "openshell_version", "protocol", "provider_retries", "state"}
+from infosec_harness.inference.protocol import (
+    BrokerError,
+    ImageDigest,
+    LogicalName,
+    NativeName,
+    Sha256,
+    StrictModel,
+)
+
+
+class TrustedBrokerProvenance(StrictModel):
+    """Exactly the native observations the controller attaches after verifying its lease."""
+
+    native_id: NativeName
+    policy_digest: Sha256
+    executor_image: ImageDigest
+    supervisor_image: ImageDigest
+    profile: LogicalName
+    credential_revision: NativeName
+    contract_digest: Sha256
+    lease_id: NativeName
+
+
+# The worker adds the request disposition to the corroborated observations.
+_ALLOWED = frozenset(TrustedBrokerProvenance.model_fields) | {"state", "request_id"}
 
 
 def runtime_evidence(messages) -> list[dict]:

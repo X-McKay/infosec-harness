@@ -3,35 +3,19 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic import BaseModel, Field, JsonValue
 
-from infosec_harness.domain.models import BatchStatus, ExperimentStatus, RunStatus
+from infosec_harness.domain.models import (
+    BatchStatus,
+    ExperimentStatus,
+    ProbeExecution,
+    RunStatus,
+)
+from infosec_harness.persistence.run_telemetry import RunTelemetry
 
 JsonObject = dict[str, JsonValue]
 
-
-class _OpenPayload(BaseModel):
-    """Typed known fields while retaining versioned JSON added by older/newer producers."""
-
-    model_config = ConfigDict(extra="allow")
-
-
-class RunTelemetry(_OpenPayload):
-    schema_version: int | None = None
-    phase: str | None = None
-    accepted_at: str | None = None
-    completed_at: str | None = None
-    wall_time_s: float | None = None
-    agent_time_s: float | None = None
-    cost_usd: float | None = None
-    known_cost_usd: float | None = None
-    accounting_complete: bool | None = None
-    cost_accounting_complete: bool | None = None
-    known_tokens: int | None = None
-    input_tokens: int | None = None
-    output_tokens: int | None = None
-    cost_coverage: float | None = None
-    total_tokens: int | None = None
+__all__ = ["RunTelemetry"]
 
 
 class RunSummary(BaseModel):
@@ -120,8 +104,20 @@ class InvocationRecord(BaseModel):
     skills_loaded: list[str]
 
 
+class RunEvidence(BaseModel):
+    """The per-stage evidence persisted with a run's output."""
+
+    schema_version: int
+    manifest: JsonObject
+    context: JsonObject | None
+    # Each execution carries the controller's origin-labelled record (``origins``); only a
+    # ``controller`` origin is the harness's own observation.
+    executions: list[ProbeExecution]
+    invocations: list[JsonObject]
+
+
 class RunDetail(RunSummary):
-    evidence: JsonObject | None
+    evidence: RunEvidence | None
     events: list[RunEvent]
     review_history: list[ReviewRecord]
     finding: JsonObject
@@ -131,6 +127,11 @@ class RunDetail(RunSummary):
 
 
 class ExperimentSummary(BaseModel):
+    """One experiment's identity and headline measurements; full metrics are per experiment.
+
+    Every measurement is None when the stored report did not record it as a finite number.
+    """
+
     id: str
     agent: str
     # None when the stored metrics carry no recognised lifecycle value.
@@ -140,7 +141,6 @@ class ExperimentSummary(BaseModel):
     git_sha: str
     overlay: str
     repetitions: int
-    metrics: JsonObject
     config_hash: str
     git_dirty: bool
     model_name: str
@@ -148,6 +148,22 @@ class ExperimentSummary(BaseModel):
     pricing: str
     harness_version: str
     created_at: str
+    accuracy: float | None
+    cost_usd_per_case: float | None
+    p50_latency_s: float | None
+    p95_latency_s: float | None
+    passed: float | None
+    cases_completed: float | None
+    cases_planned: float | None
+    budget_exhausted_count: float | None
+    gate_status: str | None
+
+
+class ExperimentPage(BaseModel):
+    items: list[ExperimentSummary]
+    total: int
+    offset: int
+    limit: int
 
 
 class ExperimentCase(BaseModel):
@@ -228,25 +244,3 @@ class RuntimeStatus(BaseModel):
     broker: BrokerStatus
     model_names: list[str] = Field(default_factory=list)
     model_connectivity: ModelConnectivity = Field(default_factory=ModelConnectivity)
-
-
-class QualifiedComponent(BaseModel):
-    agent: str
-    scope: str
-    status: GateStatus
-    measured_commit: str | None = None
-    freshness: Literal["fresh", "reused", "stale", "unavailable"]
-    reason: str
-    cases: int | None = None
-    passed_cases: int | None = None
-
-
-class QualificationStatus(BaseModel):
-    active_profile_status: GateStatus = "not_checked"
-    active_profile_detail: str = "Retained component evidence does not establish qualification of the active model and transport profile."
-    as_of: str
-    candidate_commit: str | None = None
-    status: GateStatus
-    detail: str
-    components: list[QualifiedComponent]
-    limitations: list[str]

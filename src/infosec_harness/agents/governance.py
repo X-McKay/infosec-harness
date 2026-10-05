@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import re
 from collections.abc import Collection, Iterable
-from pathlib import Path
 from typing import Any
 
 from infosec_harness.agents.risk import TIER_ORDER as RISK_TIERS
@@ -35,25 +34,14 @@ class GovernanceError(ValueError):
     """A spec cannot be governed as written, so it must not become a running agent."""
 
 
-def _resolve_reference(value: str) -> Path | None:
-    """Locate a path a spec's metadata references, or ``None`` when nothing here can see it.
-
-    ``agents/<name>/evals/release-policy.yaml`` ships in the wheel beside the spec it gates, so
-    it resolves under the package root; a source checkout is tried second so a reference to a
-    reviewable project file can be checked too. ``None`` means "this deployment cannot check
-    that", which is different from "missing".
-    """
-    from infosec_harness.resources import package_root, source_checkout
-
-    for base in (package_root(), source_checkout()):
-        if base is not None and (candidate := base / value).exists():
-            return candidate
-    return None if source_checkout() is None else source_checkout() / value
-
-
 def violations(agent_name: str, metadata: dict[str, Any] | None, *,
-               check_referenced_files: bool = True) -> list[str]:
-    """Every problem with one agent's governance metadata, as readable sentences."""
+               tier: str | None) -> list[str]:
+    """Every problem with one agent's governance metadata, as readable sentences.
+
+    ``tier`` is the model tier the committed spec runs, which its model policy must resolve to.
+    None only for an experiment overlay, which may substitute a model (that is what a model
+    sweep is) and is recorded as overlay provenance; the policy must still exist.
+    """
     problems: list[str] = []
     meta = metadata or {}
     for field in REQUIRED_FIELDS:
@@ -80,10 +68,9 @@ def violations(agent_name: str, metadata: dict[str, Any] | None, *,
             problems.append(f"metadata.{field} must be a list of strings")
 
     problems.extend(_budget_violations(agent_name, meta))
-    problems.extend(_policy_violations(meta))
+    problems.extend(_policy_violations(meta, tier))
     problems.extend(risk_violations(agent_name, meta))
-    if check_referenced_files:
-        problems.extend(_reference_violations(agent_name, meta))
+    problems.extend(_reference_violations(meta))
     return problems
 
 
@@ -117,24 +104,35 @@ def _budget_violations(agent_name: str, meta: dict[str, Any]) -> list[str]:
     return []
 
 
-def _policy_violations(meta: dict[str, Any]) -> list[str]:
-    """The named model policy must exist, and must resolve to the tier the spec runs."""
+def _policy_violations(meta: dict[str, Any], tier: str | None) -> list[str]:
+    """The named model policy must exist and, for a committed spec, resolve to its tier."""
     from infosec_harness.agents.models import load_models_config
 
-    cfg = load_models_config()
+    policies = load_models_config().model_policies
     policy = meta["model_policy"]
-    if policy not in cfg.model_policies:
+    if policy not in policies:
         return [f"metadata.model_policy {policy!r} is not in config/models.yaml model_policies "
-                f"(known: {sorted(cfg.model_policies)})"]
+                f"(known: {sorted(policies)})"]
+    if tier is not None and policies[policy] != tier:
+        return [f"metadata.model_policy {policy!r} resolves to {policies[policy]!r}, not the "
+                f"spec's model tier {tier!r}"]
     return []
 
 
-def _reference_violations(agent_name: str, meta: dict[str, Any]) -> list[str]:
-    """An eval policy that is only a path is not evidence of anything."""
-    path = _resolve_reference(str(meta["evaluation_policy"]))
-    if path is not None and not path.exists():
-        return [f"metadata.evaluation_policy points at {meta['evaluation_policy']!r}, which "
-                f"does not exist"]
+def _reference_violations(meta: dict[str, Any]) -> list[str]:
+    """The release policy ships in the package beside the spec it gates, so it must be there.
+
+    Resolved against the package root only, and confined to it: a reference this deployment
+    cannot see is a missing policy, never a check skipped.
+    """
+    from infosec_harness.resources import package_root
+
+    reference = str(meta["evaluation_policy"])
+    root = package_root().resolve()
+    candidate = (root / reference).resolve()
+    if not candidate.is_relative_to(root) or not candidate.is_file():
+        return [f"metadata.evaluation_policy points at {reference!r}, which is not a file in "
+                f"the package"]
     return []
 
 
@@ -188,43 +186,24 @@ def assert_execution_class_covers_tools(name: str, metadata: dict[str, Any] | No
         )
 
 
-def assert_model_policy(name: str, metadata: dict[str, Any] | None, tier: str) -> None:
-    """A committed spec's model policy must resolve to exactly the tier it runs.
-
-    Experiment overlays may substitute a model (that is what a model sweep is) and are recorded
-    as overlay provenance; the committed spec itself must not let the two drift apart.
-    """
-    from infosec_harness.agents.models import load_models_config
-
-    policy = (metadata or {}).get("model_policy")
-    policies = load_models_config().model_policies
-    if policies.get(policy) != tier:
-        raise GovernanceError(
-            f"Agent {name!r} metadata.model_policy {policy!r} resolves to "
-            f"{policies.get(policy)!r}, not the spec's model tier {tier!r}")
-
-
 def assert_tools_are_declared(name: str, selections: Iterable[Collection[str] | None]) -> None:
     """Every repo tool an agent can call must appear in the toolset's own policy.
 
     The policy in `tools/repo-read-only/tool.yaml` is what the execution class is judged
     against and what a reviewer reads; a tool reachable from a spec but absent from it is
     governed by nothing. ``selections`` are the spec's `RepoReadOnly(tools=[...])` arguments
-    (None: the default surface), so a typo in a subset fails rather than silently narrowing
-    the agent's tools.
+    (None: the default surface); an unknown name fails in ``selected_repo_tools``, the one
+    place the selection is validated.
     """
-    from infosec_harness.agents.capabilities import DEFAULT_REPO_RO_TOOLS, REPO_RO_TOOLS
+    from infosec_harness.agents.capabilities import selected_repo_tools
     from infosec_harness.tools.policies import load_policies
 
     declared = {t.name for t in load_policies()["repo-read-only"].tools}
     for tools in selections:
-        selected = tools or DEFAULT_REPO_RO_TOOLS
-        unknown = sorted(set(selected) - set(REPO_RO_TOOLS))
-        if unknown:
-            raise GovernanceError(
-                f"Agent {name!r} selects repo tools that do not exist: {unknown}. "
-                f"Available: {sorted(REPO_RO_TOOLS)}"
-            )
+        try:
+            selected = selected_repo_tools(tools)
+        except ValueError as e:
+            raise GovernanceError(f"Agent {name!r}: {e}") from None
         undeclared = sorted(set(selected) - declared)
         if undeclared:
             raise GovernanceError(
@@ -234,8 +213,8 @@ def assert_tools_are_declared(name: str, selections: Iterable[Collection[str] | 
 
 
 def assert_governed(agent_name: str, metadata: dict[str, Any] | None, *,
-                    check_referenced_files: bool = True) -> None:
-    problems = violations(agent_name, metadata, check_referenced_files=check_referenced_files)
+                    tier: str | None) -> None:
+    problems = violations(agent_name, metadata, tier=tier)
     if problems:
         raise GovernanceError(
             f"Agent {agent_name!r} cannot be constructed:\n- " + "\n- ".join(problems)

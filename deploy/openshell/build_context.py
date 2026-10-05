@@ -65,7 +65,8 @@ def build_context(root: Path, output: Path, *, machine: str = "aarch64") -> None
     for path in (package_dir, package_dir / "inference", package_dir / "agents",
                  package_dir / "domain"):
         (path / "__init__.py").write_text("")
-    for name in ("auth", "codec", "compat", "diagnostics", "executor", "http_service", "protocol", "timing"):
+    for name in ("auth", "codec", "compat", "diagnostics", "executor", "http_service", "protocol",
+                 "rendering", "timing"):
         shutil.copyfile(
             root / f"src/infosec_harness/inference/{name}.py", package_dir / f"inference/{name}.py"
         )

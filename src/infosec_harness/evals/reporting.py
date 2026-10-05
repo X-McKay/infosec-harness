@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+from typing import Any
 
+from sqlalchemy import select
+
+from infosec_harness.evals import baselines as baseline_store
 from infosec_harness.evals.provenance import code_version
-from infosec_harness.evals.run import run_experiment
+from infosec_harness.evals.run import load_experiment, run_experiment
+from infosec_harness.persistence import db
 
 _COMPARISON_COLUMNS: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("accuracy", ("task_success_rate",), "pct"),
@@ -19,6 +24,7 @@ _COMPARISON_COLUMNS: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("p95 req", ("p95_model_requests",), "int"),
     ("budget", ("budget_exhausted_count",), "int"),
 )
+
 
 class IncomparableExperiments(SystemExit):
     """Release-grade comparison was requested for incompatible experiment records."""
@@ -72,8 +78,8 @@ def comparability_issues(found: list[object]) -> list[str]:
         issues.append("different pricing status; cost results are not comparable")
 
     required_numbers = (
-        "accuracy", "n", "n_planned", "passed", "task_success_rate",
-        "schema_validity_rate", "p95_model_requests",
+        "n", "n_planned", "passed", "task_success_rate", "schema_validity_rate",
+        "p95_model_requests",
     )
     for row in found:
         metrics = row.metrics or {}
@@ -104,24 +110,45 @@ async def compare_experiments(
     experiment_ids: list[str], *, descriptive: bool = False
 ) -> None:
     """Compare two or more experiments. The first is the baseline the rest are read against."""
-    from infosec_harness.persistence import db
-
-    async with db.session() as s:
-        rows = [(eid, await s.get(db.EvalExperiment, eid)) for eid in experiment_ids]
+    rows = [(eid, await load_experiment(eid)) for eid in experiment_ids]
     if missing := [eid for eid, row in rows if row is None]:
         raise SystemExit(f"experiment not found: {', '.join(missing)}")
     found = [row for _, row in rows]
+    _render_comparison(found, descriptive=descriptive)
+    if len(found) == 2:
+        _print_pairwise(found[0], found[1])
+
+
+def _render_comparison(found: list, *, descriptive: bool) -> None:
+    """The comparison table, refused outright unless the runs are release-comparable or the
+    caller asked for a descriptive view -- which then says, loudly, that it is only that."""
     issues = comparability_issues(found)
     if issues and not descriptive:
         raise IncomparableExperiments(issues)
     _print_comparison(found)
     if issues:
-        print("\n  !! DESCRIPTIVE ONLY: these experiments are not release-comparable:")
+        print("\n  !! DESCRIPTIVE ONLY: these experiments are not release-comparable, so this "
+              "output cannot clear release gates:")
         for issue in issues:
             print(f"     - {issue}")
-        print("     This output cannot clear release gates.")
-    if len(found) == 2:
-        _print_pairwise(found[0], found[1])
+
+
+def _coverage_warning(label: str, row: Any) -> str | None:
+    """A loud line for a run that did not score every planned case, ``None`` for one that did.
+
+    Its numbers are then over a different set of cases than a complete run's, so any delta
+    against it can be nothing but which cases happened to run.
+    """
+    metrics = row.metrics or {}
+    status = metrics.get("status") or "unknown"
+    if status == "complete":
+        return None
+    cut = metrics.get("truncated") or {}
+    return (f"  !! {label} {row.id} is {str(status).upper()}: "
+            f"{metrics.get('n', 0)}/{metrics.get('n_planned', '?')} case runs scored"
+            + (f" — stopped on case {cut['failed_case']!r} "
+               f"({cut['error_type']}: {cut['error'][:120]})" if cut else "")
+            + ". Its metrics cover only those cases, so it is not a like-for-like row.")
 
 
 def _experiment_label(row) -> str:
@@ -149,17 +176,8 @@ def _print_comparison(found: list) -> None:
         print("  ! at least one run had a dirty working tree and cannot be reproduced from "
               "its commit.")
     for row in found:
-        status = (row.metrics.get("status") or "unknown")
-        if status == "complete":
-            continue
-        # Loud, because the columns above are then between different numbers of cases: a
-        # "+8% accuracy" can be nothing but which cases happened to run.
-        cut = row.metrics.get("truncated") or {}
-        print(f"  !! {_experiment_label(row)} ({row.id}) is {status.upper()}: "
-              f"{row.metrics.get('n', 0)}/{row.metrics.get('n_planned', '?')} case runs scored"
-              + (f" — stopped on case {cut['failed_case']!r} "
-                 f"({cut['error_type']}: {cut['error'][:120]})" if cut else "")
-              + ". Its metrics cover only those cases, so this is not a like-for-like row.")
+        if warning := _coverage_warning(_experiment_label(row), row):
+            print(warning)
 
 
 def _print_pairwise(b, c) -> None:
@@ -175,30 +193,23 @@ def _print_pairwise(b, c) -> None:
             return f"{before:>10} -> {after:<10} (unknown)"
         return f"{bv:>10} -> {cv:<10} ({cv - bv:+.4f})"
 
-    incomplete = [(label, exp) for label, exp in (("baseline", b), ("candidate", c))
-                  if exp.metrics.get("status") != "complete"]
-    for label, exp in incomplete:
-        # Loud and first: the deltas below are between different numbers of cases, so a
-        # "+8% accuracy" here can be nothing but which cases happened to run.
-        t = exp.metrics.get("truncated") or {}
-        print(f"  !! {label} {exp.id} is {str(exp.metrics.get('status') or 'unknown').upper()}: "
-              f"{exp.metrics.get('n', 0)}/{exp.metrics.get('n_planned', '?')} case runs scored"
-              + (f" — stopped on case {t['failed_case']!r} ({t['error_type']}: {t['error'][:120]})"
-                 if t else "")
-              + ". Its metrics cover only those cases.")
+    # Loud and first: the deltas below are between different numbers of cases.
+    warnings = {label: _coverage_warning(label, exp)
+                for label, exp in (("baseline", b), ("candidate", c))}
+    incomplete = [label for label, warning in warnings.items() if warning]
+    for label in incomplete:
+        print(warnings[label])
     if incomplete:
         print("  !! NOT a like-for-like comparison: re-run the "
-              f"{'/'.join(label for label, _ in incomplete)} side before drawing a conclusion.")
+              f"{'/'.join(incomplete)} side before drawing a conclusion.")
     print(f"  config      {b.config_hash} -> {c.config_hash}")
     print(f"  coverage    {b.metrics.get('n', 0)}/{b.metrics.get('n_planned', '?')} -> "
           f"{c.metrics.get('n', 0)}/{c.metrics.get('n_planned', '?')} case runs "
           f"({b.metrics.get('status') or 'unknown'} -> {c.metrics.get('status') or 'unknown'})")
-    for key in ("accuracy", "cost_usd_per_case", "avg_tokens", "cache_hit_ratio"):
+    for key in ("task_success_rate", "cost_usd_per_case", "avg_tokens", "cache_hit_ratio"):
         print(f"  {key:18} {delta(key)}")
     print(f"  baseline confusion: {b.metrics.get('confusion')}")
     print(f"  candidate confusion: {c.metrics.get('confusion')}")
-
-
 
 
 def _dig(metrics: dict, path: tuple[str, ...]):
@@ -270,8 +281,6 @@ async def sweep_models(agent: str, models: list[str], *, overlay: Path | None = 
     worth seeing next to the models that could. Every completed model writes its own release
     report into ``report_dir`` when one is given, audited like any other.
     """
-    from infosec_harness.persistence import db
-
     results: list[dict] = []
     for tier in models:
         print(f"\n=== {agent} @ {tier} " + "=" * 40)
@@ -284,14 +293,24 @@ async def sweep_models(agent: str, models: list[str], *, overlay: Path | None = 
             results.append({"label": tier, "experiment_id": getattr(exc, "experiment_id", "-"),
                             "pricing": "", "metrics": {}, "failed": True})
             continue
-        async with db.session() as s:
-            row = await s.get(db.EvalExperiment, exp_id)
-            results.append({"label": tier, "experiment_id": exp_id,
-                            "pricing": row.pricing, "metrics": row.metrics, "failed": False})
+        row = await load_experiment(exp_id)
+        results.append({"label": tier, "experiment_id": exp_id,
+                        "pricing": row.pricing, "metrics": row.metrics, "failed": False})
     print(f"\n{agent}: {len(models)} models, {repeat} repetition(s), "
           f"code {code_version().label()}\n")
     print(comparison_table(results))
     return results
+
+
+async def _stored_experiments(*, agent: str | None, commit: str | None) -> list:
+    """Stored experiments, newest first, optionally for one agent and one commit prefix."""
+    await db.create_all()
+    query = select(db.EvalExperiment).order_by(db.EvalExperiment.created_at.desc())
+    if agent:
+        query = query.where(db.EvalExperiment.agent == agent)
+    async with db.session() as s:
+        rows = list((await s.execute(query)).scalars())
+    return [r for r in rows if r.git_sha.startswith(commit)] if commit else rows
 
 
 async def list_experiments(*, agent: str | None = None, commit: str | None = None,
@@ -301,23 +320,11 @@ async def list_experiments(*, agent: str | None = None, commit: str | None = Non
     The columns are the ones you need to decide whether two rows are comparable at all: the
     model, the code, and the config -- not just the score.
     """
-    from sqlalchemy import select
-
-    from infosec_harness.persistence import db
-
-    await db.create_all()
-    query = select(db.EvalExperiment).order_by(db.EvalExperiment.created_at.desc())
-    if agent:
-        query = query.where(db.EvalExperiment.agent == agent)
-    async with db.session() as s:
-        rows = list((await s.execute(query)).scalars())
-    if commit:
-        rows = [r for r in rows if r.git_sha.startswith(commit)]
-    rows = rows[:limit]
+    rows = (await _stored_experiments(agent=agent, commit=commit))[:limit]
     if not rows:
         print("no experiments stored" + (f" for {agent}" if agent else ""))
         return rows
-    header = f"{'experiment':<22} {'agent':<16} {'model':<10} {'code':<20} {'status':<10} acc     $/case"
+    header = f"{'experiment':<22} {'agent':<16} {'model':<10} {'code':<20} {'status':<10} succ    $/case"
     print(header)
     print("-" * len(header))
     for row in rows:
@@ -341,43 +348,21 @@ async def compare_models_for(
     the terminal it was printed in, and so models run days apart can still be read together
     (with the code difference called out, because that is exactly when it matters).
     """
-    from sqlalchemy import select
-
-    from infosec_harness.persistence import db
-
-    await db.create_all()
-    async with db.session() as s:
-        rows = list((await s.execute(
-            select(db.EvalExperiment)
-            .where(db.EvalExperiment.agent == agent)
-            .order_by(db.EvalExperiment.created_at.desc()))).scalars())
-    if commit:
-        rows = [r for r in rows if r.git_sha.startswith(commit)]
     latest: dict[str, object] = {}
-    for row in rows:  # newest first, so the first of each model wins
+    for row in await _stored_experiments(agent=agent, commit=commit):
+        # Newest first, so the first of each model wins.
         latest.setdefault(row.model_tier or row.config_hash[:8], row)
     if not latest:
         raise SystemExit(f"no experiments stored for {agent}"
                          + (f" at commit {commit}" if commit else ""))
     found = list(latest.values())
-    issues = comparability_issues(found)
-    if issues and not descriptive:
-        raise IncomparableExperiments(issues)
-    _print_comparison(found)
-    if issues:
-        print("\n  !! DESCRIPTIVE ONLY; this output cannot clear release gates:")
-        for issue in issues:
-            print(f"     - {issue}")
+    _render_comparison(found, descriptive=descriptive)
     return found
 
 
 async def save_baseline(experiment_id: str) -> Path:
     """Record one experiment as the committed baseline for its agent and model."""
-    from infosec_harness.evals import baselines as baseline_store
-    from infosec_harness.persistence import db
-
-    async with db.session() as s:
-        row = await s.get(db.EvalExperiment, experiment_id)
+    row = await load_experiment(experiment_id)
     if row is None:
         raise SystemExit(f"experiment not found: {experiment_id}")
     try:

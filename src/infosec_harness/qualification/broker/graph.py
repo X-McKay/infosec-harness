@@ -16,12 +16,18 @@ import time
 import uuid
 from contextlib import suppress
 from pathlib import Path
-from unittest.mock import patch
 
+from infosec_harness.qualification.broker.support import (
+    child_environment,
+    forbid_io,
+    ledger_snapshot,
+    private_write,
+    read_private_environment,
+    reap,
+)
 from infosec_harness.qualification.broker.validators import (
     ROOT,
     RealProviderManifest,
-    read_private_environment,
     sha256_file,
     verify_configuration,
 )
@@ -37,12 +43,6 @@ FINDING = {"title": "SQL injection in get_user",
 
 def artifact_root() -> Path:
     return (ROOT / ".harness/openshell-spike/live-qualification").resolve()
-
-
-def write_private(path: Path, value: dict) -> None:
-    with path.open("x") as stream:
-        os.chmod(path, 0o600)
-        json.dump(value, stream, sort_keys=True, indent=2)
 
 
 def _registry(pilot_sha256: str, phase: str) -> Path:
@@ -102,8 +102,9 @@ def freeze(pilot: Path, destination: Path, phase: str) -> dict:
         "task_queue": "broker-real-graph-" + uuid.uuid4().hex, "duration_seconds": DURATION_SECONDS,
         "concurrency": 1, "maximum_trials": 1, "finding": {**FINDING, "repo_url": str(repo)},
     }
-    write_private(destination, manifest)
-    write_private(registry, {"manifest": str(destination), "sha256": sha256_file(destination)})
+    private_write(destination, manifest, exclusive=True)
+    private_write(registry, {"manifest": str(destination), "sha256": sha256_file(destination)},
+                  exclusive=True)
     return manifest
 
 
@@ -149,36 +150,25 @@ def preflight(path: Path, expected_sha256: str) -> dict:
 
 
 def environment(value: dict) -> dict[str, str]:
-    env = dict(os.environ)
     temporary = Path(value["directory"]) / "tmp"
     temporary.mkdir(mode=0o700, exist_ok=True)
+    native = value["phase"] == "native"
+    if not (ROOT / ".harness/dev.env").is_file():
+        raise ValueError("The production graph trial requires the managed sandbox settings")
+    env = child_environment(
+        ROOT, models_config=value["models_config"],
+        database=read_private_environment(value["database_env_file"]),
+        worker_key=(value["worker_hmac_env"], value["worker_hmac_file"]),
+        broker_config=value["broker_config"] if native else None)
     # The managed Docker CLI executes inside Lima; host /tmp is not shared.
     # All generated Dockerfiles and copied contexts must be guest-visible.
-    env["TMPDIR"] = str(temporary)
-    for name in list(env):
-        if name.startswith(("AWS_", "HARNESS_BROKER_")) or name in {
-                "OPENAI_API_KEY", "HARNESS_OPENAI_API_KEY", "HARNESS_MODEL_BACKEND", "HARNESS_S3_ENDPOINT"}:
-            env.pop(name, None)
-    for name, setting in read_private_environment(ROOT / ".harness/dev.env").items():
-        if name.startswith(("HARNESS_SANDBOX_", "HARNESS_BUILD_")) or name == "HARNESS_BUILDX_BUILDER":
-            env[name] = setting
-    env.update(read_private_environment(value["database_env_file"]))
-    env.update(HARNESS_MODEL_MODE="live", HARNESS_MODELS_CONFIG=value["models_config"],
-        HARNESS_TASK_QUEUE=value["task_queue"], HARNESS_TEMPORAL_ADDRESS=value["temporal_address"],
-        HARNESS_PER_REPO_CONCURRENCY="1", HARNESS_RECIPE_CACHE_ENABLED="false",
+    env.update(TMPDIR=str(temporary), HARNESS_TASK_QUEUE=value["task_queue"],
+        HARNESS_TEMPORAL_ADDRESS=value["temporal_address"], HARNESS_PER_REPO_CONCURRENCY="1",
+        HARNESS_RECIPE_CACHE_ENABLED="false",
         HARNESS_WORKSPACE_DIR=str(Path(value["directory"]) / "workspace"),
         HARNESS_REPORTS_DIR=str(Path(value["directory"]) / "reports"), HARNESS_S3_ENDPOINT="",
-        HARNESS_ALLOW_INSECURE_RUNTIME="false", HARNESS_SANDBOX_RUNTIME="runsc",
-        HARNESS_AGENT_RUN_TIMEOUT_S="600", HARNESS_ROOT_MAX_ELAPSED_SECONDS=str(DURATION_SECONDS),
-        PYDANTIC_AI_NO_BANNER="1", PYTHONPATH=str(ROOT / "src"))
-    env["PATH"] = os.pathsep.join((str(ROOT / ".harness/bin"), str(ROOT / ".venv/bin"), env.get("PATH", "")))
-    if value["phase"] == "native":
-        env["HARNESS_BROKER_CONFIG"] = value["broker_config"]
-        key = Path(value["worker_hmac_file"])
-        if key.is_symlink() or key.stat().st_mode & 0o077:
-            raise ValueError("Worker channel key must be private")
-        env[value["worker_hmac_env"]] = key.read_text().strip()
-    else:
+        HARNESS_ROOT_MAX_ELAPSED_SECONDS=str(DURATION_SECONDS))
+    if not native:
         env["HARNESS_OPENAI_API_KEY"] = "local-no-auth-qualification"
     return env
 
@@ -193,44 +183,13 @@ def oracle_passed(detail: dict, prepared_status: str | None = None) -> bool:
         and execution.get("sink_returned") for execution in executions))
 
 
-async def ledger_snapshot(batch: str) -> dict:
-    from sqlalchemy import select
-
-    from infosec_harness.persistence import db
-    async with db.session() as session:
-        rows = (await session.scalars(select(db.InferenceRequestRecord).where(
-            db.InferenceRequestRecord.root_id == batch))).all()
-        root = await session.get(db.BudgetLedger, batch)
-        return {"rows": [{"id": row.request_id, "state": row.state, "revision": row.revision, "result": row.result}
-                         for row in sorted(rows, key=lambda r: r.request_id)],
-                "root": root.state if root else None}
-
-
 async def replay(histories: list, batch: str) -> None:
-    import httpx
-    import httpx2
     from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
     from temporalio.worker import Replayer
 
-    from infosec_harness.inference import invocations
-    from infosec_harness.inference.transport import BrokerModel
-    from infosec_harness.persistence import db
     from infosec_harness.workflows.worker import WORKFLOWS
     before = await ledger_snapshot(batch)
-
-    async def forbidden(*_args, **_kwargs):
-        raise AssertionError("Production replay attempted external I/O")
-
-    def forbidden_sync(*_args, **_kwargs):
-        raise AssertionError("Production replay attempted synchronous I/O")
-
-    with (patch.object(BrokerModel, "request", forbidden),
-          patch.object(invocations, "request_invocation", forbidden),
-          patch.object(httpx.AsyncClient, "request", forbidden),
-          patch.object(httpx2.AsyncClient, "request", forbidden),
-          patch.object(db, "session", forbidden_sync),
-          patch.object(subprocess, "Popen", forbidden_sync),
-          patch.object(asyncio, "create_subprocess_exec", forbidden)):
+    with forbid_io(synchronous=True):
         player = Replayer(workflows=WORKFLOWS, plugins=[PydanticAIPlugin()])
         for history in histories:
             await player.replay_workflow(history)
@@ -264,19 +223,6 @@ def _start_worker(log):
     # cannot leave a detached worker able to schedule more activities.
     return subprocess.Popen([sys.executable, "-m", "infosec_harness.workflows.worker"],
         cwd=ROOT, env=dict(os.environ), stdout=log, stderr=log)
-
-
-async def _stop_worker(worker) -> bool:
-    # Signal the exact retained child, never the shared outer watchdog group.
-    with suppress(ProcessLookupError):
-        worker.terminate()
-    try:
-        await asyncio.to_thread(worker.wait, timeout=10)
-    except subprocess.TimeoutExpired:
-        with suppress(ProcessLookupError):
-            worker.kill()
-        await asyncio.to_thread(worker.wait, timeout=10)
-    return worker.poll() is not None
 
 
 async def _cancel_owned(client, histories: dict, batch: str) -> bool:
@@ -327,7 +273,7 @@ async def execute(path: Path, expected_sha256: str) -> dict:
         if not isinstance(outputs, list) or len(outputs) != 1:
             raise ValueError("Graph batch must return exactly one result")
         observed = TriageRunOutput.model_validate(outputs[0])
-        write_private(directory / "workflow-result.json", observed.model_dump(mode="json"))
+        private_write(directory / "workflow-result.json", observed.model_dump(mode="json"), exclusive=True)
         summaries = await store.list_runs(batch_id=batch)
         if len(summaries) != 1:
             raise ValueError("Graph batch must persist exactly one run")
@@ -340,7 +286,7 @@ async def execute(path: Path, expected_sha256: str) -> dict:
             raise ValueError("Persisted finding differs from the workflow result")
         if detail["result"] != observed.result.model_dump(mode="json"):
             raise ValueError("Persisted result differs from the workflow result")
-        write_private(directory / "persisted-api-result.json", detail)
+        private_write(directory / "persisted-api-result.json", detail, exclusive=True)
         report.update(run_id=summaries[0]["id"], query_api="passed", temporal_visibility=(await handle.describe()).status.name,
             actual_runsc_oracle="passed" if oracle_passed(detail, observed.prepared_status) else "failed")
         histories = await histories_for(client, "batch:" + batch)
@@ -361,7 +307,8 @@ async def execute(path: Path, expected_sha256: str) -> dict:
                     histories = await histories_for(client, "batch:" + batch)
             report["workflow_cleanup"] = "passed" if await _cancel_owned(client, histories, batch) else "failed"
         if worker is not None:
-            report["worker_cleanup"] = "passed" if await _stop_worker(worker) else "failed"
+            # Signal the exact retained child, never the shared outer watchdog group.
+            report["worker_cleanup"] = "passed" if await asyncio.to_thread(reap, worker) else "failed"
         report["elapsed_seconds"] = time.monotonic() - started
-        write_private(directory / "report.json", report)
+        private_write(directory / "report.json", report, exclusive=True)
     return report

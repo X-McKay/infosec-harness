@@ -123,7 +123,20 @@ def read_file(ctx: RunContext[AgentDeps], path: str, start_line: int = 1, end_li
         raise ModelRetry(f"{path!r} does not exist.")
     # 400 lines is not a byte bound: one minified line can be megabytes. Hold a single read to
     # the same budget as a batched one.
-    return _clip_bytes(_read_one(target, path, start_line, end_line), MAX_BATCH_BYTES)
+    return clip_bytes(_read_one(target, path, start_line, end_line), MAX_BATCH_BYTES)
+
+
+def clip_bytes(text: str, limit: int, suffix: str | None = None) -> str:
+    """``text`` cut to at most ``limit`` UTF-8 bytes (never mid-character), then ``suffix``.
+
+    The suffix is model-visible and says the cut happened; it defaults to naming the limit.
+    Text within the limit is returned unchanged, with no suffix.
+    """
+    raw = text.encode()
+    if len(raw) <= limit:
+        return text
+    marker = f"\n... truncated at {limit} bytes" if suffix is None else suffix
+    return raw[:limit].decode(errors="ignore") + marker
 
 
 def _read_capped(target: Path) -> tuple[str, bool]:
@@ -142,9 +155,13 @@ def _read_capped(target: Path) -> tuple[str, bool]:
 
 
 def _read_one(target: Path, path: str, start_line: int, end_line: int) -> str:
+    return numbered_lines(*_read_capped(target), path, start_line, end_line)
+
+
+def numbered_lines(text: str, truncated: bool, path: str, start_line: int, end_line: int) -> str:
+    """Lines `start_line`..`end_line` of an already-read file, numbered, with a header."""
     start_line = max(1, start_line)
     end_line = min(max(start_line, end_line), start_line + MAX_READ_LINES - 1)
-    text, truncated = _read_capped(target)
     lines = text.splitlines()
     chunk = lines[start_line - 1 : end_line]
     body = "\n".join(f"{i:>5}  {line}" for i, line in enumerate(chunk, start=start_line))
@@ -191,9 +208,7 @@ def read_files(ctx: RunContext[AgentDeps], paths: list[str], start_line: int = 1
             sections.append(f"--- {path}\n[not read: this call's {MAX_BATCH_BYTES}-byte output "
                             "budget was already spent; read it in a second call]")
             continue
-        body = _read_one(target, path, start_line, end_line)
-        if len(body.encode()) > budget:
-            body = body.encode()[:budget].decode(errors="ignore") + "\n... truncated"
+        body = clip_bytes(_read_one(target, path, start_line, end_line), budget, "\n... truncated")
         budget -= len(body.encode())
         sections.append(f"--- {body}")
     if len(missing) == len(paths):
@@ -317,7 +332,7 @@ def _tree_text(directory: str, summaries: list[_DirSummary], total_files: int,
                             _pick_dirs(summaries, limit), 0)
         if len(body.encode()) <= MAX_TREE_BYTES:
             return body
-    return _clip_bytes(body, MAX_TREE_BYTES)
+    return clip_bytes(body, MAX_TREE_BYTES)
 
 
 def _tree_branch(rel: str) -> str:
@@ -385,13 +400,6 @@ def _render_tree(directory: str, total_files: int, total_dirs: int,
         out.append(f"... {len(summaries) - len(shown)} further non-empty directories not shown; "
                    f"call list_tree on one of the directories above to expand it")
     return "\n".join(out)
-
-
-def _clip_bytes(text: str, limit: int) -> str:
-    raw = text.encode()
-    if len(raw) <= limit:
-        return text
-    return raw[:limit].decode(errors="ignore") + f"\n... truncated at {limit} bytes"
 
 
 # --- repo_digest -------------------------------------------------------------------------
@@ -466,7 +474,7 @@ def repo_digest(ctx: RunContext[AgentDeps]) -> str:
     except RepositoryAccessError as exc:
         # Fail closed, and say so: nothing is listed or read from a snapshot the boundary
         # rejects, and the absence is stated rather than left to read as an empty repository.
-        return _clip_bytes("\n".join([
+        return clip_bytes("\n".join([
             "# Repository digest: traversal rejected", "", _traversal_rejected(exc),
             "The snapshot holds an entry the read-only repository tools refuse to traverse (a "
             "link that leaves the snapshot, a directory link, or a special file), so nothing in "
@@ -491,7 +499,7 @@ def repo_digest(ctx: RunContext[AgentDeps]) -> str:
     for rel in manifests[MAX_DIGEST_MANIFESTS:]:
         sections.append(f"(not shown: {rel} - read it with read_files if you need it)")
     sections += ["", "## Test layout", *_test_layout(summaries)]
-    return _clip_bytes("\n".join(sections), MAX_DIGEST_BYTES)
+    return clip_bytes("\n".join(sections), MAX_DIGEST_BYTES)
 
 
 # --- search_code -------------------------------------------------------------------------

@@ -9,6 +9,7 @@ import pytest
 from infosec_harness.agents.deps import AgentDeps
 from infosec_harness.inference.protocol import ExecutorContract, ReservationBinding
 from infosec_harness.workflows import accounting, temporal_ops
+from infosec_harness.workflows.payloads import ReserveArgs
 
 
 def contract():
@@ -47,8 +48,9 @@ async def test_new_broker_operation_identity_survives_attempts_but_distinguishes
             root_id="batch:root", fingerprint="fingerprint").reserve(config(), configuration_digest="accepted-config"))
     assert identities[0] == identities[1]
     assert identities[0][1] == "triage:fingerprint:batch:root:execution-1:0:context"
-    reserved = [args for args in calls if "requested" in args]
-    assert all(args["run_id"] == "execution-1" and args["invocation_id"] == identities[0][1] for args in reserved)
+    reserved = [args for args in calls if isinstance(args, ReserveArgs)]
+    assert reserved and all(args.run_id == "execution-1"
+                            and args.invocation_id == identities[0][1] for args in reserved)
     instance = accounting.RootAccounting(root_id="batch:root", fingerprint="fingerprint")
     first = await instance.reserve(config(), configuration_digest="accepted-config")
     second = await instance.reserve(config(), configuration_digest="accepted-config")
@@ -69,12 +71,12 @@ async def test_direct_accounting_identity_is_workflow_scoped_and_carries_no_brok
         root_id="batch:root", fingerprint="fingerprint",
     ).reserve(config(broker=False), configuration_digest="accepted-config")
     assert identity[1] == "triage:fingerprint:batch:root:0:context"
-    assert "run_id" not in calls[0] and "invocation_id" not in calls[0]
+    assert calls[0].run_id is None and calls[0].invocation_id is None
 
 
 async def test_new_temporal_binding_is_an_activity_and_not_runtime_io_in_workflow(monkeypatch):
     selected = config()
-    ops = temporal_ops.TemporalOps()
+    ops = temporal_ops.TemporalOps(root_id="root", fingerprint="fingerprint")
     ops._agents = {"context": object()}
     ops._configs = {"context": selected}
     ops._accounting.reserve = AsyncMock(return_value=("root", "operation"))
@@ -92,11 +94,11 @@ async def test_new_temporal_binding_is_an_activity_and_not_runtime_io_in_workflo
         return binding.model_dump(mode="json")
     monkeypatch.setattr(temporal_ops.workflow, "execute_activity", activity)
 
-    async def run(name, prompt, deps):
+    async def run(agent, name, prompt, deps, config, record, **kwargs):
         assert deps.broker_binding == binding
         assert deps.broker_contract == selected.model.broker_contract
         return "outcome"
-    monkeypatch.setattr(ops, "_run_agent", run)
+    monkeypatch.setattr(temporal_ops, "run_recorded", run)
     original = AgentDeps(repo_path="/tmp/repository")
     assert await ops.run_agent("context", ["prompt"], original) == "outcome"
     assert original.broker_binding is None
@@ -107,18 +109,18 @@ async def test_new_temporal_binding_is_an_activity_and_not_runtime_io_in_workflo
 
 async def test_direct_temporal_branch_does_not_schedule_broker_activity(monkeypatch):
     selected = config(broker=False)
-    ops = temporal_ops.TemporalOps()
+    ops = temporal_ops.TemporalOps(root_id="root", fingerprint="fingerprint")
     ops._agents = {"context": object()}
     ops._configs = {"context": selected}
     ops._accounting.reserve = AsyncMock(return_value=("root", "operation"))
     ops._accounting.settle = AsyncMock()
     monkeypatch.setattr(temporal_ops.workflow, "execute_activity", AsyncMock(side_effect=AssertionError("Unexpected broker activity")))
-    monkeypatch.setattr(ops, "_run_agent", AsyncMock(return_value="outcome"))
+    monkeypatch.setattr(temporal_ops, "run_recorded", AsyncMock(return_value="outcome"))
     assert await ops.run_agent("context", ["prompt"], AgentDeps(repo_path="/tmp/repository")) == "outcome"
 
 
 async def test_close_before_first_reservation_performs_no_controller_activity(monkeypatch):
-    ops = temporal_ops.TemporalOps()
+    ops = temporal_ops.TemporalOps(root_id="root", fingerprint="fingerprint")
     ops._configs = {"context": config()}
     monkeypatch.setattr(temporal_ops.workflow, "execute_activity",
                         lambda *args, **kwargs: pytest.fail("No run ownership was established"))
@@ -126,7 +128,7 @@ async def test_close_before_first_reservation_performs_no_controller_activity(mo
 
 
 async def test_close_uses_the_established_run_root_ownership(monkeypatch):
-    ops = temporal_ops.TemporalOps()
+    ops = temporal_ops.TemporalOps(root_id="root", fingerprint="fingerprint")
     ops._broker_identity = ("execution-1", "root")
     monkeypatch.setattr(temporal_ops.workflow, "patched", lambda name: True)
     calls = []

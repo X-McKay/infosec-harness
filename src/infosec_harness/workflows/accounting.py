@@ -1,17 +1,16 @@
 """Replay-safe root reservation around a durable agent invocation or sandbox workload.
 
 The root (batch) and the finding an operation is spent on are passed in explicitly by the
-workflow that owns them; nothing here is recovered by parsing workflow identifiers.
+workflow that owns them; nothing here is recovered by parsing workflow identifiers. Every
+durable operation is accounted: there is no unaccounted mode.
 """
 from __future__ import annotations
 
 import asyncio
 import hashlib
-from datetime import timedelta
 from typing import Literal
 
 from temporalio import workflow
-from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError
 
 with workflow.unsafe.imports_passed_through():
@@ -19,15 +18,13 @@ with workflow.unsafe.imports_passed_through():
 
     from infosec_harness.agents.registry import ACTIVITY_MAX_ATTEMPTS, ResolvedAgentConfig
     from infosec_harness.domain.models import AgentOutcome
-    from infosec_harness.workflows.progress import (
+    from infosec_harness.workflows.activity_options import LEDGER
+    from infosec_harness.workflows.payloads import ProgressArgs, ReserveArgs, SettleArgs
+    from infosec_harness.workflows.persistence_activities import (
         progress_activity,
         reserve_budget_activity,
         settle_budget_activity,
     )
-
-_POLICY = dict(start_to_close_timeout=timedelta(seconds=30),
-               retry_policy=RetryPolicy(maximum_attempts=3,
-                   non_retryable_error_types=["UsageLimitExceeded", "ValueError"]))
 
 Identity = tuple[str, str]
 
@@ -35,14 +32,14 @@ Identity = tuple[str, str]
 class RootAccounting:
     """Reserve and settle one workflow's operations against its batch's root budget.
 
-    ``root_id`` is the batch id (None: an unaccounted, non-durable run). ``fingerprint`` is the
-    finding this workflow's operations are attributed to; preparation is attributed to the first
-    finding of its component, as everywhere else.
+    ``root_id`` is the batch id. ``fingerprint`` is the finding this workflow's operations are
+    attributed to; preparation is attributed to the first finding of its component, as
+    everywhere else.
     """
 
-    def __init__(self, root_id: str | None = None, fingerprint: str | None = None) -> None:
-        if root_id is not None and not fingerprint:
-            raise ValueError("Root accounting requires the finding its operations are spent on")
+    def __init__(self, root_id: str, fingerprint: str) -> None:
+        if not root_id or not fingerprint:
+            raise ValueError("Root accounting requires the batch and the finding it is spent on")
         self.root_id = root_id
         self.fingerprint = fingerprint
         self.sequence = 0
@@ -56,23 +53,21 @@ class RootAccounting:
         self.sequence += 1
         return operation
 
-    async def _reserve(self, args: dict) -> dict | None:
+    async def _reserve(self, args: ReserveArgs) -> dict:
         try:
-            return await workflow.execute_activity(reserve_budget_activity, args, **_POLICY)
+            return await workflow.execute_activity(reserve_budget_activity, args, **LEDGER)
         except ActivityError as exc:
             if isinstance(exc.cause, ApplicationError) and exc.cause.type == "UsageLimitExceeded":
                 raise UsageLimitExceeded(str(exc.cause)) from exc
             raise
 
     def _operation_args(self, operation: str, kind: Literal["agent", "execution"], agent: str,
-                        requested: dict) -> dict:
-        return {"root_id": self.root_id, "operation_id": operation, "requested": requested,
-                "agent": agent, "operation_kind": kind, "fingerprint": self.fingerprint}
+                        requested: dict[str, float], **ownership: str | None) -> ReserveArgs:
+        return ReserveArgs(root_id=self.root_id, operation_id=operation, requested=requested,
+                           agent=agent, operation_kind=kind, fingerprint=self.fingerprint,
+                           **ownership)
 
-    async def reserve(self, config: ResolvedAgentConfig, *,
-                      configuration_digest: str) -> Identity | None:
-        if self.root_id is None:
-            return None
+    async def reserve(self, config: ResolvedAgentConfig, *, configuration_digest: str) -> Identity:
         broker_owned = config.model.broker_contract is not None
         operation = self._next_operation(config.agent_name, run_scoped=broker_owned)
         budget = config.budget.effective
@@ -85,37 +80,31 @@ class RootAccounting:
                                  else budget.max_cost_usd * factor),
                     "tool_calls": budget.max_tool_calls * factor, "agent_runs": 1,
                     "execution_seconds": budget.max_tool_calls * 300 * ACTIVITY_MAX_ATTEMPTS}
-        args = self._operation_args(operation, "agent", config.agent_name, reserved)
-        args["configuration_digest"] = configuration_digest
-        if broker_owned:
-            args.update(run_id=workflow.info().run_id, invocation_id=operation)
-        result = await self._reserve(args)
-        if result is None:
-            return None
+        ownership = ({"run_id": workflow.info().run_id, "invocation_id": operation}
+                     if broker_owned else {})
+        await self._reserve(self._operation_args(
+            operation, "agent", config.agent_name, reserved,
+            configuration_digest=configuration_digest, **ownership))
         if config.model.pricing_status == "known_zero":
             self.zero_cost_operations.add(operation)
         if config.model.mode == "stub":
             self.exact_operations.add(operation)
-        await workflow.execute_activity(progress_activity,
-            {"batch_id": self.root_id, "fingerprint": self.fingerprint,
-             "phase": f"agent:{config.agent_name}",
-             "event_key": hashlib.sha256(operation.encode()).hexdigest()[:20],
-             "detail": f"Started {config.agent_name}; root budget reserved."}, **_POLICY)
+        await workflow.execute_activity(progress_activity, ProgressArgs(
+            batch_id=self.root_id, fingerprint=self.fingerprint,
+            phase=f"agent:{config.agent_name}",
+            event_key=hashlib.sha256(operation.encode()).hexdigest()[:20],
+            detail=f"Started {config.agent_name}; root budget reserved."), **LEDGER)
         return (self.root_id, operation)
 
-    async def reserve_execution(self, name: str, seconds: float) -> Identity | None:
-        if self.root_id is None:
-            return None
+    async def reserve_execution(self, name: str, seconds: float) -> Identity:
         operation = self._next_operation(name)
-        result = await self._reserve(self._operation_args(operation, "execution", name, {
+        await self._reserve(self._operation_args(operation, "execution", name, {
             "requests": 0, "tokens": 0, "cost_usd": 0, "tool_calls": 0, "agent_runs": 0,
             "execution_seconds": seconds}))
-        return (self.root_id, operation) if result is not None else None
+        return (self.root_id, operation)
 
-    async def settle(self, identity: Identity | None, outcome: AgentOutcome | None,
+    async def settle(self, identity: Identity, outcome: AgentOutcome | None,
                      failure: str = "") -> None:
-        if identity is None:
-            return
         record = (outcome.model_dump(mode="json") if outcome
                   else {"failure": failure, "usage": "unavailable"})
         if identity[1] in self.zero_cost_operations:
@@ -130,6 +119,6 @@ class RootAccounting:
                         "cost_usd": outcome.cost_usd or 0.0,
                         "tool_calls": outcome.tool_calls, "agent_runs": 1,
                         "execution_seconds": 0}  # Stub agents execute no real workloads.
-        await asyncio.shield(workflow.execute_activity(settle_budget_activity,
-            {"root_id": identity[0], "operation_id": identity[1], "observed": observed,
-             "record": record}, **_POLICY))
+        await asyncio.shield(workflow.execute_activity(settle_budget_activity, SettleArgs(
+            root_id=identity[0], operation_id=identity[1], observed=observed, record=record),
+            **LEDGER))

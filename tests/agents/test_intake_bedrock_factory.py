@@ -34,7 +34,7 @@ def test_atomic_intake_uses_bedrock_converse_with_existing_retry_and_region_cont
     models.load_models_config.cache_clear()
     models._build_live.cache_clear()
     try:
-        model = models.resolve_intake_atomic("intake", "sonnet", durable=True)
+        model = models.resolve("intake", "sonnet", durable=True, atomic_intake=True)
         backend = models.load_models_config().backends["bedrock"]
         expected_model_id = models.load_models_config().model_id("sonnet", "bedrock")
         current_config = resolve_agent_config("intake", load_spec("intake"), durable=True)

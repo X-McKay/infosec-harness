@@ -211,7 +211,12 @@ def controller_factory():
     from infosec_harness.inference.controller import Controller
     from infosec_harness.inference.http_service import JsonChannel
     from infosec_harness.inference.openshell import NativeDeploymentConfig
-    from infosec_harness.inference.protocol import BrokerError, ReservationBinding, canonical_bytes
+    from infosec_harness.inference.protocol import (
+        INFER_PATH,
+        BrokerError,
+        ReservationBinding,
+        canonical_bytes,
+    )
     from infosec_harness.persistence import budgets, db
 
     value = configuration()
@@ -260,7 +265,7 @@ def controller_factory():
 
         async def delayed(path, body, headers):
             response = await original(path, body, headers)
-            if path == "/v1/infer":
+            if path == INFER_PATH:
                 try:
                     fd = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                 except FileExistsError:
@@ -292,13 +297,17 @@ async def worker() -> None:
     from infosec_harness.agents.render import render_prompt
     from infosec_harness.domain.models import StackFingerprint
     from infosec_harness.inference.http_service import JsonChannel
-    from infosec_harness.inference.protocol import ReservationBinding, canonical_bytes
+    from infosec_harness.inference.protocol import (
+        INVOCATIONS_PATH,
+        ReservationBinding,
+        canonical_bytes,
+    )
     from infosec_harness.inference.transport import BrokerModel
 
     value = configuration()
     channel = JsonChannel(ca_file=value["controller_ca"])
     binding = ReservationBinding.model_validate(await post(channel, value["controller_origin"],
-        "/v1/invocations", canonical_bytes(reference(value).model_dump(mode="json"))))
+        INVOCATIONS_PATH, canonical_bytes(reference(value).model_dump(mode="json"))))
     os.environ["IH_NATIVE_WORKER_KEY"] = WORKER_KEY.decode()
     model = BrokerModel(contract=reference(value).contract, binding=binding,
         controller_url=value["controller_origin"], secret_env="IH_NATIVE_WORKER_KEY",
@@ -321,7 +330,14 @@ async def prove() -> None:
 
     from infosec_harness.inference.auth import AUTH_HEADER
     from infosec_harness.inference.http_service import JsonChannel
-    from infosec_harness.inference.protocol import BrokerError, canonical_bytes
+    from infosec_harness.inference.protocol import (
+        INFER_PATH,
+        LEDGER_CLAIM_PATH,
+        RESULTS_PATH,
+        RUN_CLOSE_PATH,
+        BrokerError,
+        canonical_bytes,
+    )
     from infosec_harness.persistence import db
 
     value, expected = configuration(), reference()
@@ -346,9 +362,9 @@ async def prove() -> None:
             raise AssertionError("Mock provider must observe exactly one admitted send")
     body = canonical_bytes(request)
     for path, payload, headers, message in (
-            ("/v1/infer", body, {AUTH_HEADER: f"v1:{int(time.time()) + 30}:" + "0" * 64},
+            (INFER_PATH, body, {AUTH_HEADER: f"v1:{int(time.time()) + 30}:" + "0" * 64},
              "Unsigned ingress accepted"),
-            ("/v1/ledger/claim", canonical_bytes({"request": request, "lease_id": row.lease_id}),
+            (LEDGER_CLAIM_PATH, canonical_bytes({"request": request, "lease_id": row.lease_id}),
              {"Authorization": "Bearer " + WORKER_KEY.decode()},
              "Worker key accepted on executor ledger channel")):
         try:
@@ -358,16 +374,16 @@ async def prove() -> None:
                 raise
         else:
             raise AssertionError(message)
-    result = await post(channel, origin, "/v1/results", body)
+    result = await post(channel, origin, RESULTS_PATH, body)
     if result["request_id"] != row.request_id or (result["usage"]["input_tokens"],
                                                   result["usage"]["output_tokens"]) != (3, 2):
         raise AssertionError("Saved result differs from the committed mock response")
     close = canonical_bytes({"run_id": expected.run_id, "root_id": expected.root_id})
-    if (await post(channel, origin, "/v1/runs/close", close))["state"] != "closed":
+    if (await post(channel, origin, RUN_CLOSE_PATH, close))["state"] != "closed":
         raise AssertionError("Native run did not close")
-    if await post(channel, origin, "/v1/results", body) != result:
+    if await post(channel, origin, RESULTS_PATH, body) != result:
         raise AssertionError("Saved result changed after close")
-    if (await post(channel, origin, "/v1/runs/close", close))["state"] != "closed":
+    if (await post(channel, origin, RUN_CLOSE_PATH, close))["state"] != "closed":
         raise AssertionError("Repeat close was not idempotent")
     if json.loads(stats_file.read_text()) != before:
         raise AssertionError("Proof steps reached the mock provider")

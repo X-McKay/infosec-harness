@@ -1,5 +1,6 @@
 /**
- * Execution evidence basis, derived from the origins recorded with each probe execution.
+ * Execution evidence basis, derived from the origins persisted with each probe execution
+ * (`ProbeExecution.origins`, written from the controller's execution record).
  * Fails closed: the notice warns unless every origin is recorded and controller-authored.
  */
 import { isRecord, text } from "./json.ts";
@@ -14,27 +15,23 @@ export type ExecutionProvenance = {
   origins: Record<ProvenanceField, (string | null)[]>;
 };
 
+/** The recorded origin of one section of one execution, or null when none was recorded. */
+function recordedOrigin(execution: unknown, field: ProvenanceField) {
+  const origins = isRecord(execution) ? execution.origins : null;
+  const section = isRecord(origins) ? origins[field] : null;
+  return isRecord(section) ? text(section.origin) : null;
+}
+
 export function executionProvenance(
   executions: readonly unknown[],
 ): ExecutionProvenance | null {
   if (!executions.length) return null;
-  const seen: Record<ProvenanceField, Set<string | null>> = {
-    observations: new Set(),
-    process: new Set(),
-    runner: new Set(),
-  };
-  for (const execution of executions) {
-    const record = isRecord(execution) ? execution : {};
-    for (const field of PROVENANCE_FIELDS) {
-      const section = record[field];
-      seen[field].add(isRecord(section) ? text(section.origin) : null);
-    }
-  }
-  const origins = {
-    observations: [...seen.observations],
-    process: [...seen.process],
-    runner: [...seen.runner],
-  };
+  const origins = Object.fromEntries(
+    PROVENANCE_FIELDS.map((field) => [
+      field,
+      [...new Set(executions.map((item) => recordedOrigin(item, field)))],
+    ]),
+  ) as ExecutionProvenance["origins"];
   const verified = PROVENANCE_FIELDS.every((field) =>
     origins[field].every(
       (origin) => origin != null && VERIFIED_ORIGINS.has(origin),

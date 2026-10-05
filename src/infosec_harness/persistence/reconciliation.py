@@ -80,10 +80,36 @@ def _dimensions(values, keys):
         raise ValueError("Accounting must be finite non-negative numbers, never booleans")
 
 
+def _check_bounds(state) -> set[str]:
+    """The root's accounting dimensions: complete, finite, and with usage within limits."""
+    keys = set(state["limits"])
+    allowed = set(budgets.FIELDS) | set(budgets.EXTENDED_FIELDS)
+    if not set(budgets.FIELDS) <= keys or not keys <= allowed:
+        raise ValueError("Invalid root accounting bounds")
+    if keys & set(budgets.EXTENDED_FIELDS) and not set(budgets.EXTENDED_FIELDS) <= keys:
+        raise ValueError("Incomplete extended root accounting bounds")
+    _dimensions(state["limits"], keys)
+    _dimensions(state.get("used"), keys)
+    if any(state["used"][key] > state["limits"][key] for key in keys):
+        raise ValueError("Root usage exceeds accounting bounds")
+    return keys
+
+
 def _operation_hash(operation):
     clean = deepcopy(operation)
     clean.pop("unknown_reconciliation", None)
     return reconciliation_digest(clean)
+
+
+def _marker_is_valid(operation) -> bool:
+    """The exact version-1 closure marker of a ``closed_unknown`` operation, unchanged since."""
+    marker = operation.get("unknown_reconciliation")
+    return (isinstance(marker, dict) and set(marker) == _MARKER_KEYS
+            and type(marker["version"]) is int and marker["version"] == 1
+            and marker["accounting_basis"] == "full_reserved_envelope_estimate"
+            and operation.get("status") == "closed_unknown"
+            and marker["charged"] == operation.get("reserved")
+            and marker["closed_operation_sha256"] == _operation_hash(operation))
 
 
 def _charged_floor(state):
@@ -93,9 +119,8 @@ def _charged_floor(state):
         if operation.get("status") == "closed_unknown":
             marker = operation["unknown_reconciliation"]
             audit = ClosureRequest.model_validate(marker["authorization"])
-            if (set(marker) != _MARKER_KEYS or type(marker["version"]) is not int or marker["version"] != 1 or marker["accounting_basis"] != "full_reserved_envelope_estimate"
-                    or marker["closed_operation_sha256"] != _operation_hash(operation)
-                    or marker["charged"] != operation["reserved"] or audit.operation_id != identity or operation.get("broker_overrun")):
+            if (not _marker_is_valid(operation) or audit.operation_id != identity
+                    or operation.get("broker_overrun")):
                 raise ValueError("Invalid existing closure audit")
             _dimensions(operation["reserved"], keys)
             binding = operation["broker_binding"]
@@ -119,16 +144,7 @@ def _charged_floor(state):
 
 def validate_closed_accounting(state: dict) -> None:
     """Verify closed envelopes before excluding them from held capacity; no I/O."""
-    keys = set(state["limits"])
-    allowed = set(budgets.FIELDS) | set(budgets.EXTENDED_FIELDS)
-    if not set(budgets.FIELDS) <= keys or not keys <= allowed:
-        raise ValueError("Invalid root accounting bounds")
-    if keys & set(budgets.EXTENDED_FIELDS) and not set(budgets.EXTENDED_FIELDS) <= keys:
-        raise ValueError("Incomplete extended root accounting bounds")
-    _dimensions(state["limits"], keys)
-    _dimensions(state["used"], keys)
-    if any(state["used"][key] > state["limits"][key] for key in keys):
-        raise ValueError("Root usage exceeds accounting bounds")
+    _check_bounds(state)
     try:
         _charged_floor(state)
     except (KeyError, TypeError, AttributeError, OverflowError) as error:
@@ -137,16 +153,10 @@ def validate_closed_accounting(state: dict) -> None:
 
 def _prepare(root, rows, request: ClosureRequest):
     state = deepcopy(root.state)
-    keys = set(state.get("limits", {}))
-    allowed = set(budgets.FIELDS) | set(budgets.EXTENDED_FIELDS)
-    if not set(budgets.FIELDS) <= keys or not keys <= allowed:
-        raise ValueError("Root accounting bounds missing or invalid")
-    if keys & set(budgets.EXTENDED_FIELDS) and not set(budgets.EXTENDED_FIELDS) <= keys:
-        raise ValueError("Incomplete extended accounting bounds")
-    _dimensions(state["limits"], keys)
-    _dimensions(state.get("used"), keys)
-    if any(state["used"][key] > state["limits"][key] for key in keys):
-        raise ValueError("Existing root usage exceeds limits")
+    try:
+        keys = _check_bounds(state)
+    except (KeyError, TypeError) as error:
+        raise ValueError("Root accounting bounds missing or invalid") from error
     deadline = state.get("deadline_at")
     try:
         expiry = datetime.fromisoformat(deadline)
@@ -201,11 +211,7 @@ def _prepare(root, rows, request: ClosureRequest):
     audit = request.model_dump(mode="json")
     marker = operation.get("unknown_reconciliation")
     if marker is not None:
-        if (set(marker) != _MARKER_KEYS or type(marker.get("version")) is not int or marker["version"] != 1
-                or marker.get("accounting_basis") != "full_reserved_envelope_estimate"
-                or operation.get("status") != "closed_unknown" or marker.get("authorization") != audit
-                or marker.get("charged") != reserved
-                or marker.get("closed_operation_sha256") != _operation_hash(operation)
+        if (not _marker_is_valid(operation) or marker["authorization"] != audit
                 or root.revision < request.expected_root_revision + 1):
             raise ValueError("Reconciliation evidence or closed root changed")
         validate_closed_accounting(state)
@@ -289,13 +295,10 @@ def is_conservatively_closed(root: db.BudgetLedger | None, row: db.InferenceRequ
         if request.root_id != root.root_id:
             return False
         validate_closed_accounting(root.state)
-        return (set(marker) == _MARKER_KEYS and type(marker["version"]) is int and marker["version"] == 1 and marker["accounting_basis"] == "full_reserved_envelope_estimate"
-                and operation["status"] == "closed_unknown" and operation["broker_owned"] is True
+        return (_marker_is_valid(operation) and operation["broker_owned"] is True
                 and operation["broker_revoked"] is True and request.root_id == row.root_id
                 and request.operation_id == row.operation_id and row.request_id in request.unknown_request_ids
-                and marker["charged"] == operation["reserved"]
                 and row_sha256(row) == request.expected_request_sha256[row.request_id]
-                and marker["closed_operation_sha256"] == _operation_hash(operation)
                 and root.revision >= request.expected_root_revision + 1
                 and row.request["binding"] == operation["broker_binding"]
                 and row.request["binding"]["root_id"] == root.root_id

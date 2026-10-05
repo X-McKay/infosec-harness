@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import dataclasses
+import json
+import unicodedata
 from typing import Any
 
 from pydantic import TypeAdapter
@@ -38,6 +40,102 @@ _SETTINGS = {
     # These authored cross-backend fields are inert on the OpenAI chat path.
     "bedrock_cache_tool_definitions", "bedrock_cache_instructions", "bedrock_cache_messages",
 }
+
+# Aggregate rendering resource bounds over every schema of one request.
+MAX_SCHEMA_BYTES = 1_048_576
+MAX_SCHEMA_NODES = 65_536
+
+
+def ascii_normalized_size(value: Any, _depth: int = 0) -> int:
+    """Sum without normalizing mapping keys into collisions.
+
+    NFD decomposes every canonical equivalent before ASCII escaping. Taking the
+    larger original/NFD size covers original Jinja JSON and NFC UTF-8 bytes. JSON
+    punctuation/spacing and HTML-safe escaping are included, not guessed.
+    """
+    if _depth > 64:
+        raise BrokerError("policy", "Admission rendering exceeds nesting bound")
+    if isinstance(value, str):
+        sizes = []
+        # Some supplementary CJK compatibility characters decompose to one BMP
+        # character: NFD alone would shrink Jinja's original surrogate-pair JSON.
+        for text in (value, unicodedata.normalize("NFD", value)):
+            encoded = json.dumps(text, ensure_ascii=True)
+            for character, escape in (("<", "\\u003c"), (">", "\\u003e"),
+                                      ("&", "\\u0026"), ("'", "\\u0027")):
+                encoded = encoded.replace(character, escape)
+            sizes.append(len(encoded))
+        return max(sizes)
+    if isinstance(value, dict):
+        return 2 + sum(ascii_normalized_size(key, _depth + 1) + 2 + ascii_normalized_size(item, _depth + 1)
+                       for key, item in value.items()) + 2 * max(0, len(value) - 1)
+    if isinstance(value, (list, tuple)):
+        return 2 + sum(ascii_normalized_size(item, _depth + 1) for item in value) + 2 * max(0, len(value) - 1)
+    try:
+        return len(json.dumps(value, ensure_ascii=True, allow_nan=False))
+    except (ValueError, TypeError, RecursionError) as exc:
+        raise BrokerError("policy", "Admission value cannot be rendered") from exc
+
+
+def check_schema_expansion(schema: Any) -> tuple[int, int]:
+    """Bound acyclic local-ref expansion before SDK inlining/deepcopy.
+
+    The SDK protects cycles but repeated acyclic references can expand exponentially.
+    These are rendering resource bounds, independent of token/context admission.
+    """
+    definitions = schema.get("$defs", {}) if isinstance(schema, dict) else {}
+    cache: dict[str, tuple[int, int, int]] = {}
+
+    def visit(value: Any, depth: int, stack: tuple[str, ...]) -> tuple[int, int, int]:
+        if depth > 64:
+            raise BrokerError("policy", "Admission schema exceeds rendering depth")
+        size, nodes, height = 0, 1, 1
+        if isinstance(value, dict):
+            for key, child in value.items():
+                child_size, child_nodes, child_height = visit(child, depth + 1, stack)
+                size += ascii_normalized_size(key) + child_size + 4
+                nodes += child_nodes
+                height = max(height, child_height + 1)
+            if "$ref" in value:
+                reference = value["$ref"]
+                if not isinstance(reference, str) or not reference.startswith("#/$defs/"):
+                    raise BrokerError("policy", "Admission schema has an unsupported reference")
+                name = reference[8:]
+                if name in stack or name not in definitions:
+                    raise BrokerError("policy", "Admission schema reference cannot be bounded")
+                if name not in cache:
+                    cache[name] = visit(definitions[name], depth + 1, (*stack, name))
+                extra_size, extra_nodes, extra_height = cache[name]
+                size += extra_size
+                nodes += extra_nodes
+                height = max(height, extra_height + 1)
+        elif isinstance(value, list):
+            for child in value:
+                child_size, child_nodes, child_height = visit(child, depth + 1, stack)
+                size += child_size + 2
+                nodes += child_nodes
+                height = max(height, child_height + 1)
+        else:
+            size = ascii_normalized_size(value)
+        if depth + height > 64:
+            raise BrokerError("policy", "Admission schema exceeds expanded rendering depth")
+        if size > 262_144 or nodes > 16_384:
+            raise BrokerError("policy", "Admission schema exceeds rendering expansion bound")
+        return size, nodes, height
+
+    size, nodes, _ = visit(schema, 0, ())
+    return size, nodes
+
+
+def check_schemas(schemas: Any) -> None:
+    """Each schema's expansion bound plus the one aggregate bound for a request."""
+    total_size, total_nodes = 0, 0
+    for schema in schemas:
+        size, nodes = check_schema_expansion(schema)
+        total_size += size
+        total_nodes += nodes
+        if total_size > MAX_SCHEMA_BYTES or total_nodes > MAX_SCHEMA_NODES:
+            raise BrokerError("policy", "Aggregate schemas exceed rendering bound")
 
 
 def _keys(value: dict, cls: type) -> None:

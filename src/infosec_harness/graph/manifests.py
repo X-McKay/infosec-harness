@@ -20,7 +20,8 @@ def source_manifest(snapshot: RepoSnapshot, stack: StackFingerprint | None = Non
         "submodule_policy": snapshot.submodule_policy,
         "lfs_policy": snapshot.lfs_policy,
     }
-    manifest = {"schema_version": 1, "source": source}
+    # The persisted manifest's schema_version is assigned once, by persistence.identity.
+    manifest: dict = {"source": source}
     if stack is not None:
         manifest["stack_digest"] = digest(stack.model_dump(mode="json"))
     return manifest

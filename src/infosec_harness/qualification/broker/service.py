@@ -24,10 +24,12 @@ from contextlib import suppress
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from infosec_harness.agents.registry import AGENT_BINDINGS
+from infosec_harness.inference.openshell import OwnedLeases
+from infosec_harness.qualification.broker.support import private_write
 from infosec_harness.qualification.broker.validators import ROOT
 
-AGENTS = ("intake", "recon", "env-planner", "build-repair", "partial-build", "context",
-          "probe-planner", "probe-author", "probe-diagnosis", "probe-repair", "verdict")
+AGENTS = tuple(AGENT_BINDINGS)
 
 
 SERVICE_MODEL_ACTIVITY_TIMEOUT_S = 20
@@ -51,12 +53,6 @@ def use_service_activity_timeout() -> None:
     registry.MODEL_ACTIVITY = ActivityConfig(
         start_to_close_timeout=timedelta(seconds=SERVICE_MODEL_ACTIVITY_TIMEOUT_S),
         retry_policy=registry.ACTIVITY_RETRY)
-
-
-def private_json(path: Path, value) -> None:
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as output:
-        json.dump(value, output)
 
 
 def free_port() -> int:
@@ -138,7 +134,7 @@ def environment(manifest: dict) -> dict[str, str]:
     return values
 
 
-class FakeNativeAdapter:
+class FakeNativeAdapter(OwnedLeases):
     """TEST ONLY: no sandbox, native policy, or secret isolation claims."""
     def __init__(self, manifest: dict):
         from infosec_harness.inference.openshell import LeaseStore
@@ -146,8 +142,10 @@ class FakeNativeAdapter:
         self.deployment = "qualification-" + manifest["run_id"]
         self.store = LeaseStore(Path(manifest["directory"]) / "leases")
         self.leases = {lease.lease_id: lease for lease in self.store.load()}
-        self._lock = asyncio.Lock()
-        self.lock = self._lock
+        self.lock = asyncio.Lock()
+
+    async def reconcile_recovered(self) -> None:
+        """Fixture executors die with their service run; nothing native is ever left behind."""
 
     def spec(self, contract):
         from infosec_harness.agents.registry import resolved_agent_configs
@@ -158,7 +156,7 @@ class FakeNativeAdapter:
         return SimpleSpec()
 
     async def ensure(self, run_id, contract):
-        async with self._lock:
+        async with self.lock:
             return await self._ensure(run_id, contract)
 
     async def _ensure(self, run_id, contract):
@@ -168,7 +166,7 @@ class FakeNativeAdapter:
         self.spec(contract)
         if self.store.is_run_revoked(run_id):
             raise BrokerError("policy")
-        for lease in self.leases.values():
+        for lease in self.owned_leases().values():
             if lease.run_id == run_id and lease.contract == contract and lease.status == "ready":
                 return lease
         lease_id = str(uuid.uuid4())
@@ -184,8 +182,8 @@ class FakeNativeAdapter:
         fault = marker.read_text().strip() if marker.exists() else "none"
         marker.unlink(missing_ok=True)
         path = Path(self.manifest["directory"]) / f"executor-{lease_id}.json"
-        private_json(path, {"settings": settings.model_dump(mode="json"), "ledger_key": lease.ledger_key,
-                           "port": port, "fault": fault})
+        private_write(path, {"settings": settings.model_dump(mode="json"), "ledger_key": lease.ledger_key,
+                             "port": port, "fault": fault})
         with open(Path(self.manifest["directory"]) / f"executor-{lease_id}.log", "ab") as log:
             process = subprocess.Popen([sys.executable, "-m", "infosec_harness.qualification.broker.service",
                 "executor", "--manifest",
@@ -318,11 +316,16 @@ def run_executor(manifest: dict, config: dict) -> None:
         OpenAIInference,
     )
     from infosec_harness.inference.http_service import JsonChannel, serve, server_tls
+    from infosec_harness.inference.protocol import (
+        LEDGER_CLAIM_PATH,
+        LEDGER_COMPLETE_PATH,
+        LEDGER_CREDENTIAL_ENV,
+    )
     settings = ExecutorSettings.model_validate(config["settings"])
 
     class MockLedgerSubstitution(JsonChannel):
         async def post(self, url, body, headers, **kwargs):
-            if url.endswith(("/v1/ledger/claim", "/v1/ledger/complete")):
+            if url.endswith((LEDGER_CLAIM_PATH, LEDGER_COMPLETE_PATH)):
                 headers = {**headers, "Authorization": "Bearer " + config["ledger_key"]}
             return await super().post(url, body, headers, **kwargs)
 
@@ -354,6 +357,7 @@ def run_executor(manifest: dict, config: dict) -> None:
             return result
 
     channel = MockLedgerSubstitution(ca_file=manifest["pki"]["ca"], cert=(manifest["pki"]["client_cert"], manifest["pki"]["client_key"]))
+    placeholder = "openshell:resolve:env:" + LEDGER_CREDENTIAL_ENV
     inference = OpenAIInference(settings.contract, "openshell:resolve:env:QUALIFICATION_PROVIDER",
                                http_transport=MockProviderSubstitution())
 
@@ -363,8 +367,8 @@ def run_executor(manifest: dict, config: dict) -> None:
             os._exit(78)
         return result
 
-    core = Executor(settings, ledger=NativeLedgerChannel(settings.controller_origin,
-        "openshell:resolve:env:IH_LEDGER_TOKEN", channel=channel),
+    core = Executor(settings, ledger=NativeLedgerChannel(settings.controller_origin, placeholder,
+        channel=channel),
         infer=fault_inference)
     serve(FaultFixture(core), host="127.0.0.1", port=config["port"],
         tls=server_tls(manifest["pki"]["server_cert"], manifest["pki"]["server_key"], client_ca=manifest["pki"]["ca"]))
@@ -373,7 +377,7 @@ def run_executor(manifest: dict, config: dict) -> None:
 def run_controller(manifest: dict) -> None:
     from infosec_harness.inference.controller import Controller
     from infosec_harness.inference.http_service import JsonChannel, serve, server_tls
-    from infosec_harness.inference.invocations import build_reservation_policy, issue_invocation
+    from infosec_harness.inference.issuance import build_reservation_policy, issue_invocation
     from infosec_harness.persistence import db
     async def bootstrap():
         await db.create_all()

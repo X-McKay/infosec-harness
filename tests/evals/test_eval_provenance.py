@@ -36,7 +36,7 @@ def experiment(**kw) -> SimpleNamespace:
         "config_hash": "c" * 16, "dataset_version": "2", "repetitions": 3,
         "metrics": {"status": "complete", "task_success_rate": 0.9, "n": 30, "n_planned": 30,
                     "schema_validity_rate": 1.0, "average_cost_usd": 0.01,
-                    "p95_model_requests": 4, "budget_exhausted_count": 0, "accuracy": 0.9,
+                    "p95_model_requests": 4, "budget_exhausted_count": 0,
                     "comparison_identity": {"split": "full"},
                     "distributions": {"p50_latency_s": 2.0}},
     }

@@ -1,5 +1,6 @@
 """Read-only batch progress from selected persisted finding records; no inferred execution."""
 
+
 from collections import defaultdict
 from datetime import UTC, datetime
 
@@ -8,6 +9,7 @@ from sqlalchemy import func, select
 from infosec_harness.domain.models import TERMINAL_BATCH_STATUSES, TERMINAL_RUN_STATUSES
 from infosec_harness.persistence import db
 from infosec_harness.persistence.population import Population, run_population
+from infosec_harness.persistence.run_telemetry import telemetry_field
 
 
 def timestamp(value):
@@ -36,9 +38,9 @@ async def batch_progress(batch_ids: list[str], population: Population | None = N
                 select(
                     db.TriageRun.batch_id,
                     db.TriageRun.status,
-                    db.TriageRun.telemetry["phase"].as_string(),
-                    db.TriageRun.telemetry["accepted_at"].as_string(),
-                    db.TriageRun.telemetry["completed_at"].as_string(),
+                    telemetry_field("phase").as_string(),
+                    telemetry_field("accepted_at").as_string(),
+                    telemetry_field("completed_at").as_string(),
                     db.TriageRun.created_at,
                     db.Batch.status,
                 )

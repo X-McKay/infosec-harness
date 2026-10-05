@@ -46,7 +46,9 @@ async def remaining_time(root_id: str) -> float | None:
     """Read the persisted acceptance-time deadline; restart never renews it."""
     async with db.session() as session:
         ledger = await session.get(db.BudgetLedger, root_id)
-        deadline = ledger.state.get("deadline_at") if ledger else None
+        if ledger is None:
+            raise MissingLedger(f"No budget ledger exists for root {root_id!r}")
+        deadline = ledger.state.get("deadline_at")
     return _remaining_time(deadline)
 
 
@@ -59,12 +61,16 @@ def _remaining_time(deadline: str | None) -> float | None:
     return remaining
 
 
-async def _mutate(root_id: str, change: Callable[[dict], dict]) -> dict | None:
+class MissingLedger(LookupError):
+    """An operation named a root that has no budget ledger: it cannot be accounted."""
+
+
+async def _mutate(root_id: str, change: Callable[[dict], dict]) -> dict:
     for _ in range(20):
         async with db.session() as session:
             ledger = await session.get(db.BudgetLedger, root_id)
             if ledger is None:
-                return None  # Not a durable batch: there is no root accounting contract.
+                raise MissingLedger(f"No budget ledger exists for root {root_id!r}")
             state = deepcopy(ledger.state)
             result = change(state)
             if state == ledger.state:
@@ -83,7 +89,7 @@ async def reserve(root_id: str, operation_id: str, requested: dict[str, float], 
                   configuration_digest: str | None = None,
                   operation_kind: Literal["agent", "execution"] = "agent",
                   run_id: str | None = None, invocation_id: str | None = None,
-                  fingerprint: str | None = None) -> dict | None:
+                  fingerprint: str | None = None) -> dict:
     """Reserve ``requested`` for one operation, idempotently per ``operation_id``.
 
     ``fingerprint`` names the finding the operation is spent on, so results are attributed by
@@ -100,8 +106,11 @@ async def reserve(root_id: str, operation_id: str, requested: dict[str, float], 
         _remaining_time(state.get("deadline_at"))
         if run_id is not None and run_id in state.get("broker_revoked_runs", []):
             raise ValueError("Broker run admission has been revoked")
-        accepted_configs = state.get("agent_config_digests")
-        if accepted_configs is not None and operation_kind == "agent":
+        if operation_kind == "agent":
+            accepted_configs = state.get("agent_config_digests")
+            if not isinstance(accepted_configs, dict):
+                # A ledger that pins no configuration cannot show which agent ran.
+                raise ValueError("Root ledger does not pin the accepted agent configurations")
             accepted_config = accepted_configs.get(agent)
             if accepted_config is None or configuration_digest != accepted_config:
                 raise ValueError(f"Worker configuration for {agent} differs from the accepted batch")
@@ -139,7 +148,7 @@ async def reserve(root_id: str, operation_id: str, requested: dict[str, float], 
 
 
 async def settle(root_id: str, operation_id: str, observed: dict[str, float] | None,
-                 record: dict[str, Any]) -> dict | None:
+                 record: dict[str, Any]) -> dict:
     if observed is not None:
         _validate_usage(observed)
 

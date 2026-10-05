@@ -25,7 +25,7 @@ from infosec_harness.qualification.broker.service import (
     environment,
     free_port,
     generate_pki,
-    private_json,
+    private_write,
     settings_files,
     wait_port,
 )
@@ -68,7 +68,7 @@ async def run(env_file: Path, *, temporal: bool) -> int:
             "repo": str(repo), "worker_key": secrets.token_hex(32), "canary": secrets.token_hex(32),
             "database_url": f"postgresql+asyncpg://harness:{quote(password, safe='')}@127.0.0.1:{port}/{database}",
             "temporal_address": "127.0.0.1:7365", "task_queue": "brokerqualification-" + run_id}
-        private_json(manifest_path, manifest)
+        private_write(manifest_path, manifest)
         sensitive = [password, quote(password, safe=""), manifest["worker_key"], manifest["canary"], manifest["database_url"]]
         runtime_environment = environment(manifest)
         for role, listener in (("provider", provider_port), ("controller", controller_port)):

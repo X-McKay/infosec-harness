@@ -3,9 +3,9 @@ from dataclasses import replace
 
 import pytest
 from pydantic_ai.exceptions import UsageLimitExceeded
-from test_inference_ledger import DEMAND, broker_request_fixture  # noqa: F401
+from test_inference_ledger import DEMAND, LEDGER, broker_request_fixture  # noqa: F401
 
-from infosec_harness.inference import admission, ledger
+from infosec_harness.inference import admission, rendering
 from infosec_harness.inference.protocol import BrokerError
 from infosec_harness.persistence import budgets, db
 
@@ -19,7 +19,7 @@ def policy_for(broker_request):
 
 async def test_catalog_produces_allocation_without_worker_amounts(broker_request):
     allocated = await admission.authorize(broker_request, policy_for(broker_request))
-    input_reserve = await admission.required_input_reserve(broker_request.payload, broker_request.contract)
+    input_reserve = await rendering.required_input_reserve(broker_request.payload, broker_request.contract)
     assert allocated["requests"] == 1
     assert allocated["tokens"] == input_reserve + 50
     assert allocated["cost_usd"] >= (input_reserve * 2 + 50 * 4) / 1_000_000
@@ -65,7 +65,7 @@ async def test_missing_root_and_operation_cannot_issue_or_admit(broker_request):
     assert exc.value.code == "identity"
     foreign = broker_request.model_copy(update={"binding": missing})
     with pytest.raises(BrokerError) as exc:
-        await ledger.admit(foreign, lease_id="lease", allocation=DEMAND)
+        await LEDGER.admit(foreign, lease_id="lease", allocation=DEMAND)
     assert exc.value.code == "identity"
     missing_op = broker_request.binding.model_copy(update={"operation_id": "missing"})
     with pytest.raises(BrokerError):
@@ -75,13 +75,13 @@ async def test_missing_root_and_operation_cannot_issue_or_admit(broker_request):
 async def test_unissued_binding_and_cross_run_request_fail_before_admission(broker_request):
     foreign = broker_request.model_copy(update={"binding": broker_request.binding.model_copy(update={"run_id": "foreign"})})
     with pytest.raises(BrokerError) as exc:
-        await ledger.admit(foreign, lease_id="lease", allocation=DEMAND)
+        await LEDGER.admit(foreign, lease_id="lease", allocation=DEMAND)
     assert exc.value.code == "identity"
-    assert await ledger.get(broker_request.request_id) is None
+    assert await LEDGER.get(broker_request.request_id) is None
 
 
 async def test_broker_owned_operation_cannot_release_on_worker_observed_settle(broker_request):
-    await ledger.admit(broker_request, lease_id="lease", allocation=DEMAND)
+    await LEDGER.admit(broker_request, lease_id="lease", allocation=DEMAND)
     await budgets.settle(broker_request.binding.root_id, "op", {"requests": 0, "tokens": 0, "cost_usd": 0},
                          {"worker": "claims-zero"})
     async with db.session() as session:
@@ -94,7 +94,7 @@ async def test_broker_owned_operation_cannot_release_on_worker_observed_settle(b
 
 
 async def test_input_size_and_framing_cannot_exceed_trusted_reserve(broker_request):
-    required = await admission.required_input_reserve(broker_request.payload, broker_request.contract)
+    required = await rendering.required_input_reserve(broker_request.payload, broker_request.contract)
     assert required > len(str(broker_request.payload))
     with pytest.raises(BrokerError) as exc:
         await admission.authorize(broker_request, replace(policy_for(broker_request), max_input_tokens=required - 1))
@@ -148,11 +148,11 @@ async def test_known_zero_is_explicit_and_uses_the_same_token_bounds(broker_requ
                      input_per_mtok=None, output_per_mtok=None)
     allocated = await admission.authorize(broker_request, policy)
     assert allocated["cost_usd"] == 0
-    assert allocated["tokens"] == await admission.required_input_reserve(broker_request.payload, broker_request.contract) + 50
+    assert allocated["tokens"] == await rendering.required_input_reserve(broker_request.payload, broker_request.contract) + 50
 
 
 async def test_issued_binding_owns_full_hold_before_any_request_admission(broker_request):
-    assert await ledger.get(broker_request.request_id) is None
+    assert await LEDGER.get(broker_request.request_id) is None
     async with db.session() as session:
         root = await session.get(db.BudgetLedger, broker_request.binding.root_id)
         issued = root.state["operations"]["op"]
@@ -168,5 +168,5 @@ async def test_issued_binding_owns_full_hold_before_any_request_admission(broker
         assert root.state["used"] == {"requests": 0, "tokens": 0, "cost_usd": 0}
     with pytest.raises(UsageLimitExceeded):
         await budgets.reserve(broker_request.binding.root_id, "another", DEMAND, "context", "config")
-    admitted = await ledger.admit(broker_request, lease_id="lease", allocation=DEMAND)
+    admitted = await LEDGER.admit(broker_request, lease_id="lease", allocation=DEMAND)
     assert admitted.state == "accepted"

@@ -22,6 +22,7 @@ import platform
 import subprocess
 from dataclasses import asdict, dataclass
 from functools import cache
+from importlib.metadata import PackageNotFoundError, version
 
 from infosec_harness.resources import source_checkout
 
@@ -77,13 +78,8 @@ def _git(*args: str) -> str | None:
 
 def _harness_version() -> str:
     try:
-        from importlib.metadata import PackageNotFoundError, version
-
-        try:
-            return version("infosec-harness")
-        except PackageNotFoundError:
-            return "unknown"
-    except Exception:
+        return version("infosec-harness")
+    except PackageNotFoundError:
         return "unknown"
 
 

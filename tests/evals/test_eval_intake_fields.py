@@ -1,23 +1,34 @@
-"""Field observations mirror unchanged guard predicates and retain no argument bodies."""
+"""Field observations mirror unchanged guard predicates and retain no argument bodies.
+
+The guard summary is what intake's atomic summary records for the proposals that reconstructed
+(``materialized_guard_summary``); it is exercised directly on reconstructed findings here.
+"""
 from __future__ import annotations
 
 import copy
 import json
 
 import pytest
-from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.messages import ModelResponse, ToolCallPart
 
-from infosec_harness.agents.intake_evidence import EXTRACTED_FIELDS, extraction_evidence_violations
+from infosec_harness.agents.intake_evidence import (
+    EXTRACTED_FIELDS,
+    extraction_evidence_diagnostics,
+    extraction_evidence_violations,
+)
 from infosec_harness.domain.models import ExtractedFinding
 from infosec_harness.evals.intake_fields import FIELD_RULES as RULES
-from infosec_harness.evals.intake_fields import FIELDS, intake_field_summary
-from infosec_harness.evals.output_retries import INTAKE_RULE_CATEGORIES
+from infosec_harness.evals.intake_fields import FIELDS, guard_summary, intake_field_summary
 
 REPORT = "Caller input is\ninterpolated into a shell command."
 
 
 def proposal(args, name="final_result"):
     return ModelResponse(parts=[ToolCallPart(name, args, tool_call_id="SECRET_ID")])
+
+
+def observe(args, report=REPORT):
+    return guard_summary([args], report=report)
 
 
 def evidence(field="cwe", quote=REPORT, confidence=1):
@@ -42,8 +53,8 @@ CASES = [
 def test_field_category_union_matches_actual_whole_guard_predicates(report, args):
     before = copy.deepcopy(args)
     parsed = ExtractedFinding.model_validate(args).model_dump(mode="json")
-    actual = {INTAKE_RULE_CATEGORIES[item] for item in extraction_evidence_violations(report, parsed)}
-    observed = intake_field_summary([proposal(args)], report=report, agent="intake")
+    actual = {item.code for item in extraction_evidence_diagnostics(report, parsed)}
+    observed = observe(args, report)
     assert observed["proposals_checked"] == 1
     assert observed["proposals_with_guard_violations"] == bool(actual)
     categories = {category for counts in observed["field_rule_counts"].values()
@@ -60,7 +71,7 @@ def test_field_category_union_matches_actual_whole_guard_predicates(report, args
 
 def test_known_field_attribution_is_precise_without_guessing_values_or_classes():
     args = {"cwe": None, "claimed_impact": "An impact", "evidence": [evidence()]}
-    observed = intake_field_summary([proposal(args)], report=REPORT, agent="intake")
+    observed = observe(args)
     assert observed["field_rule_counts"]["cwe"]["positive_value_missing"] == 1
     assert observed["field_rule_counts"]["claimed_impact"]["positive_support_missing"] == 1
     assert observed["field_rule_counts"]["cwe"]["positive_support_missing"] == 0
@@ -78,7 +89,7 @@ def test_whitespace_observation_never_accepts_or_rewrites_rejected_quotes(quote,
     args = {"cwe": "CWE-78", "evidence": [evidence(quote=quote)]}
     before = copy.deepcopy(args)
     actual = extraction_evidence_violations(REPORT, args)
-    observed = intake_field_summary([proposal(args)], report=REPORT, agent="intake")
+    observed = observe(args)
     assert observed["quote_not_verbatim_but_whitespace_normalized_match"]["cwe"] == match
     assert observed["proposals_with_guard_violations"] == bool(actual)
     assert args == before
@@ -95,21 +106,15 @@ def test_whitespace_observation_never_accepts_or_rewrites_rejected_quotes(quote,
     ({"start_line": 1 << 10000}, "bounded_out_proposals"),
 ])
 def test_malformed_and_bounded_proposals_remain_closed_private_categories(args, key):
-    observed = intake_field_summary([proposal(args)], report=REPORT, agent="intake")
+    observed = observe(args)
     assert observed[key] == 1 and observed["proposals_checked"] == 0
     assert "SECRET" not in json.dumps(observed)
 
 
-@pytest.mark.parametrize("messages,report,count", [
-    ([proposal({})] * 33, REPORT, 32),
-    ([ModelResponse(parts=[])] * 128 + [proposal({})], REPORT, 0),
-    ([ModelResponse(parts=[TextPart("SECRET")] * 512 + [ToolCallPart("final_result", {})])], REPORT, 0),
-    ([proposal({})], "SECRET" * 30000, 1),
-])
-def test_observation_scanner_bounds_are_explicit(messages, report, count):
-    observed = intake_field_summary(messages, report=report, agent="intake")
-    assert observed["truncated"] and observed["proposals_observed"] == count
-    assert all(value <= 32 for counts in observed["field_rule_counts"].values() for value in counts.values())
+def test_an_unboundedly_long_report_is_not_scanned():
+    observed = guard_summary([{}], report="SECRET" * 30000)
+    assert observed["truncated"] and observed["bounded_out_proposals"] == 1
+    assert observed["proposals_checked"] == 0
     assert "SECRET" not in json.dumps(observed)
 
 
@@ -120,6 +125,7 @@ def test_nonoutput_and_other_agent_proposals_are_not_guessed():
     assert intake_field_summary([], report=REPORT, agent="intake")["capture_status"] == "unknown"
     observed = intake_field_summary([proposal({})], report=REPORT, agent="context")
     assert observed["capture_status"] == "not_applicable" and observed["proposals_observed"] == 0
+    assert "SECRET" not in json.dumps(observed)
 
 
 @pytest.mark.parametrize("args", [
@@ -128,8 +134,7 @@ def test_nonoutput_and_other_agent_proposals_are_not_guessed():
     {"start_line": 1 << 10000},
 ])
 def test_json_and_dict_proposals_share_structural_bounds(args):
-    summaries = [intake_field_summary([proposal(value)], report=REPORT, agent="intake")
-                 for value in (args, json.dumps(args))]
+    summaries = [observe(value) for value in (args, json.dumps(args))]
     assert summaries[0] == summaries[1]
     assert summaries[0]["bounded_out_proposals"] == 1
     assert summaries[0]["proposals_checked"] == 0 and summaries[0]["truncated"]

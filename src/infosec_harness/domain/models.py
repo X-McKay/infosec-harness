@@ -505,6 +505,45 @@ class ProbeSource(_Model):
     explanation: str = ""
 
 
+# Who authored each part of an execution record (sandbox.evidence). Only ``controller`` is the
+# harness's own observation; marker text and parsed runner output come from the untrusted probe
+# process. Readers must treat anything but ``controller`` as unverified.
+ExecutionOrigin = Literal["controller", "self_reported_marker", "parsed_untrusted_output"]
+
+
+class ExecutionProcess(_Model):
+    """The probe process as the controller observed it."""
+
+    exit_code: int | None
+    timed_out: bool
+    duration_s: float
+    origin: ExecutionOrigin
+
+
+class ExecutionObservations(_Model):
+    """The exploit markers the probe printed."""
+
+    precondition_reached: bool
+    sink_returned: bool
+    oracle_fired: bool
+    origin: ExecutionOrigin
+
+
+class ExecutionRunner(_Model):
+    """The runner's own zero-test phrase, or None when its output contained none."""
+
+    zero_test_signal: str | None
+    origin: ExecutionOrigin
+
+
+class ExecutionOrigins(_Model):
+    """The origin-labelled sections of the controller's execution record (sandbox.evidence)."""
+
+    process: ExecutionProcess
+    observations: ExecutionObservations
+    runner: ExecutionRunner
+
+
 class ProbeExecution(_Model):
     attempt: int
     exit_code: int | None
@@ -524,6 +563,9 @@ class ProbeExecution(_Model):
     duration_s: float = 0.0
     log_artifact: str | None = None
     source_artifact: str | None = None
+    # The controller's origin-labelled record of this execution. None when no probe process ran
+    # (the sandbox was unavailable or disabled): nothing was observed, so nothing is verified.
+    origins: ExecutionOrigins | None = None
 
 
 class DiagnosisKind(StrEnum):
@@ -567,6 +609,13 @@ class Verdict(_Model):
     rationale: str
     inconclusive_reason: InconclusiveReason | None = None
     evidence: list[CodeRef] = Field(default_factory=list)
+
+
+def inconclusive_verdict(reason: InconclusiveReason, rationale: str, *, confidence: float = 0.0,
+                         evidence: list[CodeRef] | None = None) -> Verdict:
+    """The verdict for a run with no supported security judgment."""
+    return Verdict(label=VerdictLabel.inconclusive, confidence=confidence, rationale=rationale,
+                   inconclusive_reason=reason, evidence=list(evidence or []))
 
 
 class VerdictFacts(_Model):

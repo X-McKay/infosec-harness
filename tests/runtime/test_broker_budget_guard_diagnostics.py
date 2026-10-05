@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from test_broker_executor import request_fixture
 
-from infosec_harness.inference import admission, ledger
+from infosec_harness.inference import admission, ledger, rendering
 from infosec_harness.inference.http_service import broker_error_body
 from infosec_harness.inference.protocol import BrokerError
 
@@ -23,7 +23,7 @@ async def test_admission_budget_logs_fixed_guard_before_allocation(monkeypatch, 
         rendered.append(True)
         return 51 if guard == 'input_reserve' else 50
 
-    monkeypatch.setattr(admission, 'required_input_reserve', reserve)
+    monkeypatch.setattr(rendering, 'required_input_reserve', reserve)
     with pytest.raises(BrokerError) as error:
         await admission.authorize(request, policy)
     assert rendered == ([] if guard == 'output_cap' else [True])
@@ -77,8 +77,8 @@ async def test_ledger_budget_rejects_before_mutation_or_dispatch(monkeypatch, ca
 
     monkeypatch.setattr(ledger.db, 'session', ReadOnlySession)
     with pytest.raises(BrokerError) as error:
-        await ledger.admit(request, lease_id='secret-lease', allocation={'requests': 1, 'tokens': 100, 'cost_usd': 0},
-                           clock=lambda: 100)
+        await ledger.DurableLedger(clock=lambda: 100).admit(
+            request, lease_id='secret-lease', allocation={'requests': 1, 'tokens': 100, 'cost_usd': 0})
     assert error.value.code == 'budget' and state == original
     assert len(observations) == 2 and error.value.diagnostic is None
     expected = ([f'IH_BUDGET_GUARD boundary=ledger category={guard}']
@@ -97,7 +97,7 @@ async def test_input_reserve_at_the_exact_limit_is_accepted_without_logs_or_sql(
         request.contract.digest, 'secret-config', 50, 16, 0)
     async def reserve(*args):
         return 50
-    monkeypatch.setattr(admission, 'required_input_reserve', reserve)
+    monkeypatch.setattr(rendering, 'required_input_reserve', reserve)
     monkeypatch.setattr(admission.db, 'session', lambda: pytest.fail('Authorize cannot use SQL'))
     assert await admission.authorize(request, policy) == {'requests': 1, 'tokens': 66, 'cost_usd': 0}
     assert caplog.messages == []
@@ -146,7 +146,7 @@ async def test_cumulative_numeric_diagnostic_identifies_only_exhausted_dimension
     monkeypatch.setattr(ledger.db, 'session', Session)
     monkeypatch.setattr(ledger, '_checkpoint', checkpoint)
     with pytest.raises(BoundaryReached if dimension is None else BrokerError) as error:
-        await ledger.admit(request, lease_id='secret-lease', allocation=demand, clock=lambda: 100)
+        await ledger.DurableLedger(clock=lambda: 100).admit(request, lease_id='secret-lease', allocation=demand)
     assert state == original
     if dimension is None:
         assert checkpoints == ['admit_before_cas'] and caplog.messages == []

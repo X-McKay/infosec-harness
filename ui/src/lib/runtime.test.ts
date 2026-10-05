@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   brokerPresentation,
-  componentTitle,
   connectivityPresentation,
   modelNames,
 } from "./runtime.ts";
@@ -62,10 +61,6 @@ test("recorded failed and passed connectivity remain distinct", () => {
     assert.equal(result.status, status);
     assert.equal(result.checkedAt, "2026-10-04T15:00:00Z");
   }
-});
-test("retained component pass is labelled only as component evidence", () => {
-  assert.equal(componentTitle("passed"), "Component evidence passed");
-  assert.equal(componentTitle("not_checked"), "Component evidence");
 });
 
 test("conservative closures remain visible separately from unresolved requests", () => {

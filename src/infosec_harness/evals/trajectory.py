@@ -10,6 +10,8 @@ and are exercised deterministically in tests via a scripted tool-calling model.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from collections import Counter
 from collections.abc import Iterable, Sequence
@@ -19,7 +21,9 @@ from functools import cache
 from pydantic_ai.messages import ModelMessage
 
 from infosec_harness.agents.capabilities import REPO_RO_TOOLS
-from infosec_harness.evals.messages import iter_tool_calls
+from infosec_harness.agents.trajectory import function_tool_calls
+from infosec_harness.evals.messages import MAX_NAME_CHARS, MAX_RECORDED_CALLS
+from infosec_harness.settings import get_settings
 
 
 @dataclass
@@ -94,8 +98,6 @@ def skill_covered_cwes() -> tuple[str, ...]:
     The single answer to "which CWEs have skills", used by the trajectory scorer and by the
     corpus harvester, so the two cannot disagree about what a harvested case can be scored on.
     """
-    from infosec_harness.settings import get_settings
-
     root = get_settings().skills_dir
     if not root.is_dir():
         return ()
@@ -120,16 +122,14 @@ def cwe_skill_prefix(cwe: str | None) -> str | None:
     return f"cwe-{num}" if f"CWE-{num}" in skill_covered_cwes() else None
 
 
-def summarize_calls(messages: Sequence[ModelMessage], *, limit: int = 128) -> dict[str, object]:
+def summarize_calls(messages: Sequence[ModelMessage], *,
+                    limit: int = MAX_RECORDED_CALLS) -> dict[str, object]:
     """Retain call order using encounter-local IDs, without recoverable argument hashes."""
-    import hashlib
-    import json
-
     counts: Counter[str] = Counter()
     signatures: Counter[tuple[str, str]] = Counter()
     sequence: list[dict[str, str]] = []
     argument_ids: dict[tuple[str, str], str] = {}
-    for call in iter_tool_calls(messages):
+    for call in function_tool_calls(messages):
         name = call.tool_name
         try:
             args = call.args_as_dict()
@@ -143,7 +143,7 @@ def summarize_calls(messages: Sequence[ModelMessage], *, limit: int = 128) -> di
         signatures[signature] += 1
         if len(sequence) < limit:
             argument_id = argument_ids.setdefault(signature, f"args-{len(argument_ids) + 1}")
-            sequence.append({"tool": name[:128], "argument_id": argument_id})
+            sequence.append({"tool": name[:MAX_NAME_CHARS], "argument_id": argument_id})
     total = sum(counts.values())
     return {
         "tool_call_count": total,

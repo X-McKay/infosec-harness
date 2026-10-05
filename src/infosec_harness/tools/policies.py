@@ -2,8 +2,12 @@
 
 A toolset's *effect* is what sets the minimum execution class for every agent that enables it:
 a `read` toolset is satisfied by `ephemeral`, a `write_reversible` one requires `durable`, and a
-`write_consequential` one requires `human_governed`. Nothing in this system declared that
-before, even though it is the rule that makes an execution class meaningful rather than a label.
+`write_consequential` one requires `human_governed`.
+
+A policy carries only what something enforces: the effect (governance), the retry safety the
+effect requires (tests), the tool names an agent may call (governance), and the timeout and
+output bound the toolset applies (agents/capabilities.py). Unknown keys are rejected, so a
+field cannot be declared without an enforcer.
 
 The directories are hyphenated to match the names agent specs use, so they are data rather than
 importable packages; this module reads them.
@@ -16,7 +20,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 TOOLS_DIR = Path(__file__).parent
 
@@ -44,26 +48,23 @@ EXECUTION_CLASS_ORDER = ("ephemeral", "durable", "human_governed")
 
 
 class ToolEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str
     effect: ToolEffect
-    notes: str = ""
 
 
 class ToolPolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str
-    owner: str
-    toolset_id: str
-    description: str
     effect: ToolEffect
     retry_safety: RetrySafety
+    # Enforced per call by the toolset (agents/capabilities.py).
     timeout_seconds: float = Field(gt=0)
-    data_classification: str
-    # Every tool must bound its output so a large result cannot flood the model's context.
+    # Every tool's result is clipped to this, so a large result cannot flood the model's context.
     max_output_bytes: int = Field(gt=0)
-    authorization_scopes: list[str] = Field(default_factory=list)
     tools: list[ToolEntry]
-    constraints: list[str]
-    risks: list[dict] = Field(default_factory=list)
 
     @property
     def minimum_execution_class(self) -> str:

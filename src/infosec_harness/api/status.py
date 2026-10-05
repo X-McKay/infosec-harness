@@ -1,4 +1,9 @@
-"""Thin public status routes; evidence validation belongs to scoped projections."""
+"""Thin public runtime status route; evidence validation belongs to scoped projections.
+
+Component qualification is not reported by the service: accepted agent evidence is committed
+under `evals/baselines/` and reviewed with the change that produced it, which a running service
+cannot measure. The runtime status reports only what this deployment can observe.
+"""
 
 import asyncio
 import re
@@ -8,19 +13,13 @@ from fastapi import APIRouter
 from sqlalchemy.engine import make_url
 
 from infosec_harness.api.broker_observation import broker_status
-from infosec_harness.api.contracts import QualificationStatus, RuntimeStatus
+from infosec_harness.api.contracts import RuntimeStatus
 from infosec_harness.api.evidence_io import COMMIT
 from infosec_harness.api.model_observation import model_runtime
-from infosec_harness.api.qualification_evidence import qualification_status
 from infosec_harness.settings import get_settings
 
 router = APIRouter(prefix="/api")
 _LABEL = re.compile(r"^[a-zA-Z0-9._-]{1,64}$")
-
-
-@router.get("/qualification", response_model=QualificationStatus)
-async def qualification() -> QualificationStatus:
-    return await asyncio.to_thread(qualification_status)
 
 
 @router.get("/runtime-status", response_model=RuntimeStatus)

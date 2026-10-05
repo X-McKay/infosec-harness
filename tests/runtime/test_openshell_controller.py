@@ -15,7 +15,13 @@ from infosec_harness.inference.auth import AUTH_HEADER, sign_request
 from infosec_harness.inference.codec import encode_response
 from infosec_harness.inference.controller import Controller
 from infosec_harness.inference.ledger import StoredDisposition
-from infosec_harness.inference.openshell import Lease, LeaseStore, NativeSpec, OpenShellAdapter
+from infosec_harness.inference.openshell import (
+    Lease,
+    LeaseStore,
+    NativeSpec,
+    OpenShellAdapter,
+    OwnedLeases,
+)
 from infosec_harness.inference.policy import policy_digest
 from infosec_harness.inference.protocol import (
     BrokerError,
@@ -89,21 +95,28 @@ def controller_fixture(tmp_path):
 
     async def verify(lease):
         events.append("verify")
-        return {"native_id": "native-id"}
+        return {"native_id": lease.native_id, "policy_digest": lease.contract.policy_digest,
+                "executor_image": lease.contract.executor_image,
+                "supervisor_image": lease.contract.supervisor_image,
+                "profile": lease.contract.profile, "credential_revision": lease.credential_revision}
 
     async def revoke(lease):
         events.append("revoke")
         lease.status = "deleted"
 
-    adapter = SimpleNamespace(
-        leases={"lease": lease},
-        deployment="deployment",
-        lock=asyncio.Lock(),
-        ensure=ensure,
-        verify=verify,
-        revoke=revoke,
-        service_url=lambda lease: "https://gateway.test/s/ih-name/infer/v1/infer",
-    )
+    class Adapter(OwnedLeases):
+        deployment = "deployment"
+
+        def __init__(self):
+            self.leases = {"lease": lease}
+            self.lock = asyncio.Lock()
+            self.store = LeaseStore(tmp_path / "fixture-leases")
+            self.ensure, self.verify, self.revoke = ensure, verify, revoke
+
+        def service_url(self, _lease):
+            return "https://gateway.test/s/ih-name/infer/v1/infer"
+
+    adapter = Adapter()
     ledger = SimpleNamespace(get=get, admit=admit, claim=claim, complete=complete, recover=recover,
                              fail_before_dispatch=fail_before_dispatch)
     policy = ReservationPolicy("verdict", "test", request.contract.digest, "config", 10000, 16, 0)
@@ -284,6 +297,27 @@ def native_fixture(tmp_path):
         "Config": {"Labels": {"openshell.ai/isolation-role": "supervisor"}},
     }
     calls = []
+    attached = [
+        {"name": contract.provider_binding, "type": "provider-profile", "id": "provider-observed-id"},
+        {"name": f"ih-ledger-{lease.lease_id}", "type": "ledger-profile", "id": "ledger-observed-id"},
+    ]
+    providers = [
+        {
+            "name": contract.provider_binding,
+            "id": "provider-observed-id",
+            "type": "provider-profile",
+            "workspace": "default",
+            "resource_version": 1,
+        },
+        {
+            "name": "ih-ledger-" + lease.lease_id,
+            "id": lease.ledger_native_id,
+            "type": "ledger-profile",
+            "workspace": "default",
+            "resource_version": 1,
+            "credential_keys": ["IH_LEDGER_TOKEN"],
+        },
+    ]
 
     class CLI:
         gateway = "https://gateway.test"
@@ -312,10 +346,7 @@ def native_fixture(tmp_path):
             if args[:3] == ["sandbox", "provider", "list"]:
                 return json.dumps(
                     {
-                        "providers": [
-                            {"name": contract.provider_binding, "type": "provider-profile"},
-                            {"name": f"ih-ledger-{lease.lease_id}", "type": "ledger-profile"},
-                        ],
+                        "providers": attached,
                         "next_page_token": "",
                     }
                 )
@@ -324,28 +355,7 @@ def native_fixture(tmp_path):
                     provider_profile if args[3] == "provider-profile" else ledger_profile
                 )
             if args[:2] == ["provider", "list"]:
-                return json.dumps(
-                    {
-                        "providers": [
-                            {
-                                "name": contract.provider_binding,
-                                "id": "provider-observed-id",
-                                "type": "provider-profile",
-                                "workspace": "default",
-                                "resource_version": 1,
-                            },
-                            {
-                                "name": "ih-ledger-" + lease.lease_id,
-                                "id": lease.ledger_native_id,
-                                "type": "ledger-profile",
-                                "workspace": "default",
-                                "resource_version": 1,
-                                "credential_keys": ["IH_LEDGER_TOKEN"],
-                            },
-                        ],
-                        "next_page_token": "",
-                    }
-                )
+                return json.dumps({"providers": providers, "next_page_token": ""})
             if args[:2] == ["sandbox", "exec"]:
                 return json.dumps({"uid": 65532, "nnp": "1", "seccomp": "2"})
             raise AssertionError(args)
@@ -358,6 +368,7 @@ def native_fixture(tmp_path):
     adapter = OpenShellAdapter(
         CLI(), store=store, deployment="deployment", specs={contract.digest: spec}
     )
+    adapter.fixture = SimpleNamespace(attached=attached, providers=providers)
     return adapter, adapter.leases[lease.lease_id], detail, workload, supervisor, calls
 
 
@@ -412,6 +423,39 @@ async def test_native_mismatch_is_fail_closed(tmp_path, fault):
         workload["Config"]["User"] = "0:0"
     with pytest.raises(BrokerError):
         await adapter.verify(lease)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fault", ["provider_id", "ledger_id", "missing_id", "extra", "duplicate"])
+async def test_attachment_is_verified_by_native_id_not_name(tmp_path, fault):
+    """A provider attached under the expected name and type but another identity is unverified."""
+    adapter, lease, *_ = native_fixture(tmp_path)
+    attached = adapter.fixture.attached
+    if fault == "provider_id":
+        attached[0]["id"] = "foreign-provider-id"
+    if fault == "ledger_id":
+        attached[1]["id"] = "foreign-ledger-id"
+    if fault == "missing_id":
+        del attached[0]["id"]
+    if fault == "extra":
+        attached.append({"name": "other", "type": "provider-profile", "id": "other-id"})
+    if fault == "duplicate":
+        attached.append(dict(attached[0]))
+    with pytest.raises(BrokerError, match="policy"):
+        await adapter.verify(lease)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("index,category", [(0, "provider_identity"), (1, "ledger_provider_identity")])
+async def test_duplicate_provider_name_is_ambiguous_even_when_one_record_matches(
+        tmp_path, caplog, index, category):
+    """The first matching name must never be selected from a duplicated inventory."""
+    adapter, lease, *_ = native_fixture(tmp_path)
+    providers = adapter.fixture.providers
+    providers.append({**providers[index], "id": "shadow-id"})
+    with pytest.raises(BrokerError, match="identity"):
+        await adapter.verify(lease)
+    assert f"IH_NATIVE_IDENTITY_FAILURE boundary=native_verify category={category}" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -1165,3 +1209,90 @@ async def test_ledger_database_fault_is_unavailable_but_bad_request_is_identity(
     with pytest.raises(BrokerError) as error:
         await core.handle("/v1/ledger/claim", canonical_bytes({"lease_id": "lease"}), headers)
     assert error.value.code == "identity"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("token", ["lédger-token", "ledger-token\udcff", "\u0000"])
+async def test_non_ascii_bearer_is_an_auth_failure_not_a_server_fault(tmp_path, token):
+    """A malformed ledger credential is classified as auth before any comparison or ledger read."""
+    core, request, lease, events, _ = controller_fixture(tmp_path)
+    body = canonical_bytes({"request": request.model_dump(mode="json"), "lease_id": lease.lease_id})
+    with pytest.raises(BrokerError) as error:
+        await core.handle("/v1/ledger/claim", body, {"Authorization": "Bearer " + token})
+    assert error.value.code in {"auth"}
+    assert events == []
+
+
+@pytest.mark.asyncio
+async def test_new_request_renders_and_authorizes_once(tmp_path, monkeypatch):
+    """Admission is rendered once per request and its allocation is the one admitted."""
+    from infosec_harness.inference import controller as module
+
+    core, request, lease, events, rows = controller_fixture(tmp_path)
+    calls = []
+    original = module.authorize
+
+    async def counted(*args):
+        calls.append(args[0].request_id)
+        return await original(*args)
+
+    async def committed(*_args, **_kwargs):
+        rows[request.request_id] = replace(rows[request.request_id], state="completed",
+            result=InferenceResult(request_id=request.request_id,
+                response=encode_response(ModelResponse(parts=[TextPart("ok")]))))
+        return {}
+
+    monkeypatch.setattr(module, "authorize", counted)
+    core.channel = SimpleNamespace(post=committed)
+    assert (await core.infer(request)).request_id == request.request_id
+    assert calls == [request.request_id]
+    assert rows[request.request_id].allocation["requests"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state,code", [("dispatch_intent", "pending"),
+                                        ("completion_unknown", "completion_unknown"),
+                                        ("failed_before_dispatch", "expired")])
+async def test_infer_and_results_share_one_saved_disposition_mapping(tmp_path, state, code):
+    core, request, lease, events, rows = controller_fixture(tmp_path)
+    rows[request.request_id] = StoredDisposition(request, lease.lease_id, state, None, {})
+    with pytest.raises(BrokerError) as inferred:
+        await core.infer(request)
+    body = canonical_bytes(request.model_dump(mode="json"))
+    headers = {AUTH_HEADER: sign_request(b"a" * 32, "POST", "/v1/results", body, 130)}
+    with pytest.raises(BrokerError) as read:
+        await core.handle("/v1/results", body, headers)
+    assert inferred.value.code == read.value.code == code
+    assert "ensure" not in events and "admit" not in events
+
+
+def test_production_controller_factory_imports_and_fails_closed_without_operator_file(
+        tmp_path, monkeypatch):
+    """The controller CLI resolves its factory by import path; it never starts unconfigured."""
+    import importlib
+
+    module, attribute = "infosec_harness.inference.deployment", "controller_factory"
+    factory = getattr(importlib.import_module(module), attribute)
+    for value in (None, "relative.yaml", str(tmp_path / "absent.yaml")):
+        if value is None:
+            monkeypatch.delenv("HARNESS_BROKER_NATIVE_CONFIG", raising=False)
+        else:
+            monkeypatch.setenv("HARNESS_BROKER_NATIVE_CONFIG", value)
+        with pytest.raises(BrokerError, match="policy"):
+            factory()
+
+
+def test_contract_inventory_covers_every_registered_agent(monkeypatch, capsys):
+    import sys
+
+    from infosec_harness.agents.registry import AGENT_BINDINGS
+    from infosec_harness.inference import deployment
+
+    monkeypatch.setattr(sys, "argv", ["deployment", "--print-contracts"])
+    deployment.main()
+    printed = json.loads(capsys.readouterr().out)
+    assert set(printed) == set(AGENT_BINDINGS)
+    assert all(row["transport"] in {"direct", "brokered"} for row in printed.values())
+    monkeypatch.setattr(sys, "argv", ["deployment"])
+    with pytest.raises(SystemExit):
+        deployment.main()

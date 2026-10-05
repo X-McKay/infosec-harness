@@ -16,6 +16,33 @@ def v(label, **kw):
     return Verdict(label=label, confidence=0.8, rationale="r", **kw)
 
 
+@pytest.mark.parametrize("label", [VerdictLabel.potentially_exploitable,
+                                   VerdictLabel.likely_not_exploitable])
+def test_a_verdict_with_no_recorded_facts_may_only_be_inconclusive(label):
+    """Regression: with `deps.facts` absent the validator returned the output unchecked, so a
+    positive or negative claim corroborated by nothing was accepted, while the offered output
+    tools (`outputs.allowed_verdict_labels`) already reduced that case to inconclusive."""
+    from types import SimpleNamespace
+
+    from pydantic_ai import ModelRetry
+
+    from infosec_harness.agents.validators import NO_FACTS_VIOLATION, validate_verdict
+
+    ctx = SimpleNamespace(deps=SimpleNamespace(facts=None))
+    with pytest.raises(ModelRetry) as error:
+        validate_verdict(ctx, v(label))
+    assert NO_FACTS_VIOLATION in error.value.message
+    inconclusive = v(VerdictLabel.inconclusive,
+                     inconclusive_reason=InconclusiveReason.conflicting_evidence)
+    assert validate_verdict(ctx, inconclusive) is inconclusive
+
+
+def test_the_no_facts_rule_matches_the_offered_tools():
+    from infosec_harness.agents.outputs import allowed_verdict_labels
+
+    assert allowed_verdict_labels(None) == {VerdictLabel.inconclusive}
+
+
 def test_exploitable_requires_oracle():
     facts = VerdictFacts(environment_ready=True, oracle_fired=False)
     assert verdict_violations(v(VerdictLabel.potentially_exploitable), facts)
@@ -836,7 +863,7 @@ def test_a_maven_warmup_that_runs_no_test_is_rejected():
             "org.apache.maven.plugins:maven-surefire-plugin:3.2.5:test -DfailIfNoTests=false"],
         test_command=MAVEN_PROBE_COMMAND)
     problems = offline_warmup_violations(spec)
-    assert any("surefire-junit-platform" in p for p in problems)
+    assert problems
     assert any(MAVEN_WARMUP_COMMAND in p for p in problems), (
         "the violation must name the corrected install command, not just the symptom"
     )
@@ -1309,23 +1336,23 @@ def test_a_junit5_warmup_in_a_junit4_project_is_rejected(tmp_path):
     assert offline_warmup_violations(matching, framework) == []
 
 
-def test_an_unwarmed_junit4_build_names_the_provider_it_will_actually_need():
-    """`surefire-junit4`, not `surefire-junit-platform`: the provider is per-project.
-
-    Measured -- a JUnit-4 project warmed by invoking the plugin with nothing to run failed its
-    offline probe on `org.apache.maven.surefire:surefire-junit4:jar:3.2.5 (absent)`. A message
-    naming the JUnit 5 artifact sends build repair looking for the wrong absence.
-    """
-    from infosec_harness.agents.ecosystem_contract import offline_warmup_violations
+def test_an_unwarmed_build_is_told_the_warmup_in_its_own_framework():
+    """The provider Surefire needs is per-project (a JUnit-4 project warmed with nothing to run
+    failed offline on `surefire-junit4:jar:3.2.5 (absent)`), so the cited warm-up must run a test
+    in the project's own framework."""
+    from infosec_harness.agents.ecosystem_contract import (
+        MAVEN_WARMUP_COMMANDS,
+        offline_warmup_violations,
+    )
     from infosec_harness.domain.models import EnvironmentSpec
 
     spec = EnvironmentSpec(
         base_image="maven:3.9-eclipse-temurin-17",
         install_commands=[MAVEN_COMPILE_COMMAND],
         test_command=MAVEN_PROBE_COMMAND)
-    assert any("surefire-junit4" in p for p in offline_warmup_violations(spec, "junit4"))
-    assert any("surefire-testng" in p for p in offline_warmup_violations(spec, "testng"))
-    assert any("surefire-junit-platform" in p for p in offline_warmup_violations(spec, "junit5"))
+    for framework, command in MAVEN_WARMUP_COMMANDS.items():
+        [problem] = offline_warmup_violations(spec, framework)
+        assert repr(command) in problem, framework
 
 
 def test_every_shipped_maven_warmup_satisfies_the_checks_that_judge_it():

@@ -131,7 +131,7 @@ async def test_agent_deadline_is_a_failed_budget_gate_and_remaining_cases_run(mo
     from types import SimpleNamespace
 
     from infosec_harness.agents import registry
-    from infosec_harness.evals import invocation
+    from infosec_harness.evals import run
 
     real_build = registry.build_agent
     deadlines = []
@@ -143,9 +143,10 @@ async def test_agent_deadline_is_a_failed_budget_gate_and_remaining_cases_run(mo
         deadlines.append(deadline)
         return deadline
 
-    # Patch only this module's asyncio reference, retaining the production
+    # Patch only the runner's asyncio reference, retaining the production
     # run_with_timeout implementation and its expired-vs-inner-timeout check.
-    monkeypatch.setattr(invocation, "asyncio", SimpleNamespace(timeout=capture_deadline))
+    monkeypatch.setattr(run, "asyncio", SimpleNamespace(
+        timeout=capture_deadline, CancelledError=asyncio.CancelledError))
 
     class SlowFirstInvocation:
         def __init__(self, inner):

@@ -28,10 +28,15 @@ this gate's job.
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
 
 from infosec_harness.domain.canonical import canonical_bytes
+from infosec_harness.sandbox.markers import (
+    ORACLE_PREFIX,
+    PRECONDITION_PREFIX,
+    SINK_RETURNED_PREFIX,
+)
+from infosec_harness.sandbox.policy import jvm_class_selector
 
 # Deliberately distinct from any finding's oracle nonce: this proves the transport, and must
 # never be mistaken for evidence about a vulnerability.
@@ -84,49 +89,42 @@ def parse_control_result(text: str) -> ControlResult | None:
             return None
     return None
 
-_CLASS_SELECTOR = re.compile(r"(?:-Dtest=|--tests\s+['\"]?\*?)([A-Za-z_$][\w$]*)")
-
-
-def selector_class_name(test_command: str, default: str = "HarnessProbeTest") -> str:
-    """The class name the test command selects, so the canary is the file it will look for.
-
-    A JVM command selects by class, so a canary written to some other name is simply not run --
-    which would look exactly like the failure this gate exists to detect, for the wrong reason.
-    """
-    match = _CLASS_SELECTOR.search(test_command or "")
-    return match.group(1) if match else default
+# The class name the skills use when the probe author picks one; a JVM command selects exactly
+# one class (``policy.jvm_class_selector``), so a control test written under any other name is
+# simply not run -- which would look exactly like the failure this gate exists to detect.
+DEFAULT_JVM_CLASS = "HarnessProbeTest"
 
 
 def _python(nonce: str, *, oracle: bool) -> tuple[str, str]:
-    oracle_line = f'    print("HARNESS_ORACLE::{nonce}", flush=True)\n' if oracle else ""
+    oracle_line = f'    print("{ORACLE_PREFIX}{nonce}", flush=True)\n' if oracle else ""
     return "tests/test_harness_canary.py", f'''# Written by the harness. Proves a test we author is discovered and its stdout is heard.
 def test_harness_canary():
-    print("HARNESS_PRECONDITION::{nonce}", flush=True)
-    print("HARNESS_SINK_RETURNED::{nonce}", flush=True)
+    print("{PRECONDITION_PREFIX}{nonce}", flush=True)
+    print("{SINK_RETURNED_PREFIX}{nonce}", flush=True)
 {oracle_line.rstrip()}
 '''
 
 
 def _perl(nonce: str, *, oracle: bool) -> tuple[str, str]:
-    oracle_line = f'print "HARNESS_ORACLE::{nonce}\\n";\n' if oracle else ""
+    oracle_line = f'print "{ORACLE_PREFIX}{nonce}\\n";\n' if oracle else ""
     return "t/harness_canary.t", f'''use strict;
 use warnings;
 use Test::More tests => 1;
 
 # Written by the harness. Proves a test we author is discovered and its stdout is heard.
-print "HARNESS_PRECONDITION::{nonce}\\n";
-print "HARNESS_SINK_RETURNED::{nonce}\\n";
+print "{PRECONDITION_PREFIX}{nonce}\\n";
+print "{SINK_RETURNED_PREFIX}{nonce}\\n";
 {oracle_line.rstrip()}
 ok(1, 'canary ran');
 '''
 
 
 def _javascript(nonce: str, *, oracle: bool) -> tuple[str, str]:
-    oracle_line = f"  console.log('HARNESS_ORACLE::{nonce}');\n" if oracle else ""
+    oracle_line = f"  console.log('{ORACLE_PREFIX}{nonce}');\n" if oracle else ""
     return "harness_canary.test.js", f'''// Written by the harness. Proves a test we author is discovered and its stdout is heard.
 test('harness canary', () => {{
-  console.log('HARNESS_PRECONDITION::{nonce}');
-  console.log('HARNESS_SINK_RETURNED::{nonce}');
+  console.log('{PRECONDITION_PREFIX}{nonce}');
+  console.log('{SINK_RETURNED_PREFIX}{nonce}');
 {oracle_line.rstrip()}
 }});
 '''
@@ -137,7 +135,7 @@ def _java(nonce: str, class_name: str, *, oracle: bool) -> tuple[str, str]:
     # package is discovered by every Surefire provider. JUnit 5's annotation is used because
     # that is what the current recipes assume; when the project is JUnit 4 this fails to
     # *compile*, and the error names `org.junit.jupiter` as missing -- which is the diagnosis.
-    oracle_line = (f'        System.out.println("HARNESS_ORACLE::{nonce}");\n'
+    oracle_line = (f'        System.out.println("{ORACLE_PREFIX}{nonce}");\n'
                    if oracle else "")
     return f"src/test/java/{class_name}.java", f'''import org.junit.jupiter.api.Test;
 
@@ -145,8 +143,8 @@ def _java(nonce: str, class_name: str, *, oracle: bool) -> tuple[str, str]:
 public class {class_name} {{
     @Test
     public void harnessCanary() {{
-        System.out.println("HARNESS_PRECONDITION::{nonce}");
-        System.out.println("HARNESS_SINK_RETURNED::{nonce}");
+        System.out.println("{PRECONDITION_PREFIX}{nonce}");
+        System.out.println("{SINK_RETURNED_PREFIX}{nonce}");
 {oracle_line.rstrip()}
     }}
 }}
@@ -169,16 +167,19 @@ def canary_for(language: str, test_command: str, *, nonce: str = CANARY_NONCE,
     if lang in ("javascript", "typescript"):
         return _javascript(nonce, oracle=oracle)
     if lang in ("java", "kotlin"):
-        return _java(nonce, selector_class_name(test_command), oracle=oracle)
+        # Raises InvalidEnvironmentSpec for a JVM command that does not select one class; a
+        # validated spec never carries one, so nothing is guessed here.
+        class_name = jvm_class_selector(test_command) or DEFAULT_JVM_CLASS
+        return _java(nonce, class_name, oracle=oracle)
     return None
 
 
 def missing_markers(output: str, *, nonce: str = CANARY_NONCE) -> list[str]:
     """Which of the three markers did not survive the round trip."""
     return [name for name, prefix in (
-        ("precondition", "HARNESS_PRECONDITION::"),
-        ("sink_returned", "HARNESS_SINK_RETURNED::"),
-        ("oracle", "HARNESS_ORACLE::"),
+        ("precondition", PRECONDITION_PREFIX),
+        ("sink_returned", SINK_RETURNED_PREFIX),
+        ("oracle", ORACLE_PREFIX),
     ) if f"{prefix}{nonce}" not in output]
 
 

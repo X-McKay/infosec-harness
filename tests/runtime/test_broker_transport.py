@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import httpx
@@ -16,6 +17,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestParameters
+from test_broker_profiles import backend
 
 from infosec_harness.inference.auth import AUTH_HEADER, sign_request
 from infosec_harness.inference.codec import encode_response
@@ -84,7 +86,7 @@ def _contract(agent: str = "recon"):
         "gateway",
         "model-v1",
         {"max_tokens": 2048, "temperature": 0.1},
-        backend_endpoint="https://provider.example/v1",
+        backend=backend(),
         atomic_intake=agent == "intake",
     )
 
@@ -114,6 +116,14 @@ def _model(contract, binding, handler, *, identity=lambda: "step:7"):
         request_identity=identity,
         http_transport=httpx.MockTransport(handler),
     )
+
+
+def _verified(contract) -> dict:
+    """The controller's corroborated native observations for an admitted contract."""
+    return {"native_id": "sandbox-test", "policy_digest": contract.policy_digest,
+            "executor_image": contract.executor_image, "supervisor_image": contract.supervisor_image,
+            "profile": contract.profile, "credential_revision": "provider-rev-1",
+            "contract_digest": contract.digest, "lease_id": "lease-test"}
 
 
 def _messages():
@@ -153,6 +163,7 @@ def test_transport_sends_one_canonical_authenticated_request_and_decodes_respons
             result = InferenceResult(
                 request_id=parsed.request_id,
                 response=encode_response(_response()),
+                provenance=_verified(parsed.contract),
             )
             return httpx.Response(200, content=canonical_bytes(result.model_dump(mode="json")))
         except Exception as exc:
@@ -171,7 +182,8 @@ def test_transport_sends_one_canonical_authenticated_request_and_decodes_respons
         assert upstream_errors == []
         raise
     assert upstream_errors == []
-    assert result == _response()
+    assert replace(result, metadata=None) == _response()
+    assert result.metadata["harness_broker"]["contract_digest"] == contract.digest
     assert len(received) == 1
 
 
@@ -227,6 +239,7 @@ def test_model_instances_isolate_bindings_and_durable_request_ids() -> None:
         outgoing = InferenceResult(
             request_id=incoming.request_id,
             response=encode_response(_response()),
+            provenance=_verified(incoming.contract),
         )
         return httpx.Response(200, content=canonical_bytes(outgoing.model_dump(mode="json")))
 
@@ -254,6 +267,7 @@ async def test_agent_run_uses_registered_identity_capability_and_typed_response_
         result = InferenceResult(
             request_id=incoming.request_id,
             response=encode_response(_response()),
+            provenance=_verified(incoming.contract),
         )
         return httpx.Response(200, content=canonical_bytes(result.model_dump(mode="json")))
 
@@ -294,6 +308,7 @@ async def test_agent_tool_call_parameters_and_messages_round_trip_through_codec(
         result = InferenceResult(
             request_id=incoming.request_id,
             response=encode_response(response),
+            provenance=_verified(incoming.contract),
         )
         return httpx.Response(200, content=canonical_bytes(result.model_dump(mode="json")))
 
@@ -405,16 +420,30 @@ def test_expired_binding_without_a_completed_result_never_uses_infer(status, err
     assert paths == ["/v1/results"]
 
 
-def test_unrecognized_controller_provenance_is_rejected() -> None:
+@pytest.mark.parametrize("change", ["unexpected", "empty", "missing_field", "other_contract",
+                                    "other_image"])
+def test_controller_provenance_is_mandatory_and_must_match_the_contract(change) -> None:
+    """A result without exact controller observations is never accepted as broker evidence."""
     contract = _contract()
     binding = _binding(contract)
+    provenance = _verified(contract)
+    if change == "unexpected":
+        provenance["unexpected_secret_field"] = "not persisted"
+    if change == "empty":
+        provenance = {}
+    if change == "missing_field":
+        del provenance["lease_id"]
+    if change == "other_contract":
+        provenance["contract_digest"] = "f" * 64
+    if change == "other_image":
+        provenance["executor_image"] = "sha256:" + "f" * 64
 
     def upstream(request: httpx.Request) -> httpx.Response:
         incoming = InferenceRequest.model_validate_json(request.content)
         result = InferenceResult(
             request_id=incoming.request_id,
             response=encode_response(_response()),
-            provenance={"unexpected_secret_field": "not persisted"},
+            provenance=provenance,
         )
         return httpx.Response(200, content=canonical_bytes(result.model_dump(mode="json")))
 
@@ -429,9 +458,9 @@ def test_unrecognized_controller_provenance_is_rejected() -> None:
 @pytest.mark.parametrize("code", ["auth", "policy", "identity", "budget", "expired",
                                   "conflict", "invalid_response", "completion_unknown"])
 def test_terminal_dispositions_cannot_be_transient_retries(code):
+    from infosec_harness.inference.http_service import response_error
     from infosec_harness.inference.protocol import TransientBrokerError
-    from infosec_harness.inference.transport import _response_error
-    error = _response_error(409, canonical_bytes({"error": code}))
+    error = response_error(409, canonical_bytes({"error": code}))
     assert type(error) is BrokerError
     with pytest.raises(ValueError):
         TransientBrokerError(code)
@@ -440,9 +469,9 @@ def test_terminal_dispositions_cannot_be_transient_retries(code):
 @pytest.mark.parametrize("code", ["unavailable", "pending"])
 def test_transient_activity_errors_have_distinct_retryable_type(code):
     from infosec_harness.agents.registry import ACTIVITY_RETRY
+    from infosec_harness.inference.http_service import response_error
     from infosec_harness.inference.protocol import TransientBrokerError
-    from infosec_harness.inference.transport import _response_error
-    error = _response_error(409, canonical_bytes({"error": code}))
+    error = response_error(409, canonical_bytes({"error": code}))
     assert type(error) is TransientBrokerError and error.code == code
     assert type(error).__name__ not in ACTIVITY_RETRY.non_retryable_error_types
     assert ACTIVITY_RETRY.maximum_attempts == 3
@@ -468,8 +497,8 @@ async def test_transient_retry_reuses_the_exact_request_and_visibility_payload()
 
 
 def test_remote_error_diagnostics_are_sanitized_and_transient_type_is_preserved(caplog):
+    from infosec_harness.inference.http_service import response_error as _response_error
     from infosec_harness.inference.protocol import TransientBrokerError
-    from infosec_harness.inference.transport import _response_error
 
     diagnostic = {"boundary": "provider_request", "category": "wall_timeout"}
     error = _response_error(409, canonical_bytes({"error": "completion_unknown", "diagnostic": diagnostic}))

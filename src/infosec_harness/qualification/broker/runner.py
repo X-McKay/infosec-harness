@@ -16,11 +16,19 @@ import subprocess
 import sys
 import time
 import uuid
-from collections import Counter
 from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 
+from infosec_harness.qualification.broker.support import (
+    child_environment,
+    forbid_io,
+    ledger_snapshot,
+    private_write,
+    read_private_environment,
+    reap,
+    serve_worker,
+)
 from infosec_harness.qualification.broker.validators import (
     AGENTS_DIR,
     CASES,
@@ -29,50 +37,24 @@ from infosec_harness.qualification.broker.validators import (
     WORKFLOW_NAME,
     RealProviderManifest,
     compare_baseline,
-    private_write,
-    read_private_environment,
     selected_phases,
     verify_configuration,
 )
 
-STRIPPED_ENVIRONMENT = ("HARNESS_BROKER_CONFIG", "HARNESS_MODEL_BACKEND", "HARNESS_BROKER_SERVICE_MANIFEST",
-    "HARNESS_NATIVE_TEMPORAL_CONFIG", "HARNESS_OPENAI_API_KEY", "HARNESS_BROKER_NATIVE_CONFIG",
-    "OPENAI_API_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN")
-
 
 def phase_environment(manifest: RealProviderManifest, phase: str) -> dict[str, str]:
     """Child environment: no ambient provider keys; broker authority only for native phases."""
-    values = dict(os.environ)
-    values.pop(manifest.worker_hmac_env, None)
-    for name in STRIPPED_ENVIRONMENT:
-        values.pop(name, None)
-    managed = ROOT / ".harness/dev.env"
-    if managed.exists():
-        for name, value in read_private_environment(managed).items():
-            if name.startswith(("HARNESS_SANDBOX_", "HARNESS_BUILD_")) or name == "HARNESS_BUILDX_BUILDER":
-                values[name] = value
-    values["HARNESS_ALLOW_INSECURE_RUNTIME"] = "false"
-    values["HARNESS_SANDBOX_RUNTIME"] = "runsc"
-    values["PATH"] = os.pathsep.join((str(ROOT / ".harness/bin"), str(ROOT / ".venv/bin"), values.get("PATH", "")))
-    database_url = "sqlite+aiosqlite:///:memory:"
-    if phase != "direct":
-        private = read_private_environment(manifest.database_env_file)
-        if "HARNESS_DATABASE_URL" not in private:
-            raise ValueError("Private database reference must define HARNESS_DATABASE_URL")
-        database_url = private["HARNESS_DATABASE_URL"]
-    values.update(HARNESS_MODEL_MODE="live", HARNESS_DATABASE_URL=database_url,
-        HARNESS_MODELS_CONFIG=manifest.direct_models_config if phase == "direct" else manifest.broker_models_config,
-        HARNESS_AGENT_RUN_TIMEOUT_S="600", PYDANTIC_AI_NO_BANNER="1", PYTHONPATH=str(ROOT / "src"))
-    if phase != "direct":
-        key_path = Path(manifest.worker_hmac_file)
-        if key_path.stat().st_mode & 0o077:
-            raise ValueError("Worker HMAC reference must be owner-only")
-        secret = key_path.read_text().strip()
-        if not secret or len(secret) > 4096:
-            raise ValueError("Invalid worker credential reference")
-        values[manifest.worker_hmac_env] = secret
-        values["HARNESS_BROKER_CONFIG"] = manifest.broker_config
-    return values
+    worker_key = (manifest.worker_hmac_env, manifest.worker_hmac_file)
+    if phase == "direct":
+        return child_environment(ROOT, models_config=manifest.direct_models_config,
+                                 database={"HARNESS_DATABASE_URL": "sqlite+aiosqlite:///:memory:"},
+                                 worker_key=worker_key)
+    private = read_private_environment(manifest.database_env_file)
+    if "HARNESS_DATABASE_URL" not in private:
+        raise ValueError("Private database reference must define HARNESS_DATABASE_URL")
+    return child_environment(ROOT, models_config=manifest.broker_models_config,
+                             database={"HARNESS_DATABASE_URL": private["HARNESS_DATABASE_URL"]},
+                             worker_key=worker_key, broker_config=manifest.broker_config)
 
 
 def prepare_case(agent: str, manifest: RealProviderManifest):
@@ -101,10 +83,12 @@ def prepare_case(agent: str, manifest: RealProviderManifest):
     case_digest = digest(case)
     if manifest.case_digests and case_digest != manifest.case_digests[agent]:
         raise ValueError("Frozen case content changed")
-    task, payload, deps, predict, expected = ADAPTERS[agent](case)
-    prompt = render_intake_prompt(task, payload) if agent == "intake" else render_prompt(task, payload)
+    adapted = ADAPTERS[agent](case)
+    prompt = (render_intake_prompt(adapted.task, adapted.payload) if agent == "intake"
+              else render_prompt(adapted.task, adapted.payload))
     # Expected labels and scorer callbacks remain host-only, never in the workflow input.
-    return {"agent": agent, "prompt": prompt, "deps": deps}, predict, expected, case_digest
+    return ({"agent": agent, "prompt": prompt, "deps": adapted.deps}, adapted.predict,
+            case["expected"], case_digest)
 
 
 def output_class(agent: str):
@@ -161,22 +145,6 @@ def check_resolved_model(manifest: RealProviderManifest, phase: str, model) -> N
         raise ValueError("Native phase resolved a direct model transport")
 
 
-async def ledger_snapshot(root_id: str) -> dict:
-    from sqlalchemy import select
-
-    from infosec_harness.persistence import db
-    async with db.session() as session:
-        root = await session.get(db.BudgetLedger, root_id)
-        records = (await session.execute(select(db.InferenceRequestRecord).where(
-            db.InferenceRequestRecord.root_id == root_id))).scalars().all()
-        return {"root_id": root_id, "root_state": root.state if root else None,
-            "requests": [{"request_id": row.request_id, "agent": row.request["binding"]["agent"],
-                          "state": row.state, "allocation": row.allocation, "overrun": row.overrun,
-                          "result_usage": row.result.get("usage") if row.result else None,
-                          "payload_digest": row.request["payload_digest"]} for row in records],
-            "request_states": dict(Counter(row.state for row in records))}
-
-
 async def run_local_case(manifest: RealProviderManifest, phase: str, agent: str,
                          checkpoint: Callable[[dict], None] | None = None) -> dict:
     """One unchanged production LocalOps case; the caller owns its finite scope."""
@@ -211,12 +179,10 @@ async def run_local_case(manifest: RealProviderManifest, phase: str, agent: str,
         from infosec_harness.evals.errors import failure_diagnostic
         from infosec_harness.evals.intake_fields import intake_field_summary
         from infosec_harness.evals.output_retries import output_retry_summary
-        metadata = row.get("config", {}).get("effective_spec", {}).get("metadata", {})
-        protocol = (metadata.get("intake_output") or {}).get("protocol")
         row["failure_diagnostic"] = failure_diagnostic(error)
         row["output_retry_summary"] = output_retry_summary(messages, agent=agent)
         row["intake_field_summary"] = intake_field_summary(
-            messages, report=getattr(inputs["deps"], "report_text", None), agent=agent, protocol=protocol)
+            messages, report=getattr(inputs["deps"], "report_text", None), agent=agent)
         row["failure_type"] = type(error).__name__
         row["broker_error_code"] = getattr(error, "code", None)
     finally:
@@ -313,39 +279,17 @@ def start_worker(manifest_path: str, queue: str, log) -> subprocess.Popen:
         "--manifest", manifest_path, "--queue", queue], stdout=log, stderr=log)
 
 
-async def stop_worker(process: subprocess.Popen) -> bool:
-    with suppress(ProcessLookupError):
-        process.terminate()
-    try:
-        await asyncio.to_thread(process.wait, 10)
-    except subprocess.TimeoutExpired:
-        with suppress(ProcessLookupError):
-            process.kill()
-        await asyncio.to_thread(process.wait, 5)
-    return process.poll() is not None
-
-
 async def _replay_without_io(history, root_id: str) -> dict:
     from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
     from temporalio.worker import Replayer
 
-    from infosec_harness.inference import invocations
-    from infosec_harness.inference.transport import BrokerModel
     from infosec_harness.qualification.broker.workflow import RealProviderWorkflow
 
     before = await ledger_snapshot(root_id)
-    original_request, original_issue = BrokerModel.request, invocations.request_invocation
-
-    async def forbidden(*_args, **_kwargs):
-        raise AssertionError("History replay attempted broker I/O")
-
-    BrokerModel.request, invocations.request_invocation = forbidden, forbidden
-    try:
+    with forbid_io():
         await Replayer(workflows=[RealProviderWorkflow], plugins=[PydanticAIPlugin()]).replay_workflow(history)
-        if await ledger_snapshot(root_id) != before:
-            raise AssertionError("History replay changed durable ledger")
-    finally:
-        BrokerModel.request, invocations.request_invocation = original_request, original_issue
+    if await ledger_snapshot(root_id) != before:
+        raise AssertionError("History replay changed durable ledger")
     return before
 
 
@@ -438,24 +382,13 @@ async def run_temporal(manifest: RealProviderManifest, report_path: Path) -> dic
         report["status"] = "failed"
     finally:
         if process is not None:
-            report["worker_cleanup"] = "passed" if await stop_worker(process) else "failed"
+            report["worker_cleanup"] = "passed" if await asyncio.to_thread(reap, process) else "failed"
         private_write(report_path, report)
     _summarize(report, ("execution", "history_replay"))
     report["status"] = ("passed" if report["execution_status"] == report["semantic_status"]
                         == report["worker_cleanup"] == "passed" else "failed")
     private_write(report_path, report)
     return report
-
-
-async def serve_worker(manifest: RealProviderManifest, queue: str):
-    from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
-    from temporalio.client import Client
-    from temporalio.worker import Worker
-
-    from infosec_harness.qualification.broker.workflow import RealProviderWorkflow
-    from infosec_harness.workflows.activities import ALL_ACTIVITIES
-    client = await Client.connect(manifest.temporal_address, plugins=[PydanticAIPlugin()])
-    await Worker(client, task_queue=queue, workflows=[RealProviderWorkflow], activities=ALL_ACTIVITIES).run()
 
 
 async def phase_main(manifest: RealProviderManifest, args):
@@ -466,7 +399,11 @@ async def phase_main(manifest: RealProviderManifest, args):
     for termination_signal in (signal.SIGTERM, signal.SIGINT):
         asyncio.get_running_loop().add_signal_handler(termination_signal, task.cancel)
     if args.phase == "worker":
-        await serve_worker(manifest, args.queue)
+        from infosec_harness.qualification.broker.workflow import RealProviderWorkflow
+        from infosec_harness.workflows.activities import ALL_ACTIVITIES
+
+        await serve_worker(manifest.temporal_address, args.queue, [RealProviderWorkflow],
+                           activities=ALL_ACTIVITIES)
         return None
     if args.phase == "temporal":
         return await run_temporal(manifest, args.report)

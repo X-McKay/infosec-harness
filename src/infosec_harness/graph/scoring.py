@@ -13,6 +13,7 @@ from infosec_harness.domain.models import (
     Severity,
     Verdict,
     VerdictLabel,
+    inconclusive_verdict,
 )
 from infosec_harness.repo.access import RepositoryAccessError, resolve_confined
 
@@ -53,21 +54,16 @@ def pre_filter(finding: Finding, snapshot: RepoSnapshot) -> PreFilterResult:
         target = resolve_confined(snapshot.path, loc.file_path, must_exist=True)
     except (OSError, RepositoryAccessError):
         return PreFilterResult(
-            Verdict(
-                label=VerdictLabel.inconclusive,
-                confidence=0.0,
-                rationale=(f"Reported file {loc.file_path} could not be resolved inside the "
-                           f"source snapshot for {finding.revision}. Missing source is not "
-                           "evidence of safety."),
-                inconclusive_reason=InconclusiveReason.needs_info,
-            ),
+            inconclusive_verdict(
+                InconclusiveReason.needs_info,
+                f"Reported file {loc.file_path} could not be resolved inside the source "
+                f"snapshot for {finding.revision}. Missing source is not evidence of safety."),
             note="file_missing",
         )
     if not target.is_file():
         return PreFilterResult(
-            Verdict(label=VerdictLabel.inconclusive, confidence=0.0,
-                    rationale=f"Reported location {loc.file_path} is not a source file.",
-                    inconclusive_reason=InconclusiveReason.needs_info),
+            inconclusive_verdict(InconclusiveReason.needs_info,
+                                 f"Reported location {loc.file_path} is not a source file."),
             note="file_missing",
         )
     return PreFilterResult(None)
@@ -97,7 +93,8 @@ def priority_band(score: float) -> PriorityBand:
     return PriorityBand.p4
 
 
-def priority_for_inconclusive(finding: Finding) -> tuple[float, PriorityBand]:
-    """Priority for a run with no supported security judgment, preserving intake severity."""
-    score = round(SEVERITY_WEIGHT[finding.severity] * 0.6, 4)
+def priority(finding: Finding, verdict: Verdict,
+             reachability: Reachability) -> tuple[float, PriorityBand]:
+    """The priority score and its band (F9)."""
+    score = priority_score(finding, verdict, reachability)
     return score, priority_band(score)

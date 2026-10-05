@@ -7,7 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from infosec_harness.agents import models
-from infosec_harness.inference import invocations
+from infosec_harness.inference import issuance
 from infosec_harness.inference.profiles import ExecutorProfile
 from infosec_harness.inference.protocol import digest
 
@@ -47,9 +47,9 @@ def test_trusted_request_policy_is_independent_of_cumulative_invocation(monkeypa
     monkeypatch.setattr(models, "broker_catalog", lambda: catalog)
     monkeypatch.setattr(models, "custom_prices", lambda _: models.Prices(
         input_per_mtok=0.0, output_per_mtok=0.0))
-    monkeypatch.setattr(invocations, "trusted_config", lambda *_, **__: config)
+    monkeypatch.setattr(issuance, "trusted_config", lambda *_, **__: config)
     request = SimpleNamespace(binding=SimpleNamespace(agent="context"), contract=contract)
-    policy = invocations.build_reservation_policy(request)
+    policy = issuance.build_reservation_policy(request)
     assert policy.max_input_tokens == expected
     assert catalog.bounds_for_agent("context").max_input_tokens == cumulative
     assert policy.max_output_tokens == (180000 if operator_cap is None else 18000)
@@ -104,7 +104,8 @@ async def test_healthy_loop_can_hold_multiple_requests_above_one_request_cap():
     try:
         for ordinal in ("model:0", "model:1"):
             value = request("x" * 60000, ordinal)
-            await ledger.admit(value, lease_id="lease", allocation=await admission.authorize(value, policy))
+            await ledger.DurableLedger().admit(value, lease_id="lease",
+                                               allocation=await admission.authorize(value, policy))
         async with db.session() as session:
             root = await session.get(db.BudgetLedger, root_id)
             held = root.state["operations"]["op"]["broker_allocated"]

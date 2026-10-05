@@ -10,7 +10,7 @@ import yaml
 from infosec_harness.evals.calibration import _validate_groups, load_calibration
 from infosec_harness.evals.dataset import load_dataset
 from infosec_harness.evals.gates import load_policy
-from infosec_harness.evals.overlays import StaleOverlay, load_overlay
+from infosec_harness.evals.run import StaleOverlay, load_overlay
 from infosec_harness.settings import REPO_ROOT
 
 EXPERIMENTS = REPO_ROOT / "evals" / "experiments"

@@ -77,7 +77,6 @@ class Scenario:
     residual: Rating
     controls: tuple[Control, ...]
     capability_floor: str | None
-    raw: dict[str, Any]
 
     @property
     def material(self) -> bool:
@@ -131,7 +130,7 @@ def parse(doc: dict[str, Any]) -> Library:
             id=sid, title=str(s["title"]), inherent=_rating(s["inherent"]),
             residual=_rating(s["residual"]),
             controls=tuple(controls[cid] for cid in s.get("controls") or []),
-            capability_floor=floor, raw=s,
+            capability_floor=floor,
         )
     agents: dict[str, tuple[str, ...]] = {}
     for agent, ids in (doc.get("agents") or {}).items():

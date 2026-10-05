@@ -49,9 +49,3 @@ export function connectivityPresentation(
     detail: measurement.detail,
   };
 }
-
-export function componentTitle(status: string) {
-  return status === "passed"
-    ? "Component evidence passed"
-    : "Component evidence";
-}

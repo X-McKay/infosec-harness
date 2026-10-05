@@ -14,13 +14,13 @@ Run `just eval-run` for a stub agent dataset. `harness eval run <agent>` records
 incrementally in `HARNESS_DATABASE_URL` and exports a release report to
 `.harness/reports/evals/<experiment-id>.json` (`HARNESS_REPORTS_DIR`, `--report` or
 `--report-dir` select another location). The report carries the policy's own verdict
-(`gate_evaluation`), the checks that could not have failed for this run (`inert_checks`), and
-what the numbers are over: split, `n` of `n_planned`, the case-set digest and the dataset path.
-Truncated runs export no report. `--dataset PATH` runs another dataset (a sealed held-out set)
+(`gate_evaluation`, `not_checked` when a `required_provenance` key is missing), the checks that
+could not have failed for this run (`inert_checks`, also printed beside the report path), what
+the numbers are over (`run`: split, `n` of `n_planned`, repetitions, the case-set digest) and
+what produced them (`provenance`). Truncated runs export no report. `--dataset PATH` runs another dataset (a sealed held-out set)
 against the deployed spec; such a run is labelled `split: external`. Stub scores exercise
 adapters and never establish live-model quality.
 
-`harness eval inert-gates REPORT [--policy PATH]` re-audits a report on disk.
 `harness eval corpus` runs the paired ground-truth corpus end to end (`--manifest`, `--limit`,
 `--dataset`) and writes a report under `.harness/reports/corpus/` (`--report` selects another).
 

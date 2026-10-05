@@ -20,13 +20,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from infosec_harness.agents.risk import Scenario, library
-from infosec_harness.evals.dataset import load_dataset
 
-__all__ = ["CATEGORIES", "ScenarioCoverage", "coverage_for", "scenario_coverage", "scenarios_for"]
-
-# The dataset categories the playbook names. Every case declares exactly one, so a dataset can
-# be read for what it actually exercises rather than inferred from case names.
-CATEGORIES = ("smoke", "regression", "capability", "safety", "adversarial", "durability")
+__all__ = ["ScenarioCoverage", "scenario_coverage", "scenarios_for"]
 
 
 @dataclass
@@ -74,8 +69,3 @@ def scenario_coverage(agent: str, cases: Iterable[Mapping[str, Any]]) -> Scenari
         # it does not.
         unknown_scenarios=sorted(sid for sid in tagged if sid not in declared),
     )
-
-
-def coverage_for(agent: str) -> ScenarioCoverage:
-    """Coverage of the agent's own packaged dataset."""
-    return scenario_coverage(agent, load_dataset(agent).cases)

@@ -9,9 +9,9 @@ from __future__ import annotations
 import json
 import os
 import re
-from functools import cache
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 import yaml
 from pydantic import (
@@ -24,33 +24,36 @@ from pydantic import (
     model_validator,
 )
 
+from infosec_harness.inference.codec import validate_settings
 from infosec_harness.inference.policy import canonical_policy
 from infosec_harness.inference.policy import policy_digest as effective_policy_digest
 from infosec_harness.inference.protocol import (
-    IMAGE_DIGEST_PATTERN,
+    LOGICAL_NAME_PATTERN,
+    EnvName,
     ExecutorContract,
     ExtensionBinding,
+    HttpsOrigin,
+    ImageDigest,
+    LogicalName,
+    ProviderAdaptation,
+    ProviderEndpoint,
     digest,
     fixed_https_url,
-    validate_thinking_token_budget,
 )
 from infosec_harness.resources import package_root
 
-_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-_NAME = re.compile(r"^[a-z][a-z0-9._-]{0,63}$")
-_IMAGE = re.compile(IMAGE_DIGEST_PATTERN)
 _SECRET_KEYS = re.compile(r"authorization|api[_-]?key|secret|credential|bearer|token", re.I)
 
 
-@cache
-def registered_agents() -> tuple[str, ...]:
-    """The registry's agent bindings are the only source of truth for catalog completeness.
+class BackendAdaptation(Protocol):
+    """The operator backend fields a contract must match; ``models.BackendConfig`` provides them."""
 
-    Imported lazily: the agent registry imports model construction, which imports this module.
-    """
-    from infosec_harness.agents.registry import AGENT_BINDINGS
-
-    return tuple(AGENT_BINDINGS)
+    base_url: str | None
+    merge_system_messages: bool
+    min_max_tokens: int
+    strict_closed_output_tools: bool
+    enable_thinking: bool | None
+    thinking_token_budget: int | None
 
 
 class _StrictModel(BaseModel):
@@ -70,25 +73,11 @@ class InvocationBounds(_StrictModel):
 class ControllerChannel(_StrictModel):
     """Deployment references for the worker-to-controller HTTPS channel."""
 
-    url: str | None = None
-    hmac_env: str | None = None
+    url: HttpsOrigin | None = None
+    hmac_env: EnvName | None = None
     ca_file: str | None = None
     client_cert: str | None = None
     client_key: str | None = None
-
-    @field_validator("url")
-    @classmethod
-    def fixed_https_origin(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        return fixed_https_url(value, require_origin=True)
-
-    @field_validator("hmac_env")
-    @classmethod
-    def environment_reference(cls, value: str | None) -> str | None:
-        if value is not None and not _ENV_NAME.fullmatch(value):
-            raise ValueError("HMAC key must be referenced by an environment variable name")
-        return value
 
     @field_validator("ca_file", "client_cert", "client_key")
     @classmethod
@@ -126,25 +115,21 @@ def _reject_secret_keys(value: Any) -> None:
             _reject_secret_keys(child)
 
 
-class ExecutorProfile(_StrictModel):
+class ExecutorProfile(_StrictModel, ProviderAdaptation):
     """Operator-approved executor template; credentials remain native attachments."""
 
-    backend_name: str | None = None
+    backend_name: LogicalName | None = None
     backend_kind: Literal["openai_compatible"] = "openai_compatible"
-    endpoint: str | None = None
-    provider_binding: str | None = None
-    provider_env: str | None = None
-    ledger_origin: str | None = None
-    ledger_profile: str | None = None
-    executor_image: str | None = None
-    supervisor_image: str | None = None
+    endpoint: ProviderEndpoint | None = None
+    provider_binding: LogicalName | None = None
+    provider_env: EnvName | None = None
+    ledger_origin: HttpsOrigin | None = None
+    ledger_profile: LogicalName | None = None
+    executor_image: ImageDigest | None = None
+    supervisor_image: ImageDigest | None = None
     approved_policy: dict[str, Any] | None = None
     merge_system_messages: bool = True
     min_max_tokens: int = Field(default=0, ge=0)
-    strict_closed_output_tools: bool = Field(default=False, exclude_if=lambda value: value is False)
-    enable_thinking: bool | None = Field(default=None, exclude_if=lambda value: value is None)
-    thinking_token_budget: int | None = Field(
-        default=None, gt=0, strict=True, exclude_if=lambda value: value is None)
     # Request context admission is separate from cumulative invocation allocation.
     # Omission preserves the identity and behavior of existing operator profiles.
     max_input_tokens_per_request: int | None = Field(
@@ -152,44 +137,6 @@ class ExecutorProfile(_StrictModel):
     credential_driver: Literal["native"] = "native"
     inspection: tuple[ExtensionBinding, ...] = ()
     provider_retries: Literal[0] = 0
-
-    @model_validator(mode="after")
-    def thinking_budget_is_consistent(self):
-        validate_thinking_token_budget(self.thinking_token_budget, self.enable_thinking)
-        return self
-
-    @field_validator("backend_name", "provider_binding", "ledger_profile")
-    @classmethod
-    def logical_names_only(cls, value: str | None) -> str | None:
-        if value is not None and not _NAME.fullmatch(value):
-            raise ValueError("Expected a fixed logical name")
-        return value
-
-    @field_validator("provider_env")
-    @classmethod
-    def environment_name_only(cls, value: str | None) -> str | None:
-        if value is not None and not _ENV_NAME.fullmatch(value):
-            raise ValueError("Provider environment binding must be a variable name")
-        return value
-
-    @field_validator("endpoint")
-    @classmethod
-    def fixed_provider_endpoint(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        return fixed_https_url(value, require_path="/v1")
-
-    @field_validator("ledger_origin")
-    @classmethod
-    def fixed_ledger_origin(cls, value: str | None) -> str | None:
-        return fixed_https_url(value, require_origin=True) if value is not None else None
-
-    @field_validator("executor_image", "supervisor_image")
-    @classmethod
-    def immutable_image_only(cls, value: str | None) -> str | None:
-        if value is not None and not _IMAGE.fullmatch(value):
-            raise ValueError("Executor images must be pinned by SHA-256 digest")
-        return value
 
     @field_validator("approved_policy")
     @classmethod
@@ -261,19 +208,10 @@ class BrokerConfig(_StrictModel):
         return value
 
     @model_validator(mode="after")
-    def catalog_is_complete(self) -> BrokerConfig:
-        agents = set(registered_agents())
-        if set(self.agent_profiles) != agents or set(self.agent_limits) != agents:
-            missing_profile = sorted(agents - set(self.agent_profiles))
-            extra_profile = sorted(set(self.agent_profiles) - agents)
-            missing_limits = sorted(agents - set(self.agent_limits))
-            extra_limits = sorted(set(self.agent_limits) - agents)
-            raise ValueError(
-                "Agent catalog mismatch "
-                f"(profile missing={missing_profile}, extra={extra_profile}; "
-                f"limits missing={missing_limits}, extra={extra_limits})"
-            )
-        if not self.profiles or any(not _NAME.fullmatch(name) for name in self.profiles):
+    def catalog_is_consistent(self) -> BrokerConfig:
+        if set(self.agent_profiles) != set(self.agent_limits):
+            raise ValueError("Every catalog agent needs exactly one profile and one limit")
+        if not self.profiles or any(not re.fullmatch(LOGICAL_NAME_PATTERN, name) for name in self.profiles):
             raise ValueError("At least one fixed named executor profile is required")
         if set(self.agent_profiles.values()) - set(self.profiles):
             raise ValueError("Every agent must name a catalog profile")
@@ -296,6 +234,15 @@ class BrokerConfig(_StrictModel):
                     raise ValueError(f"Enabled profile {name!r} is incomplete") from exc
         return self
 
+    def require_agents(self, agents: Iterable[str]) -> BrokerConfig:
+        """The registered agent list is the only source of truth for catalog completeness."""
+        expected = set(agents)
+        if set(self.agent_profiles) != expected:
+            missing = sorted(expected - set(self.agent_profiles))
+            extra = sorted(set(self.agent_profiles) - expected)
+            raise ValueError(f"Agent catalog mismatch (missing={missing}, extra={extra})")
+        return self
+
     def bounds_for_agent(self, agent: str) -> InvocationBounds:
         try:
             return self.agent_limits[agent]
@@ -312,43 +259,34 @@ class BrokerConfig(_StrictModel):
     def resolve_contract(
         self,
         agent: str,
-        backend: str,
+        backend_name: str,
         model: str,
         model_settings: dict[str, Any],
         *,
-        backend_endpoint: str,
+        backend: BackendAdaptation,
         atomic_intake: bool = False,
-        merge_system_messages: bool = True,
-        min_max_tokens: int = 0,
-        strict_closed_output_tools: bool = False,
-        enable_thinking: bool | None = None,
-        thinking_token_budget: int | None = None,
     ) -> ExecutorContract:
         """Resolve a secret-free executor contract from trusted effective settings."""
         if not self.enabled:
             raise ValueError("Brokered model transport is disabled")
         profile_name, profile = self.profile_for_agent(agent)
         profile.require_complete()
-        if profile.backend_name != backend:
+        if profile.backend_name != backend_name:
             raise ValueError("Backend is not admitted by the selected access profile")
-        if fixed_https_url(backend_endpoint) != profile.endpoint:
+        if backend.base_url is None or fixed_https_url(backend.base_url) != profile.endpoint:
             raise ValueError("Backend endpoint differs from the operator-approved profile")
-        if merge_system_messages != profile.merge_system_messages:
-            raise ValueError("Message adaptation differs from the approved profile")
-        if min_max_tokens != profile.min_max_tokens:
-            raise ValueError("Output-token floor differs from the approved profile")
-        if enable_thinking is not profile.enable_thinking:
-            raise ValueError("Thinking control differs from the approved profile")
-        validate_thinking_token_budget(thinking_token_budget, enable_thinking)
-        if thinking_token_budget != profile.thinking_token_budget:
-            raise ValueError("Thinking token budget differs from the approved profile")
-        if strict_closed_output_tools != profile.strict_closed_output_tools:
-            raise ValueError("Strict output adaptation differs from the approved profile")
+        for field, message in (
+            ("merge_system_messages", "Message adaptation differs from the approved profile"),
+            ("min_max_tokens", "Output-token floor differs from the approved profile"),
+            ("enable_thinking", "Thinking control differs from the approved profile"),
+            ("thinking_token_budget", "Thinking token budget differs from the approved profile"),
+            ("strict_closed_output_tools", "Strict output adaptation differs from the approved profile"),
+        ):
+            if getattr(backend, field) != getattr(profile, field) or (
+                    type(getattr(backend, field)) is not type(getattr(profile, field))):
+                raise ValueError(message)
         if atomic_intake != (agent == "intake"):
             raise ValueError("Atomic intake profile is valid only for the intake agent")
-
-        from infosec_harness.inference.codec import validate_settings
-
         effective = dict(model_settings)
         validate_settings(effective)
         maximum = effective.get("max_tokens")
@@ -360,7 +298,7 @@ class BrokerConfig(_StrictModel):
         assert profile.supervisor_image is not None
         assert profile.policy_digest is not None
         return ExecutorContract(
-            backend=backend,
+            backend=backend_name,
             model=model,
             profile=profile_name,
             profile_digest=profile.profile_digest,
@@ -370,20 +308,23 @@ class BrokerConfig(_StrictModel):
             supervisor_image=profile.supervisor_image,
             policy_digest=profile.policy_digest,
             model_settings=effective,
-            merge_system_messages=merge_system_messages,
-            min_max_tokens=min_max_tokens,
+            merge_system_messages=profile.merge_system_messages,
+            min_max_tokens=profile.min_max_tokens,
             atomic_intake=atomic_intake,
-            strict_closed_output_tools=strict_closed_output_tools,
-            enable_thinking=enable_thinking,
-            thinking_token_budget=thinking_token_budget,
+            strict_closed_output_tools=profile.strict_closed_output_tools,
+            enable_thinking=profile.enable_thinking,
+            thinking_token_budget=profile.thinking_token_budget,
             provider_retries=0,
             credential_driver="native",
             inspection=(),
         )
 
 
-def load_broker_config(path: Path | None = None) -> BrokerConfig:
-    """Load and validate packaged/operator YAML, including full registry coverage."""
+def load_broker_config(path: Path | None = None, *, agents: Iterable[str]) -> BrokerConfig:
+    """Load and validate packaged/operator YAML, including full coverage of ``agents``.
+
+    Callers pass the registered agent names (``agents.registry.AGENT_BINDINGS``).
+    """
     source = path or (package_root() / "config" / "credential-broker.yaml")
     try:
         value = yaml.safe_load(source.read_text(encoding="utf-8"))
@@ -394,7 +335,7 @@ def load_broker_config(path: Path | None = None) -> BrokerConfig:
         # coercion. YAML sequences are JSON arrays at this boundary, so validate their
         # JSON representation instead of weakening strict field validation.
         encoded = json.dumps(value, allow_nan=False, separators=(",", ":"))
-        config = BrokerConfig.model_validate_json(encoded)
+        config = BrokerConfig.model_validate_json(encoded).require_agents(agents)
     except (TypeError, ValueError) as exc:
         raise ValueError("Broker profile catalog is invalid") from exc
     return config

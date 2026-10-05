@@ -396,3 +396,19 @@ def test_the_agents_that_need_it_are_told_to_use_it_imperatively(agent):
     tool = "describe_callables" if agent == "context" else "inspect_target"
     assert tool in text, f"{agent} is not told the tool exists"
     assert f"Call `{tool}`" in text or f"call `{tool}`" in text
+
+
+def test_a_file_larger_than_the_read_cap_is_described_from_its_first_bytes_only(
+        tmp_path, monkeypatch):
+    """Regression: describe_callables read the whole file with `read_text()`, bypassing
+    MAX_FILE_BYTES, so a multi-gigabyte file was loaded into the worker to describe it."""
+    from infosec_harness.agents import repo_tools
+
+    monkeypatch.setattr(repo_tools, "MAX_FILE_BYTES", 64)
+    monkeypatch.setattr(symbol_inspection, "MAX_FILE_BYTES", 64)
+    (tmp_path / "big.py").write_text("def early(a):\n    pass\n" + "x = 1\n" * 50
+                                     + "def late(b):\n    pass\n")
+    ctx = SimpleNamespace(deps=AgentDeps(repo_path=str(tmp_path)))
+    report = symbol_inspection.describe_callables(ctx, "big.py")
+    assert "early" in report and "late" not in report
+    assert "larger than 64 bytes" in report
