@@ -294,7 +294,19 @@ async def test_output_feedback_repairs_exact_id_or_failed_probe_without_reexecut
 
 
 @pytest.mark.parametrize(
-    "failure", [None, "failed", "truncated", "unverified", "wrong-source", "controls", "contrary"]
+    "failure",
+    [
+        None,
+        "failed",
+        "truncated",
+        "unverified",
+        "wrong-source",
+        "controls",
+        "target_reached",
+        "oracle_valid",
+        "positive_control",
+        "contrary",
+    ],
 )
 async def test_verdict_validator_requires_complete_matching_offline_evidence(failure):
     from pydantic_ai import ModelRetry
@@ -316,6 +328,8 @@ async def test_verdict_validator_requires_complete_matching_offline_evidence(fai
         observations["source_verified"] = False
     if failure == "controls":
         observations["negative_control"] = False
+    if failure in ("target_reached", "oracle_valid", "positive_control"):
+        observations[failure] = False
     if failure == "contrary":
         observations["vulnerability_observed"] = False
     evidence = Evidence(
@@ -522,6 +536,83 @@ async def test_split_probe_marker_feedback_repairs_with_new_bounded_probe():
         ),
     )
     assert result.output.label == "potentially_exploitable"
+    assert result.output.evidence_ids == ["probe:3:repaired"]
+    assert len(shell.executions) == 2
+    assert calls == 4
+    assert shell.executions[0][2] != shell.executions[1][2]
+
+
+async def test_blocked_target_feedback_requires_new_complete_probe():
+    from pydantic_ai.messages import RetryPromptPart
+
+    shell = FakeOpenShell()
+    native_execute = shell.execute
+    observations = dict(
+        target_reached=False,
+        oracle_valid=True,
+        positive_control=True,
+        negative_control=True,
+        vulnerability_observed=False,
+    )
+
+    async def execute(sandbox, command, **kwargs):
+        await native_execute(sandbox, command, **kwargs)
+        # Mocked process evidence: normal read succeeds; the real callable rejects traversal.
+        claims = {**observations, "target_reached": len(shell.executions) > 1}
+        return CommandResult(
+            0, "normal read OK; traversal BLOCKED\nHARNESS_PROBE " + json.dumps(claims), ""
+        )
+
+    shell.execute = execute
+    calls = 0
+
+    def respond(messages, info):
+        nonlocal calls
+        calls += 1
+        if calls in (1, 3):
+            if calls == 3:
+                feedback = [
+                    part.content
+                    for message in messages
+                    if isinstance(message, ModelRequest)
+                    for part in message.parts
+                    if isinstance(part, RetryPromptPart)
+                ][-1]
+                assert "target_reached must be true" in feedback
+                assert "observed security rejection still reaches" in feedback
+                assert "Setup/import failures or stand-ins do not qualify" in feedback
+                assert "run a new probe" in feedback
+                assert "do not relabel the existing receipt" in feedback
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "run_probe",
+                        {"command": "python probe.py"},
+                        tool_call_id="blocked" if calls == 1 else "repaired",
+                    )
+                ]
+            )
+        response = final_response(
+            info, evidence_ids=["probe:1:blocked" if calls == 2 else "probe:3:repaired"]
+        )
+        response.parts[0].args.update(
+            label="likely_not_exploitable",
+            citations=[dict(path="reader.py", start_line=1, end_line=1)],
+        )
+        return response
+
+    request = InvestigationRequest(finding=Finding(title="Traversal", repo_url="fixture"))
+    result = await build_agent(shell, FunctionModel(respond)).run(
+        "Inspect",
+        deps=InvestigationDeps(
+            run_id="run",
+            sandbox=await shell.create("run"),
+            source_digest="digest",
+            snapshot_path="/fixture",
+            request=request,
+        ),
+    )
+    assert result.output.label == "likely_not_exploitable"
     assert result.output.evidence_ids == ["probe:3:repaired"]
     assert len(shell.executions) == 2
     assert calls == 4

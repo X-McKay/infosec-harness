@@ -1,22 +1,24 @@
 # Qualification status — 2026-10-05
 
-Implementation candidate: `2d28974` on `feature/astra-simplification`.
+Latest evaluated implementation candidate: `ecf0333` on `feature/astra-simplification`.
 PR: https://github.com/X-McKay/infosec-harness/pull/6 (target `develop`).
 
-The rewrite is implemented and pushed. Live release qualification remains **blocked**.
-A fresh cohort exposed an evidence-feedback defect, corrected in `f7b6656` with generation
-v11. The following cohort captured an OpenShell policy-generation change closing the
-active model tunnel; see [native provider readiness](NATIVE_PROVIDER_READINESS.md).
-The readiness-gated candidate completed eleven model calls, then exhausted output
-corrections on malformed probe markers; see [marker feedback](PROBE_MARKER_FEEDBACK.md).
-The next candidate adds explicit one-line marker feedback without changing thresholds.
-No candidate is qualified for promotion, and no improved accuracy claim is supported.
+Live release qualification remains **blocked**. The latest full-cohort attempt completed
+five cases correctly, then `pathtraversal-fixed` exhausted two output corrections because
+the model interpreted target_reached as exploit/sink reachability. Thirty cases remained
+unstarted. See [target reachability feedback](TARGET_REACHABILITY_FEEDBACK.md).
+A correction clarifies probe semantics and validation feedback without changing admission,
+labels, thresholds or budgets. No candidate is qualified for promotion.
+
+Earlier confirmed defects and bounded fixes are recorded in
+[verdict feedback](VERDICT_FEEDBACK.md), [native provider readiness](NATIVE_PROVIDER_READINESS.md)
+and [marker feedback](PROBE_MARKER_FEEDBACK.md). Original failed reports are preserved.
 
 ## Gates
 
 | Gate | Status | Evidence / limit |
 | --- | --- | --- |
-| Deterministic regression suite | passed | 233 tests with `HARNESS_TEST_REQUIRE_TEMPORAL=1` |
+| Deterministic regression suite | passed | 263 tests with `HARNESS_TEST_REQUIRE_TEMPORAL=1` |
 | Real Temporal replay, restart, cancellation and identity | passed | Includes two-worker model/tool/skill rejection, cleanup ownership and repeated cancellation |
 | Lint, compilation, generated contracts and instructions | passed | Local checks and backend CI |
 | Lightweight UI | passed | Five tests, types/build, browser inspection and managed control-plane readiness; web CI |
@@ -24,8 +26,8 @@ No candidate is qualified for promotion, and no improved accuracy claim is suppo
 | Repeated native model admission | passed | Same provider-attached sandbox, including a new adapter instance, without replaying commands |
 | Minimal executor / multi-turn usage decoding | passed | New native image imports and usage-extension preservation; no inference needed for decode proof |
 | Real self-hosted model dispatch | passed | Typed native smoke and completed production model responses; this is connectivity evidence only |
-| Full 36-case live cohort | failed | First investigation stopped after two completed responses and a third connection loss; 35 cases unstarted |
-| Task-success threshold (75%) | not_checked | No investigation completed; no quality score claimed |
+| Full 36-case live cohort | failed | Latest candidate: five correct completions; sixth workflow failed; 30 cases unstarted |
+| Task-success threshold (75%) | not_checked | Incomplete cohort; no full-corpus quality score claimed |
 | Unsafe negatives (maximum zero) | not_checked | Incomplete cohort cannot establish safety performance |
 | Native package egress / offline Python dependency use | passed | Approved PyPI access, unrelated-host denial, pinned install followed by offline import |
 | Reliable clean-cache Maven build | failed | Initial transfer failures preserved; IPv4 and native-CA setup eventually compiled unchanged Java, but reliability is not established |
@@ -35,11 +37,11 @@ No candidate is qualified for promotion, and no improved accuracy claim is suppo
 Runtime Python is 17 files, approximately 3,044 lines, versus 178 files / 28,527 lines
 before the rewrite (about 89% fewer lines). One PydanticAI investigator chooses skills
 and tools; Temporal owns durable execution; OpenShell is the only agent execution and
-provider boundary. The next candidate generation is `investigate-v11`; incompatible old
+provider boundary. The current generation is `investigate-v11`; incompatible old
 workers must drain. Durable receipts and source snapshots must remain available to
 the queue's workers. See the architecture documentation for the exact recovery limits.
 
-## Frozen native candidate
+## Historical native candidate
 
 - Workspace image: `sha256:acb4868cde1d9412b58d42a7306aec44ea6fcef40571f2140884ba2c20f75949`.
 - Model image: `sha256:e86f45fd6e30fc2f37d7d861f241d02110b7ad8ab32d2d9c4f732ef0ad991fd3`.
@@ -52,7 +54,7 @@ The rebuilt model image passed actual imports and next-turn decoding of native u
 extensions. Private `usage-extension-model-import-report.json` SHA-256:
 `49e0a7f1952f275fd0546163653816c2612f02cc31338c62dcff0a8e2f6d78f2`.
 
-## Latest live failure
+## Earlier disconnect evidence
 
 Workflow `investigate-v10-eval-e24bdcd26e09408a8c5d0bc924fec24a` completed two model
 responses and a repository read. Model receipts `model:2` and `model:3` report

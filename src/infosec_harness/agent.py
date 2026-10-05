@@ -245,12 +245,28 @@ async def validate_verdict(ctx: RunContext[InvestigationDeps], verdict: Verdict)
                 "HARNESS_PROBE line is invalid. Correct the probe, execute a new run_probe and "
                 "cite its exact ID, or return inconclusive."
             )
+        claim_feedback = ""
+        if any(
+            item.kind == "probe"
+            and item.id in verdict.evidence_ids
+            and item.observations.get("origin") == "self_reported"
+            and item.observations.get("target_reached") is False
+            for item in evidence
+        ):
+            claim_feedback = (
+                " The cited target_reached must be true: it means the finding input invoked "
+                "the real target entry point, including its validation checks; an observed "
+                "security rejection still reaches the target. It does not mean the sensitive "
+                "sink ran or the vulnerability was observed. Setup/import failures or stand-ins "
+                "do not qualify. Derive the value from actual execution, then run a new probe "
+                "and cite its exact ID; do not relabel the existing receipt."
+            )
         raise ModelRetry(
             "A definitive verdict needs source citations and the exact ID of a successful, "
             "complete, source-verified offline run_probe with target/oracle and both controls "
             "true and vulnerability_observed matching the verdict, without contradictory "
             "successful probes. Workspace execute cannot substitute. Correct the probe or "
-            "return inconclusive when corroboration is unavailable."
+            "return inconclusive when corroboration is unavailable." + claim_feedback
         )
     return verdict
 

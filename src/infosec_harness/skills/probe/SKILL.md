@@ -17,8 +17,13 @@ The probe must exercise the real target and report evidence for both controls:
 
 - A positive control demonstrates the observation/oracle can detect the claimed behavior.
 - A negative control demonstrates the oracle does not fire on a known-safe/control input.
-- The actual finding input must reach the target; an exception during setup is not evidence
-  that the target rejects an attack.
+- `target_reached` means the actual finding input invoked the real target entry point,
+  including its validation or containment checks. It does not mean the sensitive sink ran
+  or the attack succeeded. An observed security rejection by that target still sets
+  `target_reached` to true and can set `vulnerability_observed` to false when the oracle
+  and both controls worked. For example, a real file-reading callable rejecting `../`
+  while a normal read succeeds has reached the target. An import/setup exception, missing
+  dependency, or a stand-in rejecting the input has not reached the real target.
 - Report whether the vulnerability was observed. A false value is meaningful only when the
   target was reached and the oracle and both controls worked.
 
