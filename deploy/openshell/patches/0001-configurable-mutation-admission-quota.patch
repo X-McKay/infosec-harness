@@ -1,0 +1,709 @@
+diff --git a/crates/openshell-core/src/config.rs b/crates/openshell-core/src/config.rs
+index c85fc4308..6a280f426 100644
+--- a/crates/openshell-core/src/config.rs
++++ b/crates/openshell-core/src/config.rs
+@@ -40,6 +40,33 @@ pub fn default_sandbox_pids_limit() -> Option<NonZeroI64> {
+     NonZeroI64::new(DEFAULT_SANDBOX_PIDS_LIMIT)
+ }
+ 
++/// Default number of durable mutation admissions retained per caller.
++///
++/// Completed admissions are retained for the replay window and unresolved
++/// admissions are retained until reconciled, so every retained claim counts
++/// toward this quota.
++pub const DEFAULT_MAX_MUTATION_ADMISSIONS_PER_CALLER: u32 = 1000;
++
++/// Inclusive upper bound for the configurable per-caller admission quota.
++///
++/// The quota also bounds a single admission-pruning scan, so it must stay
++/// finite and small enough to read in one storage query.
++pub const MAX_MUTATION_ADMISSIONS_PER_CALLER_LIMIT: u32 = 1_000_000;
++
++/// Validate a per-caller durable mutation admission quota.
++///
++/// # Errors
++///
++/// Returns a static description when the quota is zero or exceeds
++/// [`MAX_MUTATION_ADMISSIONS_PER_CALLER_LIMIT`].
++pub const fn validate_max_mutation_admissions_per_caller(quota: u32) -> Result<u32, &'static str> {
++    if quota == 0 || quota > MAX_MUTATION_ADMISSIONS_PER_CALLER_LIMIT {
++        Err("must be an integer between 1 and 1000000 inclusive")
++    } else {
++        Ok(quota)
++    }
++}
++
+ /// Default Docker bridge network name for local sandboxes.
+ pub const DEFAULT_DOCKER_NETWORK_NAME: &str = "openshell-docker";
+ 
+@@ -256,6 +283,14 @@ pub struct Config {
+ 
+     /// Browser-facing sandbox service routing configuration.
+     pub service_routing: ServiceRoutingConfig,
++
++    /// Maximum durable mutation admissions retained per caller.
++    ///
++    /// Read once at startup. Bounds both atomic admission and the expired-claim
++    /// pruning scan. Always between 1 and
++    /// [`MAX_MUTATION_ADMISSIONS_PER_CALLER_LIMIT`] inclusive when set through
++    /// [`Self::with_max_mutation_admissions_per_caller`].
++    pub max_mutation_admissions_per_caller: u32,
+ }
+ 
+ /// Browser-facing sandbox service routing configuration.
+@@ -868,6 +903,7 @@ impl Config {
+             grpc_rate_limit_requests: None,
+             grpc_rate_limit_window_secs: None,
+             service_routing: ServiceRoutingConfig::default(),
++            max_mutation_admissions_per_caller: DEFAULT_MAX_MUTATION_ADMISSIONS_PER_CALLER,
+         }
+     }
+ 
+@@ -955,6 +991,21 @@ impl Config {
+         self
+     }
+ 
++    /// Set the per-caller durable mutation admission quota.
++    ///
++    /// # Errors
++    ///
++    /// Returns a static description when the quota is zero or exceeds
++    /// [`MAX_MUTATION_ADMISSIONS_PER_CALLER_LIMIT`].
++    pub fn with_max_mutation_admissions_per_caller(
++        mut self,
++        quota: u32,
++    ) -> Result<Self, &'static str> {
++        self.max_mutation_admissions_per_caller =
++            validate_max_mutation_admissions_per_caller(quota)?;
++        Ok(self)
++    }
++
+     /// Set the gateway-wide gRPC request rate limit.
+     #[must_use]
+     pub const fn with_grpc_rate_limit(
+@@ -1650,4 +1701,38 @@ mod tests {
+         let sandbox_tag = sandbox_image.rsplit_once(':').unwrap().1;
+         assert!(!sandbox_tag.is_empty());
+     }
++
++    #[test]
++    fn mutation_admission_quota_defaults_and_validates() {
++        use super::{
++            Config, DEFAULT_MAX_MUTATION_ADMISSIONS_PER_CALLER,
++            MAX_MUTATION_ADMISSIONS_PER_CALLER_LIMIT, validate_max_mutation_admissions_per_caller,
++        };
++        assert_eq!(DEFAULT_MAX_MUTATION_ADMISSIONS_PER_CALLER, 1000);
++        assert_eq!(
++            Config::new(None).max_mutation_admissions_per_caller,
++            DEFAULT_MAX_MUTATION_ADMISSIONS_PER_CALLER
++        );
++        for valid in [1, 1000, 5000, MAX_MUTATION_ADMISSIONS_PER_CALLER_LIMIT] {
++            assert_eq!(
++                validate_max_mutation_admissions_per_caller(valid),
++                Ok(valid)
++            );
++            assert_eq!(
++                Config::new(None)
++                    .with_max_mutation_admissions_per_caller(valid)
++                    .unwrap()
++                    .max_mutation_admissions_per_caller,
++                valid
++            );
++        }
++        for invalid in [0, MAX_MUTATION_ADMISSIONS_PER_CALLER_LIMIT + 1, u32::MAX] {
++            assert!(validate_max_mutation_admissions_per_caller(invalid).is_err());
++            assert!(
++                Config::new(None)
++                    .with_max_mutation_admissions_per_caller(invalid)
++                    .is_err()
++            );
++        }
++    }
+ }
+diff --git a/crates/openshell-server/src/cli.rs b/crates/openshell-server/src/cli.rs
+index f531d88c5..04380a707 100644
+--- a/crates/openshell-server/src/cli.rs
++++ b/crates/openshell-server/src/cli.rs
+@@ -560,6 +560,21 @@ fn prepare_server_config_with_drivers(
+         config.policy_validation_failure_mode = mode;
+     }
+ 
++    if let Some(quota) = file
++        .as_ref()
++        .and_then(|f| f.openshell.gateway.max_mutation_admissions_per_caller)
++    {
++        // `config_file::load` already validated the range; re-check here so a
++        // programmatically built file can never install an unbounded quota.
++        config = config
++            .with_max_mutation_admissions_per_caller(quota)
++            .map_err(|message| {
++                miette::miette!(
++                    "invalid gateway config field `openshell.gateway.max_mutation_admissions_per_caller`: {message}"
++                )
++            })?;
++    }
++
+     if let Some(issuer) = args.oidc_issuer.clone() {
+         config = config.with_oidc(openshell_core::OidcConfig {
+             issuer,
+@@ -3303,4 +3318,60 @@ mem_mib = "not-a-number"
+         assert!(file.openshell.drivers.contains_key("docker"));
+         assert!(file.openshell.drivers.contains_key("vm"));
+     }
++
++    #[test]
++    fn server_config_preparation_reads_mutation_admission_quota_once() {
++        let _lock = ENV_LOCK
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner);
++        let state = tempfile::tempdir().unwrap();
++        let local_tls = tempfile::tempdir().unwrap();
++        let _g1 = EnvVarGuard::set("XDG_STATE_HOME", state.path().to_str().unwrap());
++        let _g2 = EnvVarGuard::set(
++            "OPENSHELL_LOCAL_TLS_DIR",
++            local_tls.path().to_str().unwrap(),
++        );
++        let config_path = state.path().join("gateway.toml");
++        let prepare = |gateway: &str| {
++            std::fs::write(
++                &config_path,
++                format!("[openshell]\nversion = 2\n\n[openshell.gateway]\n{gateway}"),
++            )
++            .unwrap();
++            let (mut args, matches) = parse_with_args(&[
++                "openshell-gateway",
++                "--config",
++                config_path.to_str().unwrap(),
++                "--db-url",
++                "sqlite::memory:",
++                "--compute-driver",
++                "podman",
++                "--disable-tls",
++            ]);
++            super::prepare_server_config(&mut args, &matches)
++        };
++
++        let prepared = prepare("").expect("quota is optional");
++        assert_eq!(
++            prepared.config.max_mutation_admissions_per_caller,
++            openshell_core::config::DEFAULT_MAX_MUTATION_ADMISSIONS_PER_CALLER
++        );
++        assert_eq!(prepared.config.max_mutation_admissions_per_caller, 1000);
++
++        let prepared = prepare("max_mutation_admissions_per_caller = 5000\n")
++            .expect("custom quota is accepted");
++        assert_eq!(prepared.config.max_mutation_admissions_per_caller, 5000);
++
++        for invalid in ["0", "1000001"] {
++            let error = prepare(&format!("max_mutation_admissions_per_caller = {invalid}\n"))
++                .err()
++                .expect("out-of-range quota must fail startup");
++            assert!(
++                error
++                    .to_string()
++                    .contains("max_mutation_admissions_per_caller"),
++                "{error}"
++            );
++        }
++    }
+ }
+diff --git a/crates/openshell-server/src/config_file.rs b/crates/openshell-server/src/config_file.rs
+index 87180766a..a10cc04ec 100644
+--- a/crates/openshell-server/src/config_file.rs
++++ b/crates/openshell-server/src/config_file.rs
+@@ -124,6 +124,12 @@ pub struct GatewayFileSection {
+     #[serde(default)]
+     pub policy_validation_failure_mode: Option<openshell_core::PolicyValidationFailureMode>,
+ 
++    // ── Durable mutation admission ───────────────────────────────────────
++    /// Maximum durable mutation admissions retained per caller. Omit to use
++    /// the built-in default of 1000. Must be within `1..=1000000`.
++    #[serde(default)]
++    pub max_mutation_admissions_per_caller: Option<u32>,
++
+     // ── Service routing ──────────────────────────────────────────────────
+     /// Subject Alternative Names configured on the gateway server certificate.
+     /// Wildcard DNS SANs also enable sandbox service URLs under that domain.
+@@ -524,6 +530,15 @@ fn parse_and_validate(path: &Path, contents: &str) -> Result<ConfigFile, ConfigF
+             message: "omit the field to use default encrypted gateway credential storage, or specify exactly one external credential driver",
+         });
+     }
++    if let Some(quota) = file.openshell.gateway.max_mutation_admissions_per_caller
++        && let Err(message) =
++            openshell_core::config::validate_max_mutation_admissions_per_caller(quota)
++    {
++        return Err(ConfigFileError::InvalidValue {
++            field: "openshell.gateway.max_mutation_admissions_per_caller",
++            message,
++        });
++    }
+     if let Some((name, _)) = file
+         .openshell
+         .drivers
+@@ -1145,6 +1160,57 @@ database_url = "sqlite::memory:"
+         ));
+     }
+ 
++    #[test]
++    fn mutation_admission_quota_is_optional_and_parsed() {
++        let tmp = write_tmp("[openshell.gateway]\nlog_level = \"info\"\n");
++        let file = load(tmp.path()).expect("quota is optional");
++        assert_eq!(
++            file.openshell.gateway.max_mutation_admissions_per_caller,
++            None
++        );
++
++        for quota in [1_u32, 5000, 1_000_000] {
++            let tmp = write_tmp(&format!(
++                "[openshell.gateway]\nmax_mutation_admissions_per_caller = {quota}\n"
++            ));
++            let file = load(tmp.path()).expect("valid quota must load");
++            assert_eq!(
++                file.openshell.gateway.max_mutation_admissions_per_caller,
++                Some(quota)
++            );
++        }
++    }
++
++    #[test]
++    fn rejects_out_of_range_mutation_admission_quota() {
++        for quota in ["0", "1000001", "4294967295"] {
++            let tmp = write_tmp(&format!(
++                "[openshell.gateway]\nmax_mutation_admissions_per_caller = {quota}\n"
++            ));
++            let err = load(tmp.path()).expect_err("out-of-range quota must be rejected");
++            assert!(
++                matches!(
++                    err,
++                    ConfigFileError::InvalidValue {
++                        field: "openshell.gateway.max_mutation_admissions_per_caller",
++                        ..
++                    }
++                ),
++                "{err}"
++            );
++            assert!(err.to_string().contains("between 1 and 1000000"), "{err}");
++        }
++        // Values that do not fit the u32 schema type never reach the range
++        // check, but are still rejected while loading.
++        for quota in ["-1", "4294967296", "1.5", "\"5000\"", "nan", "inf"] {
++            let tmp = write_tmp(&format!(
++                "[openshell.gateway]\nmax_mutation_admissions_per_caller = {quota}\n"
++            ));
++            let err = load(tmp.path()).expect_err("non-u32 quota must be rejected");
++            assert!(matches!(err, ConfigFileError::Parse { .. }), "{err}");
++        }
++    }
++
+     #[test]
+     fn rejects_unknown_gateway_field() {
+         let toml = r"
+diff --git a/crates/openshell-server/src/grpc/mutation_replay.rs b/crates/openshell-server/src/grpc/mutation_replay.rs
+index 19ce93688..4e8d3c152 100644
+--- a/crates/openshell-server/src/grpc/mutation_replay.rs
++++ b/crates/openshell-server/src/grpc/mutation_replay.rs
+@@ -39,7 +39,9 @@ use crate::persistence::{
+ 
+ const OBJECT_TYPE: &str = "mutation_admission_v1";
+ const SUCCESS_TTL_MS: i64 = 24 * 60 * 60 * 1000;
+-const MAX_ADMISSIONS_PER_CALLER: u32 = 1000;
++// The per-caller admission quota is operator configuration
++// (`openshell.gateway.max_mutation_admissions_per_caller`, default 1000),
++// validated at startup and read from `ServerState::config`.
+ // Bound work detached from request cancellation across all service instances.
+ static EXECUTORS: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(64)));
+ static DESCRIPTORS: LazyLock<DescriptorPool> = LazyLock::new(|| {
+@@ -253,6 +255,9 @@ async fn execute_owned<M: Mutation>(
+         success: None,
+         completed_at_ms: None,
+     };
++    // Startup-validated quota. The same bound limits atomic admission and the
++    // expired-claim scan; it never affects request-ID deduplication below.
++    let quota = state.config.max_mutation_admissions_per_caller;
+     // Contention is bounded. Losing a race never authorizes execution.
+     for _ in 0..8 {
+         if let Some(row) = state
+@@ -321,13 +326,13 @@ async fn execute_owned<M: Mutation>(
+                 bucket,
+                 &payload,
+                 None,
+-                u64::from(MAX_ADMISSIONS_PER_CALLER),
++                u64::from(quota),
+             )
+             .await;
+         let version = match write {
+             Ok(Some(write)) => write.resource_version,
+             Ok(None) => {
+-                if prune_expired(&state.store, bucket).await? {
++                if prune_expired(&state.store, bucket, quota).await? {
+                     continue;
+                 }
+                 return Err(Status::resource_exhausted(
+@@ -422,10 +427,11 @@ impl Completion {
+     }
+ }
+ 
+-async fn prune_expired(store: &Store, bucket: &str) -> Result<bool, Status> {
+-    // The bucket is atomically bounded, so this scan cannot grow without limit.
++async fn prune_expired(store: &Store, bucket: &str, quota: u32) -> Result<bool, Status> {
++    // The bucket is atomically bounded by the same quota, so this scan cannot
++    // grow without limit.
+     let rows = store
+-        .list(OBJECT_TYPE, bucket, MAX_ADMISSIONS_PER_CALLER, 0)
++        .list(OBJECT_TYPE, bucket, quota, 0)
+         .await
+         .map_err(storage_error)?;
+     let mut removed = false;
+diff --git a/crates/openshell-server/src/grpc/mutation_replay/tests.rs b/crates/openshell-server/src/grpc/mutation_replay/tests.rs
+index 28dfc688f..1a2408d59 100644
+--- a/crates/openshell-server/src/grpc/mutation_replay/tests.rs
++++ b/crates/openshell-server/src/grpc/mutation_replay/tests.rs
+@@ -34,11 +34,23 @@ pub(super) fn reason(status: &Status) -> String {
+ }
+ 
+ pub(super) async fn state_for(store: Store) -> Arc<ServerState> {
++    state_with_quota(
++        store,
++        openshell_core::config::DEFAULT_MAX_MUTATION_ADMISSIONS_PER_CALLER,
++    )
++    .await
++}
++
++/// Same as [`state_for`], with an operator-configured admission quota.
++async fn state_with_quota(store: Store, quota: u32) -> Arc<ServerState> {
+     let store = Arc::new(store);
+     crate::ensure_default_workspace(&store).await.unwrap();
+     let compute = crate::compute::new_test_runtime(store.clone()).await;
+     Arc::new(ServerState::new(
+-        openshell_core::Config::new(None).with_credential_drivers(["test-static"]),
++        openshell_core::Config::new(None)
++            .with_credential_drivers(["test-static"])
++            .with_max_mutation_admissions_per_caller(quota)
++            .unwrap(),
+         store,
+         compute,
+         crate::sandbox_index::SandboxIndex::new(),
+@@ -468,7 +480,15 @@ async fn exercise_expiry_and_uncertainty(state: &Arc<ServerState>) {
+         reason(&run(state, authed_request(req)).await.unwrap_err()),
+         "REQUEST_OUTCOME_UNCERTAIN"
+     );
+-    assert!(!prune_expired(&state.store, &row.workspace).await.unwrap());
++    assert!(
++        !prune_expired(
++            &state.store,
++            &row.workspace,
++            state.config.max_mutation_admissions_per_caller
++        )
++        .await
++        .unwrap()
++    );
+ }
+ 
+ #[tokio::test]
+@@ -720,6 +740,9 @@ async fn cancellation_keeps_owned_work_and_duplicate_cannot_take_over() {
+ #[tokio::test]
+ async fn quota_fails_closed_but_replays_and_expired_success_cleanup_still_work() {
+     let state = test_server_state().await;
++    // Unset configuration keeps the historical default.
++    let quota = state.config.max_mutation_admissions_per_caller;
++    assert_eq!(quota, 1000);
+     let req = create("quota-replay");
+     run(&state, authed_request(req.clone())).await.unwrap();
+     let original = state
+@@ -738,7 +761,7 @@ async fn quota_fails_closed_but_replays_and_expired_success_cleanup_still_work()
+         completed_at_ms: None,
+     };
+     let payload = serde_json::to_vec(&pending).unwrap();
+-    for i in 1..MAX_ADMISSIONS_PER_CALLER - 1 {
++    for i in 1..quota - 1 {
+         let id = format!("quota-{i}");
+         state
+             .store
+@@ -749,7 +772,7 @@ async fn quota_fails_closed_but_replays_and_expired_success_cleanup_still_work()
+                 &original.workspace,
+                 &payload,
+                 None,
+-                u64::from(MAX_ADMISSIONS_PER_CALLER),
++                u64::from(quota),
+             )
+             .await
+             .unwrap()
+@@ -803,7 +826,7 @@ async fn quota_fails_closed_but_replays_and_expired_success_cleanup_still_work()
+             .count_in_workspace(OBJECT_TYPE, &original.workspace)
+             .await
+             .unwrap(),
+-        u64::from(MAX_ADMISSIONS_PER_CALLER)
++        u64::from(quota)
+     );
+     assert!(
+         state
+@@ -815,6 +838,253 @@ async fn quota_fails_closed_but_replays_and_expired_success_cleanup_still_work()
+     );
+ }
+ 
++fn unresolved_admission_payload() -> Vec<u8> {
++    serde_json::to_vec(&Admission {
++        protection: None,
++        format_version: 1,
++        payload_hash: "unused".into(),
++        workspace_id: None,
++        target_id: None,
++        success: None,
++        completed_at_ms: None,
++    })
++    .unwrap()
++}
++
++/// Fill `bucket` with unresolved claims until it holds `target` rows.
++async fn fill_bucket(state: &ServerState, bucket: &str, prefix: &str, target: u32) {
++    let payload = unresolved_admission_payload();
++    let quota = u64::from(state.config.max_mutation_admissions_per_caller);
++    let mut count = state
++        .store
++        .count_in_workspace(OBJECT_TYPE, bucket)
++        .await
++        .unwrap();
++    while count < u64::from(target) {
++        let id = format!("{prefix}-{count}");
++        state
++            .store
++            .create_if_workspace_count_below(OBJECT_TYPE, &id, &id, bucket, &payload, None, quota)
++            .await
++            .unwrap()
++            .unwrap();
++        count += 1;
++    }
++}
++
++#[tokio::test]
++async fn configured_quota_admits_beyond_default_and_refuses_at_configured_limit() {
++    let quota = 1003;
++    let state = state_with_quota(Store::connect("sqlite::memory:").await.unwrap(), quota).await;
++    assert_eq!(state.config.max_mutation_admissions_per_caller, quota);
++    let first = create("custom-quota-first");
++    run(&state, authed_request(first.clone())).await.unwrap();
++    let bucket = state
++        .store
++        .list_by_type_after(OBJECT_TYPE, None, 1)
++        .await
++        .unwrap()
++        .remove(0)
++        .workspace;
++    // The built-in default would refuse the 1001st claim.
++    fill_bucket(&state, &bucket, "custom", 1000).await;
++    run(&state, authed_request(create("custom-quota-1001")))
++        .await
++        .unwrap();
++    fill_bucket(&state, &bucket, "custom", quota).await;
++    assert_eq!(
++        state
++            .store
++            .count_in_workspace(OBJECT_TYPE, &bucket)
++            .await
++            .unwrap(),
++        u64::from(quota)
++    );
++    let refused = create("custom-quota-refused");
++    assert_eq!(
++        run(&state, authed_request(refused.clone()))
++            .await
++            .unwrap_err()
++            .code(),
++        Code::ResourceExhausted
++    );
++    assert!(
++        state
++            .store
++            .get_message_by_name::<Workspace>("", &refused.name)
++            .await
++            .unwrap()
++            .is_none()
++    );
++    // A full bucket still replays completed claims instead of re-executing.
++    let replay = run(&state, authed_request(first)).await.unwrap();
++    assert_eq!(replay.metadata().get("openshell-replayed").unwrap(), "true");
++    assert_eq!(
++        state
++            .store
++            .count_in_workspace(OBJECT_TYPE, &bucket)
++            .await
++            .unwrap(),
++        u64::from(quota)
++    );
++}
++
++#[tokio::test]
++async fn raising_quota_never_readmits_claimed_request_ids() {
++    let dir = tempfile::tempdir().unwrap();
++    let url = format!(
++        "sqlite://{}?mode=rwc",
++        dir.path().join("quota-raise.db").display()
++    );
++    let state = state_with_quota(Store::connect(&url).await.unwrap(), 3).await;
++    let completed = create("raise-completed");
++    run(&state, authed_request(completed.clone()))
++        .await
++        .unwrap();
++    // Leave an unresolved claim behind an effect, as an interrupted owner would.
++    let unresolved = create("raise-unresolved");
++    let control = Arc::new(Control {
++        fail_after_effect: true,
++        ..Default::default()
++    });
++    control.proceed.notify_one();
++    let mut request = authed_request(ControlledCreate {
++        name: unresolved.name.clone(),
++        request_id: unresolved.request_id.clone(),
++    });
++    request.extensions_mut().insert(control.clone());
++    assert_eq!(
++        run(&state, request).await.unwrap_err().code(),
++        Code::Internal
++    );
++    let third = create("raise-third");
++    run(&state, authed_request(third.clone())).await.unwrap();
++    let refused = create("raise-refused");
++    assert_eq!(
++        run(&state, authed_request(refused.clone()))
++            .await
++            .unwrap_err()
++            .code(),
++        Code::ResourceExhausted
++    );
++    let workspaces = state
++        .store
++        .count_in_workspace(Workspace::object_type(), "")
++        .await
++        .unwrap();
++    drop(state);
++
++    // Restart with a larger quota: only genuinely new request IDs gain room.
++    let raised = state_with_quota(Store::connect(&url).await.unwrap(), 10).await;
++    for req in [&completed, &third] {
++        let replay = run(&raised, authed_request(req.clone())).await.unwrap();
++        assert_eq!(replay.metadata().get("openshell-replayed").unwrap(), "true");
++    }
++    assert_eq!(
++        reason(
++            &run(&raised, authed_request(unresolved.clone()))
++                .await
++                .unwrap_err()
++        ),
++        "REQUEST_OUTCOME_UNCERTAIN"
++    );
++    let mut retry = authed_request(ControlledCreate {
++        name: unresolved.name.clone(),
++        request_id: unresolved.request_id.clone(),
++    });
++    retry.extensions_mut().insert(control.clone());
++    assert_eq!(
++        reason(&run(&raised, retry).await.unwrap_err()),
++        "REQUEST_OUTCOME_UNCERTAIN"
++    );
++    assert_eq!(control.calls.load(Ordering::SeqCst), 1);
++    let mut mismatch = completed.clone();
++    mismatch.labels.insert("changed".into(), "payload".into());
++    assert_eq!(
++        reason(&run(&raised, authed_request(mismatch)).await.unwrap_err()),
++        "REQUEST_ID_PAYLOAD_MISMATCH"
++    );
++    assert_eq!(
++        raised
++            .store
++            .count_in_workspace(Workspace::object_type(), "")
++            .await
++            .unwrap(),
++        workspaces
++    );
++    run(&raised, authed_request(refused)).await.unwrap();
++}
++
++#[tokio::test]
++async fn pruning_scan_uses_configured_quota_and_keeps_unresolved_claims() {
++    let state = state_with_quota(Store::connect("sqlite::memory:").await.unwrap(), 3).await;
++    let quota = state.config.max_mutation_admissions_per_caller;
++    let bucket = format!("_mutation/prune-{}", uuid::Uuid::new_v4().simple());
++    fill_bucket(&state, &bucket, "a-unresolved", 2).await;
++    // Rows are listed by creation time then name, so the expired claim sorts
++    // after both unresolved claims and is only visible to a scan of 3 rows.
++    let expired = serde_json::to_vec(&Admission {
++        protection: None,
++        format_version: 1,
++        payload_hash: "unused".into(),
++        workspace_id: None,
++        target_id: None,
++        success: Some(Success::Deletion { outcome: 0 }),
++        completed_at_ms: Some(0),
++    })
++    .unwrap();
++    state
++        .store
++        .create_if_workspace_count_below(
++            OBJECT_TYPE,
++            "z-expired",
++            "z-expired",
++            &bucket,
++            &expired,
++            None,
++            u64::from(quota),
++        )
++        .await
++        .unwrap()
++        .unwrap();
++    assert!(
++        !prune_expired(&state.store, &bucket, quota - 1)
++            .await
++            .unwrap()
++    );
++    assert!(
++        state
++            .store
++            .get(OBJECT_TYPE, "z-expired")
++            .await
++            .unwrap()
++            .is_some()
++    );
++    assert!(prune_expired(&state.store, &bucket, quota).await.unwrap());
++    assert!(
++        state
++            .store
++            .get(OBJECT_TYPE, "z-expired")
++            .await
++            .unwrap()
++            .is_none()
++    );
++    // Unresolved claims never expire, whatever the scan bound.
++    assert!(
++        !prune_expired(&state.store, &bucket, 1_000_000)
++            .await
++            .unwrap()
++    );
++    assert_eq!(
++        state
++            .store
++            .count_in_workspace(OBJECT_TYPE, &bucket)
++            .await
++            .unwrap(),
++        2
++    );
++}
++
+ #[tokio::test]
+ async fn workspace_replacement_blocks_replay_without_reexecuting_member_removal() {
+     let state = test_server_state().await;
+diff --git a/docs/how-it-works/gateways/configuration.mdx b/docs/how-it-works/gateways/configuration.mdx
+index fc9d5aa8c..7aa18d241 100644
+--- a/docs/how-it-works/gateways/configuration.mdx
++++ b/docs/how-it-works/gateways/configuration.mdx
+@@ -169,6 +169,11 @@ guest_tls_key           = "/etc/openshell/certs/client-key.pem"
+ grpc_rate_limit_requests       = 120
+ grpc_rate_limit_window_seconds = 60
+ 
++# Optional durable mutation admission quota per caller (1 to 1000000).
++# Completed admissions count for 24 hours; unresolved ones until reconciled.
++# Omit to use the default of 1000.
++max_mutation_admissions_per_caller = 1000
++
+ # Optional exact provider-profile source composition. When omitted, the
+ # gateway uses imported profiles only.
+ provider_profile_sources = [
