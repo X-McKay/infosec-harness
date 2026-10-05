@@ -1,11 +1,12 @@
 # Qualification status — 2026-10-05
 
-Latest evaluated implementation candidate: `ecf0333` on `feature/astra-simplification`.
+Latest evaluated implementation candidate: `c34f1cc` on `feature/astra-simplification`.
 PR: https://github.com/X-McKay/infosec-harness/pull/6 (target `develop`).
 
 Live release qualification remains **blocked**. The latest full-cohort attempt completed
 five cases correctly, then `pathtraversal-fixed` exhausted two output corrections because
-the model interpreted target_reached as exploit/sink reachability. Thirty cases remained
+the model interpreted target_reached as exploit/sink reachability and earlier exploratory
+citations caused format feedback to mask the semantic explanation. Thirty cases remained
 unstarted. See [target reachability feedback](TARGET_REACHABILITY_FEEDBACK.md).
 A correction clarifies probe semantics and validation feedback without changing admission,
 labels, thresholds or budgets. No candidate is qualified for promotion.

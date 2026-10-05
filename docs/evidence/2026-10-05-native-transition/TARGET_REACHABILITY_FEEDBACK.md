@@ -38,3 +38,27 @@ Validation: 263 deterministic tests passed (one network test deselected), with
 checks passed. Completed native history (145 events) replayed with zero model/native
 dispatches. The feedback repair regression uses mocked model/process evidence; it does
 not establish live-model quality. A new full cohort is required for that gate.
+
+## Mixed-citation feedback correction
+
+Candidate `c34f1cc` again completed five correct cases before the same negative case
+exhausted output corrections. The model cited earlier exploratory probes without markers
+alongside newer well-formed markers declaring target_reached false. The validator's
+format-error branch took precedence, so both delivered corrections discussed marker format
+and never delivered target semantics. All model calls returned complete receipts; all seven
+owned sandbox records were closed and exact reconciliation passed.
+
+The follow-up removes competing diagnostic branches and returns one complete requirement
+message. It explains marker format and entrypoint semantics together, independent of which
+citation fails first. The same semantics now appear in always-visible agent instructions.
+This removes runtime lines and preserves the exact admission predicate and two-correction
+budget. A regression includes an earlier malformed citation alongside the false target claim.
+The 169-event completed native history still replays with zero external dispatches.
+
+Private evidence: `.harness/openshell/private/live-eval-v11-201cc101da4a/`.
+
+| Report | SHA-256 |
+| --- | --- |
+| `cohort.json` | `a3cfd39728a499931efbb15210c3b16bbed0ec67e9b31de8dbe057cba5f70a26` |
+| `sixth-case-failure.json` | `41ae404e40fd8d159568a08a63e75fcc38d946329c11e744186f1db3aa449b4c` |
+| `sixth-case-history.json` | `224298bf709ce354be5df5c232b1d466e25710dc9c8d5c5a9c9d804af8ff96d8` |

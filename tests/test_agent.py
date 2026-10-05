@@ -358,8 +358,16 @@ async def test_verdict_validator_requires_complete_matching_offline_evidence(fai
         evidence_ids=[evidence.id],
         citations=[dict(path="sink.py", start_line=1, end_line=1)],
     )
+    if failure == "target_reached":
+        # A malformed exploratory citation must not hide the false target claim.
+        exploratory = evidence.model_copy(update={"id": "probe:earlier", "observations": {}})
+        ctx.messages[0].parts.append(
+            ToolReturnPart("run_probe", exploratory.model_dump(), tool_call_id="earlier")
+        )
+        verdict.evidence_ids.append(exploratory.id)
     if failure:
-        with pytest.raises(ModelRetry, match="definitive verdict"):
+        match = "target_reached must be true" if failure == "target_reached" else "definitive verdict"
+        with pytest.raises(ModelRetry, match=match):
             await validate_verdict(ctx, verdict)
     else:
         assert await validate_verdict(ctx, verdict) == verdict
