@@ -569,3 +569,160 @@ async def test_changed_original_executable_bit_prevents_probe_restore(adapter, t
     with pytest.raises(OpenShellError, match="changed or deleted"):
         await boundary.copy_workspace(source, probe, operation_id="copy", expected_source=original)
     assert len(native.execs) == 1
+
+
+def provider_ready_adapter(adapter, monkeypatch):
+    boundary, native = adapter
+    boundary.config = boundary.config.model_copy(update={"profiles": {
+        **boundary.config.profiles,
+        "model": boundary.config.profiles["model"].model_copy(update={"provider": "selfhosted"})}})
+    provider = data.Provider(metadata=data.ObjectMeta(id="provider-id", name="selfhosted",
+        workspace="default", resource_version=1), type="openai")
+    monkeypatch.setattr(native, "ListSandboxProviders", lambda request, timeout:
+        pb.ListSandboxProvidersResponse(providers=[provider]))
+    calls = []
+
+    def ready(request, timeout):
+        calls.append(copy.deepcopy(request))
+        desired = pb.ProviderDesiredIdentity(sandbox_id=native.resources[request.sandbox].metadata.id,
+            sandbox=request.sandbox, provider_id="provider-id", provider_resource_version=1,
+            attachment_epoch="epoch", provider_env_revision=7, config_revision=8, policy_hash="hash")
+        receipt = pb.ProviderMutationReceipt(receipt_id="receipt", mutation_id="mutation",
+            provider="selfhosted", workspace="default", kind=pb.PROVIDER_MUTATION_KIND_OBSERVE,
+            desired=desired)
+        receipt.persisted_time.seconds = 1
+        status = pb.ProviderReadinessStatus(receipt=receipt, state=pb.PROVIDER_READINESS_STATE_READY,
+            network_instance_id="network", observed=pb.ProviderReadinessObservation(
+                session_id="session", process_instance_id="process", attachment_epoch="epoch",
+                provider_env_revision=7, config_revision=8, policy_hash="hash",
+                credentials_installed=True, policy_active=True, launch_environment_installed=True))
+        return pb.GetSandboxProviderStatusResponse(status=status)
+
+    monkeypatch.setattr(native, "GetSandboxProviderStatus", ready, raising=False)
+    return boundary, native, ready, calls
+
+
+@pytest.mark.asyncio
+async def test_provider_pending_to_exact_ready_precedes_exec(adapter, monkeypatch):
+    boundary, native, ready, calls = provider_ready_adapter(adapter, monkeypatch)
+
+    def status(request, timeout):
+        response = ready(request, timeout)
+        if len(calls) == 1:
+            response.status.state = pb.PROVIDER_READINESS_STATE_PENDING
+            response.status.ClearField("observed")
+        assert not native.execs and not native.observations
+        return response
+
+    monkeypatch.setattr(native, "GetSandboxProviderStatus", status)
+    sandbox = await boundary.create("provider-run", profile="model")
+    assert len(calls) == 2 and calls[0].receipt_id == "" and calls[1].receipt_id == "receipt"
+    assert boundary._record("provider-readiness", sandbox.id).exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("defect", ["superseded", "stale", "empty", "wrong-owner", "malformed",
+    "failed", "withheld", "revoked", "unknown"])
+async def test_provider_readiness_fails_closed(adapter, monkeypatch, defect):
+    boundary, native, ready, calls = provider_ready_adapter(adapter, monkeypatch)
+
+    def status(request, timeout):
+        response = ready(request, timeout)
+        s = response.status
+        if defect == "superseded":
+            if len(calls) == 1:
+                s.state = pb.PROVIDER_READINESS_STATE_PENDING
+            else:
+                s.receipt.desired.config_revision += 1
+        elif defect == "stale":
+            s.observed.provider_env_revision -= 1
+        elif defect == "empty":
+            s.observed.process_instance_id = ""
+        elif defect == "wrong-owner":
+            s.receipt.desired.sandbox_id = "other"
+        elif defect == "malformed":
+            s.receipt.persisted_time.nanos = 1000000000
+        else:
+            s.state = {"failed": pb.PROVIDER_READINESS_STATE_FAILED,
+                "withheld": pb.PROVIDER_READINESS_STATE_WITHHELD,
+                "revoked": pb.PROVIDER_READINESS_STATE_REVOKED, "unknown": 99}[defect]
+        return response
+
+    monkeypatch.setattr(native, "GetSandboxProviderStatus", status)
+    with pytest.raises(OpenShellError, match="provider readiness"):
+        await boundary.create("provider-run", profile="model")
+    assert native.deleted and not native.execs and not native.observations
+
+
+@pytest.mark.asyncio
+async def test_provider_readiness_cancellation_cleans_owned_sandbox(adapter, monkeypatch):
+    boundary, native, ready, calls = provider_ready_adapter(adapter, monkeypatch)
+
+    def pending(request, timeout):
+        response = ready(request, timeout)
+        response.status.state = pb.PROVIDER_READINESS_STATE_PENDING
+        return response
+
+    monkeypatch.setattr(native, "GetSandboxProviderStatus", pending)
+    task = asyncio.create_task(boundary.create("provider-cancel", profile="model"))
+    while not calls:
+        await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert native.deleted and not native.execs
+
+
+@pytest.mark.asyncio
+async def test_provider_readiness_timeout_is_bounded_and_cleans_up(adapter, monkeypatch):
+    boundary, native, ready, calls = provider_ready_adapter(adapter, monkeypatch)
+    boundary.config = boundary.config.model_copy(update={"ready_timeout_seconds": 1})
+
+    def pending(request, timeout):
+        response = ready(request, timeout)
+        response.status.state = pb.PROVIDER_READINESS_STATE_PENDING
+        return response
+
+    monkeypatch.setattr(native, "GetSandboxProviderStatus", pending)
+    with pytest.raises(OpenShellError, match="provider readiness timed out"):
+        await boundary.create("provider-timeout", profile="model")
+    assert native.deleted and not native.execs
+
+
+@pytest.mark.asyncio
+async def test_provider_status_not_requested_for_unattached_workspace(adapter, monkeypatch):
+    boundary, native = adapter
+
+    def unexpected(request, timeout):
+        pytest.fail("workspace admission must not query a provider")
+
+    monkeypatch.setattr(native, "GetSandboxProviderStatus", unexpected, raising=False)
+    await boundary.create("workspace")
+
+
+@pytest.mark.asyncio
+async def test_provider_readiness_rpc_error_discloses_only_status_code(adapter, monkeypatch):
+    import grpc
+
+    boundary, native, _, _ = provider_ready_adapter(adapter, monkeypatch)
+    sentinel = "SECRET-provider-credential-sentinel"
+
+    class Failure(grpc.RpcError):
+        def code(self):
+            return grpc.StatusCode.UNAVAILABLE
+
+        def details(self):
+            return sentinel
+
+        def __str__(self):
+            return sentinel
+
+    def failure(request, timeout):
+        raise Failure()
+
+    monkeypatch.setattr(native, "GetSandboxProviderStatus", failure)
+    with pytest.raises(OpenShellError) as caught:
+        await boundary.create("provider-rpc-failure", profile="model")
+    assert str(caught.value) == "native provider readiness RPC failed: UNAVAILABLE"
+    assert sentinel not in str(caught.value) and caught.value.__suppress_context__
+    assert native.deleted and not native.execs

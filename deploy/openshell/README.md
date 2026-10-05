@@ -259,7 +259,11 @@ denial of writes to `/dev/shm`, and denial of a symlink escape from the workspac
 runtime also independently inspects exact native-owned workloads for pinned image, non-root
 identity, dropped capabilities, seccomp, no-new-privileges, disabled network, bounded
 CPU/memory/PIDs and absence of host bind mounts. A configured profile, sandbox name or gateway
-`Ready` state alone is not proof.
+`Ready` state alone is not proof. Model admission additionally waits for the native
+provider's exact readiness receipt, with observed credential, policy and launch-environment
+installation bound to the desired identity and revisions. Pending status may be polled
+within the configured readiness deadline; failure, revocation or supersession closes
+admission without dispatching inference.
 
 ## Qualification and evaluation
 

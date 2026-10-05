@@ -3,13 +3,12 @@
 Implementation candidate: `2d28974` on `feature/astra-simplification`.
 PR: https://github.com/X-McKay/infosec-harness/pull/6 (target `develop`).
 
-The rewrite is implemented and pushed. Live release qualification is **blocked** by
-an unresolved end-to-end evaluation failure. A fresh authorized cohort completed
-seven native model requests, then failed verdict validation; see
-[verdict feedback evidence](VERDICT_FEEDBACK.md). The earlier connection loss remains
-undetermined. This candidate is not
-qualified for promotion. No claim of improved model accuracy or zero remaining
-technical debt is supported by the available evidence.
+The rewrite is implemented and pushed. Live release qualification remains **blocked**.
+A fresh cohort exposed an evidence-feedback defect, corrected in `f7b6656` with generation
+v11. The following cohort captured an OpenShell policy-generation change closing the
+active model tunnel; see [native provider readiness](NATIVE_PROVIDER_READINESS.md).
+The next candidate gates model admission on observed native provider readiness.
+No candidate is qualified for promotion, and no improved accuracy claim is supported.
 
 ## Gates
 

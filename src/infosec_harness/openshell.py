@@ -23,6 +23,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
 import yaml
+from google.protobuf.json_format import MessageToDict
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from infosec_harness._io import atomic_write_bytes
@@ -391,6 +392,8 @@ class OpenShell:
                        or p.metadata.workspace != self.config.workspace
                        or p.metadata.resource_version <= 0 or not p.type for p in providers)):
             raise OpenShellError("native credential provider attachment was not established")
+        if expected_provider:
+            await self._wait_provider_ready(sandbox, providers[0])
         outer = await self._inspect(sandbox)
         # Each admission is a new observation, not a replay of the prior probe.
         # Native terminal exec receipts do not retain their output streams.
@@ -424,6 +427,85 @@ class OpenShell:
         self._save(self._record("qualification", sandbox.id),
             {"sandbox": asdict(sandbox), "outer": outer, "workload": proof,
              "landlock_compatibility": observed.spec.policy.landlock.compatibility})
+
+    async def _wait_provider_ready(self, sandbox: Sandbox, provider: Any) -> None:
+        """Wait for the pinned native provider receipt's installation evidence.
+
+        Mirrors OpenShell SDK provider_readiness validation; saved attachment
+        intent and a ready sandbox phase do not prove credential installation.
+        Only read-only status RPCs may repeat. No inference or exec is retried.
+        """
+        import grpc
+
+        pb = self._pb
+        request = pb.GetSandboxProviderStatusRequest(workspace_scope=self._scope,
+            sandbox=sandbox.name, provider=provider.metadata.name)
+        frozen = None
+        status = None
+        try:
+            async with asyncio.timeout(self.config.ready_timeout_seconds):
+                while True:
+                    response = await asyncio.to_thread(self._stub.GetSandboxProviderStatus, request,
+                        timeout=self.config.ready_timeout_seconds)
+                    status = response.status
+                    receipt = status.receipt
+                    desired = receipt.desired
+                    def valid_time(t: Any) -> bool:
+                        return (-62135596800 <= t.seconds <= 253402300799
+                                and 0 <= t.nanos <= 999999999)
+                    if (not status.HasField("receipt") or not receipt.HasField("desired")
+                            or not receipt.HasField("persisted_time")
+                            or not valid_time(receipt.persisted_time)
+                            or any(status.HasField(field) and not valid_time(getattr(status, field))
+                                   for field in ("observed_time", "evaluated_time"))
+                            or not receipt.receipt_id or not receipt.mutation_id
+                            or receipt.workspace != self.config.workspace
+                            or receipt.provider != provider.metadata.name
+                            or desired.sandbox_id != sandbox.id or desired.sandbox != sandbox.name
+                            or desired.provider_id != provider.metadata.id
+                            or desired.provider_resource_version != provider.metadata.resource_version
+                            or receipt.kind not in (pb.PROVIDER_MUTATION_KIND_ATTACH,
+                                pb.PROVIDER_MUTATION_KIND_UPDATE, pb.PROVIDER_MUTATION_KIND_OBSERVE)
+                            or status.state not in pb.ProviderReadinessState.values()
+                            or status.state == pb.PROVIDER_READINESS_STATE_UNSPECIFIED
+                            or status.reason not in pb.ProviderReadinessReason.values()):
+                        raise OpenShellError("native provider readiness receipt is invalid")
+                    identity = receipt.SerializeToString(deterministic=True)
+                    if frozen is None:
+                        frozen = identity
+                        request.receipt_id = receipt.receipt_id
+                    elif frozen != identity:
+                        raise OpenShellError("native provider readiness receipt was superseded")
+                    if status.state == pb.PROVIDER_READINESS_STATE_READY:
+                        observed = status.observed
+                        if (not status.HasField("observed") or not desired.policy_hash
+                                or not status.network_instance_id or not observed.session_id
+                                or not observed.process_instance_id or not observed.credentials_installed
+                                or not observed.policy_active or not observed.launch_environment_installed
+                                or observed.reason != pb.PROVIDER_READINESS_REASON_UNSPECIFIED
+                                or status.reason != pb.PROVIDER_READINESS_REASON_UNSPECIFIED
+                                or observed.attachment_epoch != desired.attachment_epoch
+                                or observed.provider_env_revision != desired.provider_env_revision
+                                or observed.config_revision != desired.config_revision
+                                or observed.policy_hash != desired.policy_hash):
+                            raise OpenShellError("native provider readiness lacks installation evidence")
+                        self._save(self._record("provider-readiness", sandbox.id),
+                            {"sandbox": asdict(sandbox), "status": MessageToDict(
+                                status, preserving_proto_field_name=True)})
+                        return
+                    if status.state not in (pb.PROVIDER_READINESS_STATE_PENDING,
+                                           pb.PROVIDER_READINESS_STATE_PERSISTED):
+                        raise OpenShellError("native provider readiness failed or was superseded: "
+                            f"{pb.ProviderReadinessState.Name(status.state)} "
+                            f"{pb.ProviderReadinessReason.Name(status.reason)}")
+                    await asyncio.sleep(0.25)
+        except grpc.RpcError as error:
+            raise OpenShellError("native provider readiness RPC failed: "
+                                 + error.code().name) from None
+        except TimeoutError:
+            reason = (pb.ProviderReadinessReason.Name(status.reason) if status is not None
+                      else "no native observation")
+            raise OpenShellError(f"native provider readiness timed out: {reason}") from None
 
     def _owned(self, sandbox: Sandbox) -> None:
         key = self._key(sandbox)
