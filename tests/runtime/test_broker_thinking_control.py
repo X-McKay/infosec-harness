@@ -139,9 +139,9 @@ def test_typed_thinking_rejects_authored_overrides_without_mutating_settings(set
 
     from pydantic_ai.providers.openai import OpenAIProvider
 
-    from infosec_harness.inference.compat import _CompatOpenAIChatModel
+    from infosec_harness.inference.compat import CompatOpenAIChatModel
 
-    model = _CompatOpenAIChatModel('offline',
+    model = CompatOpenAIChatModel('offline',
         provider=OpenAIProvider(api_key='offline', base_url='https://provider.invalid/v1'), enable_thinking=False)
     settings = {setting: {'unexpected': 'value'}, 'max_tokens': 16}
     before = deepcopy(settings)

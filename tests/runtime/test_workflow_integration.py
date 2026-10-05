@@ -163,7 +163,7 @@ async def test_durable_acceptance_restart_results_and_history_replay(fixture_rep
         async with Worker(client, task_queue="durability-test", workflows=WORKFLOWS,
                           activities=ALL_ACTIVITIES):
             outputs = await handle.result()
-        detail = await store.get_run(store._run_id(batch_id, outputs[0].finding.fingerprint))
+        detail = await store.get_run(store.run_id(batch_id, outputs[0].finding.fingerprint))
         assert detail["status"] == "complete"
         assert detail["telemetry"]["wall_time_s"] > 0
         assert detail["evidence"]["executions"]
@@ -236,7 +236,7 @@ async def test_finding_failure_preserves_completed_invocations_and_budget_reason
         assert output.result.verdict.inconclusive_reason is InconclusiveReason.budget_exhausted
         assert "context" in {inv.agent for inv in output.invocations}
         assert "verdict" not in {inv.agent for inv in output.invocations}
-        detail = await store.get_run(store._run_id(batch_id, output.finding.fingerprint))
+        detail = await store.get_run(store.run_id(batch_id, output.finding.fingerprint))
         assert "context" in {inv["agent"] for inv in detail["invocations"]}
         assert writebacks == [(43, None)]
     finally:

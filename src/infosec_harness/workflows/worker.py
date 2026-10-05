@@ -18,14 +18,12 @@ from infosec_harness.workflows.activities import ALL_ACTIVITIES
 from infosec_harness.workflows.workflows import (
     ComponentPreparationWorkflow,
     FindingTriageWorkflow,
-    RepoPreparationWorkflow,
     TriageBatchWorkflow,
 )
 
 # TriageBatchWorkflow.__pydantic_ai_agents__ carries the durable agents; PydanticAIPlugin
 # registers their model/tool activities on the worker (once, worker-global).
-WORKFLOWS = [TriageBatchWorkflow, RepoPreparationWorkflow, ComponentPreparationWorkflow,
-             FindingTriageWorkflow]
+WORKFLOWS = [TriageBatchWorkflow, ComponentPreparationWorkflow, FindingTriageWorkflow]
 
 
 async def connect() -> Client:

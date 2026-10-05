@@ -19,7 +19,7 @@ from test_broker_profiles import _config
 from infosec_harness.agents import models
 from infosec_harness.inference.auth import AUTH_HEADER, sign_request
 from infosec_harness.inference.codec import encode_payload
-from infosec_harness.inference.compat import _CompatOpenAIChatModel, input_wire
+from infosec_harness.inference.compat import CompatOpenAIChatModel, input_wire
 from infosec_harness.inference.executor import Executor, OpenAIInference
 from infosec_harness.inference.profiles import BrokerConfig, ExecutorProfile
 from infosec_harness.inference.protocol import BrokerError, canonical_bytes, digest
@@ -69,14 +69,14 @@ def test_reasoning_budget_reserves_space_for_final_output(cap):
     with pytest.raises(ValidationError):
         type(request.contract).model_validate({**request.contract.model_dump(mode='json'),
                                               'thinking_token_budget': cap})
-    model = _CompatOpenAIChatModel('offline', provider=OpenAIProvider(
+    model = CompatOpenAIChatModel('offline', provider=OpenAIProvider(
         api_key='offline', base_url='https://provider.invalid/v1'), thinking_token_budget=cap)
     with pytest.raises((BrokerError, ValueError)):
         model.prepare_request({'max_tokens': 16}, ModelRequestParameters())
 
 
 def test_reasoning_budget_is_below_the_effective_floored_total_without_mutation():
-    model = _CompatOpenAIChatModel('offline', provider=OpenAIProvider(
+    model = CompatOpenAIChatModel('offline', provider=OpenAIProvider(
         api_key='offline', base_url='https://provider.invalid/v1'),
         thinking_token_budget=8, min_max_tokens=16)
     authored = {'max_tokens': 4}
@@ -87,7 +87,7 @@ def test_reasoning_budget_is_below_the_effective_floored_total_without_mutation(
 
 
 def test_reasoning_budget_requires_a_known_total_before_provider_dispatch():
-    model = _CompatOpenAIChatModel('offline', provider=OpenAIProvider(
+    model = CompatOpenAIChatModel('offline', provider=OpenAIProvider(
         api_key='offline', base_url='https://provider.invalid/v1'), thinking_token_budget=8)
     with pytest.raises((BrokerError, ValueError)):
         model.prepare_request(None, ModelRequestParameters())
@@ -181,7 +181,7 @@ async def test_actual_sdk_direct_executor_and_admission_use_top_level_budget(mon
 def test_agents_cannot_inject_or_override_the_operator_reasoning_budget(override):
     with pytest.raises(BrokerError):
         encode_payload([ModelRequest(parts=[UserPromptPart('offline')])], override, ModelRequestParameters())
-    model = _CompatOpenAIChatModel('offline', provider=OpenAIProvider(
+    model = CompatOpenAIChatModel('offline', provider=OpenAIProvider(
         api_key='offline', base_url='https://provider.invalid/v1'), thinking_token_budget=8)
     before = deepcopy(override)
     with pytest.raises(BrokerError):

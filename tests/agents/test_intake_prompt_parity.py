@@ -6,11 +6,11 @@ from infosec_harness.agents.render import render_prompt
 from infosec_harness.domain.models import Finding
 
 
-def test_retained_prompt_preserves_exact_original_bytes():
-    payload = {"report": "First line.\r\nSecond line.\n", "known": {"cwe": "CWE-89"}}
-    assert render_intake_prompt("Extract fields.", payload, protocol=None) == render_prompt(
-        "Extract fields.", payload
-    )
+def test_only_the_atomic_protocol_renders():
+    import pytest
+
+    with pytest.raises(ValueError, match="Unknown intake prompt protocol"):
+        render_intake_prompt("Extract fields.", {"report": "x"}, protocol="intake-evidence/v1")
 
 
 def test_atomic_prompt_changes_only_top_level_report_and_keeps_known_fields():

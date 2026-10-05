@@ -7,10 +7,14 @@ import pytest
 from infosec_harness.domain.models import EnvironmentSpec
 from infosec_harness.sandbox import docker
 from infosec_harness.sandbox.policy import SandboxUnavailable
+from infosec_harness.sandbox.process import run_bounded
 
 
 def configure(monkeypatch, proxy="http://192.0.2.10:3128", host="192.0.2.10"):
-    monkeypatch.setattr(docker, "get_settings", lambda: SimpleNamespace(build_egress_proxy=proxy, build_egress_host_ip=host))
+    monkeypatch.setattr(docker, "get_settings", lambda: SimpleNamespace(
+        build_egress_proxy=proxy, build_egress_host_ip=host, allow_insecure_runtime=False,
+        sandbox_runtime="runsc", use_buildx=True, buildx_builder="harness-gvisor",
+        build_egress_network="harness-egress"))
 
 
 def spec(runner="mvn", **overrides):
@@ -71,7 +75,7 @@ def test_proxy_switch_changes_maven_target_cache_identity(monkeypatch):
     assert docker.image_tag_for("sealed-source", spec()) != original
     configure(monkeypatch, proxy="")
     assert docker.image_tag_for("sealed-source", spec()) != original
-    assert docker.IMAGE_FORMAT_VERSION == "3"
+    assert docker.IMAGE_FORMAT_VERSION == "4"
 
 
 async def test_run_prefix_preserves_existing_opts_and_original_settings(tmp_path, monkeypatch):
@@ -87,8 +91,8 @@ async def test_run_prefix_preserves_existing_opts_and_original_settings(tmp_path
     monkeypatch.setenv("CAPTURE_FILE", str(captured))
     monkeypatch.setenv("ARGUMENT_FILE", str(arguments))
     install = next(line.removeprefix("RUN ") for line in docker.render_dockerfile(spec()).splitlines() if line.startswith("RUN export MAVEN_OPTS="))
-    result = await docker._run(["/bin/sh", "-c", install], timeout=5)
-    assert result.exit_code == 0
+    result = await run_bounded(["/bin/sh", "-c", install], env=dict(os.environ), timeout=5)
+    assert result.returncode == 0
     values = shlex.split(captured.read_text())
     assert values[:2] == ["-Xmx128m", "-Dretained.setting=unchanged"]
     assert "-Daether.connector.http.useSystemProperties=true" in values

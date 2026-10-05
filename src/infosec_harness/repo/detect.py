@@ -1,6 +1,7 @@
 """Deterministic stack fingerprinting (P1): language counts, manifests, and declared registries.
 
-No model involved. The declared registries become the build-stage egress allowlist (D14).
+No model involved. Declared registries are recorded as repository requests only; build egress
+is confined by the operator's proxy allowlist, which no repository declaration can widen (D14).
 """
 
 from __future__ import annotations

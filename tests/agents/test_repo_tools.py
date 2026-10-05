@@ -8,6 +8,7 @@ bounds the tool policy declares, and the property each tool was added for.
 
 from __future__ import annotations
 
+import time
 import types
 from pathlib import Path
 
@@ -15,6 +16,7 @@ import pytest
 from pydantic_ai import ModelRetry
 
 from infosec_harness.agents import capabilities as cap
+from infosec_harness.agents import repo_tools as rt
 from infosec_harness.agents.deps import AgentDeps
 from infosec_harness.tools.policies import load_policies
 
@@ -238,6 +240,154 @@ def test_the_digest_never_executes_or_imports_what_it_reads(repo):
     (repo / "setup.py").write_text("import os; os.write(2, b'ran')\n")
     out = cap.repo_digest(ctx(repo))  # would not return if either were executed
     assert "setup.py" in out
+
+
+def _test_layout_dirs(digest: str) -> set[str]:
+    section = digest.split("## Test layout", 1)[1]
+    return {line.split("/  files=", 1)[0] for line in section.splitlines() if "/  files=" in line}
+
+
+def test_test_directories_are_matched_by_whole_path_segment_not_by_prefix(tmp_path):
+    """`tools/`, `templates/` and `third_party/` are not test directories under any convention.
+
+    Matching by string prefix against a set containing Perl's `t` made every directory whose
+    name begins with "t" a test directory, so a profile of the repository would point a probe
+    author at build tooling and vendored code as the place the existing tests live.
+    """
+    root = tmp_path
+    for rel in ("tools/x.py", "templates/a.html", "third_party/b.c", "testing_utils/h.py",
+                "tests/test_a.py", "src/test/Foo.java", "t/basic.t", "web/__tests__/a.test.js",
+                "src/main/App.java"):
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text("x\n")
+    assert _test_layout_dirs(cap.repo_digest(ctx(root))) == {
+        "tests", "src/test", "t", "web/__tests__"}
+    for rel in ("tools", "templates", "third_party", "testing_utils", "src/main", "src/testing"):
+        assert not rt._is_test_dir(rel), rel
+    for rel in ("tests", "src/test/java/com/example", "t", "spec/models", "web/__tests__"):
+        assert rt._is_test_dir(rel), rel
+
+
+def test_a_catastrophically_backtracking_regex_is_stopped_at_the_deadline(tmp_path, monkeypatch):
+    """`(\\w|\\d)+x` has no repeat nested inside a repeat, so a shape guard let it through, and
+    against a long run of word characters it backtracks for far longer than any tool call may
+    take (quadratic in the run length: measured ~0.17 s at 5 000 characters, so ~17 s at 50 000).
+    Python's `re` cannot be interrupted, so the only real bound is a process killed at a
+    deadline -- and a stopped search must say it was stopped, keeping what it had found rather
+    than reading as "no matches"."""
+    (tmp_path / "a.txt").write_text("ax\n")  # walked first: matches before the hang
+    (tmp_path / "big.txt").write_text("a" * 50_000 + "\n")
+    monkeypatch.setattr(rt, "SEARCH_TIMEOUT_SECONDS", 1.5)
+    began = time.monotonic()
+    out = cap.search_code(ctx(tmp_path), r"(\w|\d)+x")
+    assert time.monotonic() - began < 8, "the search was not stopped at its deadline"
+    assert "timed out" in out and "partial" in out
+    assert "a.txt:1: ax" in out
+    assert "(no matches)" not in out
+
+
+def test_the_search_deadline_fits_inside_the_toolsets_declared_timeout():
+    """A deadline longer than the policy's own timeout would let the tool, not the search, be
+    what gets cut off -- with no result at all."""
+    declared = load_policies()["repo-read-only"].timeout_seconds
+    assert 0 < rt.SEARCH_TIMEOUT_SECONDS < declared
+
+
+def test_search_code_keeps_its_output_format_confinement_and_exclusions(repo):
+    out = cap.search_code(ctx(repo), r"class A0[01] ", "*.java")
+    assert out.splitlines() == [
+        "src/main/java/com/example/A00.java:2: class A00 { void go() {} }",
+        "src/main/java/com/example/A01.java:2: class A01 { void go() {} }",
+    ]
+    assert cap.search_code(ctx(repo), "binary-ish") == "(no matches)"  # target/ is excluded
+    every = cap.search_code(ctx(repo), "^package", "*.java")
+    assert len(every.splitlines()) == 31  # 30 sources + 1 test, each declaring its package once
+    assert all(line.endswith(":1: package com.example;") for line in every.splitlines())
+    (repo / "many").mkdir()
+    for i in range(cap.MAX_MATCHES + 10):
+        (repo / "many" / f"m{i:03d}.txt").write_text("needle\n")
+    capped = cap.search_code(ctx(repo), "needle", "*.txt")
+    assert capped.endswith(f"\n... truncated at {cap.MAX_MATCHES} matches")
+    assert len(capped.splitlines()) == cap.MAX_MATCHES + 1
+    with pytest.raises(ModelRetry, match="Invalid regex"):
+        cap.search_code(ctx(repo), "(")
+
+
+def test_a_file_larger_than_the_read_cap_is_read_only_up_to_the_cap(repo, monkeypatch):
+    """Reading a whole file and then truncating it costs the whole file in memory first.
+
+    Every line is `L` + 7 digits + newline = 9 bytes, so exactly 2_000_000 // 9 = 222_222 whole
+    lines fit in the cap. Line 222_223 straddles it and line 250_000 lies wholly beyond it: a
+    reader bounded before the read cannot return either, and must say the file is larger.
+    """
+    assert rt.MAX_FILE_BYTES == 2_000_000
+    big = repo / "big.txt"
+    big.write_text("".join(f"L{n:07d}\n" for n in range(1, 300_001)))
+    assert big.stat().st_size == 2_700_000
+    read_sizes: list[int] = []
+    real_open = Path.open
+
+    def counting_open(self, *args, **kwargs):
+        fh = real_open(self, *args, **kwargs)
+        real_read = fh.read
+
+        def read(n=-1):
+            data = real_read(n)
+            read_sizes.append(len(data))
+            return data
+
+        fh.read = read
+        return fh
+
+    monkeypatch.setattr(Path, "open", counting_open)
+    edge = cap.read_file(ctx(repo), "big.txt", 222_221, 222_230)
+    assert sum(read_sizes) <= rt.MAX_FILE_BYTES + 1, "more than the cap was read from disk"
+    assert "L0222222" in edge and "L0222223" not in edge
+    assert "of at least 222222" in edge.splitlines()[0]
+    assert "larger than 2000000 bytes" in edge.splitlines()[0]
+    beyond = cap.read_file(ctx(repo), "big.txt", 250_000, 250_010)
+    assert "L0250000" not in beyond
+
+
+def test_one_huge_line_cannot_flood_a_single_read(repo):
+    """400 lines is not a byte bound when one line is megabytes, as in minified bundles."""
+    (repo / "bundle.min.js").write_text("v" * 3_000_000)
+    out = cap.read_file(ctx(repo), "bundle.min.js")
+    assert len(out.encode()) <= cap.MAX_BATCH_BYTES + 100
+    assert out.rstrip().endswith(f"truncated at {cap.MAX_BATCH_BYTES} bytes")
+
+
+def test_a_file_link_leaving_the_listed_directory_but_not_the_snapshot_is_still_listed(repo):
+    """The checkout admits a link that stays inside the snapshot, so listing a subdirectory
+    must not reject it merely because its target lies outside that subdirectory."""
+    (repo / "docs").mkdir()
+    (repo / "docs/README.md").symlink_to("../README.md")
+    assert cap.list_files(ctx(repo), "docs") == "docs/README.md"
+    assert "docs/  files=1" in cap.list_tree(ctx(repo), "docs")
+    assert "# app" in cap.read_file(ctx(repo), "docs/README.md")
+
+
+@pytest.mark.parametrize("kind", ["external-file-link", "directory-link"])
+def test_listing_fails_closed_on_an_entry_the_snapshot_boundary_rejects(tmp_path, kind):
+    """The read tools traverse with the same rule the checkout admits snapshots by
+    (`repo.access.walk_files`), so an entry it would refuse is refused here too, loudly,
+    and nothing behind it is listed or read."""
+    secret = tmp_path / "outside"
+    secret.mkdir()
+    (secret / "token.txt").write_text("must-not-leak\n")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "app.py").write_text("print(1)\n")
+    if kind == "external-file-link":
+        (repo / "token.txt").symlink_to(secret / "token.txt")
+    else:
+        (repo / "linked").symlink_to(secret, target_is_directory=True)
+    for tool in (lambda: cap.list_files(ctx(repo), "."), lambda: cap.list_tree(ctx(repo), "."),
+                 lambda: cap.search_code(ctx(repo), "must-not-leak")):
+        with pytest.raises(ModelRetry, match="traversal was rejected"):
+            tool()
+    digest = cap.repo_digest(ctx(repo))
+    assert "traversal was rejected" in digest and "must-not-leak" not in digest
 
 
 # --- the toolset's identity ---------------------------------------------------------------

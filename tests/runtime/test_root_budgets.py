@@ -45,31 +45,20 @@ async def test_non_finite_or_negative_budget_values_fail_before_storage(value):
         await budgets.settle("nonexistent", "operation", invalid, {})
 
 
-@pytest.mark.parametrize(
-    ("root", "parent", "fallback_patch", "expected"),
-    [
-        ("batch:new-server", "batch:parent", True, "new-server"),
-        (None, "batch:old-server", True, "old-server"),
-        (None, "batch:old-server", False, None),
-        (None, "standalone", True, None),
-    ],
-)
-async def test_temporal_root_budget_old_server_and_replay(
-    monkeypatch, root, parent, fallback_patch, expected,
+@pytest.mark.parametrize(("root_id", "fingerprint"), [(None, None), ("batch-explicit", "fp-1")])
+async def test_temporal_root_scope_is_explicit_not_parsed_from_workflow_ids(
+    monkeypatch, root_id, fingerprint,
 ):
-    """Older servers must account child calls without changing recorded histories."""
+    """The root and the finding come from the workflow's own arguments. Workflow ids are opaque:
+    one that looks like a batch id or embeds another fingerprint changes nothing."""
     from types import SimpleNamespace
 
     from infosec_harness.workflows import accounting
 
-    info = SimpleNamespace(
-        workflow_id="triage:fingerprint:batch:old-server",
-        root=SimpleNamespace(workflow_id=root) if root else None,
-        parent=SimpleNamespace(workflow_id=parent),
-    )
+    info = SimpleNamespace(workflow_id="triage:other-fp:batch:looks-like-a-root", run_id="run",
+                           root=SimpleNamespace(workflow_id="batch:looks-like-a-root"),
+                           parent=SimpleNamespace(workflow_id="batch:looks-like-a-root"))
     monkeypatch.setattr(accounting.workflow, "info", lambda: info)
-    monkeypatch.setattr(accounting.workflow, "patched", lambda name:
-                        fallback_patch if name == "root-budget-parent-v1" else True)
     requests = []
 
     async def execute(activity, args, **kwargs):
@@ -81,16 +70,44 @@ async def test_temporal_root_budget_old_server_and_replay(
         agent_name="context",
         budget=SimpleNamespace(effective=SimpleNamespace(
             max_requests=1, max_tool_calls=2, max_input_tokens=100, max_output_tokens=20, max_cost_usd=1)),
-        model=SimpleNamespace(transport_retries=0, pricing_status="known_zero", mode="stub"),
+        model=SimpleNamespace(transport_retries=0, pricing_status="known_zero", mode="stub",
+                              broker_contract=None),
     )
-    result = await accounting.RootAccounting().reserve(config)
-    if expected is None:
-        assert result is None
+    ledger = accounting.RootAccounting(root_id=root_id, fingerprint=fingerprint)
+    result = await ledger.reserve(config, configuration_digest="digest")
+    execution = await ledger.reserve_execution("build_environment_activity", 60)
+    if root_id is None:
+        assert result is None and execution is None
         assert requests == []
-    else:
-        assert result[0] == expected
-        assert requests[0]["root_id"] == expected
-        assert requests[0]["requested"]["tokens"] > 0
+        return
+    reserve, progress, reserve_execution = requests
+    assert result[0] == root_id == reserve["root_id"] == reserve_execution["root_id"]
+    assert reserve["fingerprint"] == reserve_execution["fingerprint"] == fingerprint
+    assert (reserve["operation_kind"], reserve_execution["operation_kind"]) == ("agent", "execution")
+    assert reserve["configuration_digest"] == "digest"
+    assert reserve["requested"]["tool_calls"] > 0 and reserve["requested"]["agent_runs"] == 1
+    assert progress["batch_id"] == root_id and progress["fingerprint"] == fingerprint
+
+
+def test_root_accounting_refuses_a_root_without_a_finding():
+    from infosec_harness.workflows.accounting import RootAccounting
+
+    with pytest.raises(ValueError, match="requires the finding"):
+        RootAccounting(root_id="batch-x")
+
+
+async def test_operations_record_their_finding_and_kind_and_cannot_be_rebound():
+    await db.create_all()
+    async with db.session() as session:
+        session.add(db.BudgetLedger(root_id="attribution", state=budgets.initial_state(
+            {"tokens": 100, "requests": 10, "cost_usd": 1})))
+        await session.commit()
+    demand = {"tokens": 1, "requests": 1, "cost_usd": 0}
+    operation = await budgets.reserve("attribution", "op", demand, "agent", fingerprint="fp-a")
+    assert (operation["fingerprint"], operation["kind"]) == ("fp-a", "agent")
+    assert await budgets.reserve("attribution", "op", demand, "agent", fingerprint="fp-a") == operation
+    with pytest.raises(ValueError, match="different budget or agent"):
+        await budgets.reserve("attribution", "op", demand, "agent", fingerprint="fp-b")
 
 
 def test_serialized_temporal_budget_failure_keeps_budget_taxonomy():

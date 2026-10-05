@@ -10,7 +10,8 @@ from __future__ import annotations
 import copy
 import hashlib
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from datetime import timedelta
 from functools import lru_cache
 from pathlib import Path
@@ -41,13 +42,7 @@ from infosec_harness.agents.intake_claims import (
     WIRE_VERSION,
     AtomicFinding,
     ReferenceError,
-    invalid_source_references,
     reconstruct,
-)
-from infosec_harness.agents.intake_contracts import (
-    ATOMIC_EXECUTION_NAME,
-    QUOTED_EXECUTION_NAME,
-    retained_intake_spec,
 )
 from infosec_harness.agents.intake_evidence import INTAKE_EVIDENCE_POLICY_VERSION
 from infosec_harness.agents.outputs import (
@@ -59,11 +54,14 @@ from infosec_harness.agents.outputs import (
     verdict_contract_instructions,
 )
 from infosec_harness.agents.planning_window import PlanningWindow, PlanningWindowTelemetry
-from infosec_harness.agents.replay_only import ReplayOnlyModel
 from infosec_harness.agents.validators import (
-    OUTPUT_VALIDATORS,
+    OutputValidator,
     bind_install_source_validator,
+    validate_environment_spec,
     validate_intake_evidence,
+    validate_partial_build_scope,
+    validate_probe,
+    validate_verdict,
 )
 from infosec_harness.domain.models import (
     EnvironmentSpec,
@@ -81,21 +79,6 @@ from infosec_harness.sandbox.install_sources import install_source_policy
 from infosec_harness.settings import get_settings
 
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
-
-# name -> output type. Every agents/<name>/agent.yaml must appear here and vice versa.
-AGENT_BINDINGS: dict[str, type[BaseModel]] = {
-    "intake": ExtractedFinding,
-    "recon": RepoProfile,
-    "env-planner": EnvironmentSpec,
-    "build-repair": EnvironmentSpec,
-    "partial-build": EnvironmentSpec,
-    "context": FindingContext,
-    "probe-planner": ProbePlan,
-    "probe-author": ProbeSource,
-    "probe-diagnosis": ProbeDiagnosis,
-    "probe-repair": ProbeSource,
-    "verdict": Verdict,
-}
 
 # Only these capability types may be named in a spec (cf. pydantic-ai #5473/#8426).
 # Skills and WarnOnCacheBusts are directly-decorated dataclasses, so the spec loader
@@ -242,15 +225,8 @@ def deep_merge(base: Any, overlay: Any) -> Any:
     return copy.deepcopy(overlay)
 
 
-def load_spec(
-    name: str,
-    overlay: Mapping[str, Any] | None = None,
-    *,
-    spec_override: AgentSpec | None = None,
-) -> AgentSpec:
-    if spec_override is not None and overlay is not None:
-        raise ValueError("A complete spec override cannot be combined with an overlay")
-    spec = spec_override or AgentSpec.from_file(spec_path(name))
+def load_spec(name: str, overlay: Mapping[str, Any] | None = None) -> AgentSpec:
+    spec = AgentSpec.from_file(spec_path(name))
     if overlay:
         merged = deep_merge(spec.model_dump(by_alias=True, exclude_none=True, mode="json"), overlay)
         spec = AgentSpec.from_dict(merged)
@@ -293,24 +269,30 @@ def _abs(path: str | Path) -> Path:
     return package_root() / p
 
 
+
+def _spec_tier(name: str, spec: AgentSpec) -> str:
+    """The model tier a spec runs. There is no default: an unnamed tier is a broken spec."""
+    if not spec.model:
+        raise GovernanceError(f"Agent {name!r} spec must name a model tier")
+    return str(spec.model)
+
+
 def resolve_agent_config(
     name: str,
     spec: AgentSpec,
     *,
     source_files: int | None = None,
     durable: bool = False,
-    replay_only: bool = False,
 ) -> ResolvedAgentConfig:
     """Resolve the same effective settings and limits an invocation will receive."""
+    binding = binding_for(name)
     effective = _apply_backend_token_floor(name, spec)
-    tier = effective.model or "sonnet"
     model = model_factory.resolve_config(
         name,
-        tier,
+        _spec_tier(name, effective),
         model_settings=dict(spec.model_settings or {}),
         durable=durable,
-        replay_only=replay_only,
-        atomic_intake=name == "intake" and ((spec.metadata or {}).get("intake_output") or {}).get("protocol") == WIRE_VERSION,
+        atomic_intake=binding.atomic_intake,
     )
     budget = resolve_budget(
         name,
@@ -319,19 +301,9 @@ def resolve_agent_config(
         provider_output_floor=model.provider_output_floor,
     )
     effective_spec = effective.model_dump(by_alias=True, exclude_none=True, mode="json")
-    if name == "intake":
-        metadata = effective_spec.setdefault("metadata", {})
-        intake_output = metadata.get("intake_output") or {}
-        metadata["output_validation"] = {
-            "version": INTAKE_EVIDENCE_POLICY_VERSION,
-            **({"wire_version": intake_output["protocol"]}
-               if intake_output.get("protocol") == WIRE_VERSION else {}),
-        }
-    if name == "build-repair":
-        # Operator configuration is resolved on the host, never from repository content.
-        effective_spec.setdefault("metadata", {})["output_validation"] = install_source_policy(
-            get_settings().default_registry_allowlist
-        )
+    if binding.output_validation is not None:
+        # Host-resolved acceptance policy, recorded in the digest it governs.
+        effective_spec.setdefault("metadata", {})["output_validation"] = binding.output_validation()
     return ResolvedAgentConfig(
         agent_name=name,
         effective_spec=effective_spec,
@@ -388,7 +360,7 @@ def _absolutize_skill_dirs(spec: AgentSpec) -> AgentSpec:
 def _apply_backend_token_floor(name: str, spec: AgentSpec) -> AgentSpec:
     """Raise the spec's per-call ``max_tokens`` to the serving backend's floor.
 
-    The backend-level half of this lives in ``_CompatOpenAIChatModel.prepare_request``, which
+    The backend-level half of this lives in ``CompatOpenAIChatModel.prepare_request``, which
     raises the cap on the outgoing payload. That is not enough on its own: pydantic-ai copies
     ``model_settings['max_tokens']`` into ``GraphAgentState.last_max_tokens`` when it builds
     the request, *before* the model's ``prepare_request`` runs, and that copy is the number
@@ -399,7 +371,7 @@ def _apply_backend_token_floor(name: str, spec: AgentSpec) -> AgentSpec:
     A zero floor (Bedrock, where thinking has its own budget) is a no-op, so this changes
     nothing for the default backend. See :func:`models.max_tokens_floor`.
     """
-    floored = model_factory._apply_max_tokens_floor(
+    floored = model_factory.apply_max_tokens_floor(
         dict(spec.model_settings or {}), model_factory.max_tokens_floor(name)
     )
     if floored == (spec.model_settings or {}):
@@ -412,33 +384,113 @@ def effective_spec(name: str, spec: AgentSpec) -> AgentSpec:
     return _apply_backend_token_floor(name, spec)
 
 
-def _assert_execution_class_covers_tools(name: str, metadata: Mapping[str, Any] | None) -> None:
+
+# Capability name -> the toolset policy (tools/<id>/tool.yaml) that governs it.
+TOOLSET_CAPABILITIES: dict[str, str] = {
+    "RepoReadOnly": "repo-read-only",
+    "SandboxShell": "sandbox-shell",
+}
+
+
+def _capability_toolsets(spec: AgentSpec) -> list[str]:
+    return [TOOLSET_CAPABILITIES[cap.name] for cap in spec.capabilities
+            if cap.name in TOOLSET_CAPABILITIES]
+
+
+def _capability_skills(spec: AgentSpec) -> set[str]:
+    """The skill names a spec's Skills capabilities can load."""
+    names: set[str] = set()
+    for cap in spec.capabilities:
+        if cap.name != "Skills":
+            continue
+        args = dict(cap.kwargs or {})
+        include = args.get("include")
+        if include:
+            names.update(include)
+            continue
+        dirs = args.get("directories") or (cap.args[0] if cap.args else "skills")
+        for d in [dirs] if isinstance(dirs, str) else dirs:
+            names.update(p.parent.name for p in _abs(d).glob("*/SKILL.md"))
+    return names
+
+
+def _assert_capabilities_match_metadata(name: str, spec: AgentSpec) -> None:
+    """Governance metadata must describe the capabilities the agent actually has.
+
+    ``enabled_toolsets`` and ``enabled_skills`` are what a reviewer reads and what the execution
+    class is judged against; a capability reachable from the spec but absent from them is
+    governed by nothing. Every toolset name must have a declared policy.
+    """
+    from infosec_harness.tools.policies import load_policies
+
+    meta = spec.metadata or {}
+    policies = load_policies()
+    declared_toolsets = list(meta.get("enabled_toolsets") or [])
+    unknown = sorted(set(declared_toolsets) - set(policies))
+    if unknown:
+        raise GovernanceError(
+            f"Agent {name!r} enables toolsets with no declared policy: {unknown}; "
+            f"known: {sorted(policies)}")
+    actual_toolsets = _capability_toolsets(spec)
+    if set(declared_toolsets) != set(actual_toolsets):
+        raise GovernanceError(
+            f"Agent {name!r} metadata.enabled_toolsets {sorted(declared_toolsets)} does not match "
+            f"its capabilities {sorted(actual_toolsets)}")
+    declared_skills = set(meta.get("enabled_skills") or [])
+    actual_skills = _capability_skills(spec)
+    if declared_skills != actual_skills:
+        raise GovernanceError(
+            f"Agent {name!r} metadata.enabled_skills {sorted(declared_skills)} does not match "
+            f"its Skills capabilities {sorted(actual_skills)}")
+
+
+def _assert_execution_class_covers_tools(name: str, spec: AgentSpec) -> None:
     """An agent's execution class must be at least what its most consequential tool requires.
 
     This is the rule that makes an execution class mean something: `sandbox-shell` executes
-    code, so any agent enabling it is at least `durable`. Declaring a stronger class is fine;
-    declaring a weaker one is not.
+    code, so any agent enabling it is at least `durable`. The requirement is derived from the
+    capabilities the spec actually attaches, not from what its metadata claims. Declaring a
+    stronger class is fine; declaring a weaker one is not.
     """
-    from infosec_harness.tools.policies import EXECUTION_CLASS_ORDER, required_execution_class
+    from infosec_harness.tools.policies import EXECUTION_CLASS_ORDER, load_policies
 
-    meta = metadata or {}
-    declared = meta.get("execution_class")
-    required = required_execution_class(list(meta.get("enabled_toolsets") or []))
+    policies = load_policies()
+    declared = (spec.metadata or {}).get("execution_class")
+    required = max(
+        [policies[toolset].minimum_execution_class for toolset in _capability_toolsets(spec)]
+        + ["ephemeral"],
+        key=EXECUTION_CLASS_ORDER.index,
+    )
     if EXECUTION_CLASS_ORDER.index(declared) < EXECUTION_CLASS_ORDER.index(required):
         raise GovernanceError(
-            f"Agent {name!r} declares execution_class {declared!r} but its enabled toolsets "
+            f"Agent {name!r} declares execution_class {declared!r} but its capabilities "
             f"require at least {required!r}"
         )
+
+
+def _assert_model_policy(name: str, spec: AgentSpec) -> None:
+    """A committed spec's model policy must resolve to exactly the tier it runs.
+
+    Experiment overlays may substitute a model (that is what a model sweep is) and are recorded
+    as overlay provenance; the committed spec itself must not let the two drift apart.
+    """
+    policy = (spec.metadata or {}).get("model_policy")
+    policies = model_factory.load_models_config().model_policies
+    tier = _spec_tier(name, spec)
+    if policies.get(policy) != tier:
+        raise GovernanceError(
+            f"Agent {name!r} metadata.model_policy {policy!r} resolves to "
+            f"{policies.get(policy)!r}, not the spec's model tier {tier!r}")
 
 
 def _assert_tools_are_declared(name: str, spec: AgentSpec) -> None:
     """Every repo tool an agent can call must appear in the toolset's own policy.
 
-    The policy in `tools/repo-read-only/tool.yaml` is what `required_execution_class` reads and
-    what a reviewer reads; a tool reachable from a spec but absent from it is governed by
-    nothing. This is checked against the spec rather than against the code's default surface,
-    because `RepoReadOnly(tools=[...])` lets a spec name a subset -- and a typo in that list
-    would otherwise silently narrow the agent's tools instead of failing.
+    The policy in `tools/repo-read-only/tool.yaml` is what the execution class is judged
+    against and what a reviewer reads; a tool reachable from a spec but absent from it is
+    governed by nothing. This is checked against the spec rather than against the code's default
+    surface, because `RepoReadOnly(tools=[...])` lets a spec name a subset -- and a typo in that
+    list would otherwise silently narrow the agent's tools instead of failing.
     """
     from infosec_harness.agents.capabilities import DEFAULT_REPO_RO_TOOLS, REPO_RO_TOOLS
     from infosec_harness.tools.policies import load_policies
@@ -463,40 +515,14 @@ def _assert_tools_are_declared(name: str, spec: AgentSpec) -> None:
 
 
 def _resolve_agent_model(
-    name: str,
-    tier: str,
-    *,
-    durable: bool,
-    atomic_intake: bool,
-    replay_only: bool,
-    deps: AgentDeps | None = None,
+    name: str, tier: str, *, durable: bool, atomic_intake: bool, deps: AgentDeps | None = None,
 ):
-    if replay_only and durable and model_factory.get_settings().model_mode == "live":
-        cfg = model_factory.load_models_config()
-        backend = cfg.backends[cfg.backend_for(name)]
-        if backend.transport == "brokered":
-            # Retained generations have no current broker contract or dispatch authority.
-            # Build only their static SDK profile so recorded history can decode.
-            from infosec_harness.inference.unbound import UnboundBrokerModel
-            return ReplayOnlyModel(UnboundBrokerModel(
-                cfg.model_id(tier, cfg.backend_for(name)), atomic_intake=atomic_intake))
-    model = (
-        model_factory.resolve_intake_atomic(name, tier, durable=durable,
-            **({"broker_binding": deps.broker_binding, "broker_contract": deps.broker_contract}
-               if deps and deps.broker_binding else {}))
-        if atomic_intake
-        else model_factory.resolve(name, tier, durable=durable,
-            **({"broker_binding": deps.broker_binding, "broker_contract": deps.broker_contract}
-               if deps and deps.broker_binding else {}))
-    )
-    if replay_only and durable:
-        return ReplayOnlyModel(model)
-    return model
+    broker = ({"broker_binding": deps.broker_binding, "broker_contract": deps.broker_contract}
+              if deps is not None and deps.broker_binding else {})
+    resolver = model_factory.resolve_intake_atomic if atomic_intake else model_factory.resolve
+    return resolver(name, tier, durable=durable, **broker)
 
 
-INTAKE_AGGREGATE_REFERENCE_REPAIR_VERSION = "intake-aggregate-reference-repair-v1"
-INTAKE_REFERENCE_REPAIR_VERSION = "intake-reference-repair-v1"
-INTAKE_LITERAL_LINE_REPAIR_VERSION = "intake-literal-line-repair-v1"
 _INTAKE_LITERAL_LINE_REPAIR = (
     "\nFix only unsupported start_line or end_line claims: report source IDs and report-line "
     "positions are not code line numbers. A retained code line claim needs its number "
@@ -504,7 +530,6 @@ _INTAKE_LITERAL_LINE_REPAIR = (
     "start_line or end_line claim to null, including its value, source and confidence. "
     "Keep other supported claims unchanged; do not invent a code line or supporting text."
 )
-INTAKE_UNSUPPORTED_CLAIM_REPAIR_VERSION = "intake-unsupported-claim-repair-v1"
 _UNSUPPORTED_CLAIM_EVIDENCE_ERRORS = frozenset({
     "A literal location value is absent from its evidence quote.",
     "Every nonempty extraction field requires positive grounded evidence.",
@@ -519,65 +544,147 @@ _UNSUPPORTED_CLAIM_REPAIR = (
 )
 
 
-def _targeted_reference_repair(version: str = INTAKE_REFERENCE_REPAIR_VERSION) -> bool:
-    """New histories use bounded feedback; old histories retain their retry bytes."""
-    from temporalio import workflow
-
-    return not workflow.in_workflow() or workflow.patched(version)
+def _reference_feedback(error: ReferenceError) -> str:
+    """Closed repair feedback: authored field names and rule names only, never report data."""
+    if len(error.failures) > 1:
+        failures = ", ".join(f"{field}={problem}" for field, problem in error.failures)
+        return (
+            "Extraction violates its evidence contract:\n- Source references violate "
+            f"their contract: {failures}. Fix only these source references: "
+            "end_id must be at or after start_id in report source-line order; "
+            "for one source line use end_id=null or end_id=start_id. "
+            "For unknown_source_id, cite an existing report source ID. "
+            "Keep supported claim values and confidence unchanged; do not invent support."
+        )
+    feedback = f"Source reference violates its contract: {error.rule}"
+    if error.rule == "reversed_source_range" and error.field is not None:
+        feedback += (
+            f". Fix only the source reference for claim '{error.field}': "
+            "end_id must be at or after start_id in report source-line order. "
+            "For a single source line, use end_id=null or end_id=start_id. "
+            "Keep the supported claim value and confidence unchanged."
+        )
+    return "Extraction violates its evidence contract:\n- " + feedback
 
 
 def _validate_atomic_intake(ctx: Any, output: AtomicFinding) -> ExtractedFinding:
-    try:
-        finding = reconstruct(ctx.deps.report_text, output)
-    except ReferenceError as error:
-        rule = error.rule if error.rule in {
-            "source_unavailable", "unknown_source_id", "reversed_source_range"
-        } else "invalid_reference"
-        from pydantic_ai import ModelRetry
-
-        references = (
-            invalid_source_references(ctx.deps.report_text, output)
-            if rule in {"unknown_source_id", "reversed_source_range"} else ()
-        )
-        if len(references) > 1 and _targeted_reference_repair(
-            INTAKE_AGGREGATE_REFERENCE_REPAIR_VERSION
-        ):
-            # Static authored field names and closed rules only. Never repair output here.
-            failures = ", ".join(f"{field}={problem}" for field, problem in references)
-            raise ModelRetry(
-                "Extraction violates its evidence contract:\n- Source references violate "
-                f"their contract: {failures}. Fix only these source references: "
-                "end_id must be at or after start_id in report source-line order; "
-                "for one source line use end_id=null or end_id=start_id. "
-                "For unknown_source_id, cite an existing report source ID. "
-                "Keep supported claim values and confidence unchanged; do not invent support."
-            ) from None
-        # A single failure or absent aggregate marker retains the exact existing bytes.
-        feedback = f"Source reference violates its contract: {rule}"
-        if (rule == "reversed_source_range" and type(error.field) is str
-                and error.field in AtomicFinding.model_fields
-                and _targeted_reference_repair()):
-            feedback += (
-                f". Fix only the source reference for claim '{error.field}': "
-                "end_id must be at or after start_id in report source-line order. "
-                "For a single source line, use end_id=null or end_id=start_id. "
-                "Keep the supported claim value and confidence unchanged."
-            )
-        raise ModelRetry("Extraction violates its evidence contract:\n- " + feedback) from None
     from pydantic_ai import ModelRetry
 
     try:
+        finding = reconstruct(ctx.deps.report_text, output)
+    except ReferenceError as error:
+        raise ModelRetry(_reference_feedback(error)) from None
+    try:
         return validate_intake_evidence(ctx, finding)
     except ModelRetry as error:
-        # Each new repair policy has its own marker; retained marker bytes stay intact.
-        if ("\n- A literal line number is absent from its evidence quote." in error.message
-                and _targeted_reference_repair(INTAKE_LITERAL_LINE_REPAIR_VERSION)):
+        # The guard emits closed diagnostics; never interpolate claim/report data here.
+        if "\n- A literal line number is absent from its evidence quote." in error.message:
             raise ModelRetry(error.message + _INTAKE_LITERAL_LINE_REPAIR) from None
-        # The existing guard emits closed diagnostics; never interpolate claim/report data.
-        if (any(f"\n- {problem}" in error.message for problem in _UNSUPPORTED_CLAIM_EVIDENCE_ERRORS)
-                and _targeted_reference_repair(INTAKE_UNSUPPORTED_CLAIM_REPAIR_VERSION)):
+        if any(f"\n- {problem}" in error.message for problem in _UNSUPPORTED_CLAIM_EVIDENCE_ERRORS):
             raise ModelRetry(error.message + _UNSUPPORTED_CLAIM_REPAIR) from None
         raise
+
+
+def _install_source_validator(config: ResolvedAgentConfig) -> OutputValidator:
+    policy = config.effective_spec["metadata"]["output_validation"]
+    return bind_install_source_validator(tuple(policy["approved_hosts"]))
+
+
+def _planning_window(spec: AgentSpec) -> list[Any]:
+    planning = PlanningWindow.from_metadata(spec.metadata or {})
+    if planning is None:
+        raise ValueError("Build repair requires its frozen planning window")
+    return [planning.capability(), PlanningWindowTelemetry(planning)]
+
+
+def _intake_output_validation() -> dict[str, str]:
+    return {"version": INTAKE_EVIDENCE_POLICY_VERSION, "wire_version": WIRE_VERSION}
+
+
+def _install_source_policy() -> dict[str, Any]:
+    # Operator configuration is resolved on the host, never from repository content.
+    return install_source_policy(get_settings().default_registry_allowlist)
+
+
+@dataclass(frozen=True)
+class AgentBinding:
+    """Everything about one agent that stays in code rather than in its spec.
+
+    ``domain_type`` is what the graph consumes and persistence records; ``output_type`` is what
+    the model is asked to emit when the two differ (a narrower or union wire contract that a
+    validator converts). Hooks are declarative so ``build_agent`` has no per-name branches.
+    """
+
+    domain_type: type[BaseModel]
+    output_type: Any = None
+    validators: tuple[OutputValidator, ...] = ()
+    config_validators: tuple[Callable[[ResolvedAgentConfig], OutputValidator], ...] = ()
+    instructions: tuple[Callable[..., str], ...] = ()
+    capabilities: Callable[[AgentSpec], list[Any]] | None = None
+    output_validation: Callable[[], dict[str, Any]] | None = None
+    atomic_intake: bool = False
+
+    @property
+    def model_output_type(self) -> Any:
+        return self.domain_type if self.output_type is None else self.output_type
+
+
+BINDINGS: dict[str, AgentBinding] = {
+    "intake": AgentBinding(
+        ExtractedFinding, output_type=AtomicFinding, validators=(_validate_atomic_intake,),
+        output_validation=_intake_output_validation, atomic_intake=True),
+    "recon": AgentBinding(RepoProfile),
+    "env-planner": AgentBinding(
+        EnvironmentSpec, output_type=PlannedEnvironmentOutput,
+        validators=(validate_environment_spec,)),
+    "build-repair": AgentBinding(
+        EnvironmentSpec, validators=(validate_environment_spec,),
+        config_validators=(_install_source_validator,), capabilities=_planning_window,
+        output_validation=_install_source_policy),
+    "partial-build": AgentBinding(
+        EnvironmentSpec, output_type=PartialEnvironmentOutput,
+        validators=(validate_environment_spec, validate_partial_build_scope)),
+    "context": AgentBinding(FindingContext, output_type=ContextOutput),
+    "probe-planner": AgentBinding(ProbePlan),
+    "probe-author": AgentBinding(ProbeSource, validators=(validate_probe,)),
+    "probe-diagnosis": AgentBinding(ProbeDiagnosis),
+    "probe-repair": AgentBinding(ProbeSource, validators=(validate_probe,)),
+    "verdict": AgentBinding(
+        Verdict, output_type=VERDICT_OUTPUTS, validators=(validate_verdict,),
+        instructions=(verdict_contract_instructions,),
+        capabilities=lambda _spec: [PrepareOutputTools(prepare_verdict_tools)]),
+}
+
+# name -> domain output type. Every agents/<name>/agent.yaml must appear here and vice versa.
+AGENT_BINDINGS: dict[str, type[BaseModel]] = {name: b.domain_type for name, b in BINDINGS.items()}
+
+# Temporal derives model/tool activity identities from the agent's name. Bumping this retires
+# every recorded activity identity at once: histories from an earlier generation are not
+# replayable by design and must be retried as new workflows.
+EXECUTION_GENERATION = "v5"
+
+
+def binding_for(name: str) -> AgentBinding:
+    try:
+        return BINDINGS[name]
+    except KeyError:
+        raise KeyError(f"Unknown agent {name!r}") from None
+
+
+def execution_name(name: str) -> str:
+    """The durable (Temporal activity) identity of an agent in this execution generation."""
+    binding_for(name)
+    return f"{name}-{EXECUTION_GENERATION}"
+
+
+def _assert_intake_protocol(name: str, spec: AgentSpec) -> None:
+    """The intake spec must declare exactly the one wire protocol and identity this code runs."""
+    intake_output = (spec.metadata or {}).get("intake_output") or {}
+    if intake_output.get("protocol") != WIRE_VERSION:
+        raise GovernanceError(f"Agent {name!r} must declare intake_output.protocol {WIRE_VERSION}")
+    if intake_output.get("execution") != execution_name(name):
+        raise GovernanceError(
+            f"Agent {name!r} intake_output.execution must be {execution_name(name)!r}")
 
 
 def build_agent(
@@ -586,11 +693,6 @@ def build_agent(
     *,
     durable: bool = True,
     production_transport: bool | None = None,
-    legacy_output_contract: bool = False,
-    execution_name: str | None = None,
-    spec_override: AgentSpec | None = None,
-    atomic_output: bool | None = None,
-    replay_only_model: bool = False,
 ) -> Agent[AgentDeps, Any]:
     """Build an agent with independently selected execution and transport layers.
 
@@ -599,35 +701,25 @@ def build_agent(
     attaching Temporal activities. Ordinary callers leave it unset, preserving the existing
     rule that durable execution owns transport retries.
     """
-    if name not in AGENT_BINDINGS:
-        raise KeyError(f"Unknown agent {name!r}")
-    if name == "intake" and legacy_output_contract and spec_override is None:
-        spec_override = retained_intake_spec()
-    if name == "env-planner" and legacy_output_contract and spec_override is None:
-        spec_override = AgentSpec.from_file(
-            package_root() / "agents" / "env-planner" / "agent-v1.0.4.yaml"
-        )
-    spec = load_spec(name, overlay, spec_override=spec_override)
-    metadata = spec.metadata or {}
-    intake_output = metadata.get("intake_output") or {}
-    declared_atomic = name == "intake" and intake_output.get("protocol") == WIRE_VERSION
-    use_atomic_output = declared_atomic if atomic_output is None else atomic_output
-    if name == "intake" and use_atomic_output != declared_atomic:
-        raise ValueError("Intake output mode must match the full spec's declared protocol")
+    binding = binding_for(name)
+    spec = load_spec(name, overlay)
     # A spec that cannot be governed must not become a running agent: owner, execution class,
     # risk tier, risk assessment, model policy, budget, skills, and toolsets are all required,
     # and the spec's risk tier must match its assessment's governance tier (§3).
     assert_governed(name, spec.metadata)
-    _assert_execution_class_covers_tools(name, spec.metadata)
     _assert_tools_are_declared(name, spec)
+    _assert_capabilities_match_metadata(name, spec)
+    _assert_execution_class_covers_tools(name, spec)
+    if overlay is None:
+        _assert_model_policy(name, spec)
+    if binding.atomic_intake:
+        _assert_intake_protocol(name, spec)
     spec = _absolutize_skill_dirs(effective_spec(name, spec))
     transport = durable if production_transport is None else production_transport
     capabilities: list[Any] = [
         ResolveModelId(
-            lambda ctx, model_id, _n=name, _d=transport, _a=use_atomic_output,
-                   _r=replay_only_model: _resolve_agent_model(
-                       _n, model_id, durable=_d, atomic_intake=_a, replay_only=_r, deps=ctx.deps
-                   )
+            lambda ctx, model_id, _n=name, _d=transport, _a=binding.atomic_intake:
+                _resolve_agent_model(_n, model_id, durable=_d, atomic_intake=_a, deps=ctx.deps)
         )
     ]
     if model_factory.get_settings().model_mode == "live":
@@ -636,14 +728,11 @@ def build_agent(
             from infosec_harness.inference.identity import BrokerRequestIdentity
             capabilities.append(BrokerRequestIdentity())
     # Cross-cutting robustness, attached in code (see ALLOWED_CAPABILITIES note).
-    if any(cap.name in {"RepoReadOnly", "SandboxShell"} for cap in spec.capabilities):
+    if _capability_toolsets(spec):
         capabilities.append(RepairToolArguments())
+    if binding.capabilities is not None:
+        capabilities.extend(binding.capabilities(spec))
     metadata = spec.metadata or {}
-    if name == "build-repair" and not legacy_output_contract:
-        planning = PlanningWindow.from_metadata(metadata)
-        if planning is None:
-            raise ValueError("Current build repair requires its frozen planning window")
-        capabilities.extend([planning.capability(), PlanningWindowTelemetry(planning)])
     if metadata.get("clear_tool_results"):
         capabilities.append(
             ClearToolResults(
@@ -656,97 +745,43 @@ def build_agent(
                 model_activity_config=MODEL_ACTIVITY, toolset_activity_config=TOOL_ACTIVITY
             )
         )
-    output_type = AtomicFinding if use_atomic_output else AGENT_BINDINGS[name]
-    if not legacy_output_contract:
-        if name == "env-planner":
-            output_type = PlannedEnvironmentOutput
-        elif name == "partial-build":
-            output_type = PartialEnvironmentOutput
-        elif name == "context":
-            output_type = ContextOutput
-        elif name == "verdict":
-            output_type = VERDICT_OUTPUTS
-            capabilities.append(PrepareOutputTools(prepare_verdict_tools))
     agent = Agent.from_spec(
         spec,
         deps_type=AgentDeps,
-        output_type=output_type,
+        output_type=binding.model_output_type,
         custom_capability_types=ALLOWED_CAPABILITIES,
         capabilities=capabilities,
-        # Temporal derives model/tool activity identities from this name. Output-contract
-        # revisions therefore need a distinct execution name; the logical name above still
-        # owns model routing, governance, budgets, telemetry and persisted AgentOutcome data.
-        name=execution_name or name,
+        # The logical name still owns model routing, governance, budgets, telemetry and the
+        # persisted AgentOutcome; only the durable activity identity carries the generation.
+        name=execution_name(name) if durable else name,
         defer_model_check=True,
     )
     from infosec_harness.telemetry import private_instrumentation
 
     agent.instrument = private_instrumentation()
-    if name == "verdict" and not legacy_output_contract:
-        agent.instructions(verdict_contract_instructions)
-    if name == "build-repair" and not legacy_output_contract:
-        policy = resolve_agent_config(name, spec, durable=transport).effective_spec[
-            "metadata"
-        ]["output_validation"]
-        agent.output_validator(bind_install_source_validator(tuple(policy["approved_hosts"])))
-    if name == "intake" and not legacy_output_contract:
-        if use_atomic_output:
-            agent.output_validator(_validate_atomic_intake)
-        else:
-            agent.output_validator(validate_intake_evidence)
-    for validator in OUTPUT_VALIDATORS.get(name, ()):
+    for instructions in binding.instructions:
+        agent.instructions(instructions)
+    if binding.config_validators:
+        config = resolve_agent_config(name, spec, durable=transport)
+        for factory in binding.config_validators:
+            agent.output_validator(factory(config))
+    for validator in binding.validators:
         agent.output_validator(validator)
     return agent
 
 
 @lru_cache
 def durable_agents() -> dict[str, Agent[AgentDeps, Any]]:
-    """Current agents, with distinct Temporal identities for revised output contracts."""
-    revised = {"partial-build", "context", "verdict", "build-repair", "intake", "env-planner"}
-    return {
-        name: build_agent(
-            name,
-            execution_name=(f"{name}-serial-tools-v1" if name in {"build-repair", "partial-build"} else
-                            ATOMIC_EXECUTION_NAME if name == "intake" else
-                            f"{name}-output-v2" if name in revised else None),
-        )
-        for name in AGENT_BINDINGS
-    }
-
-
-def quoted_intake_agent(*, durable: bool = True) -> Agent[AgentDeps, Any]:
-    """Build retained 1.0.2 quote output with the v2 Temporal identity."""
-    return build_agent(
-        "intake", durable=durable, spec_override=retained_intake_spec(),
-        atomic_output=False, replay_only_model=durable, execution_name=QUOTED_EXECUTION_NAME,
-    )
-
-
-@lru_cache
-def legacy_output_agents() -> dict[str, Agent[AgentDeps, Any]]:
-    """Original Temporal identities and parsers retained solely for history replay."""
-    return {
-        name: build_agent(
-            name, legacy_output_contract=True,
-            spec_override=(AgentSpec.from_file(package_root() / f"agents/{name}/agent-v{version}.yaml")
-                           if (version := {"build-repair": "1.0.5", "partial-build": "1.1.3"}.get(name))
-                           else retained_intake_spec() if name == "intake" else None),
-            replay_only_model=(name in {"intake", "env-planner"}),
-        )
-        for name in ("partial-build", "context", "verdict", "build-repair", "intake", "env-planner")
-    }
+    """Every current agent, built once with its durable execution identity."""
+    return {name: build_agent(name) for name in BINDINGS}
 
 
 @lru_cache
 def agent_usage_limits() -> dict[str, Any]:
-    """Each agent's run budget as UsageLimits, resolved once on the host.
-
-    TemporalOps needs these inside a workflow, where reading a spec from disk would be
-    nondeterministic I/O, so they are computed at import like the config hashes.
-    """
+    """Each agent's run budget as UsageLimits, resolved once on the host."""
     from infosec_harness.agents.budgets import usage_limits_for
 
-    return {name: usage_limits_for(name, load_spec(name).metadata) for name in AGENT_BINDINGS}
+    return {name: usage_limits_for(name, load_spec(name).metadata) for name in BINDINGS}
 
 
 @lru_cache
@@ -757,18 +792,13 @@ def agent_config_hashes() -> dict[str, str]:
 @lru_cache
 def resolved_agent_configs() -> dict[str, ResolvedAgentConfig]:
     """Durable base configs loaded outside workflow execution."""
-    return {
-        name: resolve_agent_config(name, load_spec(name), durable=True) for name in AGENT_BINDINGS
-    }
+    return {name: resolve_agent_config(name, load_spec(name), durable=True) for name in BINDINGS}
 
 
 @lru_cache
 def resolved_model_names() -> dict[str, str]:
-    """Precomputed name per agent, so workflows avoid disk/config I/O at run time."""
-    return {
-        name: model_factory.resolved_model_name(name, load_spec(name).model or "sonnet")
-        for name in AGENT_BINDINGS
-    }
+    """The concrete model each agent resolves to, from its resolved configuration."""
+    return {name: config.model.resolved_model for name, config in resolved_agent_configs().items()}
 
 
 def spec_names_on_disk() -> set[str]:
@@ -779,11 +809,11 @@ def validate_all() -> list[str]:
     """CI gate (`just agents-validate`): bindings <-> specs, allowlist, cache-safe prompts."""
     problems: list[str] = []
     on_disk = spec_names_on_disk()
-    for missing in sorted(set(AGENT_BINDINGS) - on_disk):
+    for missing in sorted(set(BINDINGS) - on_disk):
         problems.append(f"{missing}: binding has no agents/{missing}/agent.yaml")
-    for extra in sorted(on_disk - set(AGENT_BINDINGS)):
-        problems.append(f"{extra}: agent.yaml has no binding in AGENT_BINDINGS")
-    for name in sorted(on_disk & set(AGENT_BINDINGS)):
+    for extra in sorted(on_disk - set(BINDINGS)):
+        problems.append(f"{extra}: agent.yaml has no binding in BINDINGS")
+    for name in sorted(on_disk & set(BINDINGS)):
         try:
             spec = load_spec(name)
             instructions = (
@@ -795,8 +825,6 @@ def validate_all() -> list[str]:
                 problems.append(
                     f"{name}: instructions must be static (no Handlebars templates, §6.2)"
                 )
-            if not spec.model:
-                problems.append(f"{name}: spec must name a model tier")
             build_agent(name, durable=True)
         except Exception as e:  # noqa: BLE001 - report every broken spec
             problems.append(f"{name}: {type(e).__name__}: {e}")

@@ -319,7 +319,7 @@ def illustrative_commands(skill: SkillDoc) -> dict[str, str]:
     return out
 
 
-def load_cases(skill: SkillDoc) -> list[SkillCase]:
+def load_skill_cases(skill: SkillDoc) -> list[SkillCase]:
     """Authored cases for one skill; an empty list when the skill deliberately has none."""
     path = skill.cases_path
     if not path.exists():

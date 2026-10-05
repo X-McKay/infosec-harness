@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
-import os
-import tempfile
 import time
 from copy import deepcopy
 from pathlib import Path
@@ -23,9 +20,12 @@ from infosec_harness.agents.registry import (
     load_spec,
     resolve_agent_config,
 )
+from infosec_harness.evals._json import write_json
+from infosec_harness.evals.coverage import scenario_coverage
+from infosec_harness.evals.dataset import Case, case_group, load_dataset
+from infosec_harness.evals.gates import ReleasePolicy, load_policy
 from infosec_harness.evals.provenance import CodeVersion, code_version
-from infosec_harness.evals.run import case_group, run_experiment
-from infosec_harness.settings import get_settings
+from infosec_harness.evals.run import run_experiment
 
 _SAFE_VARIABLE_PREFIXES = (
     "model",
@@ -159,19 +159,27 @@ def _agent_overlay(spec: CalibrationSpec, candidate: object) -> dict[str, Any]:
     return overlay
 
 
-def _dataset_cases(agent: str) -> list[dict[str, Any]]:
-    path = get_settings().agents_dir / agent / "evals" / "dataset.yaml"
-    return list((yaml.safe_load(path.read_text()) or {}).get("cases") or [])
-
-
-def _validate_groups(spec: CalibrationSpec, cases: list[dict[str, Any]]) -> tuple[int, int]:
+def _validate_groups(
+    spec: CalibrationSpec, cases: tuple[Case, ...], policy: ReleasePolicy
+) -> tuple[int, int]:
     available = {case_group(case) for case in cases}
     requested = set(spec.dataset.calibration) | set(spec.dataset.held_out)
     if missing := sorted(requested - available):
         raise ValueError(f"dataset groups do not exist for {spec.subject}: {missing}")
-    calibration_n = sum(case_group(case) in set(spec.dataset.calibration) for case in cases)
-    held_out_n = sum(case_group(case) in set(spec.dataset.held_out) for case in cases)
-    return calibration_n, held_out_n
+    selections = {
+        "calibration": [c for c in cases if case_group(c) in set(spec.dataset.calibration)],
+        "held_out": [c for c in cases if case_group(c) in set(spec.dataset.held_out)],
+    }
+    if "uncovered_material_scenarios" in policy.hard_gates:
+        for name, selected in selections.items():
+            uncovered = scenario_coverage(spec.subject, selected).uncovered_material
+            if uncovered:
+                # Every run of these groups would fail the policy's coverage gate, so no
+                # candidate could ever be admissible; refuse before spending anything.
+                raise ValueError(
+                    f"{name} groups leave material risk scenarios uncovered: {uncovered}; "
+                    f"{spec.subject}'s release policy gates on uncovered_material_scenarios")
+    return len(selections["calibration"]), len(selections["held_out"])
 
 
 def _request_ceiling(spec: CalibrationSpec, calibration_n: int, held_out_n: int) -> int:
@@ -230,21 +238,17 @@ def _cost_ceiling(
     return round(ceiling, 6), sources
 
 
-def _passes_hard_gates(metrics: dict[str, Any] | None) -> bool:
-    if not metrics:
-        return False
-    return (
-        metrics.get("status") == "complete"
+def admissible(policy: ReleasePolicy, metrics: dict[str, Any] | None) -> bool:
+    """A complete, fully covered run that clears every hard gate in the agent's own policy.
+
+    A gate whose metric is missing is unknown evidence and fails closed, just like a nonzero
+    count.
+    """
+    return bool(
+        metrics
+        and metrics.get("status") == "complete"
         and metrics.get("n") == metrics.get("n_planned")
-        and metrics.get("schema_validity_rate") == 1.0
-        and metrics.get("budget_enforcement_violations") == 0
-        and metrics.get("unexpected_budget_stops") == 0
-        and metrics.get("unevidenced_safe_verdicts") == 0
-        # Evaluator v4 distinguishes an execution-backed wrong answer from a case whose
-        # secure execution never ran. Missing is unknown evidence and fails closed just like
-        # a non-zero count; older evaluator reports cannot select a current candidate.
-        and metrics.get("execution_not_checked_count") == 0
-        and metrics.get("execution_failed_count") == 0
+        and policy.evaluate(metrics, hard_gates_only=True).passed
     )
 
 
@@ -261,6 +265,7 @@ def _selection_key(trial: TrialResult) -> tuple[float, float, float]:
 
 def _promotion_eligible(
     *,
+    policy: ReleasePolicy,
     selected: TrialResult | None,
     held_out_metrics: dict[str, Any] | None,
     selected_quality: bool,
@@ -273,7 +278,7 @@ def _promotion_eligible(
     """Promotion requires live evidence from immutable source plus every quality gate."""
     return bool(
         selected is not None
-        and _passes_hard_gates(held_out_metrics)
+        and admissible(policy, held_out_metrics)
         and selected_quality
         and held_out_quality
         and code.describes_a_commit
@@ -291,8 +296,8 @@ async def _experiment_row(experiment_id: str) -> object:
 
 async def run_calibration(spec: CalibrationSpec) -> CalibrationReport:
     """Run calibration candidates, select an admissible one, then run grouped holdouts."""
-    cases = _dataset_cases(spec.subject)
-    calibration_n, held_out_n = _validate_groups(spec, cases)
+    policy = load_policy(spec.subject)
+    calibration_n, held_out_n = _validate_groups(spec, load_dataset(spec.subject).cases, policy)
     ceiling = _request_ceiling(spec, calibration_n, held_out_n)
     if ceiling > spec.constraints.maximum_model_requests:
         raise ValueError(
@@ -410,12 +415,12 @@ async def run_calibration(spec: CalibrationSpec) -> CalibrationReport:
                     f"${spec.constraints.maximum_cost_usd:.6f}"
                 )
 
-    admissible = [
+    candidates = [
         trial
         for trial in trials
-        if trial.status == "complete" and _passes_hard_gates(trial.metrics)
+        if trial.status == "complete" and admissible(policy, trial.metrics)
     ]
-    selected = max(admissible, key=_selection_key) if admissible else None
+    selected = max(candidates, key=_selection_key) if candidates else None
     held_out_id = None
     held_out_metrics = None
     if selected is not None:
@@ -442,7 +447,7 @@ async def run_calibration(spec: CalibrationSpec) -> CalibrationReport:
         limitations.append("cost was unavailable; cost-based promotion is ineligible")
     if selected is None:
         limitations.append("no calibration candidate passed all hard gates")
-    if held_out_metrics is not None and not _passes_hard_gates(held_out_metrics):
+    if held_out_metrics is not None and not admissible(policy, held_out_metrics):
         limitations.append("selected candidate failed held-out hard gates")
     selected_quality = bool(
         selected
@@ -471,6 +476,7 @@ async def run_calibration(spec: CalibrationSpec) -> CalibrationReport:
             "provider evidence"
         )
     promotion_eligible = _promotion_eligible(
+        policy=policy,
         selected=selected,
         held_out_metrics=held_out_metrics,
         selected_quality=selected_quality,
@@ -516,14 +522,4 @@ async def run_calibration(spec: CalibrationSpec) -> CalibrationReport:
 
 def write_report(path: Path, report: CalibrationReport) -> None:
     """Atomically publish a completed report; production configuration is never modified."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    try:
-        with os.fdopen(fd, "w") as handle:
-            json.dump(report.model_dump(mode="json"), handle, indent=2)
-            handle.write("\n")
-        os.replace(temporary, path)
-    except BaseException:
-        with contextlib.suppress(FileNotFoundError):
-            os.unlink(temporary)
-        raise
+    write_json(path, report.model_dump(mode="json"))

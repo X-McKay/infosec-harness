@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from infosec_harness.agents.ecosystem_contract import ADAPTER_CONTRACT_VERSION
 from infosec_harness.domain.models import (
     BuildResult,
     EnvironmentSpec,
@@ -21,16 +22,20 @@ from infosec_harness.domain.models import (
     canonical_json,
     sha256_text,
 )
-from infosec_harness.graph.manifests import execution_manifest, persisted_manifest
+from infosec_harness.graph.manifests import execution_manifest
+from infosec_harness.persistence.identity import persisted_manifest
 from infosec_harness.repo import checkout as checkout_module
 from infosec_harness.repo.access import RepositoryAccessError
 from infosec_harness.repo.checkout import checkout
+from infosec_harness.settings import get_settings
 
 
 @pytest.fixture
 def snapshot_workspace(tmp_path, monkeypatch):
     workspace = tmp_path / "workspace"
     monkeypatch.setattr(checkout_module, "default_workspace", lambda: workspace)
+    # Local sources are admitted only beneath operator-approved roots.
+    monkeypatch.setattr(get_settings(), "local_repo_roots", [tmp_path])
     return workspace
 
 
@@ -212,7 +217,7 @@ def test_execution_manifest_records_identities_without_environment_values(tmp_pa
     assert workflow_manifest["schema_version"] == 1
     assert "harness" not in workflow_manifest
     manifest = persisted_manifest(workflow_manifest)
-    assert manifest["environment"]["adapter_contract_version"] == "unit-probe-adapters/v1"
+    assert manifest["environment"]["adapter_contract_version"] == ADAPTER_CONTRACT_VERSION
     assert manifest["environment"]["adapter_profiles"] == {
         "profiles": [
             {"id": "python-unit-probe", "version": "1", "support": "experimental"}
@@ -241,3 +246,55 @@ def test_execution_manifest_records_identities_without_environment_values(tmp_pa
         "smoke": {"ok": True},
     }
     assert "do-not-persist" not in canonical_json(manifest)
+
+
+async def test_local_source_outside_approved_roots_is_rejected(tmp_path, monkeypatch):
+    repo = tmp_path / "unapproved"
+    repo.mkdir()
+    (repo / "app.py").write_text("x = 1\n")
+    monkeypatch.setattr(get_settings(), "local_repo_roots", [tmp_path / "approved"])
+    for url in (str(repo), f"file://{repo}"):
+        with pytest.raises(ValueError, match="local_repo_roots"):
+            await checkout(RepoRef(repo_url=url, source_mode="working_snapshot"))
+    monkeypatch.setattr(get_settings(), "local_repo_roots", [])
+    with pytest.raises(ValueError, match="local_repo_roots"):
+        await checkout(RepoRef(repo_url=str(repo), source_mode="working_snapshot"))
+
+
+@pytest.mark.parametrize("url", ["ssh://example.invalid/r.git", "git@example.invalid:r.git",
+                                 "ext::sh -c touch% /tmp/pwned", "--upload-pack=touch /tmp/x",
+                                 "http://example.invalid/r.git"])
+async def test_only_https_remote_sources_are_admitted(snapshot_workspace, url):
+    with pytest.raises(ValueError, match="https"):
+        await checkout(RepoRef(repo_url=url, revision="HEAD"))
+
+
+@pytest.mark.parametrize("revision", ["--output=/tmp/x", "-b", "main\nmore"])
+async def test_option_like_revisions_are_rejected_before_git(snapshot_workspace, tmp_path, revision):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    with pytest.raises(ValueError, match="revision"):
+        await checkout(RepoRef(repo_url=str(repo), revision=revision))
+
+
+async def test_git_runs_with_controlled_config_and_without_ambient_credentials(
+        snapshot_workspace, tmp_path, monkeypatch):
+    seen = {}
+
+    async def capture(argv, *, env, **_kwargs):
+        seen["argv"], seen["env"] = argv, env
+        from infosec_harness.sandbox.process import ProcessResult
+        return ProcessResult(0, b"", b"", False, False, 0.0)
+
+    monkeypatch.setenv("GIT_ASKPASS", "/ambient/askpass")
+    monkeypatch.setenv("SSH_AUTH_SOCK", "/ambient/agent.sock")
+    monkeypatch.setenv("IH_PROVIDER_SECRET", "must-not-reach-git")
+    monkeypatch.setattr(checkout_module, "run_bounded", capture)
+    await checkout_module._git("clone", "--", "https://example.invalid/r.git", "dest")
+    argv, env = seen["argv"], seen["env"]
+    assert argv[0] == "git" and "protocol.allow=never" in argv
+    assert "protocol.https.allow=always" in argv and "protocol.file.allow=always" not in argv
+    assert "credential.helper=" in argv and "core.fsmonitor=false" in argv
+    assert argv[-3:] == ["--", "https://example.invalid/r.git", "dest"]
+    assert env["GIT_CONFIG_NOSYSTEM"] == "1" and env["GIT_ASKPASS"] == ""
+    assert "SSH_AUTH_SOCK" not in env and "IH_PROVIDER_SECRET" not in env

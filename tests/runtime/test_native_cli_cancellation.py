@@ -7,6 +7,7 @@ import pytest
 
 from infosec_harness.inference import openshell as m
 from infosec_harness.inference.protocol import BrokerError
+from infosec_harness.sandbox.process import run_bounded
 
 
 @pytest.fixture
@@ -140,15 +141,15 @@ async def test_repeated_cancel_during_reap_finishes_owned_cleanup(cli, tmp_path,
 
     async def wrapped(*a, **kw):
         p = await real(*a, **kw)
-        communicate = p.communicate
+        wait = p.wait
 
         async def slow():
-            result = await communicate()
+            result = await wait()
             reaped.set()
             await asyncio.sleep(0.1)
             return result
 
-        p.communicate = slow
+        p.wait = slow
         return p
 
     monkeypatch.setattr(m.asyncio, "create_subprocess_exec", wrapped)
@@ -206,9 +207,7 @@ async def test_cancel_reaps_descendant_after_group_leader_exit(tmp_path):
     marker = tmp_path / "mutation"
     child = f'import time,pathlib;time.sleep(.4);pathlib.Path({str(marker)!r}).write_text("late")'
     code = f'import subprocess,sys,pathlib;subprocess.Popen([sys.executable,"-c",{child!r}]);pathlib.Path({str(ready)!r}).write_text("started")'
-    task = asyncio.create_task(
-        m._run_owned_native_process([sys.executable, "-c", code], env={}, timeout=10)
-    )
+    task = asyncio.create_task(run_bounded([sys.executable, "-c", code], env={}, timeout=10))
     await wait_ready(ready)
     await asyncio.sleep(0.02)
     task.cancel()
@@ -216,3 +215,51 @@ async def test_cancel_reaps_descendant_after_group_leader_exit(tmp_path):
         await asyncio.wait_for(task, 2)
     await asyncio.sleep(0.45)
     assert not marker.exists()
+
+
+@pytest.mark.asyncio
+async def test_binary_is_rehashed_only_when_its_file_identity_changes(cli, monkeypatch):
+    hashed = []
+    real = m.hashlib.sha256
+
+    def counting(data=b""):
+        hashed.append(len(data))
+        return real(data)
+
+    monkeypatch.setattr(m.hashlib, "sha256", counting)
+    await cli.run(["--version"])
+    await cli.run(["--version"])
+    assert len(hashed) == 1
+    cli.binary.write_text(cli.binary.read_text() + "\n")
+    with pytest.raises(BrokerError) as e:
+        await cli.run(["--version"])
+    assert e.value.code == "identity" and len(hashed) == 2
+
+
+@pytest.mark.asyncio
+async def test_timeout_is_reported_and_output_bound_keeps_tail():
+    result = await run_bounded(
+        [sys.executable, "-c", "import sys; sys.stdout.write('a' * 50 + 'END')"],
+        env={}, timeout=10, capture_limit=10,
+    )
+    assert result.returncode == 0 and result.truncated and result.stdout == b"aaaaaaaEND"
+    slow = await run_bounded([sys.executable, "-c", "import time; time.sleep(5)"],
+                             env={}, timeout=0.2)
+    assert slow.timed_out and slow.returncode is None
+
+
+@pytest.mark.asyncio
+async def test_stdin_closed_early_by_child_is_not_a_runner_failure():
+    result = await run_bounded([sys.executable, "-c", "import os; os.close(0)"],
+                               env={}, timeout=10, stdin=b"x" * 4_000_000)
+    assert result.returncode == 0 and not result.timed_out
+
+
+@pytest.mark.asyncio
+async def test_child_receives_only_the_explicit_environment(monkeypatch):
+    monkeypatch.setenv("IH_AMBIENT_SECRET", "must-not-leak")
+    result = await run_bounded(
+        [sys.executable, "-c", "import os; print(sorted(os.environ))"], env={"ONLY": "1"},
+        timeout=10,
+    )
+    assert b"IH_AMBIENT_SECRET" not in result.stdout and b"ONLY" in result.stdout

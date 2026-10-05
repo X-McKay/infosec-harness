@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 import ssl
 import time
 from collections.abc import Callable
 from typing import Any
-from urllib.parse import urlsplit
 
 import httpx
 from pydantic import Field
@@ -20,9 +18,16 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from infosec_harness.agents.intake_schema import intake_openai_profile
 from infosec_harness.inference.auth import AUTH_HEADER, sign_request
 from infosec_harness.inference.codec import decode_response, encode_payload
-from infosec_harness.inference.diagnostics import report_remote_diagnostic, report_transport_failure
-from infosec_harness.inference.http_service import parse_body
+from infosec_harness.inference.diagnostics import report_transport_failure
+from infosec_harness.inference.http_service import (
+    TRANSPORT_ERRORS,
+    parse_response,
+    post_bounded,
+    response_error,
+)
 from infosec_harness.inference.protocol import (
+    DIGEST_PATTERN,
+    IMAGE_DIGEST_PATTERN,
     BrokerError,
     ExecutorContract,
     InferenceRequest,
@@ -32,36 +37,23 @@ from infosec_harness.inference.protocol import (
     TransientBrokerError,
     canonical_bytes,
     digest,
+    fixed_https_url,
     logical_request_id,
 )
 from infosec_harness.inference.timing import WORKER_TIMEOUT_S, remaining_timeout
 
 INFER_PATH = "/v1/infer"
 RESULTS_PATH = "/v1/results"
-_ERROR_CODES = {
-    "auth",
-    "policy",
-    "identity",
-    "budget",
-    "expired",
-    "conflict",
-    "pending",
-    "completion_unknown",
-    "unavailable",
-    "invalid_response",
-}
-
-
 class _TrustedBrokerProvenance(StrictModel):
     """Only the native observations emitted after controller-side verification."""
 
     native_id: str = Field(pattern=r"^[A-Za-z0-9._-]{1,128}$")
-    policy_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
-    executor_image: str = Field(pattern=r"^sha256:[a-f0-9]{64}$")
-    supervisor_image: str = Field(pattern=r"^sha256:[a-f0-9]{64}$")
+    policy_digest: str = Field(pattern=DIGEST_PATTERN)
+    executor_image: str = Field(pattern=IMAGE_DIGEST_PATTERN)
+    supervisor_image: str = Field(pattern=IMAGE_DIGEST_PATTERN)
     profile: str = Field(pattern=r"^[a-z][a-z0-9._-]{0,63}$")
     credential_revision: str = Field(pattern=r"^[A-Za-z0-9._-]{1,128}$")
-    contract_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+    contract_digest: str = Field(pattern=DIGEST_PATTERN)
     lease_id: str = Field(pattern=r"^[A-Za-z0-9._-]{1,128}$")
 
 
@@ -91,21 +83,13 @@ def _durable_request_identity(callback: Callable[[], str] | None) -> str:
 
 
 def _response_error(status: int, body: bytes) -> BrokerError:
-    """Map known remote dispositions without propagating response or transport text."""
-    try:
-        value = parse_body(body)
-    except BrokerError:
-        value = None
-    code = value.get("error") if isinstance(value, dict) else None
-    if status != 200:
-        code = code if code in _ERROR_CODES else "unavailable"
-        diagnostic = report_remote_diagnostic(value.get("diagnostic")) if isinstance(value, dict) else None
-        if code in {"unavailable", "pending"}:
-            error = TransientBrokerError(code)
-            error.diagnostic = diagnostic
-            return error
-        return BrokerError(code, diagnostic=diagnostic)
-    return BrokerError("invalid_response")
+    """Worker view of a non-200 response: infrastructure/pending dispositions may retry."""
+    error = response_error(status, body)
+    if error.code in {"unavailable", "pending"}:
+        transient = TransientBrokerError(error.code)
+        transient.diagnostic = error.diagnostic
+        return transient
+    return error
 
 
 class BrokerModel(Model):
@@ -135,19 +119,11 @@ class BrokerModel(Model):
             raise BrokerError("auth")
         if (client_cert is None) != (client_key is None):
             raise BrokerError("policy")
-        parsed = urlsplit(controller_url)
-        if (
-            parsed.scheme != "https"
-            or not parsed.hostname
-            or parsed.username is not None
-            or parsed.password is not None
-            or parsed.path not in {"", "/"}
-            or parsed.query
-            or parsed.fragment
-        ):
-            raise BrokerError("policy")
         try:
-            _ = parsed.port
+            controller_url = fixed_https_url(controller_url, require_origin=True)
+        except ValueError:
+            raise BrokerError("policy") from None
+        try:
             profile: ModelProfileSpec = OpenAIProvider.model_profile(contract.model) or {}
             if contract.atomic_intake:
                 profile = intake_openai_profile(profile)
@@ -157,7 +133,7 @@ class BrokerModel(Model):
         super().__init__(settings=contract.model_settings, profile=profile)
         self.contract = contract
         self.binding = binding
-        self.controller_url = controller_url.rstrip("/")
+        self.controller_url = controller_url
         self.secret_env = secret_env
         self.ca_file = ca_file
         self.client_cert = client_cert
@@ -215,49 +191,22 @@ class BrokerModel(Model):
 
         try:
             context = ssl.create_default_context(cafile=self.ca_file)
-            cert: str | tuple[str, str] | None = None
             if self.client_cert and self.client_key:
-                cert = (self.client_cert, self.client_key)
-                context.load_cert_chain(*cert)
+                context.load_cert_chain(self.client_cert, self.client_key)
             timeout = (self.timeout if request_path == RESULTS_PATH
                        else remaining_timeout(request.binding.expires_at, self.timeout))
-            async with (
-                asyncio.timeout(timeout),
-                httpx.AsyncClient(
-                    verify=context,
-                    cert=cert,
-                    trust_env=False,
-                    follow_redirects=False,
-                    transport=self.http_transport,
-                    timeout=timeout,
-                ) as client,
-                client.stream(
-                    "POST",
-                    self.controller_url + request_path,
-                    content=body,
-                    headers={"Content-Type": "application/json", AUTH_HEADER: authorization},
-                ) as response,
-            ):
-                received = bytearray()
-                async for chunk in response.aiter_bytes():
-                    received.extend(chunk)
-                    if len(received) > 4 * 1024 * 1024:
-                        raise BrokerError("invalid_response")
-                response_body = bytes(received)
-                if response.status_code != 200:
-                    raise _response_error(response.status_code, response_body)
-        except BrokerError:
-            raise
-        except (httpx.HTTPError, OSError, ssl.SSLError, ValueError, TimeoutError) as error:
+            status, response_body = await post_bounded(
+                self.controller_url + request_path, body, {AUTH_HEADER: authorization},
+                timeout=timeout, verify=context, transport=self.http_transport,
+            )
+        except TRANSPORT_ERRORS as error:
             report_transport_failure("worker_controller", error)
             raise TransientBrokerError("unavailable") from None
-        except Exception as error:
-            report_transport_failure("worker_controller", error)
-            raise TransientBrokerError("unavailable") from None
+        if status != 200:
+            raise _response_error(status, response_body)
 
         try:
-            value = parse_body(response_body)
-            result = InferenceResult.model_validate(value)
+            result = InferenceResult.model_validate(parse_response(response_body))
             if result.request_id != request_id:
                 raise ValueError
             response = decode_response(result.response)

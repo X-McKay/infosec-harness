@@ -1,7 +1,7 @@
 """Activity boundary for durable progress and output persistence."""
 from temporalio import activity
 
-from infosec_harness.domain.models import TriageRunOutput
+from infosec_harness.domain.models import BatchStatus, RunStatus, TriageRunOutput
 from infosec_harness.persistence import lifecycle, store
 from infosec_harness.settings import get_settings
 
@@ -16,7 +16,8 @@ async def save_output_activity(args: dict) -> str:
     out = TriageRunOutput.model_validate(args["output"])
     run_id = await store.save_run_output(args["batch_id"], out)
     stored = await store.get_run(run_id)
-    phase = stored["status"] if stored else ("needs_info" if out.needs_info else "complete")
+    phase = stored["status"] if stored else (
+        RunStatus.needs_info if out.needs_info else RunStatus.complete)
     await lifecycle.record_progress(args["batch_id"], out.finding.fingerprint,
                                     phase, f"terminal:{phase}")
     return run_id
@@ -30,13 +31,13 @@ async def writeback_output_activity(args: dict) -> None:
     out = TriageRunOutput.model_validate(args["output"])
     if out.finding.ado_work_item_id is None:
         return
-    from infosec_harness.workflows.runner import _writeback
-    await _writeback([out], {out.finding.fingerprint: args["run_id"]})
+    from infosec_harness.workflows.writeback import write_back
+    await write_back([out], {out.finding.fingerprint: args["run_id"]})
 
 
 @activity.defn
 async def finish_batch_activity(args: dict) -> None:
-    await lifecycle.finish_pending(args["batch_id"], args.get("status", "complete"),
+    await lifecycle.finish_pending(args["batch_id"], args.get("status", BatchStatus.complete),
                                    args.get("detail", ""))
 
 

@@ -97,7 +97,7 @@ async def test_smoke_test_fails_when_the_runner_is_missing(monkeypatch):
 
     calls = []
 
-    async def fake_shell(image, command, *, network, timeout=None):
+    async def fake_shell(image, command, *, timeout=None, **_ignored):
         calls.append(command)
         if "harness-smoke-ok" in command:
             return docker.ProcResult(exit_code=0, stdout="harness-smoke-ok\n", stderr="",
@@ -117,7 +117,7 @@ async def test_smoke_test_passes_when_the_runner_answers(monkeypatch):
     from infosec_harness.sandbox import docker
     from infosec_harness.workflows.activities import smoke_test_activity
 
-    async def fake_shell(image, command, *, network, timeout=None):
+    async def fake_shell(image, command, *, timeout=None, **_ignored):
         out = "harness-smoke-ok\n" if "harness-smoke-ok" in command else "pytest 9.1.1\n"
         return docker.ProcResult(exit_code=0, stdout=out, stderr="", timed_out=False,
                                  duration_s=0.1)
@@ -133,7 +133,7 @@ async def test_a_bare_image_tag_still_works(monkeypatch):
     from infosec_harness.sandbox import docker
     from infosec_harness.workflows.activities import smoke_test_activity
 
-    async def fake_shell(image, command, *, network, timeout=None):
+    async def fake_shell(image, command, *, timeout=None, **_ignored):
         return docker.ProcResult(exit_code=0, stdout="harness-smoke-ok\n", stderr="",
                                  timed_out=False, duration_s=0.1)
 

@@ -240,12 +240,12 @@ async def test_a_repo_that_cannot_be_prepared_does_not_sink_the_batch(repo, monk
 
     real_prepare = local.run_prepare
 
-    async def flaky_prepare(ops, snapshot, stack):
+    async def flaky_prepare(ops, snapshot, stack, *, component_root="."):
         # keyed on repo_url: checkout() relocates the tree, so `path` is not the input path
         if snapshot.repo_url == bad_repo:
             from pydantic_ai.exceptions import UsageLimitExceeded
             raise UsageLimitExceeded("Exceeded the input_tokens_limit of 250000")
-        return await real_prepare(ops, snapshot, stack)
+        return await real_prepare(ops, snapshot, stack, component_root=component_root)
 
     local.run_prepare = flaky_prepare
     try:
@@ -280,8 +280,8 @@ async def test_a_failed_preparation_still_reports_the_agent_calls_it_made(repo):
 
     real_prepare = local.run_prepare
 
-    async def fail_after_recon(ops, snapshot, stack):
-        outcome = await real_prepare(ops, snapshot, stack)
+    async def fail_after_recon(ops, snapshot, stack, *, component_root="."):
+        outcome = await real_prepare(ops, snapshot, stack, component_root=component_root)
         raise PrepareFailed(RuntimeError("boom after recon"), outcome.invocations)
 
     # Recorded in `prepare_sink`, keyed per repo, exactly as the success path does: preparation
@@ -760,3 +760,150 @@ async def test_context_citations_are_validated_against_snapshot_bytes(repo):
     assert validated.source is None
     assert validated.reachability is Reachability.unknown
     assert "Citation validation failed" in validated.reachability_rationale
+
+
+async def test_an_environment_repair_does_not_consume_the_probe_repair_budget(repo):
+    """Regression: re-running the unchanged probe after an environment rebuild advanced the
+    execution count that also gated probe repair, so a later genuine probe defect got one repair
+    fewer than `max_probe_repairs` (none at all when the budget is 1)."""
+    ops, prepared = await _prepared(repo)
+    seen = _diagnosis_ops(ops, ["environment_issue", "probe_defect"])
+    _make_build_repair_change_the_plan(ops)
+
+    async def fake_exec(image, probe, spec, nonce, attempt):
+        return ProbeExecution(attempt=attempt, exit_code=1, oracle_fired=False,
+                              precondition_reached=False, sink_returned=False,
+                              stderr_tail="still broken")
+
+    ops.execute_probe = fake_exec
+    finding = to_finding(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
+                                      start_line=2, cwe="CWE-89", severity="high"))
+    state = TriageState(finding=finding, prepared=prepared)
+    result = await TRIAGE_GRAPH.run(
+        state=state, deps=TriageDeps(ops=ops, max_probe_repairs=1, max_environment_repairs=1),
+        inputs=PreFilter())
+
+    assert state.environment_repairs == 1
+    assert seen.count("probe-repair") == 1, "the probe-repair budget was spent by the rebuild"
+    assert state.probe_repairs == 1
+    assert result.early_exit == "probe_unrepairable"
+
+
+def _negative_ops(ops, verdict_label="likely_not_exploitable"):
+    """Diagnosis says valid_negative; the verdict agent returns ``verdict_label``."""
+    from infosec_harness.domain.models import AgentOutcome, DiagnosisKind, ProbeDiagnosis, Verdict
+
+    real = ops.run_agent
+
+    async def run_agent(name, prompt, deps):
+        if name == "probe-diagnosis":
+            return AgentOutcome(output=ProbeDiagnosis(kind=DiagnosisKind.valid_negative,
+                                                      explanation="resisted", fix_hint=""),
+                                agent=name)
+        if name == "verdict":
+            return AgentOutcome(output=Verdict(label=VerdictLabel(verdict_label), confidence=0.8,
+                                               rationale="The sink returned safely."),
+                                agent=name)
+        return await real(name, prompt, deps)
+
+    async def fake_exec(image, probe, spec, nonce, attempt):
+        return ProbeExecution(attempt=attempt, exit_code=0, oracle_fired=False,
+                              precondition_reached=True, sink_returned=True)
+
+    ops.run_agent = run_agent
+    ops.execute_probe = fake_exec
+
+
+@pytest.mark.parametrize("record", [None, "HARNESS_CONTROL_RESULT::{not json"])
+async def test_a_negative_without_a_readable_control_record_is_not_accepted(repo, record):
+    """Regression: a missing or unparseable adapter-control record was treated as passed, so a
+    negative judgment could stand on an adapter nobody had shown can report a positive."""
+    from infosec_harness.domain.models import InconclusiveReason, SmokeResult
+
+    ops, prepared = await _prepared(repo)
+    _negative_ops(ops)
+    excerpt = "runner ok" if record is None else "runner ok\n" + record
+    prepared = prepared.model_copy(update={"smoke": SmokeResult(ok=True, output_excerpt=excerpt)})
+    finding = to_finding(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
+                                      start_line=2, cwe="CWE-89", severity="high"))
+    state = TriageState(finding=finding, prepared=prepared)
+    result = await TRIAGE_GRAPH.run(state=state, deps=TriageDeps(ops=ops), inputs=PreFilter())
+
+    assert result.verdict.label is VerdictLabel.inconclusive
+    assert result.verdict.inconclusive_reason is InconclusiveReason.conflicting_evidence
+    assert result.early_exit == "unsupported_negative"
+
+
+async def test_a_negative_with_passing_controls_stands(repo):
+    from infosec_harness.domain.models import SmokeResult
+    from infosec_harness.sandbox.canary import ControlResult, encode_control_result
+
+    ops, prepared = await _prepared(repo)
+    _negative_ops(ops)
+    record = encode_control_result(ControlResult(positive=True, negative=True))
+    prepared = prepared.model_copy(update={"smoke": SmokeResult(ok=True, output_excerpt=record)})
+    finding = to_finding(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
+                                      start_line=2, cwe="CWE-89", severity="high"))
+    state = TriageState(finding=finding, prepared=prepared)
+    result = await TRIAGE_GRAPH.run(state=state, deps=TriageDeps(ops=ops), inputs=PreFilter())
+
+    assert result.verdict.label is VerdictLabel.likely_not_exploitable
+
+
+@pytest.mark.parametrize("attached", [False, True])
+async def test_a_failed_verdict_call_is_recorded_with_its_usage(repo, attached):
+    """Regression: a verdict call that exhausted its retries vanished from the record, so its
+    requests and tokens were missing from every cost and trajectory figure."""
+    from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+    from infosec_harness.domain.models import AgentOutcome
+
+    ops, prepared = await _prepared(repo)
+    _negative_ops(ops)
+    negative_run_agent = ops.run_agent
+
+    async def failing(name, prompt, deps):
+        if name == "verdict":
+            error = UnexpectedModelBehavior("Exceeded maximum output retries (4)")
+            if attached:
+                error.agent_outcome = AgentOutcome(output=None, agent="verdict", requests=5,
+                                                   input_tokens=900, output_tokens=40,
+                                                   failure="UnexpectedModelBehavior")
+            raise error
+        return await negative_run_agent(name, prompt, deps)
+
+    ops.run_agent = failing
+    finding = to_finding(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
+                                      start_line=2, cwe="CWE-89", severity="high"))
+    state = TriageState(finding=finding, prepared=prepared)
+    result = await TRIAGE_GRAPH.run(state=state, deps=TriageDeps(ops=ops), inputs=PreFilter())
+
+    assert result.early_exit == "verdict_contract_unsatisfied"
+    failed = state.invocations[-1]
+    assert (failed.agent, failed.failure, failed.output) == ("verdict", "UnexpectedModelBehavior",
+                                                             None)
+    assert failed.requests == (5 if attached else 0)
+
+
+async def test_local_ops_attaches_the_partial_usage_of_a_failed_call(repo, monkeypatch):
+    """The in-process path measures a failed run from the messages it exchanged."""
+    from pydantic_ai.exceptions import UnexpectedModelBehavior
+    from pydantic_ai.messages import ModelResponse, ToolCallPart
+    from pydantic_ai.models.function import FunctionModel
+    from pydantic_ai.usage import RequestUsage
+
+    from infosec_harness.agents.deps import AgentDeps
+
+    ops = LocalOps(sandbox=False)
+    agent, _config = ops._agent("verdict")
+
+    def respond(messages, info):
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {"bogus": 1})],
+                             usage=RequestUsage(input_tokens=100, output_tokens=7))
+
+    with agent.override(model=FunctionModel(respond)), \
+            pytest.raises(UnexpectedModelBehavior) as error:
+        await ops.run_agent("verdict", ["Decide."], AgentDeps(repo_path=repo))
+    outcome = error.value.agent_outcome
+    assert outcome.failure == "UnexpectedModelBehavior" and outcome.agent == "verdict"
+    assert outcome.requests >= 2 and outcome.input_tokens == 100 * outcome.requests

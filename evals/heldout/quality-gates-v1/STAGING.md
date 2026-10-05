@@ -4,13 +4,17 @@ Do not open dataset or fixture contents after the candidate is frozen. The prepa
 has seen them, so it must not participate in candidate changes or score interpretation.
 
 After freezing the candidate, copy this bundle's `fixtures/` directory to
-`evals/heldout/quality-gates-v1/fixtures/`. Copy the repository's packaged agents directory to a
-temporary directory outside the checkout. For one agent at a time, replace only
-`<agents-dir>/<agent>/evals/dataset.yaml` with the corresponding sealed dataset, set the
-`agents_dir` setting to that temporary directory, and run the existing `harness eval run
-<agent>` command. Destroy that temporary agents directory before preparing the next agent.
-This preserves the deployed agent protocol and prevents a second held-out dataset from being
-discoverable through the configured agents directory.
+`evals/heldout/quality-gates-v1/fixtures/`. Then run one agent at a time against its sealed
+dataset, in place:
+
+```bash
+harness eval run <agent> --dataset evals/heldout/quality-gates-v1/datasets/<agent>/dataset.yaml
+```
+
+`--dataset` replaces only the cases; the agent's deployed spec, protocol and release policy are
+unchanged, and no agents directory is copied or reconfigured, so a second held-out dataset is
+never discoverable through the configured agents directory. The release report records the
+sealed dataset's path and case-set digest in its provenance.
 
 The expected fields remain in the sealed dataset because the deterministic adapter consumes
 them after inference. The adapter renders only `payload` into the model prompt; it never renders

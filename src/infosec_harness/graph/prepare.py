@@ -22,6 +22,7 @@ from infosec_harness.domain.models import (
     StackFingerprint,
 )
 from infosec_harness.graph.ops import AgentOutcome, Ops
+from infosec_harness.repo.components import component_stack, owning_component
 from infosec_harness.settings import get_settings
 
 
@@ -73,9 +74,8 @@ async def _run_prepare(ops: Ops, snapshot: RepoSnapshot, stack: StackFingerprint
     """The preparation itself. ``invocations`` is owned by :func:`run_prepare` so that the
     calls completed before a failure survive it."""
     s = get_settings()
-    # Sum of the stack's per-language file counts: how much repository the agents have to
-    # explore, which is what their request budgets scale on.
-    source_files = sum((stack.languages or {}).values()) or None
+    # How much repository the agents have to explore, which is what their budgets scale on.
+    source_files = stack.source_files
     deps = AgentDeps(repo_path=snapshot.path, source_files=source_files)
     component_context = ({"component_root": component_root}
                          if component_root not in ("", ".") else {})
@@ -198,7 +198,7 @@ async def _run_prepare(ops: Ops, snapshot: RepoSnapshot, stack: StackFingerprint
     # here, where build repair can still act, rather than at probe time as exit 127.
     # The canary inside the smoke test needs to know which language to write, and which
     # module to run in for a partial build.
-    top_language = max(stack.languages, key=lambda k: (stack.languages[k], k)) if stack.languages else ""
+    top_language = stack.top_language
     smoke = await ops.smoke_test(build.image_tag, build.spec.test_command,
                                  language=top_language,
                                  module_path=build.spec.module_path or "")
@@ -249,8 +249,6 @@ async def _run_prepare(ops: Ops, snapshot: RepoSnapshot, stack: StackFingerprint
 async def prepare_resolved_component(ops: Ops, finding: Finding,
                                      prepared: PreparedEnvironment) -> PrepareOutcome | None:
     """Rebind a description-only finding when intake discovers a nested component."""
-    from infosec_harness.repo.components import component_stack, owning_component
-
     path = finding.location.file_path if finding.location else None
     component = owning_component(prepared.stack, path)
     current_root = prepared.build.spec.module_path if prepared.build else None

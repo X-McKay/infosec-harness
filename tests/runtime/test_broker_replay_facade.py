@@ -10,7 +10,7 @@ from pathlib import Path
 
 import yaml
 
-from infosec_harness.inference.profiles import REGISTERED_AGENTS
+from infosec_harness.inference.profiles import registered_agents
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -68,9 +68,9 @@ def _broker_configuration(directory: Path) -> tuple[Path, Path]:
                 "inspection": [],
             }
         },
-        "agent_profiles": {agent: "qualification" for agent in REGISTERED_AGENTS},
+        "agent_profiles": {agent: "qualification" for agent in registered_agents()},
         "root_limits": limits,
-        "agent_limits": {agent: limits for agent in REGISTERED_AGENTS},
+        "agent_limits": {agent: limits for agent in registered_agents()},
     }
     models_path = directory / "models.yaml"
     broker_path = directory / "broker.yaml"

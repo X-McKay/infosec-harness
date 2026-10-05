@@ -2,13 +2,20 @@
 
 Inspect only RetryPromptPart shape and exact static intake feedback. Discard all source,
 model, provider, tool/field names, schema details, arguments, and exception bodies.
+
+Each feedback item is classified by its first line, which must be one of the guard's exact
+messages; any further lines are host-authored repair guidance appended by the intake output
+validator (v2: v1 required the whole item to match, so every current-protocol retry carrying
+repair guidance was left unclassified).
 """
 from __future__ import annotations
 
 from collections.abc import Sequence
 from typing import Literal, TypedDict
 
-from pydantic_ai.messages import ModelMessage, ModelRequest, RetryPromptPart
+from pydantic_ai.messages import ModelMessage
+
+from infosec_harness.evals.messages import OUTPUT_TOOL, Walk, iter_retry_prompts
 
 RetryCategory = Literal[
     "source_unavailable", "unknown_field", "quote_not_verbatim", "positive_quote_missing",
@@ -28,7 +35,7 @@ class RetryCategoryCounts(TypedDict):
 
 
 class OutputRetrySummary(TypedDict):
-    version: Literal["output-retries/v1"]
+    version: Literal["output-retries/v2"]
     capture_status: Literal["observed", "unknown"]
     retry_parts_observed: int
     intake_guard_retry_parts: int
@@ -39,9 +46,7 @@ class OutputRetrySummary(TypedDict):
     truncated: bool
 
 
-OUTPUT_RETRY_SUMMARY_VERSION: Literal["output-retries/v1"] = "output-retries/v1"
-MAX_MESSAGES = 128
-MAX_REQUEST_PARTS = 512
+OUTPUT_RETRY_SUMMARY_VERSION: Literal["output-retries/v2"] = "output-retries/v2"
 MAX_RETRY_PARTS = 32
 MAX_CONTENT_CHARS = 4096
 _INTAKE_PREFIX = "Extraction violates its evidence contract:\n- "
@@ -69,47 +74,34 @@ def output_retry_summary(messages: Sequence[ModelMessage], *, agent: str) -> Out
                "retry_parts_observed": 0, "intake_guard_retry_parts": 0,
                "intake_guard_category_counts": counts, "output_schema_retry_parts": 0,
                "function_tool_retry_parts": 0, "unclassified_retry_parts": 0, "truncated": False}
-    scanned_parts = 0
-    for number, message in enumerate(messages):
-        if number >= MAX_MESSAGES:
-            summary["truncated"] = True
-            break
-        if not isinstance(message, ModelRequest):
-            continue
-        for part in message.parts:
-            if scanned_parts >= MAX_REQUEST_PARTS:
-                summary["truncated"] = True
-                return summary
-            scanned_parts += 1
-            if not isinstance(part, RetryPromptPart):
+    walk = Walk()
+    for part in iter_retry_prompts(messages, walk, MAX_RETRY_PARTS):
+        summary["retry_parts_observed"] += 1
+        # Intake currently uses the SDK's single default structured output tool.
+        # Other agents may rename output tools, so leave those retries unclassified.
+        if agent != "intake":
+            summary["unclassified_retry_parts"] += 1
+        elif part.tool_name == OUTPUT_TOOL:
+            if isinstance(part.content, list):
+                summary["output_schema_retry_parts"] += 1
                 continue
-            if summary["retry_parts_observed"] >= MAX_RETRY_PARTS:
-                summary["truncated"] = True
-                return summary
-            summary["retry_parts_observed"] += 1
-            # Intake currently uses the SDK's single default structured output tool.
-            # Other agents may rename output tools, so leave those retries unclassified.
-            if agent != "intake":
+            if not isinstance(part.content, str):
                 summary["unclassified_retry_parts"] += 1
-            elif part.tool_name == "final_result":
-                if isinstance(part.content, list):
-                    summary["output_schema_retry_parts"] += 1
+                continue
+            content = part.content
+            if len(content) <= MAX_CONTENT_CHARS and content.startswith(_INTAKE_PREFIX):
+                rules = [item.split("\n", 1)[0]
+                         for item in content[len(_INTAKE_PREFIX):].split("\n- ")]
+                if rules and all(rule in INTAKE_RULE_CATEGORIES for rule in rules):
+                    summary["intake_guard_retry_parts"] += 1
+                    for category in {INTAKE_RULE_CATEGORIES[rule] for rule in rules}:
+                        counts[category] += 1
                     continue
-                if not isinstance(part.content, str):
-                    summary["unclassified_retry_parts"] += 1
-                    continue
-                content = part.content
-                if len(content) <= MAX_CONTENT_CHARS and content.startswith(_INTAKE_PREFIX):
-                    messages_in_retry = content[len(_INTAKE_PREFIX):].split("\n- ")
-                    if messages_in_retry and all(item in INTAKE_RULE_CATEGORIES for item in messages_in_retry):
-                        summary["intake_guard_retry_parts"] += 1
-                        for category in {INTAKE_RULE_CATEGORIES[item] for item in messages_in_retry}:
-                            counts[category] += 1
-                        continue
-                summary["unclassified_retry_parts"] += 1
-                summary["truncated"] |= len(content) > MAX_CONTENT_CHARS
-            elif part.tool_name:
-                summary["function_tool_retry_parts"] += 1
-            else:
-                summary["unclassified_retry_parts"] += 1
+            summary["unclassified_retry_parts"] += 1
+            summary["truncated"] |= len(content) > MAX_CONTENT_CHARS
+        elif part.tool_name:
+            summary["function_tool_retry_parts"] += 1
+        else:
+            summary["unclassified_retry_parts"] += 1
+    summary["truncated"] |= walk.truncated
     return summary

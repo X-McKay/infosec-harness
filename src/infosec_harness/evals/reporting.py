@@ -1,16 +1,12 @@
-"""Release reports, strict experiment comparison, result listing, and baselines."""
+"""Strict experiment comparison, model sweeps, result listing, and baselines."""
 
 from __future__ import annotations
 
-import json
 import math
-import tempfile
-from datetime import UTC, datetime
 from pathlib import Path
 
-from infosec_harness.evals.coverage import coverage_for
 from infosec_harness.evals.provenance import code_version
-from infosec_harness.evals.run import _pricing_label, run_experiment
+from infosec_harness.evals.run import run_experiment
 
 _COMPARISON_COLUMNS: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("accuracy", ("task_success_rate",), "pct"),
@@ -33,91 +29,6 @@ class IncomparableExperiments(SystemExit):
             "experiments are not strictly comparable:\n- " + "\n- ".join(issues)
             + "\nUse a descriptive comparison only for inspection; it cannot clear release gates."
         )
-
-
-def write_release_report(path: Path, *, agent: str, metrics: dict, cfg_hash: str,
-                         model_name: str, dataset_version: str, agent_version: str,
-                         extra_gates: dict | None = None, experiment_id: str = "",
-                         repeat: int = 1, spec: object | None = None) -> None:
-    """Write the report `agentctl release` compares against the agent's release policy.
-
-    The gate and threshold names here are the policy's names; provenance is what makes a pass
-    reproducible rather than a claim.
-    """
-    gates = {
-        "schema_validity_rate": metrics["schema_validity_rate"],
-        "budget_exhausted_count": metrics["budget_exhausted_count"],
-        **(extra_gates or {}),
-    }
-    report = {
-        "schema_version": 1,
-        "subject": {"kind": "agent", "name": agent},
-        "agent": agent,
-        "hard_gates": {**gates,
-                       # Zero is the only passing value: "passing average quality cannot
-                       # compensate for an uncovered material risk".
-                       "uncovered_material_scenarios":
-                           len(coverage_for(agent).uncovered_material)},
-        "metrics": {k: metrics[k] for k in
-                    ("task_success_rate", "average_cost_usd", "p95_model_requests")},
-        # The playbook makes uncovered material risk a release blocker, so the report must
-        # carry covered *and uncovered* scenario IDs -- a report that lists only what passed
-        # cannot show what was never tested.
-        "coverage": coverage_for(agent).as_report(),
-        # Distributions, not just means: the playbook asks for pass rate and worst case,
-        # p50/p95 latency and cost, and tool-call and model-request spreads, because a single
-        # average cannot show the tail a budget exists to brake.
-        "distributions": metrics.get("distributions", {}),
-        "provenance": {
-            # `run_experiment` captures this before the first case. Recomputing it while
-            # writing the report can attach a different dirty-tree digest if another process
-            # edits the shared worktree during a long run.
-            **(metrics.get("code_identity") or code_version().as_dict()),
-            # `git_dirty` travels beside the commit deliberately: a reader who sees only a SHA
-            # has no way to know the tree differed from it when the numbers were produced.
-            "agent_version": agent_version,
-            "config_hash": cfg_hash,
-            "model": model_name,
-            "dataset_version": dataset_version,
-            "execution_mode": (metrics.get("comparison_identity") or {}).get(
-                "execution_mode"
-            ),
-            # The rest of what the playbook's Provenance section enumerates. What makes a pass
-            # reproducible is knowing which skills, toolsets and model settings produced it --
-            # `config_hash` fingerprints them, but a reader cannot expand a hash.
-            "recorded_at": datetime.now(UTC).isoformat(),
-            "run_count": repeat,
-            "experiment_id": experiment_id,
-            # Package-relative, which is the path inside the distribution as well as under
-            # src/ in a checkout.
-            "dataset": f"agents/{agent}/evals/dataset.yaml",
-            "model_pricing": _pricing_label(model_name),
-            "evaluators": ["deterministic_output_match", "schema_validity", "budget_gate",
-                           "scenario_coverage"],
-            # No LLM judge is used anywhere in this suite, which is deliberate: the playbook
-            # forbids one as the sole evaluator for schema validity and safety properties, and
-            # every gate here is deterministic. Recorded explicitly so its absence is a stated
-            # fact rather than an omission.
-            "judge_rubric": None,
-            "model_settings": dict(getattr(spec, "model_settings", None) or {}),
-            "skills": list(getattr(spec, "enabled_skills", None) or []),
-            "toolsets": list(getattr(spec, "enabled_toolsets", None) or []),
-            # Case-level results (per repetition, with pass/fail and cost) are persisted to the
-            # experiment store under this id rather than inlined, so the report stays readable.
-            "case_results": f"experiment {experiment_id}" if experiment_id else None,
-        },
-    }
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # Publish only a complete JSON document; a cancelled export must not look like evidence.
-    temporary = None
-    try:
-        with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as output:
-            temporary = Path(output.name)
-            output.write(json.dumps(report, indent=2) + "\n")
-        temporary.replace(path)
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
 
 
 def comparability_issues(found: list[object]) -> list[str]:
@@ -238,7 +149,7 @@ def _print_comparison(found: list) -> None:
         print("  ! at least one run had a dirty working tree and cannot be reproduced from "
               "its commit.")
     for row in found:
-        status = row.metrics.get("status", "complete")
+        status = (row.metrics.get("status") or "unknown")
         if status == "complete":
             continue
         # Loud, because the columns above are then between different numbers of cases: a
@@ -265,12 +176,12 @@ def _print_pairwise(b, c) -> None:
         return f"{bv:>10} -> {cv:<10} ({cv - bv:+.4f})"
 
     incomplete = [(label, exp) for label, exp in (("baseline", b), ("candidate", c))
-                  if exp.metrics.get("status", "complete") != "complete"]
+                  if exp.metrics.get("status") != "complete"]
     for label, exp in incomplete:
         # Loud and first: the deltas below are between different numbers of cases, so a
         # "+8% accuracy" here can be nothing but which cases happened to run.
         t = exp.metrics.get("truncated") or {}
-        print(f"  !! {label} {exp.id} is {exp.metrics.get('status', 'incomplete').upper()}: "
+        print(f"  !! {label} {exp.id} is {str(exp.metrics.get('status') or 'unknown').upper()}: "
               f"{exp.metrics.get('n', 0)}/{exp.metrics.get('n_planned', '?')} case runs scored"
               + (f" — stopped on case {t['failed_case']!r} ({t['error_type']}: {t['error'][:120]})"
                  if t else "")
@@ -281,7 +192,7 @@ def _print_pairwise(b, c) -> None:
     print(f"  config      {b.config_hash} -> {c.config_hash}")
     print(f"  coverage    {b.metrics.get('n', 0)}/{b.metrics.get('n_planned', '?')} -> "
           f"{c.metrics.get('n', 0)}/{c.metrics.get('n_planned', '?')} case runs "
-          f"({b.metrics.get('status', 'complete')} -> {c.metrics.get('status', 'complete')})")
+          f"({b.metrics.get('status') or 'unknown'} -> {c.metrics.get('status') or 'unknown'})")
     for key in ("accuracy", "cost_usd_per_case", "avg_tokens", "cache_hit_ratio"):
         print(f"  {key:18} {delta(key)}")
     print(f"  baseline confusion: {b.metrics.get('confusion')}")
@@ -346,7 +257,8 @@ def comparison_table(rows: list[dict]) -> str:
 
 
 async def sweep_models(agent: str, models: list[str], *, overlay: Path | None = None,
-                       repeat: int = 1, report_dir: Path | None = None) -> list[dict]:
+                       repeat: int = 1, report_dir: Path | None = None,
+                       dataset: Path | None = None) -> list[dict]:
     """Run one agent's dataset once per model, then report them side by side.
 
     Sequential on purpose. These runs are the measurement, and latency is one of the things
@@ -355,7 +267,8 @@ async def sweep_models(agent: str, models: list[str], *, overlay: Path | None = 
 
     A model that fails does not abort the sweep: its row is recorded as failed and the others
     still produce numbers, because "opus could not complete the dataset" is itself a result
-    worth seeing next to the models that could.
+    worth seeing next to the models that could. Every completed model writes its own release
+    report into ``report_dir`` when one is given, audited like any other.
     """
     from infosec_harness.persistence import db
 
@@ -364,9 +277,9 @@ async def sweep_models(agent: str, models: list[str], *, overlay: Path | None = 
         print(f"\n=== {agent} @ {tier} " + "=" * 40)
         try:
             exp_id = await run_experiment(
-                agent, overlay=overlay, repeat=repeat, model=tier,
-                report=(report_dir / f"{agent}-{tier}.json") if report_dir else None)
-        except SystemExit as exc:  # includes TruncatedExperiment
+                agent, overlay=overlay, repeat=repeat, model=tier, dataset=dataset,
+                report_dir=report_dir)
+        except Exception as exc:  # includes TruncatedExperiment; the next model still runs
             print(f"  {tier}: FAILED -- {type(exc).__name__}: {str(exc)[:200]}")
             results.append({"label": tier, "experiment_id": getattr(exc, "experiment_id", "-"),
                             "pricing": "", "metrics": {}, "failed": True})

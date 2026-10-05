@@ -263,22 +263,23 @@ def test_a_migration_that_carries_both_runners_names_the_one_its_test_script_inv
 
 def test_the_environment_agents_all_carry_the_contract():
     """A spec from any of the three build agents reaches run_probe, so all three are bound."""
-    from infosec_harness.agents.validators import OUTPUT_VALIDATORS, validate_environment_spec
+    from infosec_harness.agents.registry import BINDINGS
+    from infosec_harness.agents.validators import validate_environment_spec
 
     for agent in ("env-planner", "build-repair", "partial-build"):
-        assert validate_environment_spec in OUTPUT_VALIDATORS[agent], agent
+        assert validate_environment_spec in BINDINGS[agent].validators, agent
 
 
 def test_partial_build_adds_its_scope_contract_without_changing_other_agents():
+    from infosec_harness.agents.registry import BINDINGS
     from infosec_harness.agents.validators import (
-        OUTPUT_VALIDATORS,
         validate_environment_spec,
         validate_partial_build_scope,
     )
 
-    assert OUTPUT_VALIDATORS["env-planner"] == (validate_environment_spec,)
-    assert OUTPUT_VALIDATORS["build-repair"] == (validate_environment_spec,)
-    assert OUTPUT_VALIDATORS["partial-build"] == (
+    assert BINDINGS["env-planner"].validators == (validate_environment_spec,)
+    assert BINDINGS["build-repair"].validators == (validate_environment_spec,)
+    assert BINDINGS["partial-build"].validators == (
         validate_environment_spec,
         validate_partial_build_scope,
     )
@@ -331,13 +332,15 @@ def test_partial_build_accepts_root_or_named_module(module_path):
 
 def test_the_retry_message_names_the_fix_rather_than_the_violation():
     """A retry the model cannot act on just burns the budget (cf. verdict's inconclusive_reason)."""
+    from infosec_harness.agents.ecosystem_contract import PYTEST_TEST_COMMAND
     from infosec_harness.agents.validators import environment_spec_violations
     from infosec_harness.domain.models import EnvironmentSpec
 
     spec = EnvironmentSpec(base_image="python:3.12-slim", test_command="python -m pytest tests/t.py")
     joined = " ".join(environment_spec_violations(spec))
     assert "{test_file}" in joined and "-s" in joined
-    assert "python -m pytest -q -s {test_file}" in joined  # shows the corrected command
+    # Shows the corrected command, and that exemplar itself passes every check.
+    assert PYTEST_TEST_COMMAND in joined
 
 
 def test_jvm_runners_select_by_class_and_are_not_required_to_carry_the_placeholder():

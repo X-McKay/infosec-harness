@@ -14,14 +14,21 @@ import yaml
 
 from infosec_harness.evals.coverage import (
     CATEGORIES,
-    agents_with_datasets,
     coverage_for,
-    dataset_path,
-    load_cases,
+    scenario_coverage,
     scenarios_for,
 )
+from infosec_harness.evals.dataset import agents_with_datasets, default_dataset_path, load_dataset
+from infosec_harness.evals.gates import load_policy, policy_problems
 
 AGENTS = agents_with_datasets()
+
+
+def load_cases(agent):
+    return load_dataset(agent).cases
+
+
+dataset_path = default_dataset_path
 
 
 def test_every_agent_has_a_dataset():
@@ -109,3 +116,18 @@ def test_the_dataset_declares_the_schema_version_the_loader_expects(agent):
 def test_case_names_are_unique_within_a_dataset(agent):
     names = [c["name"] for c in load_cases(agent)]
     assert len(names) == len(set(names)), f"{agent}: duplicate case names"
+
+
+@pytest.mark.parametrize("agent", AGENTS)
+def test_every_check_in_the_release_policy_can_be_measured_and_can_fail(agent):
+    """A gate on a metric the run never publishes, or on execution evidence the dataset never
+    declares, is compared against nothing or against a constant zero."""
+    assert policy_problems(load_policy(agent), load_cases(agent)) == []
+
+
+def test_coverage_is_of_the_cases_a_run_used_not_the_whole_dataset():
+    """A group-filtered or held-out run must not borrow coverage it did not exercise."""
+    cases = load_cases("verdict")
+    assert not scenario_coverage("verdict", cases).uncovered_material
+    untagged = [{**case, "scenarios": []} for case in cases]
+    assert scenario_coverage("verdict", untagged).uncovered_material == ["RISK-SEC-003"]

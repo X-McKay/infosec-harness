@@ -83,11 +83,14 @@ ReferenceRule = Literal["source_unavailable", "unknown_source_id", "reversed_sou
 class ReferenceError(ValueError):
     """Closed source-index failure that does not echo report text or model-provided IDs."""
 
-    def __init__(self, rule: ReferenceRule, *, field: str | None = None) -> None:
+    def __init__(self, rule: ReferenceRule, *, field: str | None = None,
+                 failures: tuple[tuple[str, ReferenceRule], ...] = ()) -> None:
         self.rule = rule
         # Only authored claim names may reach model repair feedback. Never retain or
         # echo source IDs, report fragments or model-provided values in diagnostics.
         self.field = field if type(field) is str and field in AtomicFinding.model_fields else None
+        self.failures = tuple((name, failed) for name, failed in failures
+                              if type(name) is str and name in AtomicFinding.model_fields)
         super().__init__(rule)
 
 
@@ -119,33 +122,17 @@ def report_source_lines(report_text: str | None) -> list[dict[str, str]]:
 def invalid_source_references(
     report_text: str | None, claims: AtomicFinding
 ) -> tuple[tuple[str, ReferenceRule], ...]:
-    """Collect at most eight authored-field failures without retaining report/claim text."""
+    """Every authored-field reference failure, in field order, without report/claim text."""
+    return _resolve(report_text, claims)[1]
+
+
+def _resolve(
+    report_text: str | None, claims: AtomicFinding
+) -> tuple[list[tuple[str, Claim, int, int]], tuple[tuple[str, ReferenceRule], ...]]:
+    """Resolve every claim's reference to a codepoint slice, collecting closed failures."""
     index = _source_index(report_text)
+    resolved: list[tuple[str, Claim, int, int]] = []
     errors: list[tuple[str, ReferenceRule]] = []
-    for field_name in AtomicFinding.model_fields:
-        claim = getattr(claims, field_name)
-        if claim is None:
-            continue
-        end_id = claim.source.start_id if claim.source.end_id is None else claim.source.end_id
-        if claim.source.start_id not in index or end_id not in index:
-            errors.append((field_name, "unknown_source_id"))
-        elif index[end_id][0] < index[claim.source.start_id][0]:
-            errors.append((field_name, "reversed_source_range"))
-    return tuple(errors)
-
-
-def reconstruct(report_text: str | None, claims: AtomicFinding) -> ExtractedFinding:
-    """Rebuild the unchanged public output type and exact verbatim evidence slices.
-
-    This function reconstructs values only. It intentionally does not apply policy or
-    normalize values; the existing whole-output guard remains the acceptance decision.
-    """
-    index = _source_index(report_text)
-    if report_text is None:
-        raise ReferenceError("source_unavailable")
-
-    data: dict[str, object] = {}
-    evidence: list[dict[str, object]] = []
     for field_name in AtomicFinding.model_fields:
         claim = getattr(claims, field_name)
         if claim is None:
@@ -153,13 +140,33 @@ def reconstruct(report_text: str | None, claims: AtomicFinding) -> ExtractedFind
         reference = claim.source
         end_id = reference.start_id if reference.end_id is None else reference.end_id
         if reference.start_id not in index or end_id not in index:
-            raise ReferenceError("unknown_source_id")
-
+            errors.append((field_name, "unknown_source_id"))
+            continue
         start, _ = index[reference.start_id]
         end_start, end = index[end_id]
         if end_start < start:
-            raise ReferenceError("reversed_source_range", field=field_name)
+            errors.append((field_name, "reversed_source_range"))
+            continue
+        resolved.append((field_name, claim, start, end))
+    return resolved, tuple(errors)
 
+
+def reconstruct(report_text: str | None, claims: AtomicFinding) -> ExtractedFinding:
+    """Rebuild the unchanged public output type and exact verbatim evidence slices.
+
+    This function reconstructs values only. It intentionally does not apply policy or
+    normalize values; the existing whole-output guard remains the acceptance decision. Every
+    reference failure is carried on the raised :class:`ReferenceError` (the first is its rule).
+    """
+    resolved, errors = _resolve(report_text, claims)
+    if errors:
+        field, rule = errors[0]
+        raise ReferenceError(rule, field=field, failures=errors)
+    assert report_text is not None  # _source_index raised source_unavailable otherwise
+
+    data: dict[str, object] = {}
+    evidence: list[dict[str, object]] = []
+    for field_name, claim, start, end in resolved:
         data[field_name] = claim.value
         evidence.append(
             {

@@ -9,6 +9,8 @@ with workflow.unsafe.imports_passed_through():
     from broker_native_temporal_fixture import NATIVE_AGENT
     from pydantic_ai.messages import ModelResponse
 
+pytestmark = pytest.mark.requires_service("HARNESS_NATIVE_TEMPORAL_CONFIG")
+
 
 @workflow.defn(name="NativeBrokerTemporalRecoveryQualification")
 class NativeBrokerTemporalWorkflow:

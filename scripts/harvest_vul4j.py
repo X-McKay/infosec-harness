@@ -70,6 +70,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
+# The one answer to "which CWEs have a skill", shared with the trajectory scorer so a harvested
+# case is classified covered exactly when the scorer would look for a matching skill.
+from infosec_harness.evals.trajectory import skill_covered_cwes
+
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 # The harness's own build-file classifier, so what is recorded here and what the harness detects
@@ -87,11 +91,6 @@ ATTRIBUTION = {
     "licence": "Dataset content licensed CC-BY-4.0 (https://creativecommons.org/licenses/by/4.0/). "
                "Vul4J's own source code is GPL-3.0 and is not used, copied, or adapted here.",
 }
-
-# The eight CWE classes we ship a skill for. Discovered from `skills/` when this runs inside
-# the repo so the list cannot drift, with the current set as the fallback for callers (tests,
-# other checkouts) that pass their own.
-FALLBACK_COVERED_CWES = ("CWE-22", "CWE-78", "CWE-79", "CWE-89", "CWE-94", "CWE-502", "CWE-611", "CWE-918")
 
 # The only CWE rewrite we are willing to defend. CWE-77 (Command Injection) is the direct
 # parent of CWE-78 (OS Command Injection), and `skills/cwe-78-os-command-injection` reads
@@ -192,19 +191,6 @@ def parse_dataset(text: str) -> list[Entry]:
         if row.get("vul_id", "").strip()
     ]
     return sorted(entries, key=lambda e: e.sort_key)
-
-
-def covered_cwes() -> tuple[str, ...]:
-    """The CWE classes `skills/cwe-*` covers, read from disk when available."""
-    skills = REPO / "src" / "infosec_harness" / "skills"
-    if not skills.is_dir():
-        return FALLBACK_COVERED_CWES
-    found = sorted(
-        f"CWE-{m.group(1)}"
-        for d in skills.iterdir()
-        if d.is_dir() and (m := re.fullmatch(r"cwe-(\d+)-.*", d.name))
-    )
-    return tuple(found) or FALLBACK_COVERED_CWES
 
 
 # --------------------------------------------------------------------------------------
@@ -798,7 +784,7 @@ def main(argv: list[str] | None = None) -> int:
         entries = entries[: args.limit]
 
     resolver = GitHubResolver(_discover_token(args.token), Path(args.cache_dir))
-    result = harvest(entries, resolver, covered_cwes())
+    result = harvest(entries, resolver, skill_covered_cwes())
     summarise(result, sys.stdout)
     print(f"github api calls: {resolver.calls}", file=sys.stdout)
 

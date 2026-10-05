@@ -4,7 +4,7 @@ import re
 
 import pytest
 
-from infosec_harness.evals.corpus import languages, load_corpus
+from infosec_harness.evals.corpus import corpus_path, languages, load_corpus
 from infosec_harness.repo.detect import detect_stack
 
 CASES = load_corpus()
@@ -177,18 +177,26 @@ def test_expected_verdicts_follow_pairing():
             assert c.expected_verdict == "likely_not_exploitable"
 
 
-async def test_score_corpus_runs_offline():
-    from infosec_harness.evals.run import score_corpus
+async def test_score_corpus_runs_offline_and_writes_its_report(tmp_path):
+    import json
 
-    metrics = await score_corpus(language="python", sandbox=False)
-    assert metrics["n"] == len(load_corpus("python"))
+    from infosec_harness.evals.corpus_run import score_corpus
+
+    report = tmp_path / "corpus.json"
+    metrics = await score_corpus(language="python", sandbox=False, limit=2, report=report)
+    assert metrics["n"] == 2  # the first pair, kept together
     assert 0.0 <= metrics["accuracy"] <= 1.0
+    written = json.loads(report.read_text())
+    assert written["metrics"] == json.loads(json.dumps(metrics))
+    assert written["selection"] == {"language": "python", "limit": 2, "repeat": 1,
+                                    "manifest": str(corpus_path())}
+    assert written["provenance"]["source_digest"]
 
 
 async def test_trajectory_report_includes_prepare_agents():
     """The trajectory report covers prepare-phase agents (recon, env-planner), not just
     per-finding agents — proving prepare invocations are wired in."""
-    from infosec_harness.evals.run import score_corpus
+    from infosec_harness.evals.corpus_run import score_corpus
 
     metrics = await score_corpus(language="python", sandbox=False)
     traj = metrics["trajectory"]
@@ -207,7 +215,7 @@ async def test_a_label_reached_without_probing_is_reported_separately():
     the same reasoning path that, applied to a vulnerable case, produces a false negative, so it
     must not be invisible in the headline number.
     """
-    from infosec_harness.evals.run import score_corpus
+    from infosec_harness.evals.corpus_run import score_corpus
 
     metrics = await score_corpus(language="python", sandbox=False)
     assert "accuracy_with_evidence" in metrics
@@ -268,7 +276,7 @@ def test_the_stage_funnel_locates_a_failure_instead_of_only_reporting_one():
     Locating that by hand meant reading raw traces for every failure, which is what this
     replaces. Here the context misreads reachability while every later stage is fine.
     """
-    from infosec_harness.evals.run import _stage_results
+    from infosec_harness.evals.corpus_run import _stage_results
 
     case, out = _case_and_output(reachability="unreachable")
     stages = dict(_stage_results(case, out))
@@ -283,7 +291,7 @@ def test_a_stage_that_never_ran_is_not_scored_as_a_pass():
     probe that never reached the sink is not agreement. On the `fixed` half it would otherwise
     score as a pass for exactly the reason a zero-test run once scored as a clean negative.
     """
-    from infosec_harness.evals.run import _stage_results
+    from infosec_harness.evals.corpus_run import _stage_results
 
     case, out = _case_and_output(sink_returned=False, oracle=False)
     stages = dict(_stage_results(case, out))
@@ -292,7 +300,7 @@ def test_a_stage_that_never_ran_is_not_scored_as_a_pass():
 
 
 def test_the_sink_location_accepts_a_ref_spanning_the_statement_but_not_a_wrong_one():
-    from infosec_harness.evals.run import _stage_results
+    from infosec_harness.evals.corpus_run import _stage_results
 
     case, _ = _case_and_output()
     _, spanning = _case_and_output(sink_line=case.sink_line)
@@ -304,7 +312,7 @@ def test_the_sink_location_accepts_a_ref_spanning_the_statement_but_not_a_wrong_
 async def test_the_funnel_blames_the_first_broken_stage_not_the_last():
     """A late stage inherits every earlier mistake, so unattributed counts would put the blame
     on `verdict` for a case whose context went wrong three stages earlier."""
-    from infosec_harness.evals.run import score_corpus
+    from infosec_harness.evals.corpus_run import score_corpus
 
     metrics = await score_corpus(language="python", sandbox=False)
     assert metrics["stages"], "no stages were scored"
@@ -343,7 +351,7 @@ def test_a_provider_outage_is_not_filed_as_an_unbuildable_environment():
 async def test_infrastructure_failures_are_excluded_from_the_stage_funnel():
     """They are reported on their own line instead, because a run full of them measures nothing."""
     from infosec_harness.domain.models import InconclusiveReason
-    from infosec_harness.evals.run import score_corpus
+    from infosec_harness.evals.corpus_run import score_corpus
 
     metrics = await score_corpus(language="python", sandbox=False)
     assert "infrastructure_failures" in metrics

@@ -1,17 +1,14 @@
 """Explicit operator closure cannot imply inference, relax evidence or hide partial writes."""
 
-import importlib
 from types import SimpleNamespace
 
 import pytest
+from conftest import load_script
 
 
 @pytest.fixture
-def closure(monkeypatch):
-    from pathlib import Path
-
-    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts"))
-    return importlib.import_module("broker_hold_closure")
+def closure():
+    return load_script("broker_hold_closure")
 
 
 async def test_dry_run_selects_only_planner(closure, monkeypatch):

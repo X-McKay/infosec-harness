@@ -6,11 +6,11 @@ import pytest
 import yaml
 
 from infosec_harness.inference.profiles import (
-    REGISTERED_AGENTS,
     BrokerConfig,
     ExecutorProfile,
     InvocationBounds,
     load_broker_config,
+    registered_agents,
 )
 from infosec_harness.resources import package_root
 
@@ -42,7 +42,7 @@ def _profile(**overrides) -> dict:
 
 
 def _config(**overrides) -> dict:
-    names = list(REGISTERED_AGENTS)
+    names = list(registered_agents())
     value = {
         "version": 1,
         "enabled": True,
@@ -63,8 +63,8 @@ def _config(**overrides) -> dict:
 def test_packaged_catalog_is_disabled_and_maps_every_agent() -> None:
     catalog = load_broker_config()
     assert catalog.enabled is False
-    assert set(catalog.agent_profiles) == set(REGISTERED_AGENTS)
-    assert set(catalog.agent_limits) == set(REGISTERED_AGENTS)
+    assert set(catalog.agent_profiles) == set(registered_agents())
+    assert set(catalog.agent_limits) == set(registered_agents())
     assert set(catalog.agent_profiles.values()) == {"inference-only"}
     assert catalog.profiles["inference-only"].endpoint is None
     assert catalog.profiles["inference-only"].approved_policy is None
@@ -72,7 +72,7 @@ def test_packaged_catalog_is_disabled_and_maps_every_agent() -> None:
 
 def test_resolve_contract_uses_fixed_profile_and_exact_effective_settings() -> None:
     catalog = BrokerConfig.model_validate(_config())
-    for agent in REGISTERED_AGENTS:
+    for agent in registered_agents():
         contract = catalog.resolve_contract(
             agent,
             "gateway",

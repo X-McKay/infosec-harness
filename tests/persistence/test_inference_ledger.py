@@ -332,7 +332,7 @@ async def test_revoke_run_terminalizes_pending_and_blocks_fresh_identity(broker_
     second = broker_request.model_copy(update={"request_id": logical_request_id(broker_request.binding, "model:1")})
     await ledger.admit(second, lease_id="lease", allocation=DEMAND)
     permit = await ledger.claim(second.request_id, lease_id="lease")
-    await ledger.revoke_run(broker_request.binding.run_id)
+    await ledger.revoke_run(broker_request.binding.run_id, root_id=broker_request.binding.root_id)
     assert (await ledger.get(broker_request.request_id)).state == "failed_before_dispatch"
     assert (await ledger.get(second.request_id)).state == "completion_unknown"
     assert (await operation(broker_request))["broker_allocated"] == {"requests": 2, "tokens": 200, "cost_usd": 2}
@@ -345,7 +345,7 @@ async def test_revoke_run_terminalizes_pending_and_blocks_fresh_identity(broker_
     with pytest.raises(BrokerError) as exc:
         await ledger.complete(result_for(second), permit=permit)
     assert exc.value.code == "completion_unknown"
-    await ledger.revoke_run(broker_request.binding.run_id)  # Idempotent repeat.
+    await ledger.revoke_run(broker_request.binding.run_id, root_id=broker_request.binding.root_id)  # Idempotent repeat.
 
 
 async def test_revoke_keeps_completed_result_and_other_runs_unchanged(broker_request):
@@ -358,7 +358,7 @@ async def test_revoke_keeps_completed_result_and_other_runs_unchanged(broker_req
     async with db.session() as session:
         session.add(db.BudgetLedger(root_id=foreign_root, state=foreign))
         await session.commit()
-    await ledger.revoke_run(broker_request.binding.run_id)
+    await ledger.revoke_run(broker_request.binding.run_id, root_id=broker_request.binding.root_id)
     assert await ledger.get(broker_request.request_id) == saved
     async with db.session() as session:
         root = await session.get(db.BudgetLedger, foreign_root)
@@ -381,7 +381,7 @@ async def test_revoke_atomic_root_fence_wins_against_waiting_dispatch(broker_req
     monkeypatch.setattr(ledger, "_checkpoint", checkpoint)
     claimant = asyncio.create_task(ledger.claim(broker_request.request_id, lease_id="lease"))
     await asyncio.wait_for(read.wait(), 5)
-    await ledger.revoke_run(broker_request.binding.run_id)
+    await ledger.revoke_run(broker_request.binding.run_id, root_id=broker_request.binding.root_id)
     resume.set()
     with pytest.raises(BrokerError):
         await claimant
@@ -401,7 +401,7 @@ async def test_run_cleanup_owner_rejects_foreign_root_without_mutation(broker_re
 
 
 async def test_run_fence_rejects_new_reserved_invocation_on_existing_root(broker_request):
-    await ledger.revoke_run(broker_request.binding.run_id)
+    await ledger.revoke_run(broker_request.binding.run_id, root_id=broker_request.binding.root_id)
     with pytest.raises(ValueError, match="revoked"):
         await budgets.reserve(broker_request.binding.root_id, "new-op", DEMAND, "context", "config",
             run_id=broker_request.binding.run_id, invocation_id="new-invocation")
@@ -441,7 +441,7 @@ async def test_negative_authoritative_response_usage_is_not_a_saved_result(broke
 async def test_repeat_run_revocation_preserves_conservative_closure(broker_request):
     await ledger.admit(broker_request, lease_id="lease", allocation=DEMAND)
     await ledger.claim(broker_request.request_id, lease_id="lease")
-    await ledger.revoke_run(broker_request.binding.run_id)
+    await ledger.revoke_run(broker_request.binding.run_id, root_id=broker_request.binding.root_id)
     async with db.session() as session:
         root = await session.get(db.BudgetLedger, broker_request.binding.root_id)
         state = deepcopy(root.state)
@@ -450,9 +450,39 @@ async def test_repeat_run_revocation_preserves_conservative_closure(broker_reque
         root.state = state
         await session.commit()
     before = await operation(broker_request)
-    await ledger.revoke_run(broker_request.binding.run_id)
+    await ledger.revoke_run(broker_request.binding.run_id, root_id=broker_request.binding.root_id)
     assert await operation(broker_request) == before
     assert (await ledger.get(broker_request.request_id)).state == "completion_unknown"
     with pytest.raises(BrokerError) as exc:
         await ledger.claim(broker_request.request_id, lease_id="lease")
     assert exc.value.code == "completion_unknown"
+
+
+async def test_revoke_run_is_scoped_to_its_authenticated_root(broker_request):
+    """Closure touches only the authenticated root and refuses one that never held the run."""
+    await ledger.admit(broker_request, lease_id="lease", allocation=DEMAND)
+    foreign_root = "unrelated-" + uuid.uuid4().hex
+    foreign = budgets.initial_state({"requests": 1, "tokens": 1, "cost_usd": 1}, elapsed_seconds=100)
+    foreign["broker_run_id"] = "other-run"
+    async with db.session() as session:
+        session.add(db.BudgetLedger(root_id=foreign_root, state=foreign))
+        await session.commit()
+    with pytest.raises(BrokerError) as exc:
+        await ledger.revoke_run(broker_request.binding.run_id, root_id=foreign_root)
+    assert exc.value.code == "identity"
+    async with db.session() as session:
+        assert (await session.get(db.BudgetLedger, foreign_root)).state == foreign
+    assert (await ledger.get(broker_request.request_id)).state == "accepted"
+
+
+async def test_injected_clock_owns_dispatch_expiry(broker_request):
+    """The controller clock, not the host wall clock, decides reservation expiry."""
+    late = broker_request.binding.expires_at + 1
+    with pytest.raises(BrokerError) as exc:
+        await ledger.admit(broker_request, lease_id="lease", allocation=DEMAND, clock=lambda: late)
+    assert exc.value.code == "expired"
+    durable = ledger.DurableLedger(clock=lambda: late)
+    with pytest.raises(BrokerError) as exc:
+        await durable.admit(broker_request, lease_id="lease", allocation=DEMAND)
+    assert exc.value.code == "expired"
+    assert await ledger.get(broker_request.request_id) is None

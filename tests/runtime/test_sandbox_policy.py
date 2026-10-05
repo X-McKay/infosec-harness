@@ -1,18 +1,17 @@
-"""Sandbox policy and hardening: base-image allowlist, egress allowlist, fail-closed,
-read-only probe args, image GC selection, and k8s Pod rendering — all deterministic."""
+"""Sandbox policy and hardening: base-image allowlist, fail-closed runtime, image provenance,
+read-only workload args, and k8s Pod rendering — all deterministic."""
 import asyncio
 import csv
 import json
 
 import pytest
 
-from infosec_harness.domain.models import EnvironmentSpec, StackFingerprint
+from infosec_harness.domain.models import EnvironmentSpec
 from infosec_harness.sandbox import docker, k8s
 from infosec_harness.sandbox.policy import (
     DisallowedBaseImage,
     InvalidEnvironmentSpec,
     SandboxUnavailable,
-    build_egress_allowlist,
     ensure_runtime_available,
     validate_base_image,
 )
@@ -34,14 +33,6 @@ def test_base_image_rejected(image):
         validate_base_image(image, ALLOW)
 
 
-def test_repo_registry_declarations_cannot_widen_egress_policy():
-    stack = StackFingerprint(registries=["artifactory.corp.internal", "https://nexus.corp/repo"])
-    hosts = build_egress_allowlist(stack)
-    assert "pypi.org" in hosts and "registry.npmjs.org" in hosts  # ecosystem defaults
-    assert "artifactory.corp.internal" not in hosts
-    assert "nexus.corp" not in hosts
-
-
 async def test_fail_closed_when_runtime_missing(monkeypatch):
     async def _no(_runtime=None):
         return False
@@ -50,6 +41,27 @@ async def test_fail_closed_when_runtime_missing(monkeypatch):
     monkeypatch.setattr(get_settings(), "allow_insecure_runtime", False, raising=False)
     with pytest.raises(SandboxUnavailable):
         await ensure_runtime_available("test")
+
+
+async def test_configured_non_gvisor_runtime_fails_closed_even_when_present(monkeypatch):
+    async def _yes(_runtime=None):
+        return True
+
+    monkeypatch.setattr(docker, "runtime_available", _yes)
+    monkeypatch.setattr(get_settings(), "allow_insecure_runtime", False, raising=False)
+    monkeypatch.setattr(get_settings(), "sandbox_runtime", "runc", raising=False)
+    with pytest.raises(SandboxUnavailable, match="not gVisor"):
+        await ensure_runtime_available("test")
+
+
+def test_settings_reject_weaker_runtime_without_explicit_override(monkeypatch):
+    from infosec_harness.settings import Settings
+
+    monkeypatch.delenv("HARNESS_ALLOW_INSECURE_RUNTIME", raising=False)
+    with pytest.raises(ValueError, match="runsc"):
+        Settings(_env_file=None, sandbox_runtime="runc", allow_insecure_runtime=False)
+    assert Settings(_env_file=None, sandbox_runtime="runc", allow_insecure_runtime=True)
+    assert Settings(_env_file=None, sandbox_runtime="runsc", allow_insecure_runtime=False)
 
 
 async def test_fail_closed_bypassed_when_insecure_allowed(monkeypatch):
@@ -92,8 +104,10 @@ def test_build_argv_uses_buildx_and_proxy(monkeypatch):
     monkeypatch.setattr(s, "use_buildx", True, raising=False)
     monkeypatch.setattr(s, "build_egress_proxy", "http://172.30.0.2:3128", raising=False)
     monkeypatch.setattr(s, "build_egress_network", "harness-egress", raising=False)
-    argv = docker.build_argv("/tmp/Dockerfile", "tag:1", "/ctx", ["pypi.org"])
+    argv = docker.build_argv("/tmp/Dockerfile", "tag:1", "/ctx")
     assert "buildx" in argv and "--builder" in argv and s.buildx_builder in argv
+    assert argv[-2:] == ["--", "/ctx"]
+    assert f"{docker.PROVENANCE_LABEL}=tag:1" in argv
     joined = " ".join(argv)
     assert "HTTP_PROXY=http://172.30.0.2:3128" in joined
     assert "NO_PROXY=localhost,127.0.0.1" in joined
@@ -256,22 +270,54 @@ async def test_run_probe_readonly_argv_shape(monkeypatch):
     assert captured["stdin"] == b"print('x')"
 
 
-async def test_manual_prune_removes_oldest_without_force(monkeypatch):
-    ids = [f"id{i}\t2026-01-0{i}" for i in range(1, 6)]
-    removed = []
+async def test_run_shell_is_read_only_no_network_and_staged(monkeypatch):
+    calls = []
 
     async def fake_run(argv, *, stdin=None, timeout):
-        if argv[:2] == ["docker", "images"]:
-            return docker.ProcResult(exit_code=0, stdout="\n".join(ids), stderr="", timed_out=False, duration_s=0)
-        if argv[:2] == ["docker", "rmi"]:
-            removed.append(argv)
-            return docker.ProcResult(exit_code=0, stdout="", stderr="", timed_out=False, duration_s=0)
-        return docker.ProcResult(exit_code=1, stdout="", stderr="", timed_out=False, duration_s=0)
+        calls.append(argv)
+        return docker.ProcResult(0, "ok", "", False, 0)
 
     monkeypatch.setattr(docker, "_run", fake_run)
-    n = await docker.prune_images(keep=2)
-    assert n == 3
-    assert removed == [["docker", "rmi", image] for image in ("id3", "id4", "id5")]
+    monkeypatch.setattr(get_settings(), "sandbox_read_only_root", True, raising=False)
+    await docker.run_shell("img", "echo hi", idempotency_key="operation-2")
+    name = docker.container_name("operation-2")
+    # A stale container from a crashed attempt is removed before the retry starts.
+    assert calls[0] == ["docker", "rm", "-f", name]
+    argv = calls[1]
+    assert "--read-only" in argv and "--network=none" in argv
+    assert any(a.startswith("--tmpfs=/work") for a in argv)
+    assert any(a.startswith("--tmpfs=/tmp") for a in argv)
+    assert argv[-1].startswith("set -e; cp -a /opt/repo /work/repo;")
+    assert argv[-1].endswith("set +e; echo hi")
+
+
+@pytest.mark.parametrize("labels,expected", [
+    ({"harness.image": "target", docker.PROVENANCE_LABEL: "harness-target:a-b"}, True),
+    ({"harness.image": "target"}, False),
+    ({"harness.image": "target", docker.PROVENANCE_LABEL: "harness-target:other"}, False),
+    ({docker.PROVENANCE_LABEL: "harness-target:a-b"}, False),
+    (None, False),
+])
+async def test_cached_image_requires_harness_provenance(monkeypatch, labels, expected):
+    async def fake_run(argv, *, stdin=None, timeout):
+        assert argv[:3] == ["docker", "image", "inspect"] and argv[-2:] == ["--", "harness-target:a-b"]
+        return docker.ProcResult(0, json.dumps(labels), "", False, 0)
+
+    monkeypatch.setattr(docker, "_run", fake_run)
+    assert await docker.image_exists("harness-target:a-b") is expected
+
+
+def test_image_tag_identity_includes_build_boundary_mode(monkeypatch):
+    s = get_settings()
+    spec = _spec()
+    monkeypatch.setattr(s, "build_egress_proxy", "", raising=False)
+    monkeypatch.setattr(s, "allow_insecure_runtime", False, raising=False)
+    secure = docker.image_tag_for("repohash", spec)
+    monkeypatch.setattr(s, "allow_insecure_runtime", True, raising=False)
+    assert docker.image_tag_for("repohash", spec) != secure
+    monkeypatch.setattr(s, "allow_insecure_runtime", False, raising=False)
+    monkeypatch.setattr(s, "build_egress_network", "another-network", raising=False)
+    assert docker.image_tag_for("repohash", spec) != secure
 
 
 async def test_cancelled_named_workload_is_removed(monkeypatch):
@@ -286,13 +332,13 @@ async def test_cancelled_named_workload_is_removed(monkeypatch):
         await asyncio.Future()
 
     monkeypatch.setattr(docker, "_run", fake_run)
-    task = asyncio.create_task(docker.run_shell("img", "sleep 30", network=False,
-                                                idempotency_key="operation-1"))
+    task = asyncio.create_task(docker.run_shell("img", "sleep 30", idempotency_key="operation-1"))
     await started.wait()
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    assert removed == [docker.container_name("operation-1")]
+    # Once before the run (stale same-name container) and once after cancellation.
+    assert removed == [docker.container_name("operation-1")] * 2
 
 
 def test_k8s_probe_pod_is_hardened():
@@ -308,7 +354,7 @@ def test_k8s_probe_pod_is_hardened():
 
 
 async def test_build_and_probe_activities_with_faked_sandbox(tmp_path, monkeypatch):
-    """Build/probe activities run with the new hardening (fail-closed + base-image + egress)
+    """Build/probe activities run with the new hardening (fail-closed + base-image)
     when the runtime is faked present — the logic the Temporal integration test exercises,
     minus Temporal."""
     from infosec_harness.domain.models import ProbeSource, RepoSnapshot
@@ -323,22 +369,17 @@ async def test_build_and_probe_activities_with_faked_sandbox(tmp_path, monkeypat
     async def _exists(tag):
         return False
 
-    async def _build(path, spec, tag, egress_hosts=None):
-        assert egress_hosts and "pypi.org" in egress_hosts
+    async def _build(path, spec, tag):
         return docker.ProcResult(exit_code=0, stdout="built", stderr="", timed_out=False, duration_s=0.1)
 
     async def _probe(image, tfp, content, cmd, nonce, module_path=""):
         return docker.ProcResult(exit_code=0, stdout=f"{docker.PRECONDITION_PREFIX}{nonce}",
                                  stderr="", timed_out=False, duration_s=0.1)
 
-    async def _prune(keep=None):
-        raise AssertionError("successful builds must not prune potentially active images")
-
     monkeypatch.setattr(docker, "runtime_available", _rt)
     monkeypatch.setattr(docker, "image_exists", _exists)
     monkeypatch.setattr(docker, "build_image", _build)
     monkeypatch.setattr(docker, "run_probe", _probe)
-    monkeypatch.setattr(docker, "prune_images", _prune)
 
     snap = RepoSnapshot(repo_url=str(tmp_path), revision="HEAD", path=str(tmp_path), content_hash="h" * 8)
     spec = EnvironmentSpec(base_image="python:3.12-slim", install_commands=["pip install -e ."],

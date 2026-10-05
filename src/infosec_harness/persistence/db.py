@@ -144,8 +144,8 @@ class InferenceRequestRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
-class RunEvent(Base):
-    """Idempotent activity-written state transitions; legacy runs have none."""
+class RunEventRecord(Base):
+    """Idempotent activity-written state transitions of one run."""
     __tablename__ = "run_events"
     id: Mapped[str] = mapped_column(String(128), primary_key=True)
     run_id: Mapped[str] = mapped_column(ForeignKey("triage_runs.id"), index=True)
@@ -265,39 +265,17 @@ def alembic_config():
     return cfg
 
 
-def _bootstrap(connection) -> None:
-    """Create missing tables, and stamp head only when this database is brand new.
+class SchemaNotAtHead(RuntimeError):
+    """The database is versioned but not at the code's migration head; it must be migrated."""
 
-    A database created here has exactly the schema the migrations produce, so stamping it
-    lets a later ``alembic upgrade head`` be the no-op it should be instead of trying to
-    re-create tables that already exist.
 
-    A database that already has tables but no version row predates alembic. Stamping it at
-    head would claim it has columns it does not, so it is left alone: bring it in with
-    ``alembic stamp 0001`` (the baseline is exactly what ``create_all`` used to build) and
-    then ``alembic upgrade head``.
-    """
-    from alembic.runtime.migration import MigrationContext
+def _head_revision() -> str:
     from alembic.script import ScriptDirectory
-    from sqlalchemy import inspect
 
-    existing = set(inspect(connection).get_table_names())
-    Base.metadata.create_all(connection)
-    if existing - {"alembic_version"}:
-        return
-    ctx = MigrationContext.configure(connection)
-    if ctx.get_current_revision() is None:
-        ctx.stamp(ScriptDirectory.from_config(alembic_config()), "head")
-
-
-async def create_all() -> None:
-    """Bootstrap the schema for tests, CI, and a fresh local database.
-
-    Deployments migrate instead (``upgrade_to_head``); see ``_bootstrap`` for how the two
-    are kept from diverging.
-    """
-    async with _engine().begin() as conn:
-        await conn.run_sync(_bootstrap)
+    head = ScriptDirectory.from_config(alembic_config()).get_current_head()
+    if head is None:  # pragma: no cover - the package always ships its migrations
+        raise RuntimeError("No migration head is packaged")
+    return head
 
 
 def _schema_state(connection) -> tuple[set[str], str | None]:
@@ -308,14 +286,48 @@ def _schema_state(connection) -> tuple[set[str], str | None]:
     return tables, MigrationContext.configure(connection).get_current_revision()
 
 
-def upgrade_to_head(url: str | None = None) -> str:
-    """Migrate the database to the latest revision, adopting a pre-alembic one on the way.
+def _bootstrap(connection) -> None:
+    """Create an empty database at head, or accept one already at head; refuse anything else.
 
-    A database with tables but no version row was built by the old ``create_all``, which
-    produced exactly what revision 0001 produces — so stamping it there and upgrading is
-    both safe and the only way such a database can pick up later revisions. Synchronous
-    because alembic drives its own event loop through ``migrations/env.py``.
+    ``create_all`` runs only on an empty database, which is then stamped at head: it has exactly
+    the schema the migrations produce, so a later ``harness migrate`` is the no-op it should be.
+    It never runs over a versioned database -- creating the newest tables there would make the
+    pending migrations that create them fail. A database behind head is refused with the
+    command that brings it forward; one with tables but no version row is not ours to guess at.
     """
+    from alembic.runtime.migration import MigrationContext
+    from alembic.script import ScriptDirectory
+
+    tables, revision = _schema_state(connection)
+    head = _head_revision()
+    if revision == head:
+        return
+    if revision is None and not (tables - {"alembic_version"}):
+        Base.metadata.create_all(connection)
+        MigrationContext.configure(connection).stamp(
+            ScriptDirectory.from_config(alembic_config()), "head")
+        return
+    if revision is None:
+        raise SchemaNotAtHead(
+            "The database has tables but no migration version; it was not created by this "
+            "harness. Use an empty database, or bring it under migration control explicitly.")
+    raise SchemaNotAtHead(
+        f"The database schema is at revision {revision}, not {head}. Run `harness migrate` "
+        "to upgrade it before starting the service.")
+
+
+async def create_all() -> None:
+    """Bootstrap the schema for tests, CI, and a fresh local database (see ``_bootstrap``).
+
+    Deployments migrate instead (``upgrade_to_head``).
+    """
+    async with _engine().begin() as conn:
+        await conn.run_sync(_bootstrap)
+
+
+def upgrade_to_head(url: str | None = None) -> str:
+    """Migrate the database to the latest revision. Synchronous because alembic drives its own
+    event loop through ``migrations/env.py``."""
     import asyncio
 
     from alembic import command
@@ -330,11 +342,8 @@ def upgrade_to_head(url: str | None = None) -> str:
         finally:
             await engine.dispose()
 
-    tables, revision = asyncio.run(_state())
     cfg = alembic_config()
     cfg.set_main_option("sqlalchemy.url", target.replace("%", "%%"))
-    if revision is None and tables - {"alembic_version"}:
-        command.stamp(cfg, "0001")
     command.upgrade(cfg, "head")
     _, revision = asyncio.run(_state())
     return revision or ""

@@ -5,9 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from pydantic_ai_harness.compaction._shared import estimate_text_tokens
-
-from .skill_documents import Relation, SkillDoc
+from .skill_documents import Relation, SkillDoc, text_tokens
 
 # --- Activation, non-activation, stopping --------------------------------------------------
 
@@ -362,7 +360,7 @@ MIN_PROCEDURE_TOKENS = 60
 
 def body_substance_problems(skill: SkillDoc) -> list[str]:
     """The skill must still have content of its own outside the standard sections."""
-    tokens = estimate_text_tokens(skill.procedure)
+    tokens = text_tokens(skill.procedure)
     if tokens < MIN_PROCEDURE_TOKENS:
         return [
             f"has only ~{tokens} tokens of content outside its standard sections (floor "

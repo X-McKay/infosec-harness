@@ -383,7 +383,7 @@ async def test_openai_verdict_tools_round_trip_through_real_provider_mapping(
         client = AsyncOpenAI(
             base_url="https://provider.invalid/v1", api_key="test", http_client=http_client,
         )
-        model = models._CompatOpenAIChatModel(
+        model = models.CompatOpenAIChatModel(
             "test-model", provider=OpenAIProvider(openai_client=client),
         )
         agent = build_agent("verdict", durable=False)

@@ -12,12 +12,8 @@ and that the query finds them.
 """
 from __future__ import annotations
 
-from infosec_harness.evals.run import (
-    compare_models_for,
-    list_experiments,
-    run_experiment,
-    sweep_models,
-)
+from infosec_harness.evals.reporting import compare_models_for, list_experiments, sweep_models
+from infosec_harness.evals.run import run_experiment
 from infosec_harness.persistence import db
 
 AGENT = "probe-diagnosis"
@@ -107,18 +103,44 @@ async def test_results_can_be_filtered_to_one_agent_and_one_commit(capsys):
     assert await list_experiments(commit="0" * 12, limit=50) == []
 
 
-async def test_default_reports_preserve_each_run_and_explicit_export(tmp_path, monkeypatch):
+async def test_reports_are_written_only_where_asked_and_never_overwrite_each_other(tmp_path):
     import json
 
-    from infosec_harness.settings import get_settings
-
-    monkeypatch.setattr(get_settings(), "reports_dir", tmp_path / "reports")
-    first = await run_experiment(AGENT)
-    second = await run_experiment(AGENT)
+    assert await run_experiment(AGENT)  # no report requested, none written anywhere
+    first = await run_experiment(AGENT, report_dir=tmp_path / "reports")
+    second = await run_experiment(AGENT, report_dir=tmp_path / "reports")
     for experiment_id in (first, second):
-        path = tmp_path / "reports" / "evals" / f"{experiment_id}.json"
+        path = tmp_path / "reports" / f"{experiment_id}.json"
         assert json.loads(path.read_text())["provenance"]["experiment_id"] == experiment_id
     explicit = tmp_path / "custom" / "report.json"
     third = await run_experiment(AGENT, report=explicit)
     assert json.loads(explicit.read_text())["provenance"]["experiment_id"] == third
-    assert not (tmp_path / "reports" / "evals" / f"{third}.json").exists()
+    assert sorted(p.name for p in (tmp_path / "reports").iterdir()) == sorted(
+        f"{experiment_id}.json" for experiment_id in (first, second))
+
+
+async def test_a_sweep_writes_and_audits_one_report_per_model(tmp_path, capsys):
+    import json
+
+    rows = await sweep_models(AGENT, ["sonnet", "haiku"], report_dir=tmp_path)
+    for row in rows:
+        report = json.loads((tmp_path / f"{row['experiment_id']}.json").read_text())
+        assert "inert_checks" in report and "gate_evaluation" in report
+    assert capsys.readouterr().out.count("INERT RELEASE GATES") == 2
+
+
+async def test_one_failing_model_does_not_abort_the_sweep(monkeypatch, capsys):
+    """A truncated run is an ordinary exception now; the sweep records it and moves on."""
+    from infosec_harness.evals import reporting
+
+    real = reporting.run_experiment
+
+    async def flaky(agent, **kwargs):
+        if kwargs["model"] == "sonnet":
+            raise RuntimeError("endpoint down")
+        return await real(agent, **kwargs)
+
+    monkeypatch.setattr(reporting, "run_experiment", flaky)
+    rows = await sweep_models(AGENT, ["sonnet", "haiku"])
+    assert [(r["label"], r["failed"]) for r in rows] == [("sonnet", True), ("haiku", False)]
+    assert "sonnet: FAILED -- RuntimeError" in capsys.readouterr().out

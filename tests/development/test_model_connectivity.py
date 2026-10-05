@@ -1,24 +1,16 @@
 """Single-request checks use real PydanticAI validation without live infrastructure."""
 
 import asyncio
-import importlib.util
 import json
-import sys
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 import yaml
+from conftest import load_script
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
-ROOT = Path(__file__).resolve().parents[2]
-SPEC = importlib.util.spec_from_file_location(
-    "model_connectivity", ROOT / "scripts/model_connectivity.py"
-)
-check = importlib.util.module_from_spec(SPEC)
-sys.modules[SPEC.name] = check
-SPEC.loader.exec_module(check)
+check = load_script("model_connectivity")
 
 
 @pytest.fixture

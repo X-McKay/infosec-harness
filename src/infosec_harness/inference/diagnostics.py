@@ -33,17 +33,20 @@ def report_remote_diagnostic(value: object) -> dict[str, str] | None:
     return diagnostic
 
 
+def exception_chain(error: BaseException, *, limit: int = 8) -> list[BaseException]:
+    """The bounded, cycle-safe cause/context chain; only types are ever inspected."""
+    causes: list[BaseException] = []
+    current: BaseException | None = error
+    while current is not None and len(causes) < limit and not any(current is c for c in causes):
+        causes.append(current)
+        current = current.__cause__ or current.__context__
+    return causes
+
+
 def transport_failure_category(error: BaseException) -> str:
     import httpx2
 
-    causes = []
-    current: BaseException | None = error
-    for _ in range(8):
-        if current is None or any(current is value for value in causes):
-            break
-        causes.append(current)
-        current = current.__cause__ or current.__context__
-    for value in causes:
+    for value in exception_chain(error):
         if isinstance(value, asyncio.CancelledError):
             return "cancelled"
         if isinstance(value, ssl.SSLError):

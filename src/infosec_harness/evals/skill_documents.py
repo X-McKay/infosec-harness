@@ -8,7 +8,12 @@ from enum import StrEnum
 from pathlib import Path
 
 import yaml
-from pydantic_ai_harness.compaction._shared import estimate_text_tokens
+from pydantic_ai.messages import ModelRequest, UserPromptPart
+from pydantic_ai_harness.compaction import estimate_token_count
+
+# Private: pydantic_ai_harness exports no public loader. This is the function the `Skills`
+# capability itself calls, so the suite parses skills exactly as the runtime does; a public
+# equivalent should replace it as soon as one exists.
 from pydantic_ai_harness.skills._loader import load_skill_libraries
 
 from infosec_harness.resources import agents_dir as _agents_dir
@@ -52,7 +57,7 @@ class Status(StrEnum):
 
 
 @dataclass(frozen=True)
-class Coverage:
+class CaseTypeCoverage:
     """One skill's disposition on one case type, with the reason it is what it is."""
 
     case_type: str
@@ -278,12 +283,17 @@ MAX_BODY_TOKENS = 3_400
 MAX_AGENT_SKILL_SHARE = 0.40
 
 
+def text_tokens(text: str) -> int:
+    """The harness's own token estimate for one piece of text, through its public API."""
+    return estimate_token_count([ModelRequest(parts=[UserPromptPart(text)])])
+
+
 def description_tokens(skill: SkillDoc) -> int:
-    return estimate_text_tokens(skill.description)
+    return text_tokens(skill.description)
 
 
 def body_tokens(skill: SkillDoc) -> int:
-    return estimate_text_tokens(skill.body)
+    return text_tokens(skill.body)
 
 
 def context_cost_problems(skill: SkillDoc) -> list[str]:

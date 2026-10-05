@@ -85,7 +85,7 @@ async def test_corpus_scoring_does_not_read_or_write_the_cache():
     loses the signal it exists to provide -- and whether that happened depended on what a
     previous run had left on disk. That is exactly how this test came to be written.
     """
-    from infosec_harness.evals.run import score_corpus
+    from infosec_harness.evals.corpus_run import score_corpus
 
     metrics = await score_corpus(language="python", sandbox=False)
     traj = metrics["trajectory"]
@@ -107,8 +107,9 @@ async def test_a_second_repo_of_the_same_shape_skips_the_planner(tmp_path, monke
     from infosec_harness.graph.ops import LocalOps
     from infosec_harness.graph.prepare import run_prepare
     from infosec_harness.repo.detect import detect_stack
+    from infosec_harness.settings import get_settings
 
-    monkeypatch.setenv("HARNESS_RECIPE_CACHE_DIR", str(tmp_path / "recipes"))
+    monkeypatch.setattr(get_settings(), "recipe_cache_dir", tmp_path / "recipes")
     ops = LocalOps(sandbox=False, recipe_cache=True)
 
     async def prepare(name: str):
@@ -133,3 +134,33 @@ async def test_a_second_repo_of_the_same_shape_skips_the_planner(tmp_path, monke
     # recon still runs: the profile feeds later prompts, and only the planner is skipped.
     assert "recon" in second_agents
     assert second.prepared.build.spec.test_command == first.prepared.build.spec.test_command
+
+
+def test_one_switch_and_one_configured_directory(tmp_path, monkeypatch):
+    """`enabled` overrides the settings switch; the directory comes from settings, not os.environ."""
+    from infosec_harness.persistence.recipes import (
+        FilesystemRecipeStore,
+        NullRecipeStore,
+        get_recipe_store,
+        record_recipe_outcome,
+    )
+    from infosec_harness.settings import get_settings
+
+    monkeypatch.setattr(get_settings(), "recipe_cache_dir", tmp_path / "configured")
+    monkeypatch.setattr(get_settings(), "recipe_cache_enabled", True)
+    assert isinstance(get_recipe_store(False), NullRecipeStore)
+    store = get_recipe_store()
+    assert isinstance(store, FilesystemRecipeStore) and store.root == tmp_path / "configured"
+    monkeypatch.setattr(get_settings(), "recipe_cache_enabled", False)
+    assert isinstance(get_recipe_store(), NullRecipeStore)
+    assert isinstance(get_recipe_store(True), FilesystemRecipeStore)
+
+    stack = StackFingerprint(languages={"python": 3}, build_systems=["pip"])
+    spec = EnvironmentSpec(base_image="python:3.12-slim", test_command="pytest {test_file}")
+    record_recipe_outcome(stack, spec, worked=True, store=store)
+    assert store.lookup(stack_key(stack)) == spec
+    record_recipe_outcome(stack, spec.model_copy(update={"scope": "partial", "module_path": "a"}),
+                          worked=True, store=store)
+    assert store.lookup(stack_key(stack)) == spec, "a partial spec neither replaces nor evicts"
+    record_recipe_outcome(stack, spec, worked=False, store=store)
+    assert store.lookup(stack_key(stack)) is None

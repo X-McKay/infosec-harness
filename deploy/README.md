@@ -9,12 +9,19 @@ and [Kubernetes control-plane templates and sandbox specifications](k8s/README.m
 `docker-compose.dev.yml` remain at the root as discoverable entry points.
 
 The base compose configuration is an advanced manual path. It does not automatically reuse the
-managed VM, project identity, credentials or allocated ports. Kubernetes manifests and a Pod
-renderer exist; Kubernetes probe submission is not implemented.
+managed VM, project identity, credentials or allocated ports. Every image in both compose files
+and the backend `Dockerfile` is pinned by version and digest; the Python, uv and Node versions
+must equal `.mise.toml`, and `tests/development/test_dev_experience.py` checks both. The artifact
+store keeps its `minio` service name but runs RustFS (S3-compatible, same ports and health
+probe), because MinIO images are no longer published. Kubernetes manifests and a Pod renderer
+exist; Kubernetes probe submission is not implemented.
 
 The development overlay rotates container logs at 10 MiB with three files per service. Successful
 full startup and `./dev logs [service]` save bounded snapshots under `.harness/logs/`. Operational
-volumes, snapshots and artifacts are retained across `./dev stop`; do not delete them as build cache.
+volumes, snapshots and artifacts are retained across `./dev stop` and `./dev stop --vm` (which also
+stops this checkout's VM); do not delete them as build cache. `./dev reset` is the one explicit,
+confirmed way to delete this checkout's VM, volumes, findings and generated configuration, and
+`./dev gc [--delete]` lists or removes VM homes under `~/.cache/ih/` whose checkout is gone.
 See [local setup](../docs/development/LOCAL_SETUP.md) and the [repository guide](../docs/development/REPOSITORY_GUIDE.md).
 
 Temporal history and visibility use separate PostgreSQL databases, `temporal` and

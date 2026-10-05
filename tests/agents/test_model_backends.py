@@ -38,7 +38,7 @@ def test_openai_compatible_construction_applies_the_production_transport_contrac
 
     monkeypatch.setattr(openai, "AsyncOpenAI", Client)
     monkeypatch.setattr(pydantic_ai.providers.openai, "OpenAIProvider", Provider)
-    monkeypatch.setattr(models, "_CompatOpenAIChatModel", ChatModel)
+    monkeypatch.setattr(models, "CompatOpenAIChatModel", ChatModel)
     backend = models.load_models_config().backends["gateway"]
     assert backend.api_key_env
     monkeypatch.setenv(backend.api_key_env, "test-key")
@@ -197,7 +197,7 @@ async def test_openai_compatible_mock_transport_round_trips_tool_and_typed_outpu
         client = AsyncOpenAI(
             base_url="https://provider.invalid/v1", api_key="test", http_client=http_client
         )
-        model = models._CompatOpenAIChatModel(
+        model = models.CompatOpenAIChatModel(
             "test-model", provider=OpenAIProvider(openai_client=client)
         )
         result = await Agent(model, output_type=_TypedReply, tools=[_echo]).run("go")

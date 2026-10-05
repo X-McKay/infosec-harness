@@ -132,39 +132,54 @@ def agents_schema():
     typer.echo(f"wrote {path}")
 
 
+def _default_report_dir(kind: str) -> Path:
+    from infosec_harness.settings import get_settings
+
+    return get_settings().reports_dir / kind
+
+
 @eval_app.command("run")
 def eval_run(
-    agent: str = typer.Argument(..., help="Agent name, or 'e2e' for the end-to-end corpus"),
+    agent: str = typer.Argument(..., help="Agent name (an agents/<name>/ directory with an eval adapter)"),
     model: list[str] = typer.Option(
         None, "--model", "-m",
         help="Model tier to run against (repeat to sweep and compare, e.g. -m sonnet -m opus)"),
-    overlay: Path = typer.Option(None, help="Experiment overlay YAML"),
+    overlay: Path = typer.Option(None, help="Experiment overlay YAML (each entry pins base_version)"),
     repeat: int = typer.Option(1, help="Repetitions (LLM variance)"),
-    report: Path = typer.Option(None, help="Release report path (default: HARNESS_REPORTS_DIR/evals/<experiment-id>.json)"),
+    dataset: Path = typer.Option(
+        None, help="Dataset YAML to run instead of the agent's packaged evals/dataset.yaml"),
+    report: Path = typer.Option(
+        None, help="Release report path (default: HARNESS_REPORTS_DIR/evals/<experiment-id>.json)"),
     report_dir: Path = typer.Option(
-        None, help="With several --model, write one release report per model into this directory"),
+        None, help="Directory for <experiment-id>.json release reports (default: HARNESS_REPORTS_DIR/evals)"),
 ):
-    """Run an agent's eval dataset and persist the experiment.
+    """Run an agent's eval dataset, persist the experiment, and write its release report.
 
     Pass --model more than once to run the same dataset against each model in turn and print
     accuracy, latency and cost side by side. The runs are sequential: latency is one of the
     things being measured, so letting them contend would make every number depend on how many
-    models were in the sweep.
+    models were in the sweep. Every completed run writes a release report, audited for checks
+    that could not have failed.
     """
-    from infosec_harness.evals.inert_gates import announce_inert_checks
-    from infosec_harness.evals.run import run_experiment, sweep_models
+    from infosec_harness.evals.run import TruncatedExperiment, run_experiment
 
     models = list(model or [])
+    if report is not None and len(models) > 1:
+        raise typer.BadParameter("--report names one file; use --report-dir for a sweep")
+    directory = report_dir or (None if report is not None else _default_report_dir("evals"))
     if len(models) > 1:
+        from infosec_harness.evals.reporting import sweep_models
+
         asyncio.run(sweep_models(agent, models, overlay=overlay, repeat=repeat,
-                                 report_dir=report_dir))
+                                 report_dir=directory, dataset=dataset))
         return
-    exp_id = asyncio.run(run_experiment(agent, overlay=overlay, repeat=repeat, report=report,
-                                        model=models[0] if models else None))
-    if report is not None and report.exists():
-        # A threshold on a metric this run could not move looks like coverage and is none:
-        # say so next to the evidence, loudly, without changing the run's verdict.
-        announce_inert_checks(agent, report, echo=typer.echo)
+    try:
+        exp_id = asyncio.run(run_experiment(
+            agent, overlay=overlay, repeat=repeat, report=report, report_dir=directory,
+            model=models[0] if models else None, dataset=dataset))
+    except TruncatedExperiment as truncated:
+        typer.echo(str(truncated), err=True)
+        raise typer.Exit(code=1) from None
     typer.echo(f"EXPERIMENT_ID={exp_id}")
 
 
@@ -175,7 +190,7 @@ def eval_results(
     limit: int = typer.Option(20, help="Most recent N experiments"),
 ):
     """List stored experiments with their model, commit and headline metrics."""
-    from infosec_harness.evals.run import list_experiments
+    from infosec_harness.evals.reporting import list_experiments
 
     asyncio.run(list_experiments(agent=agent, commit=commit, limit=limit))
 
@@ -214,7 +229,7 @@ def eval_compare(
     Either name the experiments, or pass --agent to line up that agent's most recent run for
     each model it has been evaluated against.
     """
-    from infosec_harness.evals.run import compare_experiments, compare_models_for
+    from infosec_harness.evals.reporting import compare_experiments, compare_models_for
 
     ids = list(experiments or [])
     if agent:
@@ -231,10 +246,11 @@ def baseline_save(
 ):
     """Record an experiment as the committed baseline for its agent and model.
 
-    Refused for a truncated run or a dirty working tree: a baseline is a claim about a commit,
-    and one that names the wrong commit cannot be reproduced or bisected.
+    Refused for a run that is not complete, covers less than the full dataset, ran against the
+    stub model, or came from a dirty working tree: a baseline is a claim about a commit and a
+    dataset, and one that misnames either cannot be reproduced or bisected.
     """
-    from infosec_harness.evals.run import save_baseline
+    from infosec_harness.evals.reporting import save_baseline
 
     asyncio.run(save_baseline(experiment))
 
@@ -243,7 +259,7 @@ def baseline_save(
 def baseline_list(agent: str = typer.Option(None, help="Only this agent")):
     """Show the committed baselines and whether the code has moved since each was measured."""
     from infosec_harness.evals import baselines as baseline_store
-    from infosec_harness.evals.run import comparison_table
+    from infosec_harness.evals.reporting import comparison_table
 
     stored = baseline_store.load_all(agent)
     if not stored:
@@ -263,22 +279,21 @@ def baseline_list(agent: str = typer.Option(None, help="Only this agent")):
 
 @eval_app.command("inert-gates")
 def eval_inert_gates(
-    report: Path = typer.Argument(..., help="An eval release report written by `eval run --report`"),
-    agent: str = typer.Option(None, help="Agent name; defaults to the report's own subject"),
-    policy: Path = typer.Option(None, help="Policy YAML; defaults to the agent's release-policy.yaml"),
+    report: Path = typer.Argument(..., help="An eval release report written by `eval run`"),
+    policy: Path = typer.Option(None, help="Policy YAML; defaults to the report agent's release-policy.yaml"),
 ):
     """Audit a release report: which of its policy's checks could not have failed?
 
-    Exit code is always 0 — inertness is evidence quality, not a gate (see
-    infosec_harness.evals.inert_gates).
+    Every report `eval run` writes is already audited, and carries the result as
+    `inert_checks`; this re-audits one on disk. Exit code is always 0 -- inertness is evidence
+    quality, not a gate (see infosec_harness.evals.inert_gates).
     """
-    from infosec_harness.evals.inert_gates import announce_inert_checks
+    from infosec_harness.evals.inert_gates import audit_report_file
 
-    name = agent or (json.loads(report.read_text()).get("agent") or "")
-    if not name and policy is None:
-        raise typer.BadParameter("report names no agent; pass --agent or --policy")
-    announce_inert_checks(name or "the subject", report, policy_path=policy, echo=typer.echo,
-                          once=False)
+    try:
+        audit_report_file(report, policy_path=policy, echo=typer.echo)
+    except ValueError as error:
+        raise typer.BadParameter(str(error)) from error
 
 
 @eval_app.command("corpus")
@@ -286,11 +301,22 @@ def eval_corpus(
     language: str = typer.Option("python", help="Corpus language, or 'all' to sweep every one"),
     sandbox: bool = typer.Option(None, help="Force sandbox on/off"),
     repeat: int = typer.Option(1, help="Passes over the corpus (LLM variance); prints the spread"),
+    manifest: Path = typer.Option(
+        None, help="Corpus manifest (default: eval-corpus/manifest.json; e.g. eval-corpus/external/vul4j.json)"),
+    dataset: str = typer.Option("seed", help="Label recorded on every case (the manifest's source)"),
+    limit: int = typer.Option(0, help="Score only the first N cases, keeping vulnerable/fixed pairs together"),
+    report: Path = typer.Option(
+        None, help="Corpus report path (default: HARNESS_REPORTS_DIR/corpus/<timestamp>.json)"),
 ):
-    """Run the seeded ground-truth corpus end-to-end and score verdicts against truth."""
-    from infosec_harness.evals.run import score_corpus
+    """Run a ground-truth corpus end-to-end, score verdicts against truth, and write a report."""
+    from datetime import UTC, datetime
 
-    asyncio.run(score_corpus(language=language, sandbox=sandbox, repeat=repeat))
+    from infosec_harness.evals.corpus_run import score_corpus
+
+    target = report or _default_report_dir("corpus") / (
+        datetime.now(UTC).strftime("corpus-%Y%m%dT%H%M%S%fZ") + ".json")
+    asyncio.run(score_corpus(language=language, sandbox=sandbox, repeat=repeat,
+                             manifest_path=manifest, dataset=dataset, limit=limit, report=target))
 
 
 if __name__ == "__main__":

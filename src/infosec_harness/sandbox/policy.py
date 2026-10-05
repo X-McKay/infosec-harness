@@ -1,8 +1,8 @@
-"""Sandbox policy: fail-closed runtime checks, base-image allowlist, and the build-egress
-allowlist derived from what a repo declares (D2/D14).
+"""Sandbox policy: fail-closed runtime checks, base-image allowlist and build-spec validation.
 
-Pure, deterministic helpers (except the runtime probe), so they are unit-tested without a
-daemon and enforced consistently by both the Docker and Kubernetes runners.
+Pure, deterministic helpers (except the runtime probe), unit-tested without a daemon. Build
+egress is confined by the operator's allowlisting proxy and internal build network, which
+``docker.ensure_build_egress_boundary`` verifies; repository declarations never widen it (D14).
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import re
 import shlex
 from pathlib import PurePosixPath
 
-from infosec_harness.domain.models import EnvironmentSpec, StackFingerprint
+from infosec_harness.domain.models import EnvironmentSpec
 from infosec_harness.settings import get_settings
 
 
@@ -135,27 +135,25 @@ def validate_environment_spec(spec: EnvironmentSpec) -> EnvironmentSpec:
     return spec
 
 
-def build_egress_allowlist(stack: StackFingerprint) -> list[str]:
-    """Hosts the build step may reach: the repo's declared registries plus the ecosystem
-    defaults. Agents cannot widen this — it is derived from deterministic detection (D14)."""
-    # Repository declarations are requests, not grants. Operators approve additional internal
-    # registries by adding them to this configured allowlist; a checked-in .npmrc cannot widen it.
-    hosts = set(get_settings().default_registry_allowlist)
-    for reg in stack.registries:
-        host = reg.split("//", 1)[-1].split("/", 1)[0]
-        if host in hosts:
-            hosts.add(host)
-    return sorted(hosts)
+REQUIRED_RUNTIME = "runsc"
 
 
 async def ensure_runtime_available(purpose: str) -> None:
-    """Fail closed: raise SandboxUnavailable if the gVisor runtime is missing, unless the
-    operator explicitly allowed an insecure runtime for local development."""
+    """Fail closed unless gVisor (runsc) is configured, registered and the daemon default.
+
+    Only the explicit development override may select or skip the runtime. The configured name
+    is not evidence by itself: the daemon must advertise it and select it as its default.
+    """
     from infosec_harness.sandbox import docker
 
     s = get_settings()
     if s.allow_insecure_runtime:
         return
+    if s.sandbox_runtime != REQUIRED_RUNTIME:
+        raise SandboxUnavailable(
+            f"cannot {purpose}: sandbox runtime {s.sandbox_runtime!r} is not gVisor "
+            f"({REQUIRED_RUNTIME!r}); only HARNESS_ALLOW_INSECURE_RUNTIME=true may select a "
+            f"weaker runtime for local development.")
     if not await docker.runtime_available(s.sandbox_runtime):
         raise SandboxUnavailable(
             f"cannot {purpose}: sandbox runtime {s.sandbox_runtime!r} is not available on this "

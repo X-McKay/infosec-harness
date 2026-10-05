@@ -1,4 +1,7 @@
-"""Explicit layer B: real HTTPS processes, real Postgres, mocked native lifecycle only."""
+"""Explicit layer B: real HTTPS processes, real Postgres, mocked native lifecycle only.
+
+Run only by ``scripts/broker_service_check.py``, which supplies the service manifest.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -22,6 +25,8 @@ from infosec_harness.inference.protocol import (
     digest,
 )
 from infosec_harness.persistence import db
+
+pytestmark = pytest.mark.requires_service("HARNESS_BROKER_SERVICE_MANIFEST")
 
 
 class Services:

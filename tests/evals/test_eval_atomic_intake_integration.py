@@ -27,9 +27,11 @@ async def test_canonical_eval_persists_atomic_guard_correction_and_failure(
         "name": "synthetic", "category": "smoke", "payload": {"report": REPORT},
         "expected": "CWE-78",
     }]}))
-    monkeypatch.setattr(run, "get_settings", lambda: get_settings().model_copy(
-        update={"agents_dir": tmp_path}
-    ))
+    from infosec_harness.evals import dataset
+
+    # Only the dataset lookup is redirected; the agent spec still comes from the package.
+    redirected = get_settings().model_copy(update={"agents_dir": tmp_path})
+    monkeypatch.setattr(dataset, "get_settings", lambda: redirected)
     calls = []
 
     def respond(messages, info):

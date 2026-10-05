@@ -1,15 +1,11 @@
 """Controlled HTTP fixtures verify deployment checks without any live services or data writes."""
-import importlib.util
 import json
-from pathlib import Path
 
 import httpx
 import pytest
+from conftest import load_script
 
-ROOT = Path(__file__).resolve().parents[2]
-SPEC = importlib.util.spec_from_file_location("ui_smoke", ROOT / "scripts/ui_deployment_smoke.py")
-smoke = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(smoke)
+smoke = load_script("ui_deployment_smoke")
 COMMIT = "a" * 40
 
 

@@ -7,21 +7,27 @@ import asyncio
 import importlib
 import secrets
 import time
+import weakref
+from collections.abc import Awaitable, Callable, Mapping
+from typing import Protocol
 
-from pydantic import Field
+from pydantic import Field, ValidationError
 
-from . import ledger as durable_ledger
 from .admission import ReservationPolicy, authorize
 from .auth import AUTH_HEADER, sign_request, verify_request
 from .codec import decode_payload, decode_response
 from .diagnostics import report_transport_failure
-from .http_service import JsonChannel, parse_body, serve, server_tls
+from .http_service import JsonChannel, parse_request, serve, server_tls
+from .ledger import DurableLedger, StoredDisposition
+from .openshell import Lease, LeaseStore, NativeSpec
 from .protocol import (
     BrokerError,
     DispatchPermit,
+    ExecutorContract,
     InferenceRequest,
     InferenceResult,
     InvocationRequest,
+    ReservationBinding,
     StrictModel,
     canonical_bytes,
 )
@@ -49,32 +55,109 @@ class Completion(StrictModel):
     result: InferenceResult
 
 
+class NativeAdapter(Protocol):
+    """Executor lease lifecycle; ``openshell.OpenShellAdapter`` is the production adapter."""
+
+    leases: dict[str, Lease]
+    deployment: str
+    store: LeaseStore
+    lock: asyncio.Lock
+
+    def spec(self, contract: ExecutorContract) -> NativeSpec: ...
+
+    def service_url(self, lease: Lease) -> str: ...
+
+    def is_deleted(self, lease_id: str) -> bool: ...
+
+    async def ensure(self, run_id: str, contract: ExecutorContract) -> Lease: ...
+
+    async def verify(self, lease: Lease) -> dict: ...
+
+    async def revoke(self, lease: Lease) -> None: ...
+
+    async def reconcile_recovered(self) -> None: ...
+
+
+class InferenceLedger(Protocol):
+    """Durable request ledger; ``ledger.DurableLedger`` is the production ledger."""
+
+    async def get(self, request_id: str) -> StoredDisposition | None: ...
+
+    async def admit(self, request: InferenceRequest, *, lease_id: str,
+                    allocation: dict[str, float]) -> StoredDisposition: ...
+
+    async def claim(self, request_id: str, *, lease_id: str) -> DispatchPermit: ...
+
+    async def complete(self, result: InferenceResult, *,
+                       permit: DispatchPermit) -> StoredDisposition: ...
+
+    async def fail_before_dispatch(self, request_id: str, *,
+                                   lease_id: str) -> StoredDisposition: ...
+
+    async def recover(self, request_id: str, *, lease_id: str) -> StoredDisposition: ...
+
+    async def revoke_run(self, run_id: str, *, root_id: str) -> None: ...
+
+    async def validate_run_owner(self, run_id: str, root_id: str) -> None: ...
+
+
+class PolicyResolver(Protocol):
+    """Operator catalog lookup; ``None`` means the request has no admission policy."""
+
+    def __call__(self, request: InferenceRequest) -> ReservationPolicy | None: ...
+
+
+InvocationIssuer = Callable[[InvocationRequest], Awaitable[ReservationBinding]]
+
+
+def _catalog_resolver(policies: Mapping[tuple[str, str], ReservationPolicy]) -> PolicyResolver:
+    catalog = dict(policies)
+
+    def resolve(request: InferenceRequest) -> ReservationPolicy | None:
+        return catalog.get((request.binding.agent, request.contract.digest))
+
+    return resolve
+
+
 class Controller:
     def __init__(
         self,
         *,
-        adapter,
-        policies: dict[tuple[str, str], ReservationPolicy],
+        adapter: NativeAdapter,
+        policies: PolicyResolver | Mapping[tuple[str, str], ReservationPolicy],
         worker_key: bytes,
-        executor_channel=None,
-        ledger=durable_ledger,
-        issue_invocation=None,
-        clock=time.time,
+        executor_channel: JsonChannel | None = None,
+        ledger: InferenceLedger | None = None,
+        issue_invocation: InvocationIssuer | None = None,
+        clock: Callable[[], float] = time.time,
     ):
         if len(worker_key) < 32:
             raise BrokerError("auth")
-        self.adapter, self.policies, self.worker_key = adapter, policies, worker_key
+        self.adapter, self.worker_key = adapter, worker_key
+        self.resolve_policy: PolicyResolver = (
+            _catalog_resolver(policies) if isinstance(policies, Mapping) else policies
+        )
         self.channel = executor_channel or JsonChannel()
-        self.ledger, self.issue_invocation, self.clock = ledger, issue_invocation, clock
-        self.lifecycle_lock = asyncio.Lock()
+        self.ledger: InferenceLedger = ledger or DurableLedger(clock=clock)
+        self.issue_invocation, self.clock = issue_invocation, clock
+        # Per-run fence between invocation issuance and run closure; other runs never wait.
+        self._run_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
+            weakref.WeakValueDictionary()
+        )
         self._reconciliation_tasks: dict[str, tuple[InferenceRequest, asyncio.Task, dict]] = {}
 
+    def _run_lock(self, run_id: str) -> asyncio.Lock:
+        lock = self._run_locks.get(run_id)
+        if lock is None:
+            lock = self._run_locks[run_id] = asyncio.Lock()
+        return lock
+
+    async def startup(self) -> None:
+        """Operator service startup: reconcile leases left non-terminal by an earlier process."""
+        await self.adapter.reconcile_recovered()
+
     async def policy(self, request: InferenceRequest) -> ReservationPolicy:
-        policy = (
-            self.policies(request)
-            if callable(self.policies)
-            else self.policies.get((request.binding.agent, request.contract.digest))
-        )
+        policy = self.resolve_policy(request)
         if policy is None:
             raise BrokerError("identity")
         await authorize(request, policy)
@@ -108,35 +191,31 @@ class Controller:
             )
             if path == "/v1/runs/close":
                 try:
-                    closure = RunClose.model_validate(parse_body(body))
-                except Exception:
+                    closure = RunClose.model_validate(parse_request(body))
+                except ValidationError:
                     raise BrokerError("identity") from None
                 await self.ledger.validate_run_owner(closure.run_id, closure.root_id)
-                await self.revoke_run(closure.run_id)
+                await self.revoke_run(closure.run_id, closure.root_id)
                 return {"run_id": closure.run_id, "state": "closed"}
             if path == "/v1/invocations":
                 if self.issue_invocation is None:
                     raise BrokerError("unavailable")
                 # Callback owns strict schema/catalog + run/reservation ownership checks.
                 try:
-                    invocation = InvocationRequest.model_validate(parse_body(body))
-                    self.adapter.spec(invocation.contract)
-                except BrokerError:
-                    raise
-                except Exception:
+                    invocation = InvocationRequest.model_validate(parse_request(body))
+                except ValidationError:
                     raise BrokerError("identity") from None
-                async with self.lifecycle_lock:
+                self.adapter.spec(invocation.contract)
+                async with self._run_lock(invocation.run_id):
                     if self.adapter.store.is_run_revoked(invocation.run_id):
                         raise BrokerError("identity")
                     binding = await self.issue_invocation(invocation)
                 return binding.model_dump(mode="json")
             try:
-                request = InferenceRequest.model_validate(parse_body(body))
-                decode_payload(request.payload)
-            except BrokerError:
-                raise
-            except Exception:
+                request = InferenceRequest.model_validate(parse_request(body))
+            except ValidationError:
                 raise BrokerError("identity") from None
+            decode_payload(request.payload)
             if path == "/v1/results":
                 stored = await self.ledger.get(request.request_id)
                 if stored is None:
@@ -154,55 +233,65 @@ class Controller:
         if path not in {"/v1/ledger/claim", "/v1/ledger/complete"}:
             raise BrokerError("policy")
         lease = self.lease_identity(lower.get("authorization", ""))
-        value = parse_body(body)
+        value = parse_request(body)
         try:
-            if path == "/v1/ledger/claim":
-                claim = Claim.model_validate(value)
-                if claim.lease_id != lease.lease_id:
-                    raise BrokerError("identity")
-                stored = await self.ledger.get(claim.request.request_id)
-                if (
-                    stored is None
-                    or stored.lease_id != lease.lease_id
-                    or stored.request != claim.request
-                    or claim.request.binding.run_id != lease.run_id
-                    or claim.request.contract != lease.contract
-                ):
-                    raise BrokerError("identity")
-                await self.policy(claim.request)
-                await self.adapter.verify(lease)
-                permit = await self.ledger.claim(claim.request.request_id, lease_id=lease.lease_id)
-                return permit.model_dump(mode="json")
-            completion = Completion.model_validate(value)
-            if completion.permit.lease_id != lease.lease_id:
-                raise BrokerError("identity")
-            stored = await self.ledger.get(completion.result.request_id)
-            if (
-                stored is None
-                or stored.lease_id != lease.lease_id
-                or stored.request.contract != lease.contract
-                or stored.request.binding.run_id != lease.run_id
-            ):
-                raise BrokerError("identity")
-            decode_response(completion.result.response)
-            observations = await self.adapter.verify(lease)
-            result = completion.result.model_copy(
-                update={
-                    "provenance": {
-                        **observations,
-                        "contract_digest": lease.contract.digest,
-                        "lease_id": lease.lease_id,
-                    }
-                }
-            )
-            disposition = await self.ledger.complete(result, permit=completion.permit)
-            if disposition.result is None:
-                raise BrokerError("invalid_response")
-            return disposition.result.model_dump(mode="json")
+            message = (Claim if path == "/v1/ledger/claim" else Completion).model_validate(value)
+        except ValidationError:
+            raise BrokerError("identity") from None
+        try:
+            if isinstance(message, Claim):
+                return await self._claim(lease, message)
+            return await self._complete(lease, message)
         except BrokerError:
             raise
         except Exception:
-            raise BrokerError("identity") from None
+            # Only request validation is an identity failure; ledger, database and native
+            # gateway faults are infrastructure unavailability.
+            raise BrokerError("unavailable") from None
+
+    async def _claim(self, lease: Lease, claim: Claim) -> dict:
+        if claim.lease_id != lease.lease_id:
+            raise BrokerError("identity")
+        stored = await self.ledger.get(claim.request.request_id)
+        if (
+            stored is None
+            or stored.lease_id != lease.lease_id
+            or stored.request != claim.request
+            or claim.request.binding.run_id != lease.run_id
+            or claim.request.contract != lease.contract
+        ):
+            raise BrokerError("identity")
+        await self.policy(claim.request)
+        await self.adapter.verify(lease)
+        permit = await self.ledger.claim(claim.request.request_id, lease_id=lease.lease_id)
+        return permit.model_dump(mode="json")
+
+    async def _complete(self, lease: Lease, completion: Completion) -> dict:
+        if completion.permit.lease_id != lease.lease_id:
+            raise BrokerError("identity")
+        stored = await self.ledger.get(completion.result.request_id)
+        if (
+            stored is None
+            or stored.lease_id != lease.lease_id
+            or stored.request.contract != lease.contract
+            or stored.request.binding.run_id != lease.run_id
+        ):
+            raise BrokerError("identity")
+        decode_response(completion.result.response)
+        observations = await self.adapter.verify(lease)
+        result = completion.result.model_copy(
+            update={
+                "provenance": {
+                    **observations,
+                    "contract_digest": lease.contract.digest,
+                    "lease_id": lease.lease_id,
+                }
+            }
+        )
+        disposition = await self.ledger.complete(result, permit=completion.permit)
+        if disposition.result is None:
+            raise BrokerError("invalid_response")
+        return disposition.result.model_dump(mode="json")
 
     async def infer(self, request: InferenceRequest) -> InferenceResult:
         try:
@@ -282,10 +371,13 @@ class Controller:
         if stored.state not in {"failed_before_dispatch", "completion_unknown"}:
             return
         lease = self.adapter.leases.get(stored.lease_id)
+        if lease is None and self.adapter.is_deleted(stored.lease_id):
+            return  # Already cleaned up and retired by an earlier revocation.
         if lease is None or lease.deployment != self.adapter.deployment:
             raise BrokerError("identity")
         # Fencing the durable row first prevents late claims/results even if native
-        # cleanup stalls, is cancelled, or needs a later idempotent retry.
+        # cleanup stalls, is cancelled, or needs a later idempotent retry. The adapter
+        # serializes this with every other revocation of the lease.
         await self.adapter.revoke(lease)
 
     async def _infer(self, request: InferenceRequest) -> InferenceResult:
@@ -340,27 +432,13 @@ class Controller:
             return await self._reconcile_interrupted_request(request, BrokerError("completion_unknown"))
         return observed.result
 
-    async def recover(self, request_id: str) -> InferenceResult | None:
-        stored = await self.ledger.get(request_id)
-        if stored is None:
-            raise BrokerError("identity")
-        lease = self.adapter.leases.get(stored.lease_id)
-        if lease is None or lease.deployment != self.adapter.deployment:
-            raise BrokerError("identity")
-        if stored.state == "dispatch_intent":
-            try:
-                await self.adapter.revoke(lease)
-            finally:
-                disposition = await self.ledger.recover(request_id, lease_id=lease.lease_id)
-        else:
-            disposition = await self.ledger.recover(request_id, lease_id=lease.lease_id)
-        return disposition.result
-
-    async def revoke_run(self, run_id: str) -> None:
-        async with self.lifecycle_lock:
+    async def revoke_run(self, run_id: str, root_id: str) -> None:
+        """Close one authenticated run: fence issuance and claims, then delete its leases."""
+        async with self._run_lock(run_id):
             # Fence issuance and durable claims before waiting for creation/cleanup.
             self.adapter.store.revoke_run(run_id)
-            await self.ledger.revoke_run(run_id)
+            await self.ledger.revoke_run(run_id, root_id=root_id)
+            # The global adapter lock waits for an in-flight provisioning of this run.
             async with self.adapter.lock:
                 for lease in list(self.adapter.leases.values()):
                     if (
@@ -391,6 +469,7 @@ def main() -> None:
         host=args.host,
         port=args.port,
         tls=server_tls(args.cert, args.key, client_ca=args.client_ca),
+        startup=core.startup,
     )
 
 

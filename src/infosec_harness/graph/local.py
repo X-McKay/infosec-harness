@@ -1,91 +1,44 @@
 """In-process batch triage (no Temporal): prepare each repo once, then triage its findings.
 
-Mirrors TriageBatchWorkflow so the CLI and tests can run the full pipeline offline. Uses
-LocalOps; sandbox build/probe run for real when Docker is available, else pass sandbox=False.
+Test and development scaffolding, not a product mode. The grouping, scheduling, per-finding
+pipeline and failure records are the durable path's own (:mod:`infosec_harness.graph.pipeline`);
+this module only supplies in-process discovery and preparation. Uses LocalOps; sandbox
+build/probe run for real when Docker is available, else pass sandbox=False.
 """
 
 from __future__ import annotations
 
-import asyncio
-from collections import defaultdict
-
-from infosec_harness.agents.deps import AgentDeps
-from infosec_harness.agents.intake_claims import WIRE_VERSION
-from infosec_harness.agents.intake_contracts import render_intake_prompt
 from infosec_harness.domain.models import (
-    ComponentProfile,
-    Finding,
     FindingInput,
-    InconclusiveReason,
+    PreparedEnvironment,
     RepoRef,
-    SourceMode,
-    TriageResult,
     TriageRunOutput,
-    Verdict,
-    VerdictLabel,
 )
 from infosec_harness.graph.manifests import execution_manifest, source_manifest
 from infosec_harness.graph.ops import LocalOps, classify_pipeline_failure
-from infosec_harness.graph.prepare import PrepareFailed, prepare_resolved_component, run_prepare
-from infosec_harness.graph.scoring import priority_for_inconclusive
-from infosec_harness.graph.triage import TRIAGE_GRAPH, PreFilter, TriageDeps, TriageState
+from infosec_harness.graph.pipeline import (
+    dedupe_by_fingerprint,
+    describe_failure,
+    group_by_repository,
+    inconclusive_output,
+    split_components,
+    triage_finding,
+    warm_then_fan_out,
+)
+from infosec_harness.graph.prepare import PrepareFailed, run_prepare
 from infosec_harness.intake import adapters
 from infosec_harness.repo.checkout import checkout
-from infosec_harness.repo.components import component_stack, owning_component, preparation_key
 from infosec_harness.repo.detect import detect_stack
 from infosec_harness.settings import get_settings
 
 
-def _inconclusive(finding: Finding, reason: InconclusiveReason, rationale: str, status: str,
-                  invocations=None, manifest=None) -> TriageRunOutput:
-    verdict = Verdict(label=VerdictLabel.inconclusive, confidence=0.0, rationale=rationale,
-                      inconclusive_reason=reason)
-    score, band = priority_for_inconclusive(finding)
-    result = TriageResult(fingerprint=finding.fingerprint, verdict=verdict, priority_score=score,
-                          priority=band, environment_scope="none", early_exit=reason.value)
-    return TriageRunOutput(finding=finding, result=result, prepared_status=status,
-                           invocations=invocations or [], manifest=manifest or {},
-                           needs_info=(reason == InconclusiveReason.needs_info))
-
-
-async def triage_one(ops: LocalOps, inp: FindingInput, prepared) -> TriageRunOutput:
-    finding = adapters.to_finding(inp)
-    invocations = []
-    if adapters.needs_extraction(finding) and finding.description.strip():
-        outcome = await ops.run_agent(
-            "intake", render_intake_prompt("Extract the missing finding fields from the report text, "
-                                    "with citations.", {"report": finding.description, "known": finding},
-                                    protocol=WIRE_VERSION),
-            AgentDeps(repo_path=prepared.snapshot.path, report_text=finding.description))
-        invocations.append(outcome)
-        finding = adapters.merge_extraction(finding, outcome.output)
-    if adapters.resolve_location(finding, prepared.snapshot.path) is None:
-        return _inconclusive(finding, InconclusiveReason.needs_info,
-                             "The finding's location could not be resolved in the repository.",
-                             prepared.status, invocations, execution_manifest(prepared))
-    try:
-        rebound = await prepare_resolved_component(ops, finding, prepared)
-        if rebound is not None:
-            prepared = rebound.prepared
-            invocations.extend(rebound.invocations)
-    except PrepareFailed as exc:
-        return _inconclusive(finding, classify_pipeline_failure(exc.cause),
-            f"Preparing the resolved component failed: {type(exc.cause).__name__}: {exc.cause}",
-            "failed", invocations + exc.invocations, execution_manifest(prepared))
-    if prepared.status != "ready":
-        return _inconclusive(finding, InconclusiveReason.environment_unbuildable,
-                             f"The environment could not be prepared: {prepared.reason}.",
-                             prepared.status, invocations, execution_manifest(prepared))
-    state = TriageState(finding=finding, prepared=prepared)
-    result = await TRIAGE_GRAPH.run(state=state, deps=TriageDeps(ops=ops), inputs=PreFilter())
-    return TriageRunOutput(finding=finding, result=result, prepared_status=prepared.status,
-                           manifest=execution_manifest(prepared),
-                           invocations=invocations + state.invocations,
-                           context=state.context, executions=state.executions)
+async def triage_one(ops: LocalOps, inp: FindingInput,
+                     prepared: PreparedEnvironment) -> TriageRunOutput:
+    return await triage_finding(ops, inp, prepared)
 
 
 async def triage_batch_local(findings: list[FindingInput], *, sandbox: bool = True,
-                             recipe_cache: bool = True,
+                             recipe_cache: bool | None = None,
                              concurrency: int | None = None,
                              prepare_sink: dict[tuple[str, ...], list] | None = None,
                              mask_paths: dict[tuple[str, str], list[str]] | None = None,
@@ -103,11 +56,9 @@ async def triage_batch_local(findings: list[FindingInput], *, sandbox: bool = Tr
     measurement of transcription.
 
     ``concurrency`` is how many of one repository's findings may be triaged at a time; None
-    takes `settings.per_repo_concurrency`, which is what `TriageBatchWorkflow` already uses.
-    This path ignored that setting and ran strictly sequentially, so the offline pipeline — the
-    one the CLI, the corpus scorer and every test exercise — had a different shape from the
-    durable one it exists to mirror, and its measured wall clock could not be read as a
-    prediction of production's. Same schedule as the workflow, for the same reasons:
+    takes `settings.per_repo_concurrency`, and the value is clamped exactly as the workflow
+    clamps it. Grouping, deduplication, ordering and the schedule come from
+    :mod:`infosec_harness.graph.pipeline`, which the workflow uses too:
 
     * Repository groups stay sequential. `run_prepare` writes the shared recipe cache, builds
       images, and is why image-cache GC has a bound to respect; two prepares at once would race
@@ -124,117 +75,76 @@ async def triage_batch_local(findings: list[FindingInput], *, sandbox: bool = Tr
     the one place to say how much of that the runner has capacity for."""
     if concurrency is None:
         concurrency = get_settings().per_repo_concurrency
-    if concurrency < 1:
-        raise ValueError(f"concurrency must be at least 1, got {concurrency}")
+    findings = dedupe_by_fingerprint(findings)
     ops = LocalOps(sandbox=sandbox, recipe_cache=recipe_cache)
     try:
-        groups: dict[tuple[str, str, SourceMode | None], list[FindingInput]] = defaultdict(list)
-        for f in findings:
-            groups[(f.repo_url, f.revision, f.source_mode)].append(f)
         results: dict[int, TriageRunOutput] = {}
         order = {id(f): i for i, f in enumerate(findings)}
-        for (repo_url, revision, source_mode), group in groups.items():
+        for (repo_url, revision, source_mode), group in group_by_repository(findings).items():
             snapshot = None
             stack = None
             try:
                 snapshot = await checkout(RepoRef(
-                    repo_url=repo_url, revision=revision,
-                    source_mode=source_mode,
+                    repo_url=repo_url, revision=revision, source_mode=source_mode,
                     exclude_paths=(mask_paths or {}).get((repo_url, revision), [])))
                 stack = detect_stack(snapshot.path)
-            except Exception as e:  # noqa: BLE001 - one repo must not sink the batch either
-                # Preparation is shared by a repo's findings, so a failure here decides all of
-                # them — but only theirs. Observed live: build-repair exhausted its token budget
-                # on real build logs and the exception left this loop, discarding every finding in
-                # the run including repos already triaged.
-                #
-                # The checkout and stack detection are inside the guard too. They are the only
-                # per-repo work that was still outside it, and a repository that cannot be cloned
-                # is the likeliest failure of all on a harvested manifest — it would have taken the
-                # whole batch with it for the same reason preparation used to.
-                #
-                # The calls preparation had already made are the only evidence about a repository
-                # that failed to prepare, so they are recorded rather than discarded: a run whose
-                # every case died here used to report nothing about which agents ran, how many
-                # requests they made, or whether one was looping.
+            except Exception as e:  # noqa: BLE001 - one repo must not sink the batch
+                # Discovery is shared by a repo's findings, so a failure here decides all of
+                # them -- but only theirs. A repository that cannot be cloned is the likeliest
+                # failure of all on a harvested manifest.
                 for f in group:
-                    results[order[id(f)]] = _inconclusive(
+                    results[order[id(f)]] = inconclusive_output(
                         adapters.to_finding(f), classify_pipeline_failure(e),
-                        f"Discovering {repo_url} failed: {type(e).__name__}: {e}", "failed", manifest=(
-                            source_manifest(snapshot, stack) if snapshot is not None else {}
-                        ))
+                        f"Discovering {repo_url} failed: {describe_failure(e)}", "failed",
+                        manifest=(source_manifest(snapshot, stack) if snapshot is not None
+                                  else {}))
                 continue
 
-            component_groups: dict[str, tuple[ComponentProfile | None, list[FindingInput]]] = {}
-            for finding_input in group:
-                component = owning_component(stack, finding_input.file_path)
-                key = preparation_key(component)
-                component_groups.setdefault(key, (component, []))[1].append(finding_input)
-
-            for component_root, (component, component_group) in component_groups.items():
-                narrowed = component_stack(stack, component) if component is not None else stack
-                effective_root = component.root if component is not None else "."
+            components = split_components(stack, group)
+            for component in components:
+                sink_key = ((repo_url, revision) if len(components) == 1
+                            else (repo_url, revision, component.root))
                 try:
-                    # Preserve the historical three-argument seam for root/single-component callers
-                    # and tests which wrap preparation. Only a nested component needs the new bind.
-                    if effective_root == ".":
-                        prep = await run_prepare(ops, snapshot, narrowed)
-                    else:
-                        prep = await run_prepare(
-                            ops, snapshot, narrowed, component_root=effective_root)
-                except Exception as e:  # noqa: BLE001 - one component must not sink the repository
+                    prep = await run_prepare(ops, snapshot, component.stack,
+                                             component_root=component.root)
+                except Exception as e:  # noqa: BLE001 - one component must not sink the repo
+                    # The calls preparation had already made are the only evidence about a
+                    # repository that failed to prepare, so they are recorded, not discarded.
                     partial = e.invocations if isinstance(e, PrepareFailed) else []
                     cause = e.cause if isinstance(e, PrepareFailed) else e
-                    sink_key = ((repo_url, revision) if len(component_groups) == 1
-                                else (repo_url, revision, component_root))
                     if prepare_sink is not None:
                         prepare_sink[sink_key] = partial
                     ran = ", ".join(i.agent for i in partial) or "none"
-                    for finding_input in component_group:
-                        results[order[id(finding_input)]] = _inconclusive(
-                            adapters.to_finding(finding_input), classify_pipeline_failure(cause),
-                            f"Preparing component {component_root!r} of {repo_url} failed after "
-                            f"{len(partial)} agent call(s) ({ran}): {type(cause).__name__}: {cause}",
-                            "failed", manifest=source_manifest(snapshot, narrowed))
+                    for f in component.findings:
+                        results[order[id(f)]] = inconclusive_output(
+                            adapters.to_finding(f), classify_pipeline_failure(cause),
+                            f"Preparing component {component.root!r} of {repo_url} failed after "
+                            f"{len(partial)} agent call(s) ({ran}): {describe_failure(cause)}",
+                            "failed", manifest=source_manifest(snapshot, component.stack))
                     continue
-                sink_key = ((repo_url, revision) if len(component_groups) == 1
-                            else (repo_url, revision, component_root))
                 if prepare_sink is not None:
                     prepare_sink[sink_key] = prep.invocations
-                # Same deterministic order the workflow uses, so both paths warm the same finding.
-                component_group.sort(key=lambda f: (f.cwe or "", f.file_path or ""))
-                outputs = await _triage_group(ops, component_group, prep.prepared, concurrency)
-                for finding_input, out in zip(component_group, outputs, strict=True):
-                    results[order[id(finding_input)]] = out
+                outputs = await _triage_group(ops, component.findings, prep.prepared, concurrency)
+                for f, out in zip(component.findings, outputs, strict=True):
+                    results[order[id(f)]] = out
         return [results[i] for i in sorted(results)]
     finally:
         await ops.close()
 
 
-async def _triage_group(ops: LocalOps, group: list[FindingInput], prepared,
+async def _triage_group(ops: LocalOps, group: list[FindingInput], prepared: PreparedEnvironment,
                         concurrency: int) -> list[TriageRunOutput]:
-    """One repository's findings, warmed then fanned out under `concurrency`."""
+    """One repository component's findings, warmed then fanned out under `concurrency`."""
 
     async def one(f: FindingInput) -> TriageRunOutput:
         try:
             return await triage_one(ops, f, prepared)
         except Exception as e:  # noqa: BLE001 - one finding must not sink the batch
-            # In the durable path each finding is its own child workflow, so a failure is
-            # already contained. Here the batch shares a process, and an agent that exhausts a
-            # retry budget on one finding used to discard every result in the run — including
-            # findings already triaged. Record it as inconclusive/error, which is what the
-            # three-way contract reserves for exactly this, and go on. That is also why
-            # `gather` below needs no `return_exceptions`: a failure is already an outcome.
-            return _inconclusive(
+            # triage_finding already contains failures after normalization; this is the
+            # in-process equivalent of a failed child workflow.
+            return inconclusive_output(
                 adapters.to_finding(f), classify_pipeline_failure(e),
-                f"Triage failed for this finding: {type(e).__name__}: {e}",
+                f"Triage failed for this finding: {describe_failure(e)}",
                 prepared.status, manifest=execution_manifest(prepared))
 
-    gate = asyncio.Semaphore(concurrency)
-
-    async def bounded(f: FindingInput) -> TriageRunOutput:
-        async with gate:
-            return await one(f)
-
-    first = await one(group[0])
-    return [first, *await asyncio.gather(*(bounded(f) for f in group[1:]))]
+    return await warm_then_fan_out(group, one, concurrency)

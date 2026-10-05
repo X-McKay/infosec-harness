@@ -90,7 +90,7 @@ async def test_the_smoke_test_fails_when_the_canary_is_not_heard(monkeypatch):
     from infosec_harness.sandbox import docker
     from infosec_harness.workflows.activities import smoke_test_activity
 
-    async def ok_shell(image, command, *, network, timeout=None):
+    async def ok_shell(image, command, *, timeout=None, **_ignored):
         return docker.ProcResult(exit_code=0, stdout="harness-smoke-ok\npytest 8.0.0",
                                  stderr="", timed_out=False, duration_s=0.0)
 
@@ -112,7 +112,7 @@ async def test_the_smoke_test_passes_when_the_canary_is_heard(monkeypatch):
     from infosec_harness.sandbox import docker
     from infosec_harness.workflows.activities import smoke_test_activity
 
-    async def ok_shell(image, command, *, network, timeout=None):
+    async def ok_shell(image, command, *, timeout=None, **_ignored):
         return docker.ProcResult(exit_code=0, stdout="harness-smoke-ok\npytest 8.0.0",
                                  stderr="", timed_out=False, duration_s=0.0)
 

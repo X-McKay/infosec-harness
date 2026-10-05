@@ -4,13 +4,13 @@ from __future__ import annotations
 import logging
 import math
 import time
+from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import update
-
+from infosec_harness.inference.ledger import CAS_ATTEMPTS, cas_root
 from infosec_harness.inference.protocol import (
     BrokerError,
     InferenceRequest,
@@ -82,14 +82,16 @@ async def authorize(request: InferenceRequest, policy: ReservationPolicy) -> dic
     return {"requests": 1, "tokens": input_reserve + output, "cost_usd": cost}
 
 
-async def bind_reservation(binding: ReservationBinding, *, configuration_digest: str) -> None:
+async def bind_reservation(binding: ReservationBinding, *, configuration_digest: str,
+                           clock: Callable[[], float] = time.time) -> None:
     """Install a trusted issuance binding on an existing invocation reservation.
 
     Call only after controller registration establishes run/invocation/operation ownership.
     Legacy operation JSON does not record run ownership, so worker-selected first bindings
     are not authorization evidence. Existing bindings and optional explicit owners are immutable.
     """
-    for _ in range(20):
+    for _ in range(CAS_ATTEMPTS):
+        now = clock()
         async with db.session() as session:
             root = await session.get(db.BudgetLedger, binding.root_id)
             if root is None:
@@ -113,17 +115,13 @@ async def bind_reservation(binding: ReservationBinding, *, configuration_digest:
             if operation.get("broker_revoked") or binding.run_id in state.get("broker_revoked_runs", []):
                 raise BrokerError("policy", "Inference run revoked")
             deadline = state.get("deadline_at")
-            if (binding.expires_at <= time.time() or deadline is None
+            if (binding.expires_at <= now or deadline is None
                     or binding.expires_at > datetime.fromisoformat(deadline).timestamp()
-                    or datetime.fromisoformat(deadline).timestamp() <= time.time()):
+                    or datetime.fromisoformat(deadline).timestamp() <= now):
                 raise BrokerError("expired", "Reservation exceeds the root deadline")
             operation.update(broker_binding=encoded, broker_owned=True,
                              broker_configuration_digest=configuration_digest)
-            won = await session.execute(update(db.BudgetLedger).where(
-                db.BudgetLedger.root_id == root.root_id, db.BudgetLedger.revision == root.revision
-            ).values(state=state, revision=root.revision + 1))
-            if won.rowcount != 1:
-                await session.rollback()
+            if not await cas_root(session, root, state):
                 continue
             await session.commit()
             return

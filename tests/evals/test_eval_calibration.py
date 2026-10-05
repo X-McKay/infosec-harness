@@ -8,16 +8,31 @@ from sqlalchemy import select
 from infosec_harness.evals.calibration import (
     CalibrationSpec,
     TrialResult,
-    _passes_hard_gates,
     _promotion_eligible,
     _selection_key,
+    admissible,
     load_calibration,
     run_calibration,
     write_report,
 )
-from infosec_harness.evals.run import case_group, run_experiment
+from infosec_harness.evals.dataset import case_group
+from infosec_harness.evals.gates import load_policy
+from infosec_harness.evals.run import run_experiment
 from infosec_harness.persistence import db
 from infosec_harness.settings import get_settings
+
+# Every hard gate the verdict and build-repair policies name, at its passing value.
+PASSING = {
+    "status": "complete",
+    "n": 1,
+    "n_planned": 1,
+    "schema_validity_rate": 1.0,
+    "budget_exhausted_count": 0,
+    "unevidenced_safe_verdicts": 0,
+    "uncovered_material_scenarios": 0,
+    "execution_not_checked_count": 0,
+    "execution_failed_count": 0,
+}
 
 
 def test_grouping_keeps_related_variants_together():
@@ -45,23 +60,25 @@ def test_candidate_ranking_preserves_observed_zero_and_penalizes_unknown_usage()
     assert _selection_key(trial(1)) > _selection_key(trial(None))
 
 
-def test_failed_or_missing_execution_evidence_fails_calibration_hard_gates():
-    metrics = {
-        "status": "complete",
-        "n": 1,
-        "n_planned": 1,
-        "schema_validity_rate": 1.0,
-        "budget_enforcement_violations": 0,
-        "unexpected_budget_stops": 0,
-        "unevidenced_safe_verdicts": 0,
-        "execution_not_checked_count": 0,
-        "execution_failed_count": 0,
-    }
-    assert _passes_hard_gates(metrics)
-    assert not _passes_hard_gates({**metrics, "execution_failed_count": 1})
-    missing = dict(metrics)
+def test_failed_or_missing_execution_evidence_fails_the_build_repair_policy():
+    policy = load_policy("build-repair")
+    assert admissible(policy, PASSING)
+    assert not admissible(policy, {**PASSING, "execution_failed_count": 1})
+    missing = dict(PASSING)
     missing.pop("execution_failed_count")
-    assert not _passes_hard_gates(missing)
+    assert not admissible(policy, missing)
+
+
+def test_calibration_gates_are_the_agents_own_policy_not_a_private_list():
+    """Verdict gates unevidenced safety and coverage; it does not gate execution evidence."""
+    policy = load_policy("verdict")
+    no_execution = {k: v for k, v in PASSING.items() if not k.startswith("execution_")}
+    assert admissible(policy, no_execution)
+    assert not admissible(policy, {**no_execution, "unevidenced_safe_verdicts": 1})
+    assert not admissible(policy, {**no_execution, "uncovered_material_scenarios": 1})
+    assert not admissible(policy, {**no_execution, "budget_exhausted_count": 1})
+    assert not admissible(policy, {**no_execution, "status": "truncated"})
+    assert not admissible(policy, {**no_execution, "n": 0})
 
 
 @pytest.mark.parametrize(
@@ -76,21 +93,12 @@ def test_failed_or_missing_execution_evidence_fails_calibration_hard_gates():
 def test_promotion_requires_live_evidence_from_a_clean_commit(model_mode, dirty, expected):
     from infosec_harness.evals.provenance import CodeVersion
 
-    gates = {
-        "status": "complete",
-        "n": 1,
-        "n_planned": 1,
-        "schema_validity_rate": 1.0,
-        "budget_enforcement_violations": 0,
-        "unexpected_budget_stops": 0,
-        "unevidenced_safe_verdicts": 0,
-        "execution_not_checked_count": 0,
-        "execution_failed_count": 0,
-    }
+    gates = dict(PASSING)
     selected = TrialResult(candidate=1, effective_config_digest="digest", status="complete")
     code = CodeVersion("a" * 40, dirty, "test", "3.12", "b" * 64)
     assert (
         _promotion_eligible(
+            policy=load_policy("verdict"),
             selected=selected,
             held_out_metrics=gates,
             selected_quality=True,
@@ -249,6 +257,11 @@ async def test_runnable_calibration_executes_candidates_then_grouped_holdout(tmp
     assert not report.promotion_eligible, "stub evidence must never be promoted"
     assert "stub-model results exercise calibration machinery only" in " ".join(report.limitations)
 
+    # Calibration trials are measurements, not releases: none may write a release report.
+    reports = get_settings().reports_dir / "evals"
+    for experiment_id in [t.experiment_id for t in report.trials] + [report.held_out_experiment_id]:
+        assert not (reports / f"{experiment_id}.json").exists()
+
     output = tmp_path / "report.json"
     write_report(output, report)
     written = yaml.safe_load(output.read_text())
@@ -308,10 +321,10 @@ async def test_stub_cost_cap_has_zero_reserved_exposure():
     assert report.planned_cost_ceiling_usd == 0.0
 
 
-@pytest.mark.parametrize("include_execution_metric", [True, False])
+@pytest.mark.parametrize("include_safety_metric", [True, False])
 async def test_calibration_skips_provider_floor_equivalent_candidate(
     monkeypatch,
-    include_execution_metric,
+    include_safety_metric,
 ):
     from types import SimpleNamespace
 
@@ -331,21 +344,15 @@ async def test_calibration_skips_provider_floor_equivalent_candidate(
         identifier = f"exp-{split}-{len(calls)}"
         calls.append(split)
         metrics = {
-            "status": "complete",
-            "n": 1,
-            "n_planned": 1,
-            "schema_validity_rate": 1.0,
-            "budget_enforcement_violations": 0,
-            "unexpected_budget_stops": 0,
-            "unevidenced_safe_verdicts": 0,
+            **PASSING,
             "task_success_rate": 1.0,
             "cost_usd_total": 0.0,
             "distributions": {"p95_latency_s": 0.1},
             "avg_tokens": 1,
         }
-        if include_execution_metric:
-            metrics["execution_not_checked_count"] = 0
-            metrics["execution_failed_count"] = 0
+        if not include_safety_metric:
+            # A gate the verdict policy names, absent: unknown evidence fails closed.
+            metrics.pop("unevidenced_safe_verdicts")
         rows[identifier] = SimpleNamespace(metrics=metrics)
         return identifier
 
@@ -364,12 +371,28 @@ async def test_calibration_skips_provider_floor_equivalent_candidate(
         get_settings.cache_clear()
         models.load_models_config.cache_clear()
 
-    assert calls == (["calibration", "held_out"] if include_execution_metric else ["calibration"])
+    assert calls == (["calibration", "held_out"] if include_safety_metric else ["calibration"])
     assert [trial.status for trial in report.trials] == ["complete", "duplicate_effective"]
     assert report.trials[1].duplicate_of == 100
-    if include_execution_metric:
+    if include_safety_metric:
         assert report.selected_candidate == 100
     else:
         assert report.selected_candidate is None
         assert report.held_out_experiment_id is None
         assert "no calibration candidate passed all hard gates" in report.limitations
+
+
+def test_groups_that_leave_a_material_scenario_uncovered_are_refused_before_any_call():
+    """Every run of such groups fails the policy's coverage gate, so nothing could be selected;
+    the plan is refused before it spends anything."""
+    raw = yaml.safe_load(Path("evals/experiments/calibration/verdict-tool-budget.yaml").read_text())
+    spec = CalibrationSpec.model_validate(raw)
+    from infosec_harness.evals.calibration import _validate_groups
+    from infosec_harness.evals.dataset import load_dataset
+
+    cases = load_dataset("verdict").cases
+    assert _validate_groups(spec, cases, load_policy("verdict")) == (3, 2)
+    stripped = tuple({**case, "scenarios": []} if case_group(case) in set(spec.dataset.calibration)
+                     else case for case in cases)
+    with pytest.raises(ValueError, match="calibration groups leave material risk scenarios"):
+        _validate_groups(spec, stripped, load_policy("verdict"))

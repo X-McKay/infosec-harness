@@ -152,6 +152,10 @@ class Settings(BaseSettings):
     # build attempt and falls back to the normal path, so the downside is bounded and the entry
     # is evicted the moment it stops working.
     recipe_cache_enabled: bool = True
+    # Where recipes live; defaults to <workspace_dir>/recipes. Evals and tests isolate it: a
+    # recipe surviving between runs makes them irreproducible, since run N+1 skips the planner
+    # that run N exercised and is therefore measuring something else.
+    recipe_cache_dir: Path | None = None
     per_repo_concurrency: int = 4
 
     # Azure DevOps (D13: comment-only write-back)
@@ -208,6 +212,20 @@ class Settings(BaseSettings):
             raise ValueError("OTLP client certificate and key must be configured together")
         if (self.otel_exporter_otlp_headers or self.otel_exporter_otlp_client_cert) and not self.otel_exporter_otlp_endpoint.startswith("https://"):
             raise ValueError("Authenticated OTLP export requires an HTTPS endpoint")
+        return self
+
+    # Operator allowlist for local repository sources: a local path or file:// repo_url is
+    # accepted only beneath one of these roots. Empty admits remote HTTPS sources only.
+    local_repo_roots: list[Path] = []
+
+    @model_validator(mode="after")
+    def validate_sandbox_isolation(self) -> Settings:
+        # A configured runtime name is not isolation evidence, but anything other than gVisor
+        # is a weaker boundary that only the explicit development override may select.
+        if self.sandbox_runtime != "runsc" and not self.allow_insecure_runtime:
+            raise ValueError(
+                "sandbox_runtime other than 'runsc' requires HARNESS_ALLOW_INSECURE_RUNTIME=true"
+            )
         return self
 
 

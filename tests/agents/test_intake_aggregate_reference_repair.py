@@ -33,10 +33,9 @@ def ctx(report=REPORT):
     return SimpleNamespace(deps=SimpleNamespace(report_text=report))
 
 
-def test_collects_both_failures_before_materialization_and_never_changes_claims(monkeypatch):
+def test_collects_both_failures_before_materialization_and_never_changes_claims():
     output = claims()
     before = output.model_dump_json()
-    monkeypatch.setattr(registry, "_targeted_reference_repair", lambda *_: True)
     with pytest.raises(ModelRetry) as e:
         registry._validate_atomic_intake(ctx(), output)
     assert "cwe=reversed_source_range, vulnerability_class=reversed_source_range" in e.value.message
@@ -52,50 +51,16 @@ def test_collects_both_failures_before_materialization_and_never_changes_claims(
     assert [e.confidence for e in finding.evidence] == [0.8, 0.9]
 
 
-@pytest.mark.parametrize("old_enabled", [False, True])
-def test_absent_aggregate_marker_preserves_exact_old_feedback_and_old_marker(
-    monkeypatch, old_enabled
-):
-    calls = []
-
-    def patched(version=registry.INTAKE_REFERENCE_REPAIR_VERSION):
-        calls.append(version)
-        return old_enabled if version == registry.INTAKE_REFERENCE_REPAIR_VERSION else False
-
-    monkeypatch.setattr(registry, "_targeted_reference_repair", patched)
-    with pytest.raises(ModelRetry) as e:
-        registry._validate_atomic_intake(ctx(), claims())
-    old = "Extraction violates its evidence contract:\n- Source reference violates its contract: reversed_source_range"
-    extension = (
-        ". Fix only the source reference for claim 'cwe': "
-        "end_id must be at or after start_id in report source-line order. "
-        "For a single source line, use end_id=null or end_id=start_id. "
-        "Keep the supported claim value and confidence unchanged."
-    )
-    assert e.value.message == old + (extension if old_enabled else "")
-    assert calls == [
-        registry.INTAKE_AGGREGATE_REFERENCE_REPAIR_VERSION,
-        registry.INTAKE_REFERENCE_REPAIR_VERSION,
-    ]
-
-
-def test_single_invalid_keeps_current_bytes_without_new_marker(monkeypatch):
+def test_single_invalid_names_its_claim_without_the_aggregate_form():
     output = claims()
     output.cwe = None
-    calls = []
-
-    def patched(version=registry.INTAKE_REFERENCE_REPAIR_VERSION):
-        calls.append(version)
-        return True
-
-    monkeypatch.setattr(registry, "_targeted_reference_repair", patched)
     with pytest.raises(ModelRetry) as e:
         registry._validate_atomic_intake(ctx(), output)
     assert "claim 'vulnerability_class'" in e.value.message
-    assert calls == [registry.INTAKE_REFERENCE_REPAIR_VERSION]
+    assert "Source references violate their contract" not in e.value.message
 
 
-def test_all_eight_errors_are_bounded_closed_and_unknown_ids_not_echoed(monkeypatch):
+def test_all_eight_errors_are_bounded_closed_and_unknown_ids_not_echoed():
     data = {}
     for name in AtomicFinding.model_fields:
         value = (
@@ -110,7 +75,6 @@ def test_all_eight_errors_are_bounded_closed_and_unknown_ids_not_echoed(monkeypa
     assert invalid_source_references(REPORT, output) == tuple(
         (name, "unknown_source_id") for name in AtomicFinding.model_fields
     )
-    monkeypatch.setattr(registry, "_targeted_reference_repair", lambda *_: True)
     with pytest.raises(ModelRetry) as e:
         registry._validate_atomic_intake(ctx("REPORT_SECRET\n"), output)
     assert len(e.value.message) < 800
@@ -123,12 +87,7 @@ def test_empty_end_id_remains_invalid_not_reinterpreted_as_single_line():
     assert invalid_source_references(REPORT, output)[0] == ("cwe", "unknown_source_id")
 
 
-def test_missing_source_keeps_old_error_without_marker(monkeypatch):
-    monkeypatch.setattr(
-        registry,
-        "_targeted_reference_repair",
-        lambda *_: pytest.fail("no marker for unavailable source"),
-    )
+def test_missing_source_keeps_its_closed_error():
     with pytest.raises(ModelRetry) as e:
         registry._validate_atomic_intake(ctx(None), claims())
     assert (
@@ -137,8 +96,7 @@ def test_missing_source_keeps_old_error_without_marker(monkeypatch):
     )
 
 
-def test_blank_or_unsupported_symbol_is_not_accepted(monkeypatch):
-    monkeypatch.setattr(registry, "_targeted_reference_repair", lambda *_: True)
+def test_blank_or_unsupported_symbol_is_not_accepted():
     output = claims()
     output.cwe.source.end_id = "S000002"
     output.vulnerability_class.source.end_id = "S000002"
@@ -153,29 +111,6 @@ def test_blank_or_unsupported_symbol_is_not_accepted(monkeypatch):
         AtomicFinding.model_validate(data)
 
 
-@pytest.mark.parametrize("in_workflow,enabled", [(False, False), (True, False), (True, True)])
-def test_aggregate_has_independent_durable_marker(monkeypatch, in_workflow, enabled):
-    from temporalio import workflow
-
-    calls = []
-    monkeypatch.setattr(workflow, "in_workflow", lambda: in_workflow)
-
-    def patched(version):
-        calls.append(version)
-        return enabled
-
-    monkeypatch.setattr(workflow, "patched", patched)
-    with pytest.raises(ModelRetry) as e:
-        registry._validate_atomic_intake(ctx(), claims())
-    assert ("cwe=reversed_source_range" in e.value.message) == (not in_workflow or enabled)
-    assert calls == (
-        []
-        if not in_workflow
-        else [registry.INTAKE_AGGREGATE_REFERENCE_REPAIR_VERSION]
-        + ([] if enabled else [registry.INTAKE_REFERENCE_REPAIR_VERSION])
-    )
-
-
 def test_mixed_rules_collect_authored_fields_without_changing_first_error():
     output = claims()
     output.cwe.source.start_id = "unknown_SECRET"
@@ -185,12 +120,11 @@ def test_mixed_rules_collect_authored_fields_without_changing_first_error():
     )
 
 
-async def test_actual_sdk_gets_both_fields_in_one_bounded_retry(monkeypatch):
+async def test_actual_sdk_gets_both_fields_in_one_bounded_retry():
     from pydantic_ai import Agent
     from pydantic_ai.messages import ModelRequest, ModelResponse, RetryPromptPart, ToolCallPart
     from pydantic_ai.models.function import FunctionModel
 
-    monkeypatch.setattr(registry, "_targeted_reference_repair", lambda *_: True)
     calls = []
 
     def respond(messages, info):

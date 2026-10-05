@@ -12,7 +12,7 @@ import tempfile
 from functools import lru_cache
 from pathlib import Path
 
-from infosec_harness.sandbox.docker import default_workspace
+from infosec_harness.persistence.paths import workspace_dir
 from infosec_harness.settings import get_settings
 
 _REF = re.compile(r"^sha256:([0-9a-f]{64})$")
@@ -73,7 +73,7 @@ class ArtifactStore:
 
 class FilesystemStore(ArtifactStore):
     def __init__(self) -> None:
-        self.root = default_workspace() / "artifacts"
+        self.root = workspace_dir() / "artifacts"
         self.root.mkdir(parents=True, exist_ok=True)
 
     def _path(self, digest: str) -> Path:

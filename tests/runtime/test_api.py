@@ -134,3 +134,30 @@ async def test_submit_local_and_read(client, tmp_path):
     r = await client.post(f"/api/runs/{runs[0]['id']}/review",
                           json={"reviewer": "bob", "decision": "confirm"})
     assert r.status_code == 200
+
+
+async def test_submission_modes_are_local_or_temporal_only(client, monkeypatch):
+    """`auto` is gone: a submission says which orchestration it wants, and local mode refuses
+    real models through the one shared check rather than a copy in the API."""
+    from infosec_harness.settings import get_settings
+
+    finding = {"title": "x", "repo_url": "/nonexistent", "file_path": "a.py"}
+    response = await client.post("/api/batches", json={"mode": "auto", "findings": [finding]})
+    assert response.status_code == 422
+    monkeypatch.setattr(get_settings(), "model_mode", "live")
+    response = await client.post("/api/batches", json={"mode": "local", "findings": [finding]})
+    assert response.status_code == 422
+    assert "HARNESS_MODEL_MODE=stub" in response.json()["detail"]
+
+
+async def test_review_decision_is_a_closed_vocabulary(client):
+    response = await client.post("/api/runs/whatever/review", json={"decision": "approve"})
+    assert response.status_code == 422
+
+
+def test_the_api_version_is_the_package_version():
+    from importlib.metadata import version
+
+    from infosec_harness.api.app import app
+
+    assert app.version == version("infosec-harness")

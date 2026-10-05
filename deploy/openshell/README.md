@@ -31,38 +31,49 @@ image names and configured runtime strings are insufficient evidence.
 
 ## Native qualification
 
-`tests/runtime/broker_native_fixture.py` is a bounded, mock-only qualification factory. It
-uses the production controller, native adapter, executor, and durable ledger, with
-four explicitly registered fixture scopes: `frozen`, `temporal`,
-`temporal-rerun`, and `cachepoint`. It rejects other provider/model targets. It requires a private
-operator JSON file referenced by `IH_NATIVE_FIXTURE_CONFIG`, containing `native`
-(the `NativeDeploymentConfig` fields), the full `contract`, `controller_origin`,
-`controller_ca`, and `fixture`. Native specs are keyed by the full contract digest;
-the approved effective policy and observed provider ID/version/profile digests must
-come from actual operator inventory. This is not a production issuance policy.
+`infosec_harness.qualification.broker.native` is a bounded, mock-provider acceptance check. It
+uses the production controller, native adapter, executor and durable ledger with three
+registered scopes: `local`, `temporal` and `cachepoint`, each with one static invocation. It
+rejects any contract whose backend or model is not the module's mock backend and mock model.
+It requires a private operator JSON file referenced by `IH_NATIVE_FIXTURE_CONFIG`, containing
+`native` (the `NativeDeploymentConfig` fields), the full `contract`, `controller_origin`,
+`controller_ca` and `scope`. Native specs are keyed by the full contract digest; the approved
+effective policy and observed provider ID/version/profile digests must come from actual
+operator inventory. This is not a production issuance policy.
 
-Start the trusted fixture controller with a migrated private test database and real
-TLS certificate, using `--factory broker_native_fixture:controller_factory` and
-`PYTHONPATH=src:tests/runtime`. The controller alone receives gateway mTLS/admin access and
-the dedicated Docker socket. The executor receives neither host mounts nor database
-access. After reviewed infrastructure and the mock HTTPS provider are ready:
+Start the counted mock HTTPS provider where the executor's provider route reaches it. Its
+gateway provider record must hold only the module's fixed test canary. Write its stats beside
+the operator configuration as `native-mock-stats.json`:
 
 ```bash
-.harness/bin/mise exec -- uv run --locked python tests/runtime/broker_native_fixture.py worker
-.harness/bin/mise exec -- uv run --locked python tests/runtime/broker_native_fixture.py prove
+.harness/bin/mise exec -- uv run --locked python -m infosec_harness.qualification.broker.native \
+  mock-provider --bind-address <guest-address> --port 18443 \
+  --certificate <cert.pem> --private-key <key.pem> --stats-file <config-dir>/native-mock-stats.json
 ```
 
-The first command runs a real Pydantic AI agent through the production broker. The
-second checks authentication rejection, committed result retrieval, actual native
-close, repeat close, and saved results after closure while asserting the independent
-mock provider counter remains unchanged. It writes a sanitized proof beside the
-private operator configuration. The Temporal fixture adds a test-only worker ACK
-barrier after production ledger completion; its host runner terminates a worker,
-retrieves the same saved request on retry, and replays history with sends forbidden. The
-`cachepoint` scope sends the actual `render_prompt` output with an authored SDK
-CachePoint and checks its exact retained representation plus one counted provider
-send before authentication, saved-result, and native-close assertions.
-See `tests/runtime/broker_native_temporal_fixture.py` for its strict public operator inputs.
+Start the trusted acceptance controller with a migrated private test database and real TLS
+certificate, using `--factory infosec_harness.qualification.broker.native:controller_factory`.
+The controller alone receives gateway mTLS/admin access and the dedicated Docker socket. The
+executor receives neither host mounts nor database access. Then:
+
+```bash
+.harness/bin/mise exec -- uv run --locked python -m infosec_harness.qualification.broker.native worker
+.harness/bin/mise exec -- uv run --locked python -m infosec_harness.qualification.broker.native prove
+```
+
+The first command runs a real Pydantic AI agent through the production broker. The second
+checks authentication rejection, committed result retrieval, actual native close, repeat
+close and saved results after closure while asserting the independent mock provider counter
+remains unchanged. It writes a sanitized `native-<scope>-proof.json` beside the private
+operator configuration. The `temporal` scope adds an acceptance-only ACK barrier after
+production ledger completion (`native-temporal-committed.json` / `native-temporal-release`
+in the same directory); its host runner terminates a worker, retrieves the same saved request
+on retry and replays history with sends forbidden. The `cachepoint` scope sends the actual
+`render_prompt` output with an authored SDK CachePoint and checks its exact retained
+representation plus one counted provider send before the authentication, saved-result and
+native-close assertions. See `tests/runtime/broker_native_temporal_fixture.py` for the
+Temporal host runner's strict operator inputs; `tests/runtime/test_broker_native_temporal.py`
+runs it only when `HARNESS_NATIVE_TEMPORAL_CONFIG` is set.
 
 Preserve failed-attempt evidence. Stop only corroborated owned resources, and run
 `scripts/openshell_guest.py stop` inside the checkout-owned guest after all dedicated
@@ -74,26 +85,65 @@ refuses to acknowledge cleanup or delete an uncorroborated resource by name.
 
 ## Authorized local-provider qualification
 
-The live runners are separate from mock qualification. Prepare an immutable reviewed manifest for the endpoint, model, cases, settings
-and budgets. Use `scripts/broker_real_provider_check.py` to validate its digest and
-execute direct, native LocalOps and native Temporal phases. Inference requires `--allow-inference`; native phases require the retained
-`--baseline-report`. Comparison checks exact effective settings, endpoint,
-authored budgets and semantic pricing inputs, retaining separate transport catalog
-hashes. Use `--help` for current commands. The user must authorize the provider
-and data scope before execution.
+The live runners are separate from mock acceptance and live in
+`infosec_harness.qualification.broker`. Prepare an immutable reviewed manifest naming the
+endpoint and model explicitly (there are no defaults), the frozen per-agent cases and dataset
+hashes, the candidate direct and brokered model files, the broker catalog, a zero-price policy,
+and the declared ordered phases (`direct`, `native-local`, `native-temporal`). The manifest's
+source commit must be the clean checkout HEAD, and its report directory must be inside the
+checkout so sandbox temporary files are guest-visible.
 
-`scripts/broker_real_graph_check.py` freezes and executes one complete production
-Temporal graph with real sandbox build/probe execution, persisted API checks and
-root/child replay with external I/O forbidden. Each manifest has an exclusive
-execution marker. Generated temporary build inputs stay in a private trial
-`TMPDIR` visible to the checkout-owned Lima guest. A separately frozen correction
-for the verified host temporary-directory defect requires retained terminal
-failure, replay and cleanup; it does not rerun a prior manifest.
+```bash
+uv run python scripts/broker_real_provider_check.py --manifest <manifest.json> --manifest-sha256 <sha256>
+uv run python scripts/broker_real_provider_check.py --manifest <manifest.json> --manifest-sha256 <sha256> \
+  --phase direct --allow-inference
+uv run python scripts/broker_real_provider_check.py --manifest <manifest.json> --manifest-sha256 <sha256> \
+  --phase local --allow-inference --baseline-report <pilot-dir>/direct.json
+```
+
+The default `validate` phase resolves every agent's direct and native route from the frozen
+files without constructing a client and makes no provider call. Each phase of a manifest is
+claimed once and runs in its own reaped child. A native phase compares against a passed direct
+phase of the same manifest: exact effective settings, endpoint, resolved model, capability
+profile, full budget and price inputs must match; only transport fields and the catalog-bytes
+component of the pricing identity may differ. The user must authorize the provider and data
+scope before execution.
+
+`scripts/broker_real_graph_check.py` freezes, then executes once by digest, one complete
+production Temporal graph per pilot and phase with real sandbox build/probe execution,
+persisted API checks and root/child replay with external I/O forbidden. Generated temporary
+build inputs stay in a private trial `TMPDIR` visible to the checkout-owned Lima guest.
 
 Live results, retained failures and remaining rollout gates are in
 [`CREDENTIAL_BROKER_LIVE_PROVIDER.md`](../../docs/validation/CREDENTIAL_BROKER_LIVE_PROVIDER.md).
 No endpoint discovery response attests deployed tokenizer identity or upstream
 authentication. Never resend `completion_unknown` requests when changing images.
+
+
+## Comparing a recorded controller configuration
+
+`scripts/openshell_controller_configuration.py` is an importable operator validation utility.
+It does not inspect Docker, load credentials, start containers, or establish ownership.
+Use `configuration_digest(saved_inspect)` to compare the complete `Config`, `HostConfig`,
+`Mounts`, and `NetworkSettings` projection. Both mount-record arrays are sorted; all
+other configuration values remain exact. Keep inspection files private because `Config`
+can contain credentials.
+
+`validate_replacement_host_config(old_host_config, new_host_config, created=True)`
+checks a newly created replacement against an explicitly recorded old null
+`OomKillDisable`. A created replacement must have boolean false. With `created=False`,
+the running replacement may have null or boolean false, reflecting Docker's default
+and unsupported-option representation. True, numeric zero, missing fields, and every
+other HostConfig difference are rejected. The actual running OOM value remains part
+of the configuration digest; later health checks compare that recorded value exactly.
+
+Before using either result for recovery, independently authenticate the exact issued
+container IDs, process identity, source and image pins, mounts, TLS, and retained state.
+A matching digest grants no permission to start, adopt, retry, release, or delete anything.
+
+Run `pytest tests/development/test_openshell_controller_configuration.py` for the pure
+regressions. Serving code, executor images, model controls, budgets, and durable workflow
+identities are unaffected; this utility requires no replay generation change.
 
 
 ## Parent-prepared boundary seccomp candidate

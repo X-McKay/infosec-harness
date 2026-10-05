@@ -10,14 +10,18 @@ import re
 import ssl
 import time
 from pathlib import Path
-from typing import Any
 
-from pydantic import Field
+from pydantic import Field, ValidationError
 
 from .auth import AUTH_HEADER, verify_request
 from .codec import decode_payload, encode_response
-from .diagnostics import report_transport_failure, sanitize_diagnostic, transport_failure_category
-from .http_service import JsonChannel, https_origin, parse_body, serve
+from .diagnostics import (
+    exception_chain,
+    report_transport_failure,
+    sanitize_diagnostic,
+    transport_failure_category,
+)
+from .http_service import JsonChannel, https_origin, parse_request, serve
 from .protocol import (
     BrokerError,
     DispatchPermit,
@@ -43,13 +47,7 @@ def _failure_category(error: BaseException, stage: str) -> str:
     from pydantic import ValidationError
     from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
 
-    causes = []
-    current: BaseException | None = error
-    for _ in range(8):
-        if current is None or any(current is cause for cause in causes):
-            break
-        causes.append(current)
-        current = current.__cause__ or current.__context__
+    causes = exception_chain(error)
     if any(isinstance(cause, ssl.SSLError) for cause in causes):
         return "tls"
     if any(isinstance(cause, (APIConnectionError, httpx.TransportError, httpx2.TransportError,
@@ -77,7 +75,7 @@ def _failure_diagnostic(stage: str, error: BaseException) -> dict[str, str]:
     existing = sanitize_diagnostic(error.diagnostic) if isinstance(error, BrokerError) else None
     if existing is not None:
         return existing
-    category = "cancelled" if isinstance(error, asyncio.CancelledError) else _failure_category(error, stage)
+    category = _failure_category(error, stage)
     if category in {"tls", "network"}:
         category = transport_failure_category(error)
     diagnostic = sanitize_diagnostic({"boundary": stage, "category": category})
@@ -143,7 +141,7 @@ class OpenAIInference:
         from openai import AsyncOpenAI
         from pydantic_ai.providers.openai import OpenAIProvider
 
-        from .compat import _CompatOpenAIChatModel
+        from .compat import model_for_contract
 
         messages, settings, params = decode_payload(request.payload)
         timeout = remaining_timeout(request.binding.expires_at, PROVIDER_TIMEOUT_S)
@@ -164,28 +162,16 @@ class OpenAIInference:
                 http_client=transport,
             ) as client,
         ):
-            provider = OpenAIProvider(openai_client=client)
-            extra: dict[str, Any] = {}
-            if self.contract.atomic_intake:
-                from infosec_harness.agents.intake_schema import intake_openai_profile
-
-                extra["profile"] = intake_openai_profile(
-                    provider.model_profile(self.contract.model)
-                )
-            model = _CompatOpenAIChatModel(
-                self.contract.model,
-                provider=provider,
-                merge_system=self.contract.merge_system_messages,
-                min_max_tokens=self.contract.min_max_tokens,
-                strict_closed_output_tools=self.contract.strict_closed_output_tools,
-                enable_thinking=self.contract.enable_thinking,
-                thinking_token_budget=self.contract.thinking_token_budget,
-                **extra,
-            )
+            model = model_for_contract(self.contract, OpenAIProvider(openai_client=client))
             try:
                 async with asyncio.timeout(timeout):
                     response = await model.request(messages, settings, params)
-            except BaseException as error:
+            except asyncio.CancelledError as error:
+                # The request may have reached the provider: record, then honour cancellation.
+                report_transport_failure("provider_request", error)
+                _LOG.warning("IH_INFERENCE_FAILURE stage=provider_request category=cancelled")
+                raise
+            except Exception as error:
                 report_transport_failure("provider_request", error)
                 _report_failure("provider_request", error)
                 raise BrokerError("completion_unknown", diagnostic=_failure_diagnostic("provider_request", error)) from None
@@ -201,7 +187,7 @@ class OpenAIInference:
                 usage=usage,
                 provenance={"contract_digest": self.contract.digest, "provider_retries": 0},
             )
-        except BaseException as error:
+        except Exception as error:
             _report_failure("response_codec", error)
             raise BrokerError("completion_unknown", diagnostic=_failure_diagnostic("response_codec", error)) from None
 
@@ -227,12 +213,10 @@ class Executor:
             now=int(self.clock()),
         )
         try:
-            request = InferenceRequest.model_validate(parse_body(body))
-            decode_payload(request.payload)
-        except BrokerError:
-            raise
-        except Exception:
+            request = InferenceRequest.model_validate(parse_request(body))
+        except ValidationError:
             raise BrokerError("identity") from None
+        decode_payload(request.payload)
         if (
             request.binding.run_id != self.settings.run_id
             or request.contract != self.settings.contract
@@ -264,7 +248,11 @@ class Executor:
             # A lost completion acknowledgement must never cause another provider request.
             stage = "ledger_complete"
             return (await self.ledger.complete(result, permit)).model_dump(mode="json")
-        except BaseException as error:
+        except asyncio.CancelledError:
+            # Dispatch may have happened; the controller reconciles the claimed request.
+            _LOG.warning("IH_INFERENCE_FAILURE stage=%s category=cancelled", stage)
+            raise
+        except Exception as error:
             _report_failure(stage, error)
             raise BrokerError("completion_unknown", diagnostic=_failure_diagnostic(stage, error)) from None
 

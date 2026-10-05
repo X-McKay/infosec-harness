@@ -107,7 +107,7 @@ async def test_zero_priced_uncertain_attempts_keep_cost_zero_and_tokens_unknown(
     out.invocations[0].cost_usd = 0.0
     state = initial_state({"tokens": 1000, "requests": 100, "cost_usd": 1})
     state["operations"]["triage:free-retry-fingerprint:call"] = {
-        "status": "uncertain", "reserved": {"tokens": 500, "requests": 10, "cost_usd": 0},
+        "kind": "agent", "fingerprint": "free-retry-fingerprint", "status": "uncertain", "reserved": {"tokens": 500, "requests": 10, "cost_usd": 0},
         "record": {"pricing_status": "known_zero"}}
     async with db.session() as session:
         session.add(db.BudgetLedger(root_id="free-retries", state=state))
@@ -127,10 +127,10 @@ def test_uncertain_execution_does_not_erase_exact_zero_provider_usage():
     invocation.cost_usd = 0.0
     operations = {
         "triage:resource-separated:0:verdict": {
-            "kind": "agent", "status": "settled", "record": {"pricing_status": "known_zero"},
+            "kind": "agent", "fingerprint": "resource-separated", "status": "settled", "record": {"pricing_status": "known_zero"},
         },
         "triage:resource-separated:1:probe": {
-            "kind": "execution", "status": "uncertain",
+            "kind": "execution", "fingerprint": "resource-separated", "status": "uncertain",
         },
     }
 
@@ -151,6 +151,7 @@ def test_uncertain_agent_usage_keeps_cost_unknown_unless_pricing_is_zero(
     operations = {
         "triage:uncertain-agent:0:verdict": {
             "kind": "agent",
+            "fingerprint": "uncertain-agent",
             "status": "uncertain",
             "record": {"pricing_status": pricing_status},
         },
@@ -163,16 +164,24 @@ def test_uncertain_agent_usage_keeps_cost_unknown_unless_pricing_is_zero(
     assert telemetry["cost_usd"] == expected_cost
 
 
-def test_legacy_operation_without_kind_remains_an_agent_operation():
-    out = _output(fp="legacy-operation")
-    operations = {"triage:legacy-operation:0:verdict": {"status": "settled", "record": {}}}
+def test_operations_are_attributed_by_their_recorded_fingerprint_not_their_identifier():
+    """Regression: attribution used to test whether the fingerprint was a *substring* of the
+    operation id, so one finding inherited another's uncertain operation whenever its
+    fingerprint occurred inside that id. Only the explicit field attributes an operation."""
+    out = _output(fp="abc")
+    operations = {
+        # Another finding's uncertain operation whose identifier happens to contain "abc".
+        "triage:abcdef:0:verdict": {"kind": "agent", "fingerprint": "abcdef",
+                                    "status": "uncertain", "record": {}},
+        # This finding's own operation, under an identifier that does not mention it.
+        "prep:batch:0:recon": {"kind": "agent", "fingerprint": "abc", "status": "settled",
+                               "record": {}},
+    }
 
     telemetry = store._output_values(out, {}, operations)["telemetry"]
 
     assert telemetry["accounting_complete"] is True
-    assert telemetry["cost_accounting_complete"] is True
     assert telemetry["total_tokens"] == 120
-    assert telemetry["cost_usd"] == pytest.approx(0.01)
 
 
 async def test_durable_writeback_retry_reuses_existing_ado_comment(monkeypatch):

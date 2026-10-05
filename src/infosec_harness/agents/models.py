@@ -21,14 +21,18 @@ from pydantic import BaseModel, Field, model_validator
 from pydantic_ai.models import Model
 
 from infosec_harness.inference.compat import (
-    _apply_max_tokens_floor,
-    _CompatOpenAIChatModel,
+    CompatOpenAIChatModel,
+    apply_max_tokens_floor,
 )
 from infosec_harness.inference.compat import (
-    _merge_leading_system_messages as _merge_leading_system_messages,
+    merge_leading_system_messages as merge_leading_system_messages,
 )
 from infosec_harness.inference.protocol import BrokerError, ExecutorContract, ReservationBinding
 from infosec_harness.settings import get_settings
+
+# Imported eagerly, not at resolution time: model resolution runs inside Temporal workflows,
+# where a first import would be re-executed in the sandbox rather than passed through.
+from infosec_harness.agents import stubs  # noqa: E402  isort: skip
 
 
 class Prices(BaseModel):
@@ -153,7 +157,6 @@ class ModelsConfig(BaseModel):
     backends: dict[str, BackendConfig]
     default_backend: str
     model_catalog: dict[str, dict[str, str]]
-    default_model: str = "sonnet"
     # Versioned logical policy -> tier. Specs name a policy in metadata.model_policy so
     # routing is a config decision rather than an edit across every spec.
     model_policies: dict[str, str] = Field(default_factory=dict)
@@ -187,7 +190,7 @@ def max_tokens_floor(agent_name: str | None = None) -> int:
     that shows up as an error message naming a cap that was never sent:
 
     * the outgoing payload, so the endpoint actually gets the larger cap
-      (:meth:`_CompatOpenAIChatModel.prepare_request`), and
+      (:meth:`CompatOpenAIChatModel.prepare_request`), and
     * the agent's own ``model_settings``, because pydantic-ai records
       ``model_settings['max_tokens']`` into ``GraphAgentState.last_max_tokens`` *before* it
       calls ``Model.prepare_request`` (``_agent_graph.py``), and that recorded number is what
@@ -210,7 +213,6 @@ def resolve_config(
     model_settings: dict[str, Any] | None = None,
     durable: bool = False,
     atomic_intake: bool = False,
-    replay_only: bool = False,
 ) -> ResolvedModelConfig:
     """Resolve the secret-free effective model contract without constructing a client."""
     requested = dict(model_settings or {})
@@ -235,7 +237,7 @@ def resolve_config(
     model_id = cfg.model_id(tier, backend_name)
     resolved_model = f"{backend_name}:{model_id}"
     source = pricing_source(resolved_model)
-    effective = _apply_max_tokens_floor(requested, backend.min_max_tokens) or {}
+    effective = apply_max_tokens_floor(requested, backend.min_max_tokens) or {}
     from infosec_harness.inference.protocol import validate_thinking_token_budget
 
     validate_thinking_token_budget(backend.thinking_token_budget, backend.enable_thinking,
@@ -254,7 +256,7 @@ def resolve_config(
         capabilities = CapabilityProfile(reasoning_accounting="separate")
         credential_reference = "aws-default-chain"
     broker_contract = None
-    if backend.transport == "brokered" and not replay_only:
+    if backend.transport == "brokered":
         if source not in {"custom", "custom-zero"}:
             raise BrokerError("budget", "Broker v1 requires explicit reviewed backend price ceilings")
         broker_contract = broker_catalog().resolve_contract(
@@ -323,7 +325,7 @@ def _build_live(
         from infosec_harness.agents.intake_schema import intake_openai_profile
 
         extra["profile"] = intake_openai_profile(OpenAIProvider.model_profile(model_id))
-    return _CompatOpenAIChatModel(
+    return CompatOpenAIChatModel(
         model_id,
         provider=provider,
         merge_system=backend.merge_system_messages,
@@ -340,9 +342,7 @@ def resolve_intake_atomic(agent_name: str, tier: str, *, durable: bool = False,
                           broker_contract: ExecutorContract | None = None) -> Model:
     """Resolve only the current atomic-claims intake generation."""
     if get_settings().model_mode == "stub":
-        from infosec_harness.agents.stubs import atomic_intake_stub_model
-
-        return atomic_intake_stub_model(agent_name, tier)
+        return stubs.atomic_intake_stub_model(agent_name, tier)
     cfg = load_models_config()
     backend = cfg.backend_for(agent_name)
     if cfg.backends[backend].transport == "brokered":
@@ -360,9 +360,7 @@ def resolve(agent_name: str, tier: str, *, durable: bool = False,
     multiplying with them.
     """
     if get_settings().model_mode == "stub":
-        from infosec_harness.agents.stubs import stub_model
-
-        return stub_model(agent_name, tier)
+        return stubs.stub_model(agent_name, tier)
     cfg = load_models_config()
     backend = cfg.backend_for(agent_name)
     if cfg.backends[backend].transport == "brokered":

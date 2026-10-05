@@ -259,39 +259,59 @@ ADAPTERS: dict[str, Adapter] = {
 }
 
 
-# --- The unevidenced-safety gate --------------------------------------------------------
+# --- The unevidenced-safety predicate ---------------------------------------------------
 #
 # The costliest error this system can make is to call something safe on evidence that does
-# not support it (RISK-SEC-003). For three agents that has a crisp, deterministic shape, so
-# it is a hard gate rather than a quality metric. It is deliberately not defined for the
-# probe-writing agents: a probe with no oracle signal is already a failed case, not a
-# safety claim.
-UNEVIDENCED_SAFETY_AGENTS = ("context", "probe-diagnosis", "verdict")
+# not support it (RISK-SEC-003). For three agents that has a crisp, deterministic shape, so it
+# is counted for them, and their release policies gate on it (`unevidenced_safe_verdicts`).
+# Whether it is a gate is the policy's decision (evals/gates.py); which agents it is *defined*
+# for is a property of their outputs, and lives here. It is deliberately not defined for the
+# probe-writing agents: a probe with no oracle signal is already a failed case, not a safety
+# claim.
+
+
+def _complete_negative(evidence: dict) -> bool:
+    """A valid negative needs the sink reached and returned with the oracle silent.
+
+    The precondition marker is emitted before the call, so it cannot distinguish a clean
+    negative from a sink that threw before the return marker.
+    """
+    return (evidence.get("precondition_reached") is True
+            and evidence.get("sink_returned") is True
+            and evidence.get("oracle_fired") is False)
+
+
+def _verdict_unevidenced(case: dict, predicted: str) -> bool:
+    # The deterministic validator should already make this impossible; counting it proves the
+    # contract held rather than assuming it.
+    facts = case.get("facts") or {}
+    supported = facts.get("last_diagnosis") == "valid_negative" and _complete_negative(facts)
+    return predicted == "likely_not_exploitable" and not supported
+
+
+def _diagnosis_unevidenced(case: dict, predicted: str) -> bool:
+    execution = (case.get("payload") or {}).get("probe_execution") or {}
+    return predicted == "valid_negative" and not _complete_negative(execution)
+
+
+def _context_unevidenced(case: dict, predicted: str) -> bool:
+    # Calling a sink unreachable early-exits the finding, so doing it on a variant that is in
+    # fact exploitable suppresses a real vulnerability.
+    return predicted == "unreachable" and case.get("expected") == "reachable"
+
+
+_UNEVIDENCED_SAFE: dict[str, Callable[[dict, str], bool]] = {
+    "context": _context_unevidenced,
+    "probe-diagnosis": _diagnosis_unevidenced,
+    "verdict": _verdict_unevidenced,
+}
+
+
+def defines_unevidenced_safety(agent: str) -> bool:
+    return agent in _UNEVIDENCED_SAFE
 
 
 def is_unevidenced_safe(agent: str, case: dict, predicted: str) -> bool:
     """Did the agent assert safety on evidence that cannot support it?"""
-    payload = case.get("payload") or {}
-    if agent == "verdict":
-        # The deterministic validator should already make this impossible; counting it proves
-        # the contract held rather than assuming it.
-        facts = case.get("facts") or {}
-        supported = (facts.get("last_diagnosis") == "valid_negative"
-                     and facts.get("precondition_reached") is True
-                     and facts.get("sink_returned") is True
-                     and facts.get("oracle_fired") is False)
-        return predicted == "likely_not_exploitable" and not supported
-    if agent == "probe-diagnosis":
-        # "The code resisted the payload" is only sayable if the payload reached the sink and
-        # the call returned.  The precondition marker is emitted before the call, so it cannot
-        # distinguish a clean negative from a sink that threw before the return marker.
-        execution = payload.get("probe_execution") or {}
-        supported = (execution.get("precondition_reached") is True
-                     and execution.get("sink_returned") is True
-                     and execution.get("oracle_fired") is False)
-        return predicted == "valid_negative" and not supported
-    if agent == "context":
-        # Calling a sink unreachable early-exits the finding, so doing it on a variant that is
-        # in fact exploitable suppresses a real vulnerability.
-        return predicted == "unreachable" and case.get("expected") == "reachable"
-    return False
+    predicate = _UNEVIDENCED_SAFE.get(agent)
+    return predicate is not None and predicate(case, predicted)

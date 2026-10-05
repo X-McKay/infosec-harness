@@ -21,12 +21,12 @@ from infosec_harness.inference.invocations import (
 )
 from infosec_harness.inference.openshell import NativeDeploymentConfig
 from infosec_harness.inference.policy import canonical_policy
-from infosec_harness.inference.profiles import REGISTERED_AGENTS
+from infosec_harness.inference.profiles import registered_agents
 from infosec_harness.inference.protocol import BrokerError, InvocationRequest
 
 
 def contracts(*, durable: bool = True):
-    return {name: trusted_config(name, durable=durable) for name in REGISTERED_AGENTS}
+    return {name: trusted_config(name, durable=durable) for name in registered_agents()}
 
 
 def controller_factory() -> Controller:

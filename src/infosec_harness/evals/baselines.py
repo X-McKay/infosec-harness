@@ -13,14 +13,19 @@ So the two roles are split, the way agent-playbook 02 lays the directories out:
   Committed, reviewed in a pull request like any other change, and readable without the
   database that produced it.
 
-A baseline is a claim about a commit, so two rules are enforced rather than documented:
+A baseline is a claim about a commit and an agent's whole dataset, so these rules are enforced
+rather than documented:
 
-* It must come from a `complete` experiment. A truncated run's metrics cover only the cases
-  that happened to run, and storing one as a baseline silently redefines the denominator.
-* The working tree must be clean. A baseline recorded from a dirty tree names a commit that
-  did not contain the code it measured, and nothing downstream could ever detect that.
+* It must come from an experiment recorded as `complete`. A truncated run's metrics cover only
+  the cases that happened to run, and a run with no recorded status proves nothing either way.
+* It must cover the full dataset (`split == "full"`). A calibration or held-out split is a
+  different denominator, and pinning one silently redefines what every later run is read
+  against.
+* It must have called a model. A stub run's numbers exercise the plumbing, not the agent.
+* The working tree must be clean, and the run must carry a commit. A baseline recorded from a
+  dirty tree names a commit that did not contain the code it measured.
 
-Both are refusals, not warnings. A baseline that quietly lies is worse than no baseline: it
+All are refusals, not warnings. A baseline that quietly lies is worse than no baseline: it
 becomes the thing every later comparison is measured against.
 """
 from __future__ import annotations
@@ -30,6 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from infosec_harness.evals._json import write_json
 from infosec_harness.evals.provenance import code_version
 from infosec_harness.resources import source_checkout
 
@@ -83,14 +89,29 @@ class Baseline:
 
 
 def from_experiment(row: Any) -> Baseline:
-    """Build a baseline from an experiment row, refusing the two cases that would make it lie."""
-    status = (row.metrics or {}).get("status", "complete")
+    """Build a baseline from an experiment row, refusing every case that would make it lie."""
+    metrics = row.metrics or {}
+    status = metrics.get("status")
+    if status is None:
+        raise BaselineRefused(
+            f"experiment {row.id} records no status, so nothing says every planned case ran. "
+            f"Re-run it before recording a baseline.")
     if status != "complete":
         raise BaselineRefused(
             f"experiment {row.id} is {status}: it scored "
-            f"{(row.metrics or {}).get('n', 0)}/{(row.metrics or {}).get('n_planned', '?')} "
+            f"{metrics.get('n', 0)}/{metrics.get('n_planned', '?')} "
             f"case runs, so its metrics describe a different dataset than the next run will. "
             f"Re-run it to completion before recording a baseline.")
+    split = (metrics.get("comparison_identity") or {}).get("split")
+    if split != "full":
+        raise BaselineRefused(
+            f"experiment {row.id} ran the {split or 'unrecorded'} split, not the full dataset, "
+            f"so its numbers are over a different case set than a baseline promises. Run "
+            f"`harness eval run {row.agent}` without a group filter.")
+    if row.pricing == "stub" or str(row.model_name or "").startswith("stub:"):
+        raise BaselineRefused(
+            f"experiment {row.id} ran against the stub model, which exercises the eval "
+            f"machinery and measures no agent. Record a baseline from a live model run.")
     if row.git_dirty:
         raise BaselineRefused(
             f"experiment {row.id} was run with a dirty working tree, so it does not describe "
@@ -120,8 +141,7 @@ def from_experiment(row: Any) -> Baseline:
 
 def save(baseline: Baseline) -> Path:
     path = baseline_path(baseline.agent, baseline.model_tier)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(baseline.as_dict(), indent=2, sort_keys=True) + "\n")
+    write_json(path, baseline.as_dict(), sort_keys=True)
     return path
 
 

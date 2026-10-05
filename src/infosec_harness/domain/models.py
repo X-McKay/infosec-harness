@@ -166,6 +166,31 @@ class Finding(_Model):
     source_tool: str | None = None
     ado_work_item_id: int | None = None
 
+    @classmethod
+    def from_input(cls, inp: FindingInput) -> Finding:
+        """Deterministic mapping of a submitted finding's structured fields (F0, D1)."""
+        location = None
+        if inp.file_path:
+            location = CodeLocation(
+                file_path=inp.file_path, start_line=inp.start_line,
+                end_line=inp.end_line, symbol=inp.symbol,
+            )
+        return cls(
+            fingerprint=cls.compute_fingerprint(inp),
+            external_id=inp.external_id,
+            title=inp.title,
+            description=inp.description,
+            repo_url=inp.repo_url,
+            revision=inp.revision,
+            source_mode=inp.source_mode,
+            location=location,
+            cwe=inp.cwe,
+            severity=inp.severity,
+            source_kind=inp.source_kind,
+            source_tool=inp.source_tool,
+            ado_work_item_id=inp.ado_work_item_id,
+        )
+
     @staticmethod
     def compute_fingerprint(inp: FindingInput) -> str:
         identity = {
@@ -262,6 +287,17 @@ class StackFingerprint(_Model):
     )
     components: list[ComponentProfile] = Field(default_factory=list)
 
+    @property
+    def source_files(self) -> int | None:
+        """How much repository the agents have to explore, for budget scaling (None: unknown)."""
+        return sum((self.languages or {}).values()) or None
+
+    @property
+    def top_language(self) -> str:
+        """The language with the most files (ties broken by name), or "" when none is known."""
+        languages = self.languages or {}
+        return max(languages, key=lambda k: (languages[k], k)) if languages else ""
+
 
 class RepoProfile(_Model):
     """ReconAgent output."""
@@ -336,6 +372,36 @@ class PreparedEnvironment(_Model):
 # ---------------------------------------------------------------------------
 # Finding triage
 # ---------------------------------------------------------------------------
+
+
+class RunStatus(StrEnum):
+    """Persisted lifecycle of one finding's triage run."""
+
+    pending = "pending"
+    running = "running"
+    complete = "complete"
+    needs_info = "needs_info"
+    failed = "failed"
+    cancelled = "cancelled"
+
+
+TERMINAL_RUN_STATUSES = frozenset({RunStatus.complete, RunStatus.needs_info, RunStatus.failed,
+                                   RunStatus.cancelled})
+
+
+class BatchStatus(StrEnum):
+    """Persisted lifecycle of one submitted batch."""
+
+    accepted = "accepted"
+    running = "running"
+    cancellation_requested = "cancellation_requested"
+    complete = "complete"
+    failed = "failed"
+    cancelled = "cancelled"
+
+
+TERMINAL_BATCH_STATUSES = frozenset({BatchStatus.complete, BatchStatus.failed,
+                                     BatchStatus.cancelled})
 
 
 class CodeRef(_Model):
@@ -559,6 +625,9 @@ class AgentOutcome(_Model):
     # Tool calls repeated with identical arguments, `tool(args)` -> count, only where count > 1.
     # Empty on a healthy run; non-empty is the signature of a loop rather than of hard work.
     repeated_tool_calls: dict[str, int] = Field(default_factory=dict)
+    # Set when the call raised instead of returning an output: the exception type. Its usage is
+    # whatever the completed requests reported, so a failed call is never recorded as free.
+    failure: str | None = None
 
 
 class TriageRunOutput(_Model):
@@ -578,18 +647,13 @@ class TriageRunOutput(_Model):
 
 
 class RepoPreparation(_Model):
-    """What one repository's preparation produced, including a failure's partial evidence.
+    """What one component's preparation produced, including a failure's partial evidence.
 
-    ``RepoPreparationWorkflow`` returned a bare ``PreparedEnvironment``, which cannot express
-    either of the two things a caller needs when preparation goes wrong. The prepare-phase agent
-    calls never crossed the workflow boundary, so a durable run's recon and env-planner work was
-    unrecoverable; and a preparation that *raised* returned nothing at all, failing the child
-    workflow, which ``TriageBatchWorkflow`` had no handler for -- so one bad repository failed
-    the entire batch, the very containment the local path was hardened against.
-
-    ``prepared`` is None only when the failure came before there was a snapshot and a stack to
-    describe (a checkout that could not complete). ``failure_reason`` is set on every failure,
-    and ``invocations`` carries whatever preparation had already done.
+    A preparation that raises is still an outcome: ``failure_reason`` is set on every failure,
+    and ``invocations`` carries whatever preparation had already done, so one bad repository
+    neither fails the batch nor loses the evidence of why. ``prepared`` is None only when the
+    failure came before there was a snapshot and a stack to describe (a checkout that could not
+    complete).
     """
 
     prepared: PreparedEnvironment | None = None

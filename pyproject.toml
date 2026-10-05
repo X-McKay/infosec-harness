@@ -65,6 +65,17 @@ ignore = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+# -rs prints every skip reason, so a skipped gate is visible rather than silent.
+addopts = "-q -rs --strict-markers"
+# A test still running after this many seconds gets every thread's traceback printed, so a
+# hung workflow or event loop names itself instead of stalling silently.
+faulthandler_timeout = 300
+# Gating decisions live in tests/conftest.py, one place per condition.
+markers = [
+  "requires_temporal: starts a local Temporal dev server; skips with one reason when the pinned CLI is absent, fails instead under HARNESS_TEST_REQUIRE_TEMPORAL=1",
+  "requires_service(*env_vars): needs an explicit qualification runner; skips unless every named manifest/config environment variable is set",
+  "network: needs internet access (PyPI, GitHub); excluded from `just test`, run by `just test-network`",
+  "posix: needs POSIX process semantics; skips elsewhere",
+]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

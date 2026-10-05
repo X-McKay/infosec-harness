@@ -8,18 +8,19 @@ only ever touch this interface, so the exact same topology runs standalone and d
 from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
-from typing import Protocol
+from typing import Any, Protocol
 
 import httpx
 from pydantic_ai.exceptions import ModelAPIError, UsageLimitExceeded
 from pydantic_ai.messages import UserContent
-from temporalio.exceptions import ApplicationError
 
 from infosec_harness.agents.deps import AgentDeps
 from infosec_harness.domain.models import (
     AgentOutcome,
     BuildResult,
     EnvironmentSpec,
+    Finding,
+    FindingInput,
     InconclusiveReason,
     ProbeExecution,
     ProbeSource,
@@ -39,6 +40,17 @@ def _failure_chain(e: BaseException) -> Iterator[BaseException]:
         current = getattr(current, "cause", None) or current.__cause__
 
 
+def _application_error_type(e: BaseException) -> str | None:
+    """The serialized type name of a Temporal ``ApplicationError``, without importing Temporal.
+
+    Classification runs on both paths, and the in-process one must not depend on Temporal.
+    """
+    if any(cls.__name__ == "ApplicationError" for cls in type(e).__mro__):
+        value = getattr(e, "type", None)
+        return value if isinstance(value, str) else None
+    return None
+
+
 def is_infrastructure_failure(e: BaseException) -> bool:
     """True when the harness's own dependencies failed, rather than the work failing.
 
@@ -50,7 +62,7 @@ def is_infrastructure_failure(e: BaseException) -> bool:
                         "ConnectError", "ReadTimeout", "TimeoutError", "BrokerError"}
     from infosec_harness.inference.protocol import BrokerError
     return any(isinstance(cause, ModelAPIError | httpx.TransportError | TimeoutError | BrokerError)
-        or (isinstance(cause, ApplicationError) and cause.type in serialized_types)
+        or _application_error_type(cause) in serialized_types
         for cause in _failure_chain(e))
 
 
@@ -81,7 +93,7 @@ def classify_pipeline_failure(e: BaseException) -> InconclusiveReason:
     repository, so recording one put the blame on a stage that had not finished being tried.
     """
     if any(isinstance(cause, UsageLimitExceeded)
-           or (isinstance(cause, ApplicationError) and cause.type == "UsageLimitExceeded")
+           or _application_error_type(cause) == "UsageLimitExceeded"
            for cause in _failure_chain(e)):
         return InconclusiveReason.budget_exhausted
     if is_infrastructure_failure(e):
@@ -90,6 +102,10 @@ def classify_pipeline_failure(e: BaseException) -> InconclusiveReason:
 
 
 class Ops(Protocol):
+    async def normalize_finding(self, inp: FindingInput) -> Finding: ...
+
+    async def resolve_location(self, finding: Finding, repo_path: str) -> Finding | None: ...
+
     async def run_agent(
         self, name: str, prompt: Sequence[UserContent], deps: AgentDeps
     ) -> AgentOutcome: ...
@@ -114,8 +130,15 @@ class Ops(Protocol):
 class LocalOps:
     """Direct, in-process implementation for standalone runs, tests, and evals."""
 
-    def __init__(self, *, sandbox: bool = True, recipe_cache: bool = True):
+    # Mirrors the shape the probe workload returns when the isolation runtime is missing, so
+    # the offline path stands in for the real one instead of contradicting it.
+    SANDBOX_DISABLED = "sandbox disabled: probe not executed (running with --no-sandbox)"
+
+    def __init__(self, *, sandbox: bool = True, recipe_cache: bool | None = None):
         import uuid
+
+        from infosec_harness.persistence.recipes import get_recipe_store
+
         self._broker_run_id = str(uuid.uuid4())
         self._broker_sequence = 0
         self._broker_used = False
@@ -124,87 +147,80 @@ class LocalOps:
         # Off during corpus scoring. The cache is a latency win, not an accuracy one, and with
         # it on the first repository of a stack records a recipe that every later repository of
         # that stack then reuses -- so env-planner runs once instead of eighteen times and the
-        # stage funnel loses the signal it exists to provide. Measured: the trajectory report
-        # dropped env-planner entirely, and whether it did so depended on what a previous run
-        # had left on disk.
-        self._recipe_cache = recipe_cache
+        # stage funnel loses the signal it exists to provide. None follows the settings switch.
+        self._recipes = get_recipe_store(recipe_cache)
+        self._agents: dict[str, tuple[Any, Any]] = {}
+
+    def _agent(self, name: str):
+        """The agent and its base configuration, resolved once per operations instance."""
+        if name not in self._agents:
+            from infosec_harness.agents.registry import build_agent, load_spec, resolve_agent_config
+
+            self._agents[name] = (build_agent(name, durable=False),
+                                  resolve_agent_config(name, load_spec(name), durable=False))
+        return self._agents[name]
+
+    async def normalize_finding(self, inp: FindingInput) -> Finding:
+        from infosec_harness.intake.adapters import to_finding
+
+        return to_finding(inp)
+
+    async def resolve_location(self, finding: Finding, repo_path: str) -> Finding | None:
+        from infosec_harness.intake.adapters import resolve_location
+
+        return resolve_location(finding, repo_path)
 
     async def run_agent(self, name: str, prompt, deps: AgentDeps) -> AgentOutcome:
         import asyncio
         import time
 
+        from pydantic_ai import capture_run_messages
+
         from infosec_harness import telemetry
-        from infosec_harness.agents import models as model_factory
-        from infosec_harness.agents.registry import (
-            build_agent,
-            load_spec,
-            resolve_agent_config,
-        )
-        from infosec_harness.evals.trajectory import count_repeated_calls, inspect_messages
+        from infosec_harness.graph.pipeline import agent_outcome, partial_outcome
         from infosec_harness.settings import get_settings
 
         if self._broker_closed:
             raise RuntimeError("Local operations have been closed")
-        agent = build_agent(name, durable=False)
-        spec = load_spec(name)
-        effective_config = resolve_agent_config(
-            name, spec, source_files=deps.source_files, durable=False
-        )
-        if effective_config.model.broker_contract is not None:
+        agent, base_config = self._agent(name)
+        config = base_config.for_source_files(deps.source_files)
+        if config.model.broker_contract is not None:
             from infosec_harness.inference.invocations import request_invocation
             from infosec_harness.inference.protocol import InvocationRequest, digest
             self._broker_used = True
-            contract = effective_config.model.broker_contract
+            contract = config.model.broker_contract
             ordinal = self._broker_sequence
             self._broker_sequence += 1
             invocation = f"{self._broker_run_id}:{ordinal}:{name}"
-            selected = resolve_agent_config(name, spec, durable=False)
             binding = await request_invocation(InvocationRequest(
                 mode="local", root_id=digest({"local_run": self._broker_run_id}),
                 run_id=self._broker_run_id, invocation_id=invocation, operation_id=invocation,
-                agent=name, configuration_digest=selected.digest, contract=contract))
+                agent=name, configuration_digest=base_config.digest, contract=contract))
             deps = deps.model_copy(update={"broker_binding": binding, "broker_contract": contract})
-        model_name = model_factory.resolved_model_name(name, spec.model or "sonnet")
-        attrs = telemetry.agent_run_attributes(name, model_name, effective_config.digest)
+        attrs = telemetry.agent_run_attributes(name, config.model.resolved_model, config.digest)
         start = time.monotonic()
         timeout = get_settings().agent_run_timeout_s
-        with telemetry.agent_span(name, attrs) as span:
+        with telemetry.agent_span(name, attrs) as span, capture_run_messages() as messages:
             try:
                 result = await asyncio.wait_for(
-                    agent.run(
-                        list(prompt),
-                        deps=deps,
-                        usage_limits=effective_config.budget.to_usage_limits(),
-                    ),
+                    agent.run(list(prompt), deps=deps,
+                              usage_limits=config.budget.to_usage_limits()),
                     timeout=timeout,
                 )
-            except TimeoutError as e:
+            except Exception as e:
+                # Record the failed call's observed usage on the error for the graph to keep.
+                e.agent_outcome = partial_outcome(  # type: ignore[attr-defined]
+                    name, messages, config, time.monotonic() - start, e)
+                if not isinstance(e, TimeoutError):
+                    raise
                 # A hung provider request never fails on its own, so neither the client's
-                # retries nor a budget will end it. Observed repeatedly against the test
-                # endpoint: a corpus run sat for twenty minutes on one request. Surface it as
-                # the infrastructure failure it is; callers contain it per finding.
+                # retries nor a budget will end it. Surface it as the infrastructure failure it
+                # is; callers contain it per finding.
                 raise TimeoutError(
                     f"agent {name!r} exceeded HARNESS_AGENT_RUN_TIMEOUT_S={timeout}s"
                 ) from e
-        usage = result.usage
-        cost, estimated = model_factory.estimate_cost(model_name, usage)
-        tools_called, skills_loaded = inspect_messages(messages := result.all_messages())
-        repeated = count_repeated_calls(messages)
-        recorded_config = effective_config.model_dump(mode="json")
-        if effective_config.model.broker_contract is not None:
-            from infosec_harness.inference.provenance import runtime_evidence
-            recorded_config["inference_runtime"] = runtime_evidence(messages)
-        outcome = AgentOutcome(
-            output=result.output, agent=name, model_name=model_name,
-            config_hash=effective_config.digest,
-            effective_config=recorded_config,
-            input_tokens=usage.input_tokens, output_tokens=usage.output_tokens,
-            cache_read_tokens=usage.cache_read_tokens or 0, cache_write_tokens=usage.cache_write_tokens or 0,
-            cost_usd=cost, cost_estimated=estimated, latency_s=time.monotonic() - start,
-            tools_called=tools_called, skills_loaded=skills_loaded,
-            requests=usage.requests or 0, repeated_tool_calls=repeated,
-        )
-        span.set_attributes(telemetry.outcome_attributes(outcome))
+            outcome = agent_outcome(name, result, config, time.monotonic() - start)
+            span.set_attributes(telemetry.outcome_attributes(outcome))
         return outcome
 
     async def close(self) -> None:
@@ -224,48 +240,29 @@ class LocalOps:
     async def build_environment(self, snapshot, spec) -> BuildResult:
         if not self._sandbox:
             return BuildResult(ok=True, image_tag="local-noop", spec=spec)
-        from infosec_harness.workflows.activities import build_environment_activity
+        from infosec_harness.graph import workloads
 
-        return await build_environment_activity(
-            {"snapshot": snapshot.model_dump(), "spec": spec.model_dump()}
-        )
+        return await workloads.build_environment(snapshot, spec)
 
     async def smoke_test(self, image_tag, test_command: str = "", *,
                          language: str = "", module_path: str = "") -> SmokeResult:
         if not self._sandbox:
             return SmokeResult(ok=True)
-        from infosec_harness.workflows.activities import smoke_test_activity
+        from infosec_harness.graph import workloads
 
-        return await smoke_test_activity({"image_tag": image_tag, "test_command": test_command,
-                                         "language": language, "module_path": module_path})
+        return await workloads.smoke_test(image_tag, test_command, language=language,
+                                          module_path=module_path)
 
     async def lookup_recipe(self, stack: StackFingerprint) -> EnvironmentSpec | None:
-        if not self._recipe_cache:
-            return None
-        from infosec_harness.persistence.recipes import get_recipe_store, stack_key
+        from infosec_harness.persistence.recipes import lookup_recipe
 
-        return get_recipe_store().lookup(stack_key(stack))
+        return lookup_recipe(stack, self._recipes)
 
     async def record_recipe(self, stack: StackFingerprint, spec: EnvironmentSpec,
                             *, worked: bool) -> None:
-        """Keep a spec that built, drop one that did not.
+        from infosec_harness.persistence.recipes import record_recipe_outcome
 
-        Eviction on first failure is the whole safety story: a stale recipe costs exactly one
-        build attempt, once, and then stops existing.
-        """
-        if not self._recipe_cache:
-            return
-        from infosec_harness.persistence.recipes import get_recipe_store, is_cacheable, stack_key
-
-        store, key = get_recipe_store(), stack_key(stack)
-        if worked and is_cacheable(spec):
-            store.record(key, spec)
-        elif not worked:
-            store.forget(key)
-
-    # Mirrors the shape `execute_probe_activity` returns when the isolation runtime is
-    # missing, so the offline path stands in for the real one instead of contradicting it.
-    SANDBOX_DISABLED = "sandbox disabled: probe not executed (running with --no-sandbox)"
+        record_recipe_outcome(stack, spec, worked=worked, store=self._recipes)
 
     async def execute_probe(self, image_tag, probe, spec, nonce, attempt) -> ProbeExecution:
         if not self._sandbox:
@@ -275,15 +272,10 @@ class LocalOps:
             # that found nothing*, which is a materially different thing: probe-diagnosis
             # reads the probe source alongside those markers, decides the probe must be
             # defective because a known-vulnerable target produced no oracle, and the graph
-            # enters its repair loop — on every case, to the repair limit. That made the
-            # documented Docker-free mode both far slower and unrepresentative, and it
-            # inflated probe-repair's share of the trajectory metrics.
+            # enters its repair loop — on every case, to the repair limit.
             return ProbeExecution(attempt=attempt, exit_code=None, oracle_fired=False,
                                   precondition_reached=False, sink_returned=False,
                                   stderr_tail=self.SANDBOX_DISABLED)
-        from infosec_harness.workflows.activities import execute_probe_activity
+        from infosec_harness.graph import workloads
 
-        return await execute_probe_activity(
-            {"image_tag": image_tag, "probe": probe.model_dump(), "spec": spec.model_dump(),
-             "nonce": nonce, "attempt": attempt}
-        )
+        return await workloads.execute_probe(image_tag, probe, spec, nonce, attempt)

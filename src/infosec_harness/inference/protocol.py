@@ -5,11 +5,10 @@ Canonical digests include payloads, never authentication or provider secret mate
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import unicodedata
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 from urllib.parse import urlsplit
 
 from pydantic import (
@@ -22,18 +21,42 @@ from pydantic import (
     model_validator,
 )
 
+from infosec_harness.domain.canonical import SHA256_PATTERN, canonical_bytes, digest
+
 PROTOCOL_VERSION = "ih-inference-v1"
 MAX_BODY_BYTES = 4 * 1024 * 1024
-DIGEST_PATTERN = r"^[a-f0-9]{64}$"
+DIGEST_PATTERN = SHA256_PATTERN
+IMAGE_DIGEST_PATTERN = r"^sha256:[0-9a-f]{64}$"
+OpenShellVersion = Literal["0.1.2"]
+OPENSHELL_VERSION: str = get_args(OpenShellVersion)[0]
 
 
-def canonical_bytes(value: Any) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
-                      allow_nan=False).encode("utf-8")
+def fixed_https_url(value: str, *, require_origin: bool = False,
+                    require_path: str | None = None) -> str:
+    """The one fixed-HTTPS URL rule; returns the value without a trailing slash.
 
-
-def digest(value: Any) -> str:
-    return hashlib.sha256(canonical_bytes(value)).hexdigest()
+    Rejects other schemes, missing hosts, userinfo, queries, fragments and invalid ports.
+    ``require_origin`` additionally rejects any path; ``require_path`` requires exactly that
+    path (trailing slash ignored). Raises ``ValueError`` so model validators can use it.
+    """
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except (TypeError, ValueError, AttributeError):
+        raise ValueError("Only fixed HTTPS endpoints are supported") from None
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or (port is not None and not 1 <= port <= 65535)
+        or (require_origin and parsed.path not in {"", "/"})
+        or (require_path is not None and parsed.path.rstrip("/") != require_path)
+    ):
+        raise ValueError("Only fixed HTTPS endpoints are supported")
+    return value.rstrip("/")
 
 
 class StrictModel(BaseModel):
@@ -71,9 +94,9 @@ class ExecutorContract(StrictModel):
     profile_digest: str = Field(pattern=DIGEST_PATTERN)
     endpoint: str
     provider_binding: str = Field(min_length=1, max_length=64)
-    executor_image: str = Field(pattern=r"^sha256:[a-f0-9]{64}$")
-    supervisor_image: str = Field(pattern=r"^sha256:[a-f0-9]{64}$")
-    openshell_version: Literal["0.1.2"] = "0.1.2"
+    executor_image: str = Field(pattern=IMAGE_DIGEST_PATTERN)
+    supervisor_image: str = Field(pattern=IMAGE_DIGEST_PATTERN)
+    openshell_version: OpenShellVersion = OPENSHELL_VERSION
     sdk_version: Literal["pydantic-ai-2.49.0"] = "pydantic-ai-2.49.0"
     policy_digest: str = Field(pattern=DIGEST_PATTERN)
     model_settings: dict[str, Any]
@@ -98,11 +121,7 @@ class ExecutorContract(StrictModel):
     @field_validator("endpoint")
     @classmethod
     def endpoint_is_fixed_https(cls, value: str) -> str:
-        parsed = urlsplit(value)
-        if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
-                or parsed.query or parsed.fragment or parsed.path.rstrip("/") != "/v1"):
-            raise ValueError("Only a fixed HTTPS /v1 provider endpoint is supported")
-        return value.rstrip("/")
+        return fixed_https_url(value, require_path="/v1")
 
     @field_validator("inspection")
     @classmethod
@@ -163,6 +182,7 @@ RequestState = Literal["accepted", "dispatch_intent", "completed", "failed_befor
                        "completion_unknown"]
 ErrorCode = Literal["auth", "policy", "identity", "budget", "expired", "conflict", "pending",
                     "completion_unknown", "unavailable", "invalid_response"]
+ERROR_CODES: frozenset[str] = frozenset(get_args(ErrorCode))
 
 
 class BrokerError(RuntimeError):

@@ -7,7 +7,7 @@ from typing import Any
 from pydantic_ai.models.openai import OpenAIChatModel as OpenAIChatModelBase
 
 
-def _merge_leading_system_messages(messages: list[Any]) -> list[Any]:
+def merge_leading_system_messages(messages: list[Any]) -> list[Any]:
     """Collapse the leading run of system messages into a single one.
 
     Order is preserved and the blocks are joined with a blank line, so the resulting prefix
@@ -22,7 +22,7 @@ def _merge_leading_system_messages(messages: list[Any]) -> list[Any]:
     return [{"role": "system", "content": merged}, *messages[lead:]]
 
 
-def _apply_max_tokens_floor(settings: Any, floor: int) -> Any:
+def apply_max_tokens_floor(settings: Any, floor: int) -> Any:
     """Raise ``max_tokens`` to ``floor``, never lower it. A zero floor is a no-op."""
     if not floor or settings is None:
         return settings
@@ -31,7 +31,7 @@ def _apply_max_tokens_floor(settings: Any, floor: int) -> Any:
     return {**settings, "max_tokens": floor}
 
 
-class _CompatOpenAIChatModel(OpenAIChatModelBase):  # type: ignore[misc,valid-type]
+class CompatOpenAIChatModel(OpenAIChatModelBase):  # type: ignore[misc,valid-type]
     """An OpenAI-spec model that works around two common self-hosted-endpoint quirks.
 
     1. *One system message.* Endpoints whose chat template allows a single leading system
@@ -63,9 +63,9 @@ class _CompatOpenAIChatModel(OpenAIChatModelBase):  # type: ignore[misc,valid-ty
 
     def prepare_request(self, model_settings: Any, model_request_parameters: Any) -> Any:
         if self._strict_closed_output_tools:
-            model_request_parameters = _strict_closed_outputs(model_request_parameters, self.profile)
+            model_request_parameters = strict_closed_outputs(model_request_parameters, self.profile)
         settings, params = super().prepare_request(model_settings, model_request_parameters)
-        settings = _apply_max_tokens_floor(settings, self._min_max_tokens)
+        settings = apply_max_tokens_floor(settings, self._min_max_tokens)
         if self._enable_thinking is not None or self._thinking_token_budget is not None:
             from .protocol import BrokerError, validate_thinking_token_budget
 
@@ -88,9 +88,30 @@ class _CompatOpenAIChatModel(OpenAIChatModelBase):  # type: ignore[misc,valid-ty
 
     async def _map_messages(self, *args: Any, **kwargs: Any) -> list[Any]:
         mapped = await super()._map_messages(*args, **kwargs)
-        return _merge_leading_system_messages(mapped) if self._merge_system else mapped
+        return merge_leading_system_messages(mapped) if self._merge_system else mapped
 
 
+def model_for_contract(contract: Any, provider: Any) -> CompatOpenAIChatModel:
+    """The one construction of a contract's provider model.
+
+    Admission sizing (:func:`input_wire`) and executor dispatch both call this, so the request
+    that is measured is the request that is sent.
+    """
+    extra: dict[str, Any] = {}
+    if contract.atomic_intake:
+        from infosec_harness.agents.intake_schema import intake_openai_profile
+
+        extra["profile"] = intake_openai_profile(provider.model_profile(contract.model))
+    return CompatOpenAIChatModel(
+        contract.model,
+        provider=provider,
+        merge_system=contract.merge_system_messages,
+        min_max_tokens=contract.min_max_tokens,
+        strict_closed_output_tools=contract.strict_closed_output_tools,
+        enable_thinking=contract.enable_thinking,
+        thinking_token_budget=contract.thinking_token_budget,
+        **extra,
+    )
 
 
 def _closed_output_schema(schema: Any) -> bool:
@@ -114,7 +135,7 @@ def _closed_output_schema(schema: Any) -> bool:
     return found_object
 
 
-def _strict_closed_outputs(params: Any, profile: Any) -> Any:
+def strict_closed_outputs(params: Any, profile: Any) -> Any:
     """Copy output definitions only; authored parameters and local guards stay intact."""
     from .protocol import BrokerError
 
@@ -227,19 +248,7 @@ async def input_wire(payload: Any, contract: Any) -> dict[str, Any]:
         AsyncOpenAI(base_url=contract.endpoint, api_key="admission-no-network",
                     max_retries=0, http_client=transport) as client,
     ):
-        provider = OpenAIProvider(openai_client=client)
-        extra: dict[str, Any] = {}
-        if contract.atomic_intake:
-            from infosec_harness.agents.intake_schema import intake_openai_profile
-
-            extra["profile"] = intake_openai_profile(provider.model_profile(contract.model))
-        model = _CompatOpenAIChatModel(
-            contract.model, provider=provider, merge_system=contract.merge_system_messages,
-            min_max_tokens=contract.min_max_tokens,
-            strict_closed_output_tools=contract.strict_closed_output_tools,
-            enable_thinking=contract.enable_thinking,
-            thinking_token_budget=contract.thinking_token_budget, **extra,
-        )
+        model = model_for_contract(contract, OpenAIProvider(openai_client=client))
         try:
             settings, params = model.prepare_request(settings, params)
             settings = settings or {}

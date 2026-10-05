@@ -64,7 +64,7 @@ async def _mutate(root_id: str, change: Callable[[dict], dict]) -> dict | None:
         async with db.session() as session:
             ledger = await session.get(db.BudgetLedger, root_id)
             if ledger is None:
-                return None  # Legacy workflows have no root accounting contract.
+                return None  # Not a durable batch: there is no root accounting contract.
             state = deepcopy(ledger.state)
             result = change(state)
             if state == ledger.state:
@@ -82,7 +82,13 @@ async def _mutate(root_id: str, change: Callable[[dict], dict]) -> dict | None:
 async def reserve(root_id: str, operation_id: str, requested: dict[str, float], agent: str,
                   configuration_digest: str | None = None,
                   operation_kind: Literal["agent", "execution"] = "agent",
-                  run_id: str | None = None, invocation_id: str | None = None) -> dict | None:
+                  run_id: str | None = None, invocation_id: str | None = None,
+                  fingerprint: str | None = None) -> dict | None:
+    """Reserve ``requested`` for one operation, idempotently per ``operation_id``.
+
+    ``fingerprint`` names the finding the operation is spent on, so results are attributed by
+    an explicit field rather than by reading identifiers.
+    """
     _validate_usage(requested)
     if operation_kind not in {"agent", "execution"}:
         raise ValueError("Unknown budget operation kind")
@@ -107,7 +113,8 @@ async def reserve(root_id: str, operation_id: str, requested: dict[str, float], 
         if operation_id in operations:
             operation = operations[operation_id]
             if (operation["agent"] != agent or operation["reserved"] != demand
-                    or operation.get("kind", "agent") != operation_kind
+                    or operation["kind"] != operation_kind
+                    or operation.get("fingerprint") != fingerprint
                     or (run_id is not None and operation.get("run_id") != run_id)
                     or (invocation_id is not None and operation.get("invocation_id") != invocation_id)):
                 raise ValueError("Operation already reserved with different budget or agent")
@@ -120,7 +127,8 @@ async def reserve(root_id: str, operation_id: str, requested: dict[str, float], 
         remaining = {key: state["limits"][key] - state["used"][key] - held[key] for key in fields}
         if any(demand[key] > remaining[key] for key in fields):
             raise UsageLimitExceeded(f"Root budget cannot reserve invocation for {agent}; remaining={remaining}")
-        operation = {"agent": agent, "kind": operation_kind, "status": "reserved", "reserved": demand}
+        operation = {"agent": agent, "kind": operation_kind, "fingerprint": fingerprint,
+                     "status": "reserved", "reserved": demand}
         if run_id is not None or invocation_id is not None:
             if not run_id or not invocation_id:
                 raise ValueError("Broker invocation ownership requires both run and invocation")

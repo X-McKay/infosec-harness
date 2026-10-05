@@ -94,7 +94,7 @@ class _Recorder:
     async def checkout(self, ref):
         return _prepared(str(self.repo)).snapshot
 
-    async def prepare(self, ops, snapshot, stack):
+    async def prepare(self, ops, snapshot, stack, *, component_root="."):
         from infosec_harness.graph.prepare import PrepareOutcome
 
         self.prepares_in_flight += 1
@@ -221,6 +221,15 @@ async def test_the_declared_setting_is_what_the_local_path_uses(repo, monkeypatc
         get_settings.cache_clear()
 
 
-async def test_a_concurrency_below_one_is_rejected_rather_than_silently_serialising(repo):
-    with pytest.raises(ValueError, match="at least 1"):
-        await _run(_findings(1, 2), 0, _Recorder(repo))
+async def test_concurrency_is_clamped_exactly_as_the_workflow_clamps_it(repo):
+    """One schedule for both paths: an out-of-range value is clamped to [1, 32], never rejected
+    by one path and silently clamped by the other."""
+    from infosec_harness.graph.pipeline import MAX_CONCURRENCY, clamp_concurrency
+
+    assert (clamp_concurrency(0), clamp_concurrency(-3), clamp_concurrency(100)) == (1, 1, 32)
+    rec = _Recorder(repo)
+    await _run(_findings(1, 4), 0, rec)
+    assert rec.peak_triage == 1, rec.peak_triage
+    rec = _Recorder(repo)
+    await _run(_findings(1, MAX_CONCURRENCY + 4), 1000, rec)
+    assert rec.peak_triage <= MAX_CONCURRENCY, rec.peak_triage

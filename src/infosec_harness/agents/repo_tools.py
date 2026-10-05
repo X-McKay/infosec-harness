@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import contextlib
 import fnmatch
-import os
+import json
 import re
+import subprocess
+import sys
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -29,6 +32,16 @@ MAX_TREE_BYTES = 40_000
 MAX_DIGEST_MANIFESTS = 8
 MAX_MANIFEST_LINES = 120
 MAX_DIGEST_BYTES = 110_000
+# The most bytes taken from disk for any one file, by the readers and by search_code alike. It is
+# applied to the read itself, so a multi-gigabyte file costs this much memory and no more; what
+# lies beyond it is reported as unreadable rather than silently missing.
+MAX_FILE_BYTES = 2_000_000
+# search_code runs the regex in a child process that is killed at this deadline. Python's `re`
+# has no match timeout, and no inspection of a pattern's shape can tell every catastrophically
+# backtracking regex from a safe one, so the work is bounded by time instead. It stays well under
+# the toolset's declared `timeout_seconds` (tools/repo-read-only/tool.yaml).
+SEARCH_TIMEOUT_SECONDS = 10.0
+MAX_MATCH_CHARS = 200
 
 
 def _resolve(root: str, rel: str) -> Path:
@@ -41,6 +54,37 @@ def _resolve(root: str, rel: str) -> Path:
         ) from exc
 
 
+def _traversal_rejected(exc: RepositoryAccessError) -> str:
+    return f"Repository traversal was rejected: {exc}"
+
+
+def _snapshot_files(root: Path, start: Path) -> Iterator[tuple[str, Path]]:
+    """(root-relative path, path) of every confined file under `start`, in walk order.
+
+    Every traversal in this module goes through `walk_files`, the same rule the checkout applies
+    when it admits a snapshot, so the tools fail closed on what the snapshot boundary rejects (a
+    link that leaves the snapshot, a directory link, a special file) rather than each skipping
+    its own idea of it. `walk_files` judges a link against the root it is handed, though, and a
+    file link from `start` to elsewhere in the snapshot is confined even though it leaves
+    `start`; so a rejection below the root is judged again against the snapshot root before it
+    stands.
+    """
+    yielded: set[str] = set()
+    try:
+        for _, path in walk_files(start, skip_dirs=SKIP_DIRS):
+            rel = path.relative_to(root).as_posix()
+            yielded.add(rel)
+            yield rel, path
+        return
+    except RepositoryAccessError:
+        if start == root:
+            raise
+    prefix = start.relative_to(root).as_posix() + "/"
+    for rel, path in walk_files(root, skip_dirs=SKIP_DIRS):
+        if rel.startswith(prefix) and rel not in yielded:
+            yield rel, path
+
+
 def list_files(ctx: RunContext[AgentDeps], directory: str = ".", pattern: str = "*") -> str:
     """List repository files under `directory` (recursive) whose name matches the glob `pattern`.
 
@@ -51,22 +95,14 @@ def list_files(ctx: RunContext[AgentDeps], directory: str = ".", pattern: str = 
     if not start.is_dir():
         raise ModelRetry(f"{directory!r} is not a directory.")
     out: list[str] = []
-    for dirpath, dirnames, filenames in os.walk(start):
-        dirnames[:] = sorted(
-            d for d in dirnames
-            if d not in SKIP_DIRS and not (Path(dirpath) / d).is_symlink()
-        )
-        for name in sorted(filenames):
-            if fnmatch.fnmatch(name, pattern):
-                candidate = Path(dirpath) / name
-                rel = str(candidate.relative_to(root))
-                try:
-                    resolve_confined(root, rel, must_exist=True)
-                except (OSError, RepositoryAccessError):
-                    continue
+    try:
+        for rel, path in _snapshot_files(root, start):
+            if fnmatch.fnmatch(path.name, pattern):
                 out.append(rel)
                 if len(out) >= MAX_LIST:
                     return "\n".join(out) + f"\n... truncated at {MAX_LIST} entries"
+    except RepositoryAccessError as exc:
+        raise ModelRetry(_traversal_rejected(exc)) from exc
     return "\n".join(out) or "(no matches)"
 
 
@@ -79,16 +115,36 @@ def read_file(ctx: RunContext[AgentDeps], path: str, start_line: int = 1, end_li
     target = _resolve(ctx.deps.repo_path, path)
     if not target.is_file():
         raise ModelRetry(f"{path!r} does not exist.")
-    return _read_one(target, path, start_line, end_line)
+    # 400 lines is not a byte bound: one minified line can be megabytes. Hold a single read to
+    # the same budget as a batched one.
+    return _clip_bytes(_read_one(target, path, start_line, end_line), MAX_BATCH_BYTES)
+
+
+def _read_capped(target: Path) -> tuple[str, bool]:
+    """At most MAX_FILE_BYTES of `target`, decoded, and whether the file holds more than that."""
+    with target.open("rb") as fh:
+        raw = fh.read(MAX_FILE_BYTES + 1)
+    truncated = len(raw) > MAX_FILE_BYTES
+    if truncated:
+        raw = raw[:MAX_FILE_BYTES]
+        # The cut almost always falls inside a line. Drop that fragment rather than present part
+        # of a line as the whole of it; a file with no line break at all keeps its fragment.
+        cut = max(raw.rfind(b"\n"), raw.rfind(b"\r"))
+        if cut >= 0:
+            raw = raw[: cut + 1]
+    return raw.decode(errors="replace"), truncated
 
 
 def _read_one(target: Path, path: str, start_line: int, end_line: int) -> str:
     start_line = max(1, start_line)
     end_line = min(max(start_line, end_line), start_line + MAX_READ_LINES - 1)
-    lines = target.read_text(errors="replace").splitlines()
+    text, truncated = _read_capped(target)
+    lines = text.splitlines()
     chunk = lines[start_line - 1 : end_line]
     body = "\n".join(f"{i:>5}  {line}" for i, line in enumerate(chunk, start=start_line))
-    return f"{path} (lines {start_line}-{start_line + len(chunk) - 1} of {len(lines)})\n{body}"
+    total = (f"at least {len(lines)}; the file is larger than {MAX_FILE_BYTES} bytes and only "
+             f"its first {len(lines)} lines are readable" if truncated else str(len(lines)))
+    return f"{path} (lines {start_line}-{start_line + len(chunk) - 1} of {total})\n{body}"
 
 
 def read_files(ctx: RunContext[AgentDeps], paths: list[str], start_line: int = 1,
@@ -165,28 +221,26 @@ class _DirSummary:
 
 
 def _walk_dirs(root: Path, start: Path) -> tuple[list[_DirSummary], int, int]:
-    """(per-directory summaries, total files, total directories) under `start`."""
+    """(per-directory summaries, total files, total directories) under `start`.
+
+    Summaries come in walk order (sorted, top-down). The directory total counts `start` and
+    every directory that holds a file somewhere beneath it; `walk_files` yields files only, so a
+    directory with nothing readable under it is not counted.
+
+    Raises RepositoryAccessError when the snapshot holds an entry `walk_files` rejects.
+    """
+    groups: dict[Path, list[str]] = {}
+    for _, path in _snapshot_files(root, start):
+        groups.setdefault(path.parent, []).append(path.name)
+    dirs = {start}
+    for here in groups:
+        while here not in dirs and here != here.parent:
+            dirs.add(here)
+            here = here.parent
     out: list[_DirSummary] = []
     total_files = 0
-    total_dirs = 0
-    for dirpath, dirnames, filenames in os.walk(start):
-        dirnames[:] = sorted(
-            d for d in dirnames
-            if d not in SKIP_DIRS and not (Path(dirpath) / d).is_symlink()
-        )
-        here = Path(dirpath)
-        names = []
-        for name in sorted(filenames):
-            rel = (here / name).relative_to(root).as_posix()
-            try:
-                resolve_confined(root, rel, must_exist=True)
-            except (OSError, RepositoryAccessError):
-                continue
-            names.append(name)
+    for here, names in groups.items():
         total_files += len(names)
-        total_dirs += 1
-        if not names:
-            continue
         size = 0
         for name in names:
             # A broken symlink or a file removed between the walk and the stat must not sink
@@ -195,7 +249,7 @@ def _walk_dirs(root: Path, start: Path) -> tuple[list[_DirSummary], int, int]:
                 size += (here / name).stat().st_size
         rel = here.relative_to(root).as_posix() or "."
         out.append(_DirSummary(rel=rel, files=tuple(names), total_bytes=size))
-    return out, total_files, total_dirs
+    return out, total_files, len(dirs)
 
 
 def _ext_histogram(names: tuple[str, ...]) -> str:
@@ -227,7 +281,15 @@ def list_tree(ctx: RunContext[AgentDeps], directory: str = ".") -> str:
     if not start.is_dir():
         raise ModelRetry(f"{directory!r} is not a directory. Pass a directory path, or use "
                          f"read_file/read_files for a file.")
-    summaries, total_files, total_dirs = _walk_dirs(root, start)
+    try:
+        summaries, total_files, total_dirs = _walk_dirs(root, start)
+    except RepositoryAccessError as exc:
+        raise ModelRetry(_traversal_rejected(exc)) from exc
+    return _tree_text(directory, summaries, total_files, total_dirs)
+
+
+def _tree_text(directory: str, summaries: list[_DirSummary], total_files: int,
+               total_dirs: int) -> str:
     # Names are given up first, directories last, and the count of what was dropped is always
     # said out loud. Which directories exist is the one thing a caller cannot recover by asking
     # again -- it is what tells them the repository is bigger than the answer -- whereas a file
@@ -338,36 +400,33 @@ MANIFEST_NAMES = (
     "Cargo.toml", "go.mod", "Gemfile", "composer.json", "cpanfile", "Makefile", "Makefile.PL",
     "Build.PL", "META.json", "tox.ini", "Dockerfile", "README.md", "README.rst", "README",
 )
-# Directory names that conventionally hold tests, longest-specific first.
-TEST_DIR_NAMES = ("src/test", "tests", "test", "t", "spec", "__tests__", "src/test/java")
-def _find_manifests(root: Path) -> list[str]:
+# Path segments that conventionally name a test directory: `tests/` and `test/` (Python, Maven's
+# `src/test/...`), `t/` (Perl), `spec/` (Ruby, JS) and `__tests__/` (Jest). A directory is a test
+# directory when ANY WHOLE segment of its path is one of these, so everything beneath
+# `src/test/` counts and `tools/`, `templates/`, `third_party/` or `testing_utils/` do not.
+TEST_DIR_NAMES = frozenset({"test", "tests", "t", "spec", "__tests__"})
+
+
+def _is_test_dir(rel: str) -> bool:
+    return any(part in TEST_DIR_NAMES for part in rel.split("/"))
+
+
+def _find_manifests(summaries: list[_DirSummary]) -> list[str]:
     """Repo-relative manifest paths, root ones first, then any nested ones."""
     found: list[str] = []
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = sorted(
-            d for d in dirnames
-            if d not in SKIP_DIRS and not (Path(dirpath) / d).is_symlink()
-        )
-        depth = len(Path(dirpath).relative_to(root).parts)
+    for s in summaries:
+        depth = 0 if s.rel == "." else s.rel.count("/") + 1
         if depth > 2:  # a manifest four levels down is a fixture, not the project's
             continue
-        for name in sorted(filenames):
-            if name in MANIFEST_NAMES:
-                rel = (Path(dirpath) / name).relative_to(root).as_posix()
-                try:
-                    resolve_confined(root, rel, must_exist=True)
-                except (OSError, RepositoryAccessError):
-                    continue
-                found.append(rel)
+        found += [name if s.rel == "." else f"{s.rel}/{name}"
+                  for name in s.files if name in MANIFEST_NAMES]
     # Root manifests first: they are the project's own, and the budget may not reach the rest.
     return sorted(found, key=lambda p: (p.count("/"), MANIFEST_NAMES.index(Path(p).name)))
 
 
-def _test_layout(root: Path, summaries: list[_DirSummary]) -> list[str]:
+def _test_layout(summaries: list[_DirSummary]) -> list[str]:
     """Which directories hold tests, and what the existing test files are named."""
-    hits = [s for s in summaries
-            if any(part in TEST_DIR_NAMES for part in (s.rel, *Path(s.rel).parts))
-            or s.rel.startswith(TEST_DIR_NAMES)]
+    hits = [s for s in summaries if _is_test_dir(s.rel)]
     if not hits:
         return ["(no conventional test directory found; look for test files beside the sources)"]
     out: list[str] = []
@@ -396,11 +455,24 @@ def repo_digest(ctx: RunContext[AgentDeps]) -> str:
     root = Path(ctx.deps.repo_path).resolve()
     if not root.is_dir():
         raise ModelRetry("The repository snapshot is not a directory; nothing to digest.")
-    summaries, total_files, total_dirs = _walk_dirs(root, root)
+    try:
+        summaries, total_files, total_dirs = _walk_dirs(root, root)
+    except RepositoryAccessError as exc:
+        # Fail closed, and say so: nothing is listed or read from a snapshot the boundary
+        # rejects, and the absence is stated rather than left to read as an empty repository.
+        return _clip_bytes("\n".join([
+            "# Repository digest: traversal rejected", "", _traversal_rejected(exc),
+            "The snapshot holds an entry the read-only repository tools refuse to traverse (a "
+            "link that leaves the snapshot, a directory link, or a special file), so nothing in "
+            "it was listed or read.",
+            "", "## Tree", "(not listed)",
+            "", "## Manifests and README (0 found: none were read)",
+            "", "## Test layout", "(not listed)",
+        ]), MAX_DIGEST_BYTES)
     sections = [f"# Repository digest: {total_files} files in {total_dirs} directories",
                 "", "## Tree (one line per non-empty directory)",
-                list_tree(ctx, ".")]
-    manifests = _find_manifests(root)
+                _tree_text(".", summaries, total_files, total_dirs)]
+    manifests = _find_manifests(summaries)
     sections += ["", f"## Manifests and README ({len(manifests)} found"
                      + (f", first {MAX_DIGEST_MANIFESTS} shown" if len(manifests) > MAX_DIGEST_MANIFESTS else "")
                      + ")"]
@@ -412,8 +484,70 @@ def repo_digest(ctx: RunContext[AgentDeps]) -> str:
         sections.append(_read_one(root / rel, rel, 1, MAX_MANIFEST_LINES))
     for rel in manifests[MAX_DIGEST_MANIFESTS:]:
         sections.append(f"(not shown: {rel} - read it with read_files if you need it)")
-    sections += ["", "## Test layout", *_test_layout(root, summaries)]
+    sections += ["", "## Test layout", *_test_layout(summaries)]
     return _clip_bytes("\n".join(sections), MAX_DIGEST_BYTES)
+
+
+# --- search_code -------------------------------------------------------------------------
+# The regex runs in a child interpreter, never in the worker: Python's `re` cannot be
+# interrupted from another thread, and a pattern such as `(\w|\d)+x` against a long run of word
+# characters backtracks for minutes. A shape check on the pattern was tried and is bypassable by
+# construction, so the bound is a deadline on a process that can be killed. The parent walks and
+# confines; the child only opens the files it is handed, matches, and prints one JSON line per
+# hit as it goes, so a search stopped at the deadline still returns the hits it had found.
+# `-I -S` keeps the child from importing anything from the environment or the working tree.
+
+_SEARCH_WORKER = r"""
+import json, re, sys
+req = json.load(sys.stdin)
+pattern = re.compile(req["regex"])
+found = 0
+for rel, path in req["files"]:
+    try:
+        with open(path, "rb") as fh:
+            raw = fh.read(req["max_bytes"] + 1)
+    except OSError:
+        continue
+    if len(raw) > req["max_bytes"]:
+        continue
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        continue
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        if pattern.search(line):
+            sys.stdout.write(json.dumps([rel, lineno, line.strip()[: req["line_chars"]]]) + "\n")
+            sys.stdout.flush()
+            found += 1
+            if found >= req["max_matches"]:
+                sys.exit(0)
+"""
+
+
+def _run_search(regex: str, files: list[tuple[str, str]]) -> tuple[list[str], str | None]:
+    """(hits as `path:line: text`, why the search stopped early or None if it completed)."""
+    payload = json.dumps({"regex": regex, "files": files, "max_matches": MAX_MATCHES,
+                          "max_bytes": MAX_FILE_BYTES, "line_chars": MAX_MATCH_CHARS}).encode()
+    try:
+        proc = subprocess.run([sys.executable, "-I", "-S", "-c", _SEARCH_WORKER], input=payload,
+                              capture_output=True, timeout=SEARCH_TIMEOUT_SECONDS, check=False)
+        stdout = proc.stdout
+        stopped = (None if proc.returncode == 0 else
+                   f"search did not complete (the search process exited with status "
+                   f"{proc.returncode})")
+    except subprocess.TimeoutExpired as exc:  # run() has already killed and reaped the child
+        stdout = exc.stdout or b""
+        stopped = (f"search timed out after {SEARCH_TIMEOUT_SECONDS:g} seconds and was stopped. "
+                   "The regex backtracks too much on this repository: drop nested or alternated "
+                   "repetition such as `(a|b)+`, anchor it, or narrow file_glob")
+    hits: list[str] = []
+    for raw in stdout.splitlines():
+        try:
+            rel, lineno, text = json.loads(raw)
+        except (ValueError, TypeError):
+            continue  # the line the kill cut short
+        hits.append(f"{rel}:{lineno}: {text}")
+    return hits[:MAX_MATCHES], stopped
 
 
 def search_code(ctx: RunContext[AgentDeps], regex: str, file_glob: str = "*") -> str:
@@ -423,34 +557,25 @@ def search_code(ctx: RunContext[AgentDeps], regex: str, file_glob: str = "*") ->
     """
     if len(regex.encode()) > 512:
         raise ModelRetry("Search regex is too large; use at most 512 bytes.")
-    # Python's regular-expression engine has no match timeout. Reject the common nested-repeat
-    # forms that create catastrophic backtracking rather than letting repository text pin a worker.
-    if re.search(r"\([^)]*[+*][^)]*\)[+*{]", regex):
-        raise ModelRetry("Search regex contains a nested repetition and is unsafe for bounded search.")
     try:
-        pattern = re.compile(regex)
+        re.compile(regex)
     except re.error as e:
         raise ModelRetry(f"Invalid regex: {e}") from e
     root = Path(ctx.deps.repo_path).resolve()
-    hits: list[str] = []
     try:
-        files = walk_files(root, skip_dirs=SKIP_DIRS)
-        for rel, fp in files:
-            if not fnmatch.fnmatch(fp.name, file_glob):
-                continue
-            try:
-                if fp.stat().st_size > 2_000_000:
-                    continue
-                text = fp.read_text(errors="strict")
-            except (UnicodeDecodeError, OSError):
-                continue
-            for lineno, line in enumerate(text.splitlines(), start=1):
-                if pattern.search(line):
-                    hits.append(f"{rel}:{lineno}: {line.strip()[:200]}")
-                    if len(hits) >= MAX_MATCHES:
-                        return "\n".join(hits) + f"\n... truncated at {MAX_MATCHES} matches"
+        files = [(rel, str(path)) for rel, path in walk_files(root, skip_dirs=SKIP_DIRS)
+                 if fnmatch.fnmatch(path.name, file_glob)]
     except RepositoryAccessError as exc:
-        raise ModelRetry(f"Repository traversal was rejected: {exc}") from exc
+        raise ModelRetry(_traversal_rejected(exc)) from exc
+    if not files:
+        return "(no matches)"
+    hits, stopped = _run_search(regex, files)
+    if stopped:
+        # Partial results are labelled as partial: a search that was stopped is not a search
+        # that found nothing.
+        return "\n".join([*hits, f"... {stopped}; any matches above are partial"])
+    if len(hits) >= MAX_MATCHES:
+        return "\n".join(hits) + f"\n... truncated at {MAX_MATCHES} matches"
     return "\n".join(hits) or "(no matches)"
 
 

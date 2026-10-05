@@ -125,3 +125,48 @@ def test_construction_refuses_a_risk_tier_that_contradicts_nothing_real():
     """A model policy that is not in config/models.yaml cannot be resolved, so it must fail."""
     with pytest.raises(GovernanceError, match="model_policy"):
         build_agent("verdict", {"metadata": {"model_policy": "imaginary-v9"}}, durable=False)
+
+
+def test_the_floor_is_derived_from_capabilities_not_from_what_metadata_claims():
+    """Regression: the floor read `metadata.enabled_toolsets`, so a spec that attached
+    SandboxShell but omitted it from its metadata was judged as read-only and could declare
+    `ephemeral`. The capabilities are what run; metadata must agree with them."""
+    overlay = {"metadata": {"execution_class": "ephemeral", "enabled_toolsets": ["repo-read-only"]}}
+    with pytest.raises(GovernanceError, match="enabled_toolsets"):
+        build_agent("build-repair", overlay, durable=False)
+
+
+def test_an_unknown_toolset_name_fails_construction():
+    overlay = {"metadata": {"enabled_toolsets": ["repo-read-only", "sandbox-shel"]}}
+    with pytest.raises(GovernanceError, match="no declared policy"):
+        build_agent("build-repair", overlay, durable=False)
+
+
+def test_enabled_skills_must_be_the_skills_the_agent_can_load():
+    overlay = {"metadata": {"enabled_skills": ["cwe-89-sql-injection"]}}
+    with pytest.raises(GovernanceError, match="enabled_skills"):
+        build_agent("context", overlay, durable=False)
+
+
+@pytest.mark.parametrize("name", sorted(AGENT_BINDINGS))
+def test_each_committed_spec_runs_the_tier_its_model_policy_names(name):
+    from infosec_harness.agents.models import load_models_config
+
+    spec = load_spec(name)
+    assert load_models_config().model_policies[spec.metadata["model_policy"]] == spec.model
+
+
+def test_a_committed_spec_whose_policy_disagrees_with_its_tier_is_refused(monkeypatch):
+    """No silent fallback: a policy that resolves to a different tier than the spec runs is a
+    governance error, not a choice made quietly by whichever field is read."""
+    from infosec_harness.agents import registry
+
+    real = registry.load_spec
+
+    def drifted(name, overlay=None):
+        spec = real(name, overlay)
+        return spec.model_copy(update={"model": "opus"})
+
+    monkeypatch.setattr(registry, "load_spec", drifted)
+    with pytest.raises(GovernanceError, match="resolves to 'sonnet', not the spec's model tier 'opus'"):
+        build_agent("verdict", durable=False)

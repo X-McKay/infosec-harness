@@ -12,25 +12,19 @@ and are exercised deterministically in tests via a scripted tool-calling model.
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from functools import cache
 
-from pydantic_ai.messages import ModelMessage, ToolCallPart
+from pydantic_ai.messages import ModelMessage
+
+from infosec_harness.evals.messages import iter_tool_calls
 
 # The Skills capability exposes this tool; its argument carries the skill id being loaded.
 LOAD_SKILL_TOOL = "load_capability"
 _SKILL_ARG_KEYS = ("id", "capability_id", "name")
-
-
-def _tool_calls(messages: Sequence[ModelMessage]) -> list[ToolCallPart]:
-    calls: list[ToolCallPart] = []
-    for msg in messages:
-        for part in getattr(msg, "parts", []):
-            if isinstance(part, ToolCallPart):
-                calls.append(part)
-    return calls
 
 
 def _skill_id(args) -> str | None:
@@ -52,14 +46,12 @@ def inspect_messages(messages: Sequence[ModelMessage]) -> tuple[list[str], list[
     """
     tools: list[str] = []
     skills: list[str] = []
-    for call in _tool_calls(messages):
+    for call in iter_tool_calls(messages):
         name = call.tool_name
         if name == LOAD_SKILL_TOOL:
-            sid = _skill_id(call.args_as_dict() if hasattr(call, "args_as_dict") else call.args)
+            sid = _skill_id(call.args_as_dict())
             if sid and sid not in skills:
                 skills.append(sid)
-            continue
-        if name.startswith("final_result") or name.startswith("_"):
             continue
         if name not in tools:
             tools.append(name)
@@ -80,12 +72,10 @@ def count_repeated_calls(messages: Sequence[ModelMessage]) -> dict[str, int]:
     nothing to record.
     """
     seen: Counter[str] = Counter()
-    for call in _tool_calls(messages):
+    for call in iter_tool_calls(messages):
         name = call.tool_name
-        if name.startswith("final_result") or name.startswith("_"):
-            continue
         try:
-            args = call.args_as_dict() if hasattr(call, "args_as_dict") else call.args
+            args = call.args_as_dict()
         except Exception:  # malformed args from the model must not break accounting
             args = None
         if isinstance(args, dict):
@@ -158,16 +148,24 @@ def scores_skills(agent: str) -> bool:
     return bool(exp and exp.skill_prefixes)
 
 
+_CWE_SKILL = re.compile(r"cwe-(\d+)-.+")
+
+
 @cache
-def _available_cwe_skill_prefixes() -> frozenset[str]:
-    """The `cwe-*` skills that exist on disk, as prefixes."""
+def skill_covered_cwes() -> tuple[str, ...]:
+    """The CWE classes a shipped `skills/cwe-<n>-*` skill covers, as ``CWE-<n>``, sorted.
+
+    The single answer to "which CWEs have skills", used by the trajectory scorer and by the
+    corpus harvester, so the two cannot disagree about what a harvested case can be scored on.
+    """
     from infosec_harness.settings import get_settings
 
     root = get_settings().skills_dir
     if not root.is_dir():
-        return frozenset()
-    return frozenset("-".join(p.name.split("-")[:2])
-                     for p in root.iterdir() if p.name.startswith("cwe-"))
+        return ()
+    found = {int(m.group(1)) for p in root.iterdir()
+             if p.is_dir() and (m := _CWE_SKILL.fullmatch(p.name))}
+    return tuple(f"CWE-{number}" for number in sorted(found))
 
 
 def cwe_skill_prefix(cwe: str | None) -> str | None:
@@ -183,8 +181,7 @@ def cwe_skill_prefix(cwe: str | None) -> str | None:
     num = cwe.upper().removeprefix("CWE-")
     if not num.isdigit():
         return None
-    prefix = f"cwe-{num}"
-    return prefix if prefix in _available_cwe_skill_prefixes() else None
+    return f"cwe-{num}" if f"CWE-{num}" in skill_covered_cwes() else None
 
 
 def summarize_calls(messages: Sequence[ModelMessage], *, limit: int = 128) -> dict[str, object]:
@@ -196,10 +193,8 @@ def summarize_calls(messages: Sequence[ModelMessage], *, limit: int = 128) -> di
     signatures: Counter[tuple[str, str]] = Counter()
     sequence: list[dict[str, str]] = []
     argument_ids: dict[tuple[str, str], str] = {}
-    for call in _tool_calls(messages):
+    for call in iter_tool_calls(messages):
         name = call.tool_name
-        if name.startswith("final_result") or name.startswith("_"):
-            continue
         try:
             args = call.args_as_dict()
         except Exception:

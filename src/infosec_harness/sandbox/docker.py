@@ -1,15 +1,16 @@
 """Docker-backed sandbox (D2): builds target images and runs probes under gVisor.
 
-Every container runs with the configured OCI runtime (``runsc`` = gVisor by default),
-as a non-root user, with all capabilities dropped, no new privileges, pid/memory/cpu
-limits, a read-only root filesystem, and a wall-clock timeout. Probe containers have **no
-network**. Builds fail closed when gVisor is unavailable (unless explicitly overridden),
-validate the base image against an allowlist, and pin egress to the operator-configured registry
-allowlist via the proxy (D14). Untrusted install steps run on a buildx builder so they are
-gVisor-contained like probes.
+Every container runs with the configured OCI runtime (``runsc`` = gVisor; anything else
+requires the explicit insecure-development override), as a non-root user, with all
+capabilities dropped, no new privileges, pid/memory/cpu limits, a read-only root filesystem
+with tmpfs work directories, no network, and a wall-clock timeout. Builds fail closed when
+gVisor is unavailable (unless explicitly overridden), validate the base image against an
+allowlist, and route all egress through the operator's allowlisting proxy on an internal
+network (D14). Untrusted install steps run on a buildx builder so they are gVisor-contained
+like probes.
 
-The worker drives the Docker daemon through its socket. In Kubernetes this module is
-replaced by a Job-based runner (phase 5) behind the same functions.
+The worker drives the Docker daemon through its socket. This is the only execution runner:
+``sandbox.k8s`` renders Pod specifications for deployment design and runs nothing.
 """
 
 from __future__ import annotations
@@ -26,12 +27,13 @@ import re
 import shlex
 import tempfile
 import time
-from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from infosec_harness.domain.canonical import digest
 from infosec_harness.domain.models import EnvironmentSpec
+from infosec_harness.sandbox.process import run_bounded
 from infosec_harness.settings import get_settings
 
 ORACLE_PREFIX = "HARNESS_ORACLE::"
@@ -52,7 +54,15 @@ HOME_STAGE = "/opt/home"
 WORK = "/work/repo"
 WORK_HOME = "/work/home"
 IMAGE_LABEL = "harness.image=target"
-IMAGE_FORMAT_VERSION = "3"  # Build-only Maven proxy bridge and proxy-bound target cache.
+# Written by every build and required on every cache hit: a same-named image that this
+# harness did not build under the current boundary is never reused.
+PROVENANCE_LABEL = "harness.image.tag"
+IMAGE_FORMAT_VERSION = "4"  # Build-boundary mode in the tag and a verified provenance label.
+# The Docker CLI and BuildKit read only these from the worker environment; model, database and
+# provider credentials are never handed to the daemon client.
+_DOCKER_ENVIRONMENT = ("PATH", "HOME", "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG",
+                       "DOCKER_CERT_PATH", "DOCKER_TLS_VERIFY", "DOCKER_API_VERSION",
+                       "BUILDX_CONFIG", "XDG_RUNTIME_DIR")
 _PROXY_ENV = ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy")
 _NO_PROXY = "localhost,127.0.0.1"
 
@@ -66,66 +76,26 @@ class ProcResult:
     duration_s: float
 
 
+def _docker_environment() -> dict[str, str]:
+    environment = {name: os.environ[name] for name in _DOCKER_ENVIRONMENT if name in os.environ}
+    environment["DOCKER_BUILDKIT"] = "1"
+    return environment
+
+
 async def _run(argv: list[str], *, stdin: bytes | None = None, timeout: float) -> ProcResult:
-    start = time.monotonic()
-    proc = await asyncio.create_subprocess_exec(
-        *argv,
-        stdin=asyncio.subprocess.PIPE if stdin is not None else asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    async def drain(stream: asyncio.StreamReader) -> bytes:
-        chunks: deque[bytes] = deque()
-        size = 0
-        while chunk := await stream.read(16_384):
-            chunks.append(chunk)
-            size += len(chunk)
-            while size > MAX_CAPTURE and chunks:
-                excess = size - MAX_CAPTURE
-                if excess >= len(chunks[0]):
-                    size -= len(chunks.popleft())
-                else:
-                    chunks[0] = chunks[0][excess:]
-                    size -= excess
-        return b"".join(chunks)
-
-    async def feed() -> None:
-        if stdin is not None and proc.stdin is not None:
-            proc.stdin.write(stdin)
-            await proc.stdin.drain()
-            proc.stdin.close()
-            await proc.stdin.wait_closed()
-
-    stdout_task = asyncio.create_task(drain(proc.stdout))
-    stderr_task = asyncio.create_task(drain(proc.stderr))
-    feed_task = asyncio.create_task(feed())
-    timed_out = False
-    try:
-        await asyncio.wait_for(asyncio.gather(proc.wait(), feed_task), timeout=timeout)
-    except TimeoutError:
-        timed_out = True
-        with contextlib.suppress(ProcessLookupError):
-            proc.kill()
-        await proc.wait()
-    except asyncio.CancelledError:
-        with contextlib.suppress(ProcessLookupError):
-            proc.kill()
-        await proc.wait()
-        raise
-    finally:
-        if not feed_task.done():
-            feed_task.cancel()
-        out, err = await asyncio.gather(stdout_task, stderr_task)
+    result = await run_bounded(argv, env=_docker_environment(), timeout=timeout, stdin=stdin,
+                               capture_limit=MAX_CAPTURE)
     return ProcResult(
-        exit_code=None if timed_out else proc.returncode,
-        stdout=out.decode(errors="replace"),
-        stderr=err.decode(errors="replace"),
-        timed_out=timed_out,
-        duration_s=time.monotonic() - start,
+        exit_code=result.returncode,
+        stdout=result.stdout.decode(errors="replace"),
+        stderr=result.stderr.decode(errors="replace"),
+        timed_out=result.timed_out,
+        duration_s=result.duration_s,
     )
 
 
-def _hardening_args(*, network: bool, read_only: bool = False) -> list[str]:
+def _hardening_args() -> list[str]:
+    """Every workload: gVisor (or the explicit insecure runtime), no network, least privilege."""
     s = get_settings()
     args = [
         "--rm",
@@ -136,12 +106,28 @@ def _hardening_args(*, network: bool, read_only: bool = False) -> list[str]:
         f"--cpus={s.sandbox_cpus}",
         f"--pids-limit={s.sandbox_pids_limit}",
         f"--user={SANDBOX_USER}",
+        "--network=none",
+        "--tmpfs=/tmp:rw,size=64m,mode=1777",
+        "--tmpfs=/work:rw,mode=1777",
     ]
-    if read_only:
+    if s.sandbox_read_only_root:
         args.append("--read-only")
-    if not network:
-        args.append("--network=none")
     return args
+
+
+def _staged(command: str, *, workdir: str, prepare: str = "") -> str:
+    """Copy the read-only stage into the /work tmpfs, then run ``command`` from ``workdir``.
+
+    Staging and ``prepare`` abort on the first failure; ``command`` runs with errexit off.
+    """
+    return (
+        "set -e; "
+        f"cp -a {REPO_STAGE} {WORK}; "
+        f"chmod -R u+rwX {WORK}; "
+        f"if [ -d {HOME_STAGE} ]; then cp -a {HOME_STAGE} {WORK_HOME}; else mkdir -p {WORK_HOME}; fi; "
+        f"export HOME={WORK_HOME}; cd {workdir}; "
+        f"{prepare}set +e; {command}"
+    )
 
 
 def _maven_build_proxy(spec: EnvironmentSpec) -> str | None:
@@ -213,21 +199,50 @@ def module_suffix(spec: EnvironmentSpec) -> str:
     return ""
 
 
-def image_tag_for(repo_hash: str, spec: EnvironmentSpec) -> str:
-    from infosec_harness.domain.models import canonical_json, sha256_text
+def _build_boundary() -> dict:
+    """The isolation an image was built under; a weaker or different build is never reused."""
+    s = get_settings()
+    return {
+        "insecure_runtime": s.allow_insecure_runtime,
+        "runtime": s.sandbox_runtime,
+        "buildx": s.use_buildx,
+        "builder": s.buildx_builder if s.use_buildx else None,
+        "egress_network": s.build_egress_network,
+        "egress_proxy": s.build_egress_proxy,
+    }
 
-    identity = {"spec": spec.model_dump(mode="json"), "image_format": IMAGE_FORMAT_VERSION}
+
+def image_tag_for(repo_hash: str, spec: EnvironmentSpec) -> str:
+    identity = {
+        "spec": spec.model_dump(mode="json"),
+        "image_format": IMAGE_FORMAT_VERSION,
+        "build_boundary": _build_boundary(),
+    }
     if proxy := _maven_build_proxy(spec):
         identity["maven_build_proxy"] = proxy
-    return f"harness-target:{repo_hash[:12]}-{sha256_text(canonical_json(identity))[:12]}"
+    return f"harness-target:{repo_hash[:12]}-{digest(identity)[:12]}"
 
 
 async def image_exists(tag: str) -> bool:
-    res = await _run(["docker", "image", "inspect", tag], timeout=30)
-    return res.exit_code == 0
+    """True only for a reusable image this harness built for ``tag``.
+
+    The tag name alone is not provenance: the image must carry the target label and the
+    provenance label written by :func:`build_argv` for exactly this tag.
+    """
+    res = await _run(["docker", "image", "inspect", "--format", "{{json .Config.Labels}}",
+                      "--", tag], timeout=30)
+    if res.exit_code != 0:
+        return False
+    try:
+        labels = json.loads(res.stdout)
+    except ValueError:
+        return False
+    key, value = IMAGE_LABEL.split("=", 1)
+    return (isinstance(labels, dict) and labels.get(key) == value
+            and labels.get(PROVENANCE_LABEL) == tag)
 
 
-def build_argv(dockerfile: str, tag: str, context: str, egress_hosts: list[str] | None) -> list[str]:
+def build_argv(dockerfile: str, tag: str, context: str) -> list[str]:
     """Construct the build command. Uses a dedicated buildx builder (whose buildkit runs
     under the sandbox runtime, so untrusted install scripts are gVisor-contained, D2) and
     pins build egress through the allowlisting proxy (D14). Pure so it can be unit-tested."""
@@ -241,12 +256,13 @@ def build_argv(dockerfile: str, tag: str, context: str, egress_hosts: list[str] 
             proxy_args += ["--build-arg", f"{var}={s.build_egress_proxy}"]
         proxy_args += ["--build-arg", f"NO_PROXY={_NO_PROXY}",
                        "--build-arg", f"no_proxy={_NO_PROXY}"]
+    labels = ["--label", f"{PROVENANCE_LABEL}={tag}"]
     if s.use_buildx:
         return ["docker", "buildx", "build", "--builder", s.buildx_builder, "--load",
-                "-f", dockerfile, "-t", tag, "--progress=plain", "--network=default", *proxy_args,
-                context]
-    return ["docker", "build", "-f", dockerfile, "-t", tag, "--progress=plain",
-            "--network=default", *proxy_args, context]
+                "-f", dockerfile, "-t", tag, *labels, "--progress=plain", "--network=default",
+                *proxy_args, "--", context]
+    return ["docker", "build", "-f", dockerfile, "-t", tag, *labels, "--progress=plain",
+            "--network=default", *proxy_args, "--", context]
 
 
 def _builder_proxy_environment() -> dict[str, str]:
@@ -318,26 +334,17 @@ async def ensure_build_egress_boundary() -> None:
         )
 
 
-async def build_image(snapshot_path: str, spec: EnvironmentSpec, tag: str,
-                      egress_hosts: list[str] | None = None) -> ProcResult:
+async def build_image(snapshot_path: str, spec: EnvironmentSpec, tag: str) -> ProcResult:
     """Build ``tag`` from the snapshot with a Dockerfile we render outside the repo, so the
     repository can supply neither its own Dockerfile nor its own ``.dockerignore``
     (a Dockerfile-specific ignore file takes precedence over the context's).
 
     The base image is validated against the allowlist first (raises DisallowedBaseImage),
-    and build egress is pinned to the proxy/allowlist (D14)."""
+    and build egress is confined to the operator's proxy and internal network (D14)."""
     from infosec_harness.sandbox.policy import ensure_runtime_available, validate_base_image
 
     validate_base_image(spec.base_image)
     s = get_settings()
-    requested = set(egress_hosts or s.default_registry_allowlist)
-    unapproved = requested - set(s.default_registry_allowlist)
-    if unapproved:
-        from infosec_harness.sandbox.policy import SandboxUnavailable
-
-        raise SandboxUnavailable(
-            f"build requested registries outside the operator allowlist: {sorted(unapproved)!r}"
-        )
     await ensure_runtime_available("build the target environment")
     await ensure_build_egress_boundary()
     await ensure_builder()
@@ -345,7 +352,7 @@ async def build_image(snapshot_path: str, spec: EnvironmentSpec, tag: str,
         dockerfile = Path(tmp) / "Dockerfile"
         dockerfile.write_text(render_dockerfile(spec))
         Path(tmp, "Dockerfile.dockerignore").write_text(".git\n")
-        argv = build_argv(str(dockerfile), tag, snapshot_path, egress_hosts)
+        argv = build_argv(str(dockerfile), tag, snapshot_path)
         return await _run(argv, timeout=s.sandbox_build_timeout_s)
 
 
@@ -471,44 +478,25 @@ async def ensure_builder() -> None:
         )
 
 
-async def prune_images(keep: int | None = None) -> int:
-    """Manually evict old target images after the operator has quiesced assessments.
-
-    This is deliberately absent from build/probe paths: between activities an active prepared
-    environment has no container reference, and durable image leases do not exist yet. Removal
-    is non-forced so Docker still protects images referenced by containers, but that is not a
-    substitute for leases; callers must ensure no workflow can still reference the candidates.
-    """
-    keep = keep if keep is not None else get_settings().image_cache_max
-    res = await _run(["docker", "images", "--filter", f"label={IMAGE_LABEL}",
-                      "--format", "{{.ID}}\t{{.CreatedAt}}"], timeout=30)
-    if res.exit_code != 0:
-        return 0
-    rows = [line.split("\t") for line in res.stdout.splitlines() if "\t" in line]
-    # `docker images` lists newest first; keep the first `keep`, remove the rest.
-    stale = [r[0] for r in rows[keep:]]
-    removed = 0
-    for image_id in stale:
-        rm = await _run(["docker", "rmi", image_id], timeout=60)
-        removed += int(rm.exit_code == 0)
-    return removed
-
-
-async def run_shell(image: str, command: str, *, network: bool, timeout: float | None = None,
+async def run_shell(image: str, command: str, *, timeout: float | None = None,
                     idempotency_key: str | None = None) -> ProcResult:
-    """Run a shell command inside ``image`` (used by the sandbox shell tool).
+    """Run a shell command inside ``image`` (used by the sandbox shell tool and smoke checks).
+
+    The container is no-network with a read-only root; the repository and home stages are
+    copied to the /work tmpfs and the command runs from the image's working directory there.
 
     ``idempotency_key`` names the container deterministically. Executing a command is a
     write, so the tool standard (agent-playbook §5/§6) requires a stable key rather than
     assuming a retry is free: with one, a retried attempt is recognisably the same operation
-    rather than a second anonymous container, and an orphan left by a crashed worker can be
-    found and removed by name.
+    rather than a second anonymous container, and an orphan left by a crashed worker is
+    removed by name before the retry starts.
     """
     s = get_settings()
     operation = idempotency_key or f"shell:{time.monotonic_ns()}"
     name = container_name(operation)
-    argv = ["docker", "run", "-i", *_hardening_args(network=network), "--name", name]
-    argv += [image, "sh", "-c", command]
+    # The image WORKDIR is the staged module directory; run from its /work copy.
+    script = _staged(command, workdir=f'"{WORK}${{PWD#{REPO_STAGE}}}"')
+    argv = ["docker", "run", "-i", *_hardening_args(), "--name", name, image, "sh", "-c", script]
     return await _run_container(argv, name=name, timeout=timeout or s.sandbox_probe_timeout_s)
 
 
@@ -525,7 +513,12 @@ async def _remove_container(name: str) -> None:
 
 async def _run_container(argv: list[str], *, name: str, timeout: float,
                          stdin: bytes | None = None) -> ProcResult:
-    """Run a named workload and remove the engine-side container on timeout/cancellation."""
+    """Run a named workload and remove the engine-side container on timeout/cancellation.
+
+    Names are deterministic per logical operation, so a stale container left by a crashed
+    earlier attempt is removed first instead of failing the retry on a name conflict.
+    """
+    await _remove_container(name)
     try:
         result = await _run(argv, stdin=stdin, timeout=timeout)
     except asyncio.CancelledError:
@@ -551,14 +544,11 @@ async def run_probe(image: str, test_file_path: str, content: str, test_command:
     cmd = test_command.replace("{test_file}", shlex.quote(rel))
     canary = f"/tmp/harness_canary_{nonce}"
     workdir = WORK + (("/" + module_path.strip("/")) if module_path else "")
-    script = (
-        "set -e; "
-        f"cp -a {REPO_STAGE} {WORK}; "
-        f"chmod -R u+rwX {WORK}; "
-        f"if [ -d {HOME_STAGE} ]; then cp -a {HOME_STAGE} {WORK_HOME}; else mkdir -p {WORK_HOME}; fi; "
-        f"export HOME={WORK_HOME}; cd {shlex.quote(workdir)}; "
-        f"mkdir -p \"$(dirname {shlex.quote(rel)})\"; cat > {shlex.quote(rel)}; "
-        f"set +e; ( {cmd} ); rc=$?; "
+    script = _staged(
+        f"( {cmd} ); rc=$?; ",
+        workdir=shlex.quote(workdir),
+        prepare=f"mkdir -p \"$(dirname {shlex.quote(rel)})\"; cat > {shlex.quote(rel)}; ",
+    ) + (
         # Surefire can be *configured by the repository* to redirect a test's stdout to
         # target/surefire-reports/<class>-output.txt, and -Dmaven.test.redirectTestOutputToFile=
         # false does not override an explicit plugin-level <configuration> (measured under
@@ -573,11 +563,7 @@ async def run_probe(image: str, test_file_path: str, content: str, test_command:
     )
     name = "harness-probe-" + hashlib.sha256(
         f"{image}:{test_file_path}:{nonce}".encode()).hexdigest()[:16]
-    argv = ["docker", "run", "-i", *_hardening_args(network=False, read_only=s.sandbox_read_only_root),
-            "--name", name,
-            "--tmpfs=/tmp:rw,size=64m,mode=1777",
-            "--tmpfs=/work:rw,mode=1777",
-            image, "sh", "-c", script]
+    argv = ["docker", "run", "-i", *_hardening_args(), "--name", name, image, "sh", "-c", script]
     return await _run_container(argv, name=name, stdin=content.encode(),
                                 timeout=s.sandbox_probe_timeout_s)
 
@@ -763,5 +749,3 @@ __all__ = [
     "runtime_available",
     "tail",
 ]
-
-os.environ.setdefault("DOCKER_BUILDKIT", "1")

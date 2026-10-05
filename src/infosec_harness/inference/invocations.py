@@ -67,7 +67,7 @@ async def issue_invocation(value: InvocationRequest | dict[str, Any]) -> Reserva
     """Controller-only issuance. Local roots are bounded; Temporal roots must already exist."""
     request = InvocationRequest.model_validate(value)
     from infosec_harness.agents import models
-    from infosec_harness.inference.profiles import REGISTERED_AGENTS
+    from infosec_harness.inference.profiles import registered_agents
     policy = build_reservation_policy(request)
     if request.configuration_digest != policy.configuration_digest:
         raise BrokerError("identity", "Worker invocation configuration differs from the controller")
@@ -82,7 +82,7 @@ async def issue_invocation(value: InvocationRequest | dict[str, Any]) -> Reserva
              "cost_usd": limits.max_cost_usd}, elapsed_seconds=limits.max_duration_seconds)
         state.update(broker_run_id=request.run_id,
             agent_config_digests={name: trusted_config(name, durable=request.mode == "eval").digest
-                                  for name in REGISTERED_AGENTS})
+                                  for name in registered_agents()})
         async with db.session() as session:
             existing = await session.get(db.BudgetLedger, request.root_id)
             if existing is None:

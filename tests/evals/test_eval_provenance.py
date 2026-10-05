@@ -18,7 +18,7 @@ import pytest
 
 from infosec_harness.evals import baselines as baseline_store
 from infosec_harness.evals.provenance import CodeVersion
-from infosec_harness.evals.run import comparison_table
+from infosec_harness.evals.reporting import comparison_table
 
 
 def version(**kw) -> CodeVersion:
@@ -37,6 +37,7 @@ def experiment(**kw) -> SimpleNamespace:
         "metrics": {"status": "complete", "task_success_rate": 0.9, "n": 30, "n_planned": 30,
                     "schema_validity_rate": 1.0, "average_cost_usd": 0.01,
                     "p95_model_requests": 4, "budget_exhausted_count": 0, "accuracy": 0.9,
+                    "comparison_identity": {"split": "full"},
                     "distributions": {"p50_latency_s": 2.0}},
     }
     return SimpleNamespace(**{**base, **kw})
@@ -77,6 +78,27 @@ def test_a_truncated_run_cannot_become_a_baseline():
     row = experiment(metrics={**experiment().metrics, "status": "truncated", "n": 7})
     with pytest.raises(baseline_store.BaselineRefused, match="truncated"):
         baseline_store.from_experiment(row)
+
+
+def test_a_run_with_no_recorded_status_cannot_become_a_baseline():
+    """Nothing says every planned case ran, so it must not be read as complete."""
+    metrics = {k: v for k, v in experiment().metrics.items() if k != "status"}
+    with pytest.raises(baseline_store.BaselineRefused, match="records no status"):
+        baseline_store.from_experiment(experiment(metrics=metrics))
+
+
+@pytest.mark.parametrize("split", ["calibration", "held_out", None])
+def test_a_partial_split_cannot_become_a_baseline(split):
+    """A baseline promises the agent's whole dataset; a split is a different denominator."""
+    metrics = {**experiment().metrics, "comparison_identity": {"split": split}}
+    with pytest.raises(baseline_store.BaselineRefused, match="not the full dataset"):
+        baseline_store.from_experiment(experiment(metrics=metrics))
+
+
+def test_a_stub_run_cannot_become_a_baseline():
+    with pytest.raises(baseline_store.BaselineRefused, match="stub model"):
+        baseline_store.from_experiment(experiment(pricing="stub",
+                                                  model_name="stub:verdict:sonnet"))
 
 
 def test_a_run_with_no_commit_cannot_become_a_baseline():

@@ -9,9 +9,9 @@ from __future__ import annotations
 import json
 import os
 import re
+from functools import cache
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import urlsplit
 
 import yaml
 from pydantic import (
@@ -27,30 +27,30 @@ from pydantic import (
 from infosec_harness.inference.policy import canonical_policy
 from infosec_harness.inference.policy import policy_digest as effective_policy_digest
 from infosec_harness.inference.protocol import (
+    IMAGE_DIGEST_PATTERN,
     ExecutorContract,
     ExtensionBinding,
     digest,
+    fixed_https_url,
     validate_thinking_token_budget,
 )
 from infosec_harness.resources import package_root
 
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _NAME = re.compile(r"^[a-z][a-z0-9._-]{0,63}$")
-_IMAGE = re.compile(r"^sha256:[a-f0-9]{64}$")
+_IMAGE = re.compile(IMAGE_DIGEST_PATTERN)
 _SECRET_KEYS = re.compile(r"authorization|api[_-]?key|secret|credential|bearer|token", re.I)
-REGISTERED_AGENTS = (
-    "intake",
-    "recon",
-    "env-planner",
-    "build-repair",
-    "partial-build",
-    "context",
-    "probe-planner",
-    "probe-author",
-    "probe-diagnosis",
-    "probe-repair",
-    "verdict",
-)
+
+
+@cache
+def registered_agents() -> tuple[str, ...]:
+    """The registry's agent bindings are the only source of truth for catalog completeness.
+
+    Imported lazily: the agent registry imports model construction, which imports this module.
+    """
+    from infosec_harness.agents.registry import AGENT_BINDINGS
+
+    return tuple(AGENT_BINDINGS)
 
 
 class _StrictModel(BaseModel):
@@ -81,8 +81,7 @@ class ControllerChannel(_StrictModel):
     def fixed_https_origin(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        parsed = _https_url(value, require_origin=True)
-        return parsed
+        return fixed_https_url(value, require_origin=True)
 
     @field_validator("hmac_env")
     @classmethod
@@ -114,27 +113,6 @@ class ControllerChannel(_StrictModel):
         for path in (self.ca_file, self.client_cert, self.client_key):
             if path is not None and not Path(path).is_file():
                 raise ValueError("Configured TLS file is unavailable")
-
-
-def _https_url(value: str, *, require_origin: bool) -> str:
-    try:
-        parsed = urlsplit(value)
-        port = parsed.port
-    except ValueError as exc:
-        raise ValueError("Only fixed HTTPS endpoints are supported") from exc
-    if (
-        parsed.scheme != "https"
-        or not parsed.hostname
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.query
-        or parsed.fragment
-        or (require_origin and parsed.path not in {"", "/"})
-    ):
-        raise ValueError("Only fixed HTTPS endpoints are supported")
-    if port is not None and not 1 <= port <= 65535:
-        raise ValueError("HTTPS endpoint port is invalid")
-    return value.rstrip("/")
 
 
 def _reject_secret_keys(value: Any) -> None:
@@ -199,15 +177,12 @@ class ExecutorProfile(_StrictModel):
     def fixed_provider_endpoint(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        parsed = urlsplit(_https_url(value, require_origin=False))
-        if parsed.path.rstrip("/") != "/v1":
-            raise ValueError("Provider endpoint must be a fixed HTTPS /v1 URL")
-        return value.rstrip("/")
+        return fixed_https_url(value, require_path="/v1")
 
     @field_validator("ledger_origin")
     @classmethod
     def fixed_ledger_origin(cls, value: str | None) -> str | None:
-        return _https_url(value, require_origin=True) if value is not None else None
+        return fixed_https_url(value, require_origin=True) if value is not None else None
 
     @field_validator("executor_image", "supervisor_image")
     @classmethod
@@ -287,7 +262,7 @@ class BrokerConfig(_StrictModel):
 
     @model_validator(mode="after")
     def catalog_is_complete(self) -> BrokerConfig:
-        agents = set(REGISTERED_AGENTS)
+        agents = set(registered_agents())
         if set(self.agent_profiles) != agents or set(self.agent_limits) != agents:
             missing_profile = sorted(agents - set(self.agent_profiles))
             extra_profile = sorted(set(self.agent_profiles) - agents)
@@ -356,7 +331,7 @@ class BrokerConfig(_StrictModel):
         profile.require_complete()
         if profile.backend_name != backend:
             raise ValueError("Backend is not admitted by the selected access profile")
-        if _https_url(backend_endpoint, require_origin=False) != profile.endpoint:
+        if fixed_https_url(backend_endpoint) != profile.endpoint:
             raise ValueError("Backend endpoint differs from the operator-approved profile")
         if merge_system_messages != profile.merge_system_messages:
             raise ValueError("Message adaptation differs from the approved profile")
@@ -422,10 +397,4 @@ def load_broker_config(path: Path | None = None) -> BrokerConfig:
         config = BrokerConfig.model_validate_json(encoded)
     except (TypeError, ValueError) as exc:
         raise ValueError("Broker profile catalog is invalid") from exc
-
-    # Keep the registry as source of truth without importing it at module load time.
-    from infosec_harness.agents.registry import AGENT_BINDINGS
-
-    if set(config.agent_profiles) != set(AGENT_BINDINGS):
-        raise ValueError("Broker profile mappings do not match the registered agent set")
     return config

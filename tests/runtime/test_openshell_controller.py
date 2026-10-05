@@ -254,6 +254,7 @@ def native_fixture(tmp_path):
         native_id="observed-id",
         status="ready",
         ledger_native_id="ledger-observed-id",
+        ledger_profile="ledger-profile",
     )
     detail = {
         "id": lease.native_id,
@@ -489,8 +490,8 @@ async def test_run_close_authenticates_owner_then_fences_before_native_cleanup(t
             raise BrokerError("identity")
         events.append("owner")
 
-    async def fence(run_id):
-        assert store.is_run_revoked(run_id)
+    async def fence(run_id, *, root_id):
+        assert store.is_run_revoked(run_id) and root_id == "root"
         events.append("fence")
 
     core.ledger.validate_run_owner = owner
@@ -626,7 +627,12 @@ async def test_partial_owned_cleanup_is_retryable_without_early_deleted_ack(tmp_
     assert actions.count(failure) == 2
     assert lease.status == "deleted"
     assert not state["sandbox"] and not state["provider"]
-    assert adapter.store.load()[0].status == "deleted"
+    # A deleted lease's secret record is retired to a secret-free archive entry.
+    assert adapter.store.load() == [] and adapter.is_deleted(lease.lease_id)
+    archived = (adapter.store.archive / f"{lease.lease_id}.json").read_text()
+    assert lease.ledger_key not in archived and lease.ingress_key_hex not in archived
+    await adapter.revoke(lease)  # Idempotent after retirement.
+    assert actions.count(failure) == 2
 
 
 async def test_detach_timeout_destroys_owned_sandbox_and_verifies_final_absence(tmp_path, caplog):
@@ -634,7 +640,7 @@ async def test_detach_timeout_destroys_owned_sandbox_and_verifies_final_absence(
     await adapter.revoke(lease)
     assert actions == ["detach", "delete", "provider"]
     assert "IH_NATIVE_CLEANUP_FAILURE stage=provider_detach category=unavailable action=destroy_owned_sandbox" in caplog.text
-    assert lease.status == adapter.store.load()[0].status == "deleted"
+    assert lease.status == "deleted" and adapter.store.load() == []
     assert not state["sandbox"] and not state["provider"]
 
 
@@ -689,7 +695,7 @@ async def test_close_during_preflight_cannot_publish_or_create_an_executor(tmp_p
         assert args == ["--version"]
         return "openshell 0.1.2"
 
-    async def fence(run):
+    async def fence(run, *, root_id):
         assert adapter.store.is_run_revoked(run)
 
     adapter.cli.preflight, adapter.cli.run = preflight, version
@@ -698,7 +704,7 @@ async def test_close_during_preflight_cannot_publish_or_create_an_executor(tmp_p
     )
     create = asyncio.create_task(adapter.ensure(lease.run_id, lease.contract))
     await entered.wait()
-    close = asyncio.create_task(core.revoke_run(lease.run_id))
+    close = asyncio.create_task(core.revoke_run(lease.run_id, "root"))
     await asyncio.sleep(0)
     assert adapter.store.is_run_revoked(lease.run_id)
     assert not close.done()
@@ -1015,3 +1021,147 @@ async def test_remote_diagnostic_survives_completion_unknown_reconciliation(tmp_
     assert rows[request.request_id].state == "completion_unknown"
     assert lease.status == "deleted"
     assert events.count("recover") == events.count("revoke") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["extra", "duplicate_workload", "missing_supervisor"])
+async def test_native_readiness_requires_exactly_one_workload_and_supervisor(tmp_path, change):
+    adapter, lease, _, workload, supervisor, _ = native_fixture(tmp_path)
+    observed = {
+        "extra": [workload, supervisor, {**workload, "Config": {"Labels": {}}}],
+        "duplicate_workload": [workload, workload, supervisor],
+        "missing_supervisor": [workload],
+    }[change]
+
+    async def containers(_identity):
+        return observed
+
+    adapter.cli.containers = containers
+    with pytest.raises(BrokerError, match="policy"):
+        await adapter.verify(lease)
+
+
+@pytest.mark.asyncio
+async def test_malformed_native_output_fails_closed_without_raw_parse_errors(tmp_path):
+    adapter, lease, _, _, _, _ = native_fixture(tmp_path)
+
+    async def garbage(args, **kwargs):
+        return "not-json" if args[:2] == ["sandbox", "list"] else "[]"
+
+    adapter.cli.run = garbage
+    with pytest.raises(BrokerError, match="policy"):
+        await adapter.revoke(lease)
+    assert lease.status == "ready"
+
+
+@pytest.mark.asyncio
+async def test_revoke_uses_persisted_inputs_after_operator_spec_removal(tmp_path):
+    adapter, lease, state, actions = owned_cleanup_fixture(tmp_path, failure=None)
+    adapter.specs = {}
+    await adapter.revoke(lease)
+    assert lease.status == "deleted" and actions == ["detach", "delete", "provider"]
+    assert not state["provider"]
+
+
+def test_lease_state_machine_rejects_regressions(tmp_path):
+    adapter, lease, *_ = native_fixture(tmp_path)
+    with pytest.raises(BrokerError, match="identity"):
+        adapter._transition(lease, "creating")
+    adapter._transition(lease, "revoked")
+    with pytest.raises(BrokerError, match="identity"):
+        adapter._transition(lease, "ready")
+    assert LeaseStore(adapter.store.directory).load()[0].status == "revoked"
+
+
+@pytest.mark.asyncio
+async def test_ready_lease_reverification_does_not_hold_the_global_lock(tmp_path):
+    adapter, lease, *_ = native_fixture(tmp_path)
+    entered, release = asyncio.Event(), asyncio.Event()
+    original = adapter.verify
+
+    async def slow_verify(target):
+        entered.set()
+        await release.wait()
+        return await original(target)
+
+    adapter.verify = slow_verify
+    task = asyncio.create_task(adapter.ensure(lease.run_id, lease.contract))
+    await entered.wait()
+    assert not adapter.lock.locked()  # Other runs may provision or close meanwhile.
+    release.set()
+    assert await task is lease
+
+
+@pytest.mark.asyncio
+async def test_startup_reconciliation_drives_recovered_leases_toward_deletion(tmp_path, caplog):
+    adapter, lease, state, actions = owned_cleanup_fixture(tmp_path, failure=None)
+    open_ready = replace(lease, lease_id="22345678-1234-1234-1234-123456789abc", status="ready",
+                         run_id="open-run")
+    interrupted = replace(lease, lease_id="32345678-1234-1234-1234-123456789abc",
+                          status="creating", native_id="", ledger_native_id="")
+    for record in (lease, open_ready, interrupted):
+        adapter.store.save(record)
+    restarted = OpenShellAdapter(adapter.cli, store=LeaseStore(adapter.store.directory),
+                                 deployment=adapter.deployment, specs=adapter.specs)
+    await restarted.reconcile_recovered()
+    assert lease.lease_id not in restarted.leases and restarted.is_deleted(lease.lease_id)
+    assert restarted.leases[open_ready.lease_id].status == "ready"
+    # Interrupted creation with verified absence of every owned resource is retired.
+    assert restarted.is_deleted(interrupted.lease_id)
+    assert "IH_NATIVE_RECONCILIATION_FAILURE" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_startup_reconciliation_never_adopts_uncorroborated_creation(tmp_path, caplog):
+    adapter, lease, *_ = native_fixture(tmp_path)
+    interrupted = replace(lease, lease_id="42345678-1234-1234-1234-123456789abc",
+                          status="creating", native_id="", ledger_native_id="")
+    adapter.store.save(interrupted)
+    calls = []
+
+    async def run(args, **kwargs):
+        calls.append(args)
+        if args[:2] == ["sandbox", "list"]:
+            # A selector match exists, but its creation receipt was never persisted.
+            return json.dumps({"next_page_token": "", "sandboxes": [
+                {"id": "unknown", "name": interrupted.name, "labels": interrupted.labels()}]})
+        raise AssertionError(args)
+
+    adapter.cli.run = run
+    restarted = OpenShellAdapter(adapter.cli, store=LeaseStore(adapter.store.directory),
+                                 deployment=adapter.deployment, specs=adapter.specs)
+    await restarted.reconcile_recovered()
+    assert restarted.leases[interrupted.lease_id].status == "quarantined"
+    assert all(args[:2] == ["sandbox", "list"] for args in calls)
+    assert "IH_NATIVE_RECONCILIATION_FAILURE state=quarantined category=identity" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_startup_reconciliation_revokes_ready_lease_of_a_closed_run(tmp_path):
+    adapter, lease, _, actions = owned_cleanup_fixture(tmp_path, failure=None)
+    lease.status = "ready"
+    adapter.store.save(lease)
+    adapter.store.revoke_run(lease.run_id)
+    restarted = OpenShellAdapter(adapter.cli, store=LeaseStore(adapter.store.directory),
+                                 deployment=adapter.deployment, specs=adapter.specs)
+    await restarted.reconcile_recovered()
+    assert restarted.is_deleted(lease.lease_id) and "delete" in actions
+
+
+@pytest.mark.asyncio
+async def test_ledger_database_fault_is_unavailable_but_bad_request_is_identity(tmp_path):
+    core, request, lease, _, rows = controller_fixture(tmp_path)
+
+    async def broken(_identity):
+        raise OSError("database host secret")
+
+    core.ledger.get = broken
+    core.adapter.leases[lease.lease_id].ledger_key = "ledger-token"
+    headers = {"Authorization": "Bearer ledger-token"}
+    body = canonical_bytes({"request": request.model_dump(mode="json"), "lease_id": "lease"})
+    with pytest.raises(BrokerError) as error:
+        await core.handle("/v1/ledger/claim", body, headers)
+    assert error.value.code == "unavailable" and "secret" not in str(error.value)
+    with pytest.raises(BrokerError) as error:
+        await core.handle("/v1/ledger/claim", canonical_bytes({"lease_id": "lease"}), headers)
+    assert error.value.code == "identity"

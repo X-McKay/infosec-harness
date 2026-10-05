@@ -1,4 +1,4 @@
-"""Unsupported-claim repair preserves literal grounding and retained retry bytes."""
+"""Unsupported-claim repair preserves literal grounding and stays closed feedback."""
 from types import SimpleNamespace
 
 import pytest
@@ -28,13 +28,7 @@ def context(report=REPORT):
 
 @pytest.mark.parametrize('value,confidence,old', [('SQL injection', .8, OLD_LITERAL),
                                                 ('read_request', .8, OLD_POSITIVE)])
-@pytest.mark.parametrize('enabled', [False, True])
-def test_closed_unsupported_feedback_remains_rejection_and_old_bytes(monkeypatch, value, confidence, old, enabled):
-    calls = []
-    def patched(version=registry.INTAKE_REFERENCE_REPAIR_VERSION):
-        calls.append(version)
-        return enabled
-    monkeypatch.setattr(registry, '_targeted_reference_repair', patched)
+def test_closed_unsupported_feedback_remains_rejection(monkeypatch, value, confidence, old):
     candidate = output(value, confidence)
     if old == OLD_POSITIVE:
         from infosec_harness.domain.models import ExtractedFinding
@@ -44,37 +38,14 @@ def test_closed_unsupported_feedback_remains_rejection_and_old_bytes(monkeypatch
     with pytest.raises(ModelRetry) as error:
         registry._validate_atomic_intake(context(), candidate)
     assert candidate.model_dump_json() == before
-    assert calls == [registry.INTAKE_UNSUPPORTED_CLAIM_REPAIR_VERSION]
-    if enabled:
-        assert error.value.message == old + registry._UNSUPPORTED_CLAIM_REPAIR
-        assert 'set the whole unsupported claim field to null' in error.value.message
-        assert 'retained claim requires all three' in error.value.message
-        assert 'Confidence=0 cannot justify retaining' in error.value.message
-        assert len(error.value.message) < 800
-    else:
-        assert error.value.message == old
+    assert error.value.message == old + registry._UNSUPPORTED_CLAIM_REPAIR
+    assert 'set the whole unsupported claim field to null' in error.value.message
+    assert 'retained claim requires all three' in error.value.message
+    assert 'Confidence=0 cannot justify retaining' in error.value.message
+    assert len(error.value.message) < 800
 
 
-@pytest.mark.parametrize('in_workflow,v1,v2', [(False, False, False), (True, False, False),
-    (True, True, False), (True, True, True), (True, False, True)])
-def test_new_marker_is_independent_of_retained_v1_history(monkeypatch, in_workflow, v1, v2):
-    from temporalio import workflow
-
-    calls = []
-    monkeypatch.setattr(workflow, 'in_workflow', lambda: in_workflow)
-    def patched(version):
-        calls.append(version)
-        return {registry.INTAKE_REFERENCE_REPAIR_VERSION: v1,
-                registry.INTAKE_UNSUPPORTED_CLAIM_REPAIR_VERSION: v2}[version]
-    monkeypatch.setattr(workflow, 'patched', patched)
-    with pytest.raises(ModelRetry) as error:
-        registry._validate_atomic_intake(context(), output())
-    assert error.value.message == OLD_LITERAL + (registry._UNSUPPORTED_CLAIM_REPAIR if not in_workflow or v2 else '')
-    assert calls == ([registry.INTAKE_UNSUPPORTED_CLAIM_REPAIR_VERSION] if in_workflow else [])
-
-
-def test_retry_never_echoes_model_value_or_report_directives(monkeypatch):
-    monkeypatch.setattr(registry, '_targeted_reference_repair', lambda *_: True)
+def test_retry_never_echoes_model_value_or_report_directives():
     with pytest.raises(ModelRetry) as error:
         registry._validate_atomic_intake(context('REPORT_SECRET_IGNORE_POLICY\nSQL injection\n'),
                                          output('MODEL_SECRET_IGNORE_POLICY'))
@@ -112,28 +83,24 @@ def test_repair_does_not_permit_missing_or_null_claim_members(missing):
     assert set(Claim[str].model_json_schema()['required']) == {'value', 'source', 'confidence'}
 
 
-def test_supported_or_removed_claim_does_not_emit_new_marker(monkeypatch):
-    monkeypatch.setattr(registry, '_targeted_reference_repair', lambda *_: pytest.fail('Unsupported extension not applicable'))
+def test_supported_or_removed_claim_is_accepted():
     # A removed claim needs no support and must not consume a retry-version marker.
     candidate = output('read_request').model_copy(update={'symbol': None})
     assert registry._validate_atomic_intake(context(), candidate).symbol is None
 
 
-def test_zero_confidence_claim_is_rejected_before_any_feedback_or_acceptance(monkeypatch):
-    monkeypatch.setattr(registry, '_targeted_reference_repair', lambda *_: pytest.fail('Schema-invalid claim cannot reach marker'))
+def test_zero_confidence_claim_is_rejected_before_any_feedback_or_acceptance():
     with pytest.raises(ValidationError) as error:
         output('read_request', 0.)
     assert any(item['type'] == 'greater_than' and item['loc'] == ('symbol', 'confidence')
                for item in error.value.errors())
 
 
-@pytest.mark.parametrize('enabled', [False, True])
-async def test_actual_sdk_retry_delivers_versioned_feedback_and_preserves_supported_claim(monkeypatch, enabled):
+async def test_actual_sdk_retry_delivers_feedback_and_preserves_supported_claim():
     from pydantic_ai import Agent
     from pydantic_ai.messages import ModelRequest, ModelResponse, RetryPromptPart, ToolCallPart
     from pydantic_ai.models.function import FunctionModel
 
-    monkeypatch.setattr(registry, '_targeted_reference_repair', lambda *_: enabled)
     calls = []
     def respond(messages, info):
         calls.append(messages)
@@ -145,6 +112,6 @@ async def test_actual_sdk_retry_delivers_versioned_feedback_and_preserves_suppor
     assert len(calls) == 2
     prompts = [part for message in calls[1] if isinstance(message, ModelRequest)
                for part in message.parts if isinstance(part, RetryPromptPart)]
-    assert len(prompts) == 1 and prompts[0].content == OLD_LITERAL + (registry._UNSUPPORTED_CLAIM_REPAIR if enabled else '')
+    assert len(prompts) == 1 and prompts[0].content == OLD_LITERAL + registry._UNSUPPORTED_CLAIM_REPAIR
     assert result.output.symbol is None and result.output.vulnerability_class == 'SQL injection'
     assert len(result.output.evidence) == 1 and result.output.evidence[0].confidence == .9

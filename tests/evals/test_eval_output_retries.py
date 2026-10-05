@@ -5,7 +5,7 @@ import json
 
 import pytest
 import yaml
-from pydantic_ai import capture_run_messages
+from pydantic_ai import Agent, capture_run_messages
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
     ModelRequest,
@@ -19,8 +19,9 @@ from pydantic_ai.usage import UsageLimits
 from sqlalchemy import select
 
 from infosec_harness.agents.deps import AgentDeps
-from infosec_harness.agents.intake_contracts import retained_intake_spec
 from infosec_harness.agents.registry import build_agent
+from infosec_harness.agents.validators import validate_intake_evidence
+from infosec_harness.domain.models import ExtractedFinding
 from infosec_harness.evals.output_retries import output_retry_summary
 
 PREFIX = "Extraction violates its evidence contract:\n- "
@@ -71,6 +72,21 @@ def test_unknown_provider_tool_schema_and_model_strings_are_not_exported():
     assert "terminal" not in json.dumps(summary) and "cause" not in json.dumps(summary)
 
 
+def test_guard_rules_followed_by_host_repair_guidance_are_classified():
+    """The intake output validator appends repair guidance after the guard's own message.
+    Regression: v1 matched whole items, so the current protocol's retries were never
+    classified."""
+    content = (PREFIX + "A literal line number is absent from its evidence quote.\n"
+               "Fix only unsupported start_line or end_line claims.")
+    summary = output_retry_summary([retry(content)], agent="intake")
+    assert summary["version"] == "output-retries/v2"
+    assert summary["intake_guard_retry_parts"] == 1
+    assert summary["intake_guard_category_counts"]["literal_line_missing"] == 1
+    unknown_first_line = PREFIX + "SECRET_RULE\nA literal line number is absent from its evidence quote."
+    assert output_retry_summary([retry(unknown_first_line)], agent="intake")[
+        "unclassified_retry_parts"] == 1
+
+
 def test_empty_capture_is_unknown_and_other_agent_output_names_are_not_guessed():
     assert output_retry_summary([], agent="intake")["capture_status"] == "unknown"
     summary = output_retry_summary([retry(PREFIX + "Evidence names an unknown extraction field.")],
@@ -94,6 +110,7 @@ def test_scan_bounds_and_truncation_are_explicit(messages, count):
 
 @pytest.mark.parametrize("exhausted", [False, True])
 async def test_real_sdk_guard_retry_then_valid_or_four_response_exhaustion(exhausted):
+    """The production evidence guard, run by the real SDK retry loop, on flat proposals."""
     calls = []
 
     def respond(_messages, info):
@@ -101,15 +118,16 @@ async def test_real_sdk_guard_retry_then_valid_or_four_response_exhaustion(exhau
         value = BAD if exhausted or len(calls) == 1 else VALID
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, value)])
 
-    agent = build_agent("intake", durable=False, production_transport=True,
-                        spec_override=retained_intake_spec(), atomic_output=False)
-    with agent.override(model=FunctionModel(respond)), capture_run_messages() as messages:
+    agent = Agent(FunctionModel(respond), deps_type=AgentDeps, output_type=ExtractedFinding,
+                  retries=3)
+    agent.output_validator(validate_intake_evidence)
+    deps = AgentDeps(repo_path="/nonexistent", report_text=REPORT)
+    with capture_run_messages() as messages:
         if exhausted:
             with pytest.raises(UnexpectedModelBehavior):
-                await agent.run("synthetic", deps=AgentDeps(repo_path="/nonexistent", report_text=REPORT),
-                                usage_limits=UsageLimits(request_limit=4))
+                await agent.run("synthetic", deps=deps, usage_limits=UsageLimits(request_limit=4))
         else:
-            result = await agent.run("synthetic", deps=AgentDeps(repo_path="/nonexistent", report_text=REPORT),
+            result = await agent.run("synthetic", deps=deps,
                                      usage_limits=UsageLimits(request_limit=4))
             assert result.output.cwe == "CWE-78" and result.usage.requests == 2
     summary = output_retry_summary(messages, agent="intake")
@@ -128,35 +146,33 @@ async def test_eval_persists_observations_for_accepted_and_protocol_failed_outpu
     from infosec_harness.agents import registry
     from infosec_harness.evals import run
     from infosec_harness.persistence import db
-    from infosec_harness.settings import get_settings
 
-    path = tmp_path / "intake/evals/dataset.yaml"
-    path.parent.mkdir(parents=True)
+    path = tmp_path / "dataset.yaml"
     path.write_text(yaml.safe_dump({"version": "synthetic-retry-regression", "cases": [
         {"name": "synthetic-finding", "category": "smoke", "payload": {"report": REPORT},
          "expected": "CWE-78"}]}))
-    monkeypatch.setattr(run, "get_settings", lambda: get_settings().model_copy(update={"agents_dir": tmp_path}))
     calls = []
 
     def respond(_messages, info):
         calls.append(1)
         if len(calls) == 2 and protocol_failure:
             raise UnexpectedModelBehavior("SECRET_PROVIDER", body="SECRET_PROVIDER_BODY")
-        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, BAD if len(calls) == 1 else VALID)])
+        # First an atomic claim citing a source line the report does not have, then a valid one.
+        source = "S999999" if len(calls) == 1 else "S000001"
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {"cwe": {
+            "value": "CWE-78", "source": {"start_id": source}, "confidence": 1}})])
 
-    agent = build_agent("intake", durable=False, production_transport=True,
-                        spec_override=retained_intake_spec(), atomic_output=False)
+    agent = build_agent("intake", durable=False, production_transport=True)
     monkeypatch.setattr(registry, "build_agent", lambda *_args, **_kwargs: agent)
-    monkeypatch.setattr(registry, "load_spec", lambda *_args, **_kwargs: retained_intake_spec())
     with agent.override(model=FunctionModel(respond)):
-        exp_id = await run.run_experiment("intake")
+        exp_id = await run.run_experiment("intake", dataset=path)
     async with db.session() as session:
         experiment = await session.get(db.EvalExperiment, exp_id)
         row = (await session.execute(select(db.EvalCaseResult).where(
             db.EvalCaseResult.experiment_id == exp_id))).scalar_one()
     summary = row.scores["output_retry_summary"]
     assert summary == experiment.metrics["attempts"][0]["output_retry_summary"]
-    assert summary["intake_guard_retry_parts"] == 1
+    assert summary["retry_parts_observed"] == 1
     assert row.passed is (not protocol_failure)
     assert run.EVALUATOR_VERSION == "deterministic-agent-output-v12"
     if protocol_failure:

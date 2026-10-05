@@ -18,7 +18,13 @@ from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
 
-from infosec_harness.persistence.db import Base, alembic_config, upgrade_to_head
+from infosec_harness.persistence.db import (
+    Base,
+    SchemaNotAtHead,
+    _bootstrap,
+    alembic_config,
+    upgrade_to_head,
+)
 
 
 def _config(db_path: Path):
@@ -70,13 +76,60 @@ def test_downgrade_returns_to_the_baseline(migrated_db):
     assert tables <= {"alembic_version"}, f"downgrade left tables behind: {tables}"
 
 
-def test_upgrade_adopts_a_pre_alembic_database():
-    """A database built by the old `create_all` has no version row. It must still be able
-    to pick up later revisions, or a deployed harness can never gain a column."""
+def _bootstrap_sync(path: Path) -> None:
+    """Run the startup bootstrap (what ``db.create_all`` runs) against one SQLite file."""
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        with engine.begin() as conn:
+            _bootstrap(conn)
+    finally:
+        engine.dispose()
+
+
+def _tables(path: Path) -> set[str]:
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        return set(inspect(engine).get_table_names())
+    finally:
+        engine.dispose()
+
+
+def test_bootstrap_refuses_a_database_behind_head_and_migration_still_succeeds():
+    """Regression: bootstrap used to run create_all over a versioned database, creating the
+    newest tables early, so the pending migration then failed with "table inference_requests
+    already exists". A database behind head must be refused untouched, and migrate must work."""
     with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "legacy.db"
-        # Revision 0001 *is* what the old create_all produced; dropping the version table
-        # leaves exactly the database a deployment has today.
+        path = Path(tmp) / "behind.db"
+        command.upgrade(_config(path), "0004")
+        before = _tables(path)
+        assert "inference_requests" not in before
+        with pytest.raises(SchemaNotAtHead, match="harness migrate"):
+            _bootstrap_sync(path)
+        assert _tables(path) == before
+        head = ScriptDirectory.from_config(alembic_config()).get_current_head()
+        assert upgrade_to_head(f"sqlite+aiosqlite:///{path}") == head
+        assert "inference_requests" in _tables(path)
+        _bootstrap_sync(path)  # at head: accepted as is
+
+
+def test_bootstrap_builds_an_empty_database_at_head():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "fresh.db"
+        _bootstrap_sync(path)
+        head = ScriptDirectory.from_config(alembic_config()).get_current_head()
+        engine = create_engine(f"sqlite:///{path}")
+        try:
+            with engine.connect() as conn:
+                assert MigrationContext.configure(conn).get_current_revision() == head
+        finally:
+            engine.dispose()
+        # Stamped at head, so migration is the no-op it should be.
+        assert upgrade_to_head(f"sqlite+aiosqlite:///{path}") == head
+
+
+def test_bootstrap_refuses_unversioned_tables():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "foreign.db"
         command.upgrade(_config(path), "0001")
         engine = create_engine(f"sqlite:///{path}")
         try:
@@ -84,13 +137,5 @@ def test_upgrade_adopts_a_pre_alembic_database():
                 conn.execute(text("DROP TABLE alembic_version"))
         finally:
             engine.dispose()
-
-        head = ScriptDirectory.from_config(alembic_config()).get_current_head()
-        assert upgrade_to_head(f"sqlite+aiosqlite:///{path}") == head
-
-        engine = create_engine(f"sqlite:///{path}")
-        try:
-            columns = {c["name"] for c in inspect(engine).get_columns("agent_invocations")}
-        finally:
-            engine.dispose()
-        assert {"requests", "repeated_tool_calls"} <= columns
+        with pytest.raises(SchemaNotAtHead, match="no migration version"):
+            _bootstrap_sync(path)

@@ -56,7 +56,7 @@ async def request_payload(model_id: str, settings: dict[str, Any], *, production
         provider = OpenAIProvider(openai_client=client)
         if production_adapter:
             backend = models.load_models_config().backends["gateway"]
-            model = models._CompatOpenAIChatModel(
+            model = models.CompatOpenAIChatModel(
                 model_id,
                 provider=provider,
                 merge_system=backend.merge_system_messages,

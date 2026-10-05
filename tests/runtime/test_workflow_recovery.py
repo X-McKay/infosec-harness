@@ -20,7 +20,8 @@ async def test_cancellation_survives_pending_and_running_workflows(started, tmp_
 
     from infosec_harness.domain.models import FindingInput
     from infosec_harness.persistence import db, lifecycle, store
-    from infosec_harness.workflows import activities, runner, worker
+    from infosec_harness.workflows import activities, worker
+    from infosec_harness.workflows import submission as runner
     from infosec_harness.workflows.workflows import TriageBatchWorkflow
 
     await db.create_all()

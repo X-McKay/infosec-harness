@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from infosec_harness.domain.models import (
     Finding,
     InconclusiveReason,
@@ -32,12 +34,14 @@ REACHABILITY_WEIGHT = {
     Reachability.neutralized: 0.4,
     Reachability.unreachable: 0.2,
 }
+
+
+@dataclass(frozen=True)
 class PreFilterResult:
     """Either continue triage, or short-circuit with an early verdict."""
 
-    def __init__(self, verdict: Verdict | None, note: str | None = None):
-        self.verdict = verdict
-        self.note = note
+    verdict: Verdict | None
+    note: str | None = None
 
     @property
     def continue_triage(self) -> bool:

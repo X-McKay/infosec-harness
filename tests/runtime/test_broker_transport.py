@@ -487,3 +487,90 @@ def test_remote_error_diagnostics_are_sanitized_and_transient_type_is_preserved(
 
     error = _response_error(503, canonical_bytes({"error": "unavailable", "diagnostic": diagnostic}))
     assert type(error) is TransientBrokerError and error.diagnostic == diagnostic
+
+
+@pytest.mark.parametrize("status,body,code", [
+    (502, b"<html>Bad gateway</html>", "unavailable"),
+    (503, b"", "unavailable"),
+    (409, b'{"error": "conflict"}', "unavailable"),  # Non-canonical body: status only.
+    (409, canonical_bytes({"error": "conflict"}), "conflict"),
+    (400, canonical_bytes({"error": "not-a-code"}), "unavailable"),
+])
+async def test_json_channel_checks_status_before_parsing(status, body, code):
+    """A gateway error page is infrastructure unavailability, never an identity failure."""
+    from infosec_harness.inference.http_service import JsonChannel
+
+    channel = JsonChannel(transport=httpx.MockTransport(lambda _r: httpx.Response(status, content=body)))
+    with pytest.raises(BrokerError) as error:
+        await channel.post("https://executor.test/v1/infer", b"{}", {})
+    assert error.value.code == code
+
+
+@pytest.mark.parametrize("body", [b"<html>ok</html>", b'{"a": 1}', b"[]",
+                                  canonical_bytes({"a": 1}) + b" "])
+async def test_json_channel_malformed_success_is_invalid_response(body):
+    from infosec_harness.inference.http_service import JsonChannel
+
+    channel = JsonChannel(transport=httpx.MockTransport(lambda _r: httpx.Response(200, content=body)))
+    with pytest.raises(BrokerError) as error:
+        await channel.post("https://executor.test/v1/infer", b"{}", {})
+    assert error.value.code == "invalid_response"
+
+
+async def test_json_channel_bounds_response_and_maps_transport_failure():
+    from infosec_harness.inference.http_service import JsonChannel
+    from infosec_harness.inference.protocol import MAX_BODY_BYTES
+
+    big = JsonChannel(transport=httpx.MockTransport(
+        lambda _r: httpx.Response(200, content=b"x" * (MAX_BODY_BYTES + 1))))
+    with pytest.raises(BrokerError) as error:
+        await big.post("https://executor.test/v1/infer", b"{}", {})
+    assert error.value.code == "invalid_response"
+
+    def refuse(_request):
+        raise httpx.ConnectError("refused secret-host")
+
+    down = JsonChannel(transport=httpx.MockTransport(refuse))
+    with pytest.raises(BrokerError) as error:
+        await down.post("https://executor.test/v1/infer", b"{}", {})
+    assert error.value.code == "unavailable" and "secret-host" not in str(error.value)
+
+
+def test_request_parser_is_identity_and_response_parser_is_invalid_response():
+    from infosec_harness.inference.http_service import parse_request, parse_response
+
+    for parse, code in ((parse_request, "identity"), (parse_response, "invalid_response")):
+        for body in (b"", b"[]", b'{"a":1,"a":2}', b'{"a":NaN}', b'{"b":1, "a":2}'):
+            with pytest.raises(BrokerError) as error:
+                parse(body)
+            assert error.value.code == code
+        assert parse(canonical_bytes({"a": 1})) == {"a": 1}
+
+
+@pytest.mark.parametrize("value", ["http://h", "https://", "https://u@h", "https://u:p@h",
+                                   "https://h?q=1", "https://h#f", "https://h:0", "https://h:70000",
+                                   "https://h:x"])
+def test_fixed_https_url_rejects_ambiguous_authority(value):
+    from infosec_harness.inference.protocol import fixed_https_url
+
+    with pytest.raises(ValueError):
+        fixed_https_url(value)
+
+
+def test_fixed_https_url_origin_and_path_requirements():
+    from infosec_harness.inference.protocol import fixed_https_url
+
+    assert fixed_https_url("https://h:8443/") == "https://h:8443"
+    assert fixed_https_url("https://h/v1/", require_path="/v1") == "https://h/v1"
+    with pytest.raises(ValueError):
+        fixed_https_url("https://h/v1", require_origin=True)
+    with pytest.raises(ValueError):
+        fixed_https_url("https://h/v2", require_path="/v1")
+
+
+def test_error_codes_are_the_closed_literal():
+    from typing import get_args
+
+    from infosec_harness.inference.protocol import ERROR_CODES, ErrorCode
+
+    assert frozenset(get_args(ErrorCode)) == ERROR_CODES and "unavailable" in ERROR_CODES

@@ -1,26 +1,25 @@
 """Validation orchestration requires explicit inference and preserves output boundaries."""
 
-import importlib
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from conftest import load_script
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture
-def validation(monkeypatch):
-    monkeypatch.syspath_prepend(str(ROOT / "scripts"))
-    return importlib.import_module("service_validation")
+def validation():
+    return load_script("service_validation")
 
 
 @pytest.fixture
 def deployment(validation, monkeypatch):
-    runtime = importlib.import_module("runtime_readiness")
-    model = importlib.import_module("model_connectivity")
+    runtime = load_script("runtime_readiness")
+    model = load_script("model_connectivity")
     profile = {
         "source_commit": "a" * 40,
         "mode": "live",

@@ -1,24 +1,19 @@
 """Readiness uses SELECT-only persistence and actual recent queue observations."""
 
-import importlib.util
 import json
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from conftest import load_script
 from google.protobuf.timestamp_pb2 import Timestamp
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from infosec_harness.settings import Settings
 
-SPEC = importlib.util.spec_from_file_location(
-    "runtime_readiness", Path(__file__).resolve().parents[2] / "scripts/runtime_readiness.py"
-)
-readiness = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(readiness)
+readiness = load_script("runtime_readiness")
 
 
 def settings(tmp_path, **kwargs):

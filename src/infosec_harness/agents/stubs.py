@@ -17,11 +17,22 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, User
 from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-# The warm-up commands and the image table the validators enforce. Sharing them is the point: a
-# stub plan the validators would reject makes every offline test a lie, and a stub that carried
-# its own copy of the Maven recipe is exactly how the JUnit-5-only warm-up survived here after
-# being found wrong for the corpus.
-from infosec_harness.agents.validators import MAVEN_WARMUP_COMMANDS, maven_image_for_release
+# The commands, paths, warm-ups and image table the validators enforce. Sharing them is the
+# point: a stub plan the validators would reject makes every offline test a lie, and a stub that
+# carried its own copy of the Maven recipe is exactly how the JUnit-5-only warm-up survived here
+# after being found wrong for the corpus.
+from infosec_harness.agents.ecosystem_contract import (
+    CPANM_INSTALL_COMMAND,
+    JS_TEST_COMMANDS,
+    MAVEN_INSTALL_COMMAND,
+    MAVEN_TEST_COMMAND,
+    MAVEN_WARMUP_COMMANDS,
+    PERL5LIB_PATH,
+    PROVE_TEST_COMMAND,
+    PYTEST_TEST_COMMAND,
+    RUNTIME_HOME,
+    maven_image_for_release,
+)
 
 
 def _prompt_text(messages: list[ModelMessage]) -> str:
@@ -57,13 +68,7 @@ def _primary_language(stack: dict | None) -> str:
 #     exists: a repository `jest.config.js` or `vitest.config.js` with `silent: true` erases all
 #     three HARNESS_ markers while still exiting 0, and `--silent=false` restores them. mocha and
 #     node:test never capture a test's stdout, so they need no flag.
-_JS_TEST_COMMANDS = {
-    "jest": "npx jest --silent=false --runTestsByPath {test_file}",
-    "vitest": "npx vitest run --silent=false {test_file}",
-    "mocha": "npx mocha {test_file}",
-    "node:test": "node --test {test_file}",
-    "jasmine": "npx jasmine {test_file}",
-}
+# The table itself is ecosystem_contract.JS_TEST_COMMANDS, the one the validators check against.
 # ts-jest type-checks the probe, so a TS project also needs the *type* declarations for whichever
 # runner's globals the probe uses: without @types/jest the run fails with
 # "TS2582: Cannot find name 'test'" and reports `Tests: 0 total`, never executing the probe.
@@ -71,11 +76,11 @@ _TS_JEST_PACKAGES = ("ts-jest", "typescript", "@types/jest", "@types/node")
 
 
 def _node_plan(stack: dict, manifests: set[str], typescript: bool) -> dict:
-    frameworks = [f for f in (stack.get("test_frameworks") or []) if f in _JS_TEST_COMMANDS]
+    frameworks = [f for f in (stack.get("test_frameworks") or []) if f in JS_TEST_COMMANDS]
     runner = frameworks[0] if frameworks else "jest"
     install = ["npm ci --no-audit --no-fund" if "package-lock.json" in manifests
                else "npm install --no-audit --no-fund"]
-    command = _JS_TEST_COMMANDS[runner]
+    command = JS_TEST_COMMANDS[runner]
     note = f"stub heuristic: node, runner {runner}"
     if typescript:
         # A .ts probe reaches nothing under a bare `npx jest`: the default babel transform has no
@@ -131,8 +136,10 @@ def _env_plan(stack: dict | None) -> dict:
         if "pyproject.toml" in manifests or "setup.py" in manifests:
             install.insert(0, "python -m pip install --no-cache-dir --user -e .")
         return {"base_image": "python:3.12-slim", "install_commands": install,
-                "test_command": "python -m pytest -q -s -o addopts= {test_file}",
-                "env": {"PYTHONDONTWRITEBYTECODE": "1", "PATH": "/work/home/.local/bin:/usr/local/bin:/usr/bin:/bin"},
+                "test_command": PYTEST_TEST_COMMAND,
+                # `pip --user` installs under HOME at build time; the probe runs from its copy.
+                "env": {"PYTHONDONTWRITEBYTECODE": "1",
+                        "PATH": f"{RUNTIME_HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin"},
                 "rationale": "stub heuristic: python"}
     if lang in {"javascript", "typescript"}:
         return _node_plan(stack, manifests, typescript=lang == "typescript")
@@ -159,14 +166,8 @@ def _env_plan(stack: dict | None) -> dict:
                 # -Dmaven.repo.local is not optional: Maven reads user.home, which is /root for
                 # the sandbox user's unmapped uid. Build writes under /opt/home; the probe reads
                 # the /work/home copy of it.
-                "install_commands": [
-                    "mvn -B -Dmaven.repo.local=/opt/home/.m2/repository -DskipTests test-compile",
-                    MAVEN_WARMUP_COMMANDS[framework]],
-                "test_command": ("mvn -B -o -Dmaven.repo.local=/work/home/.m2/repository "
-                                 "test-compile "
-                                 "org.apache.maven.plugins:maven-surefire-plugin:3.2.5:test "
-                                 "-Dtest=HarnessProbeTest "
-                                 "-Dmaven.test.redirectTestOutputToFile=false"),
+                "install_commands": [MAVEN_INSTALL_COMMAND, MAVEN_WARMUP_COMMANDS[framework]],
+                "test_command": MAVEN_TEST_COMMAND,
                 "rationale": f"stub heuristic: maven, {framework}"}
     if lang == "perl":
         # The shape verified against the corpus (see skills/build-cpanm): --local-lib because the
@@ -176,13 +177,13 @@ def _env_plan(stack: dict | None) -> dict:
         # `prove` is perl core, so nothing installs it -- `App::prove` is not a distribution.
         return {"base_image": "perl:5.38-slim",
                 "system_packages": ["gcc", "make", "libc6-dev"],
-                "install_commands": ["cpanm --notest --local-lib=/opt/home/perl5 --installdeps ."],
-                "env": {"PERL5LIB": "/opt/home/perl5/lib/perl5"},
+                "install_commands": [CPANM_INSTALL_COMMAND],
+                "env": {"PERL5LIB": PERL5LIB_PATH},
                 # -Ilib, not just -v: measured on a fixture whose modules live in blib/lib and
                 # one whose live in src/perl, a probe with no `use lib` and a prove with no -I
                 # dies on `Can't locate Runner.pm`. The recipe in skills/build-cpanm says both
                 # flags are load-bearing and this stub used to carry only one of them.
-                "test_command": "prove -v -Ilib {test_file}", "rationale": "stub heuristic: perl"}
+                "test_command": PROVE_TEST_COMMAND, "rationale": "stub heuristic: perl"}
     return {"base_image": "debian:bookworm-slim", "install_commands": [],
             "test_command": "sh {test_file}", "rationale": "stub heuristic: unknown stack"}
 

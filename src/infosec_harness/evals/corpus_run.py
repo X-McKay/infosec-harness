@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
+from infosec_harness.evals._json import write_json
+from infosec_harness.evals.provenance import code_version
 from infosec_harness.evals.trajectory import scores_skills
 
 
@@ -61,7 +64,8 @@ def _stage_results(case, out) -> list[tuple[str, bool | None]]:
 
 async def score_corpus(*, language: str = "python", sandbox: bool | None = None,
                        repeat: int = 1, manifest_path: Path | None = None,
-                       dataset: str = "seed", limit: int = 0) -> dict:
+                       dataset: str = "seed", limit: int = 0,
+                       report: Path | None = None) -> dict:
     """Run the seeded corpus end-to-end and score verdicts against ground truth (§10.2).
 
     Headline metrics: per-class recall and the false-negative rate on truly exploitable
@@ -74,7 +78,10 @@ async def score_corpus(*, language: str = "python", sandbox: bool | None = None,
     so a single pass has enough run-to-run variance (measured: one agent's skill-evocation
     rate moved between 0% and 44% with no change at all) that comparing two one-pass runs
     cannot separate a real effect from noise. Repeat both sides of an A/B.
+
+    ``report`` writes the metrics, with the code and corpus they were measured on, as JSON.
     """
+    code = code_version()
     from infosec_harness.evals.corpus import languages as corpus_languages
     from infosec_harness.evals.corpus import load_corpus
 
@@ -93,6 +100,9 @@ async def score_corpus(*, language: str = "python", sandbox: bool | None = None,
                 language=lang, sandbox=sandbox, manifest_path=manifest_path,
                 dataset=dataset, limit=limit)})
     if len(runs) == 1:
+        _write_corpus_report(report, runs[0], code=code, language=language,
+                             manifest_path=manifest_path, dataset=dataset, limit=limit,
+                             repeat=repeat)
         return runs[0]
 
     agents = sorted({a for r in runs for a in r["trajectory"]})
@@ -124,7 +134,33 @@ async def score_corpus(*, language: str = "python", sandbox: bool | None = None,
         skills = [r["trajectory"][a]["skill_use_rate"] for r in runs if a in r["trajectory"]]
         skill_col = _spread(skills) if scores_skills(a) else "n/a (no expectation)"
         print(f"  {a:14} tools {_spread(tools):18} skills {skill_col}")
+    _write_corpus_report(report, summary, code=code, language=language,
+                         manifest_path=manifest_path, dataset=dataset, limit=limit,
+                         repeat=repeat)
     return summary
+
+
+def _write_corpus_report(path: Path | None, metrics: dict, *, code, language: str,
+                         manifest_path: Path | None, dataset: str, limit: int,
+                         repeat: int) -> None:
+    if path is None:
+        return
+    from infosec_harness.evals.corpus import corpus_path
+    from infosec_harness.settings import get_settings
+
+    write_json(path, {
+        "schema_version": 1,
+        "subject": {"kind": "corpus", "name": dataset},
+        "selection": {"language": language, "limit": limit, "repeat": repeat,
+                      "manifest": str(manifest_path or corpus_path())},
+        "metrics": metrics,
+        "provenance": {
+            **code.as_dict(),
+            "model_mode": get_settings().model_mode,
+            "recorded_at": datetime.now(UTC).isoformat(),
+        },
+    })
+    print(f"corpus report written to {path}")
 
 
 def _mean_rate(runs: list[dict], agent: str, key: str) -> float:

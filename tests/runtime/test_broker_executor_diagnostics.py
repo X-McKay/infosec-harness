@@ -202,6 +202,29 @@ async def test_successful_saved_response_is_unaffected_by_error_diagnostics(capl
     assert not caplog.records
 
 
-def test_cancellation_diagnostic_is_fixed_and_does_not_include_exception_content():
-    error = asyncio.CancelledError(SECRET)
-    assert module._failure_diagnostic("provider_request", error) == {"boundary": "provider_request", "category": "cancelled"}
+async def test_postclaim_cancellation_is_recorded_then_propagates(caplog):
+    """A cancelled executor request is never converted into an ordinary error response."""
+    request, settings = request_fixture()
+    calls = []
+
+    async def claim(received, lease):
+        calls.append("claim")
+        return DispatchPermit(request_id=received.request_id, lease_id=lease, fence="fixed-fence")
+
+    async def infer(_received):
+        calls.append("infer")
+        raise asyncio.CancelledError(SECRET)
+
+    async def complete(*_args):
+        pytest.fail("A cancelled dispatch must not complete")
+
+    core = Executor(settings, ledger=SimpleNamespace(claim=claim, complete=complete), infer=infer,
+                    clock=lambda: 100)
+    caplog.set_level(logging.WARNING, logger=module.__name__)
+    body, headers = signed(request, settings)
+    with pytest.raises(asyncio.CancelledError):
+        await core.handle("/v1/infer", body, headers)
+    assert calls == ["claim", "infer"]
+    assert [record.getMessage() for record in caplog.records if record.name == module.__name__] == [
+        "IH_INFERENCE_FAILURE stage=inference category=cancelled"]
+    assert SECRET not in caplog.text

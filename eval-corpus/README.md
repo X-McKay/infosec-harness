@@ -9,21 +9,39 @@ This is the cleanest ground-truth signal for the whole pipeline and for per-agen
 scoring (expected verdict, reachability, sink file/line, target callable). Truth is never
 shown to the agents.
 
-## Cases (32 total)
+## Cases (36 total)
 
-Each case name is `[<lang>-]<cwe>-<variant>` (Python cases are unprefixed).
+Each case name is `[<lang>-]<cwe>-<variant>` (Python cases are unprefixed). This table is
+checked against `manifest.json` by `tests/evals/test_corpus_readme.py`.
 
-| Language (toolchain) | CWEs (paired vulnerable/fixed) |
-|---|---|
-| python (pip / pytest) | CWE-89 SQLi, CWE-78 cmdi, CWE-22 path traversal, CWE-79 XSS, CWE-94 code injection, CWE-502 deserialization, CWE-611 XXE, CWE-918 SSRF |
-| java (maven / junit5, release 17) | CWE-89 SQLi, CWE-78 cmdi |
-| java (maven / **junit4**, source 1.7) | CWE-611 XXE |
-| javascript (npm / jest) | CWE-78 cmdi, CWE-79 XSS |
-| perl (cpanm / Test::More) | CWE-89 SQLi, CWE-78 cmdi |
+| Cases | Language | CWE | Toolchain |
+|---|---|---|---|
+| `sqli-vulnerable`, `sqli-fixed` | python | CWE-89 | pip / pytest |
+| `cmdi-vulnerable`, `cmdi-fixed` | python | CWE-78 | pip / pytest |
+| `pathtraversal-vulnerable`, `pathtraversal-fixed` | python | CWE-22 | pip / pytest |
+| `xss-vulnerable`, `xss-fixed` | python | CWE-79 | pip / pytest |
+| `codeinjection-vulnerable`, `codeinjection-fixed` | python | CWE-94 | pip / pytest |
+| `deserialization-vulnerable`, `deserialization-fixed` | python | CWE-502 | pip / pytest |
+| `xxe-vulnerable`, `xxe-fixed` | python | CWE-611 | pip / pytest |
+| `ssrf-vulnerable`, `ssrf-fixed` | python | CWE-918 | pip / pytest |
+| `unreachable` | python | CWE-89 | pip / pytest |
+| `testonly` | python | CWE-89 | pip / pytest |
+| `java-sqli-vulnerable`, `java-sqli-fixed` | java | CWE-89 | maven / junit5, release 17 |
+| `java-cmdi-vulnerable`, `java-cmdi-fixed` | java | CWE-78 | maven / junit5, release 17 |
+| `java-xxe-vulnerable`, `java-xxe-fixed` | java | CWE-611 | maven / **junit4**, source 1.7 |
+| `javascript-cmdi-vulnerable`, `javascript-cmdi-fixed` | javascript | CWE-78 | npm / jest, CommonJS |
+| `javascript-xss-vulnerable`, `javascript-xss-fixed` | javascript | CWE-79 | npm / jest, CommonJS |
+| `javascript-xssesm-vulnerable`, `javascript-xssesm-fixed` | javascript | CWE-79 | npm / vitest, ESM + TypeScript |
+| `perl-sqli-vulnerable`, `perl-sqli-fixed` | perl | CWE-89 | cpanm / Test::More |
+| `perl-cmdi-vulnerable`, `perl-cmdi-fixed` | perl | CWE-78 | cpanm / Test::More |
+| `perl-xss-vulnerable`, `perl-xss-fixed` | perl | CWE-79 | Module::Build / Test2::V0 |
 
-Plus two Python edge cases: `unreachable` (sink present but only ever called with a constant
-query — context should mark it unreachable) and `testonly` (the flagged pattern is under
-`tests/` — the pre-filter should early-exit).
+The two unpaired Python cases are edge cases: `unreachable` (sink present but only ever called
+with a constant query — context should mark it unreachable) and `testonly` (the flagged pattern
+is under `tests/` — the pre-filter should early-exit). The `javascript-xssesm` and `perl-xss`
+pairs exist for their toolchains: an ESM + TypeScript project under vitest, and a
+Module::Build distribution tested with Test2::V0, both of which the stack fingerprint used to
+miss.
 
 The two JVM rows are the point of the `java-xxe` pair. The seeded Java cases were all JUnit 5
 on `maven.compiler.release` 17, and of the 51 Maven entries harvested from Vul4J into

@@ -6,10 +6,10 @@ from infosec_harness.settings import get_settings
 
 
 async def test_direct_submission_rejects_live_before_running_or_persisting(monkeypatch):
-    from infosec_harness.workflows.runner import run_local
+    from infosec_harness.workflows.local_run import LocalModeUnavailable, run_local
 
     monkeypatch.setattr(get_settings(), "model_mode", "live")
-    with pytest.raises(ValueError, match="require Temporal"):
+    with pytest.raises(LocalModeUnavailable, match="require Temporal"):
         await run_local([])
 
 

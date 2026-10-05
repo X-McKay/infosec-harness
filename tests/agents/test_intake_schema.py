@@ -16,7 +16,7 @@ from infosec_harness.agents.intake_schema import (
     InlineOpenAIJsonSchemaTransformer,
     intake_openai_profile,
 )
-from infosec_harness.domain.models import ExtractedFinding, FieldEvidence
+from infosec_harness.domain.models import ExtractedFinding
 
 
 def test_profile_builder_copies_base_and_overrides_only_schema_transformer():
@@ -248,93 +248,3 @@ async def test_canonical_registry_resolves_current_atomic_spec_through_mock_open
     tool_schema = next(tool["function"]["parameters"] for tool in request["tools"]
                        if tool["type"] == "function" and tool["function"]["name"] != "load_capability")
     assert "$defs" not in json.dumps(tool_schema)
-
-
-async def test_retained_quote_registry_path_keeps_quote_schema_and_default_model_settings(monkeypatch):
-    import openai
-
-    from infosec_harness.agents import models as model_factory
-    from infosec_harness.agents.intake_contracts import render_intake_prompt
-    from infosec_harness.agents.registry import quoted_intake_agent
-    from infosec_harness.settings import get_settings
-
-    report = "Caller input reaches a shell command."
-    calls = []
-    quote_output = ExtractedFinding(
-        cwe="CWE-78",
-        evidence=[FieldEvidence(field="cwe", quote=report, confidence=0.75)],
-    ).model_dump(mode="json")
-
-    def respond(request: httpx.Request) -> httpx.Response:
-        body = json.loads(request.content)
-        calls.append(body)
-        functions = [item["function"] for item in body["tools"] if item["type"] == "function"]
-        tool = next((item for item in functions if item["name"] != "load_capability"), None)
-        if tool is None:
-            tool = next(item for item in functions if item["name"] == "load_capability")
-            arguments = json.dumps({"id": "cwe-78-os-command-injection"})
-        else:
-            arguments = json.dumps(quote_output)
-        return httpx.Response(
-            200,
-            json={
-                "id": "retained-quote-mock",
-                "object": "chat.completion",
-                "created": 1,
-                "model": "mock-model",
-                "choices": [
-                    {
-                        "index": 0,
-                        "finish_reason": "tool_calls",
-                        "message": {
-                            "role": "assistant",
-                            "content": None,
-                            "tool_calls": [
-                                {
-                                    "id": f"quote-{len(calls)}",
-                                    "type": "function",
-                                    "function": {
-                                        "name": tool["name"],
-                                        "arguments": arguments,
-                                    },
-                                }
-                            ],
-                        },
-                    }
-                ],
-                "usage": {"prompt_tokens": 2, "completion_tokens": 2, "total_tokens": 4},
-            },
-        )
-
-    http = httpx.AsyncClient(transport=httpx.MockTransport(respond))
-    real_async_openai = openai.AsyncOpenAI
-    monkeypatch.setattr(
-        openai, "AsyncOpenAI", lambda **kwargs: real_async_openai(**kwargs, http_client=http)
-    )
-    monkeypatch.setenv("HARNESS_MODEL_MODE", "live")
-    monkeypatch.setenv("HARNESS_MODEL_BACKEND", "gateway")
-    get_settings.cache_clear()
-    model_factory.load_models_config.cache_clear()
-    model_factory._build_live.cache_clear()
-    try:
-        agent = quoted_intake_agent(durable=False)
-        result = await agent.run(
-            render_intake_prompt("Synthetic task", {"report": report},
-                                 protocol="intake-evidence/v1"),
-            deps=AgentDeps(repo_path="/synthetic", report_text=report),
-        )
-    finally:
-        model_factory._build_live.cache_clear()
-        model_factory.load_models_config.cache_clear()
-        get_settings.cache_clear()
-        await http.aclose()
-
-    assert result.output == ExtractedFinding.model_validate(quote_output)
-    assert calls
-    assert all("temperature" not in request for request in calls)
-    output_schema = next(
-        tool["function"]["parameters"] for request in calls for tool in request["tools"]
-        if tool["type"] == "function" and tool["function"]["name"] != "load_capability"
-    )
-    assert "evidence" in output_schema["properties"]
-    assert set(output_schema["properties"]) >= set(ExtractedFinding.model_fields)

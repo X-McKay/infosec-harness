@@ -53,7 +53,7 @@ async def client(tmp_path, monkeypatch):
             )
         await s.flush()
         s.add(
-            db.RunEvent(
+            db.RunEventRecord(
                 id="event",
                 run_id="b",
                 phase="probing",
@@ -62,7 +62,7 @@ async def client(tmp_path, monkeypatch):
             )
         )
         s.add(
-            db.RunEvent(
+            db.RunEventRecord(
                 id="demo-event",
                 run_id="demo",
                 phase="failed",

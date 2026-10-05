@@ -1,5 +1,5 @@
-# Full local stack (D11). `docker compose up` runs Postgres, Temporal (+UI), MinIO, an
-# OpenTelemetry collector + Jaeger, the worker, the API, and the React web app.
+# Full local stack (D11). `docker compose up` runs Postgres, Temporal (+UI), an S3 store (RustFS),
+# an OpenTelemetry collector + Jaeger, the worker, the API, and the React web app.
 #
 # Model access: set HARNESS_MODEL_MODE=live plus a backend. For Bedrock, mount ~/.aws and
 # set AWS_PROFILE (run `aws sso login` on the host first). For an OpenAI-spec endpoint,
@@ -9,6 +9,8 @@
 # Probe sandbox: the worker drives the host Docker daemon via the mounted socket. gVisor
 # (runsc) is the default runtime in production; set HARNESS_SANDBOX_RUNTIME=runc for a host
 # without gVisor installed.
+#
+# Every image is pinned by version and digest (tests/development/test_dev_experience.py).
 
 x-backend-env: &backend-env
   HARNESS_DATABASE_URL: postgresql+asyncpg://harness:harness@postgres:5432/harness
@@ -27,7 +29,7 @@ x-backend-env: &backend-env
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16.15-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
     environment:
       POSTGRES_USER: harness
       POSTGRES_PASSWORD: harness
@@ -43,7 +45,7 @@ services:
       retries: 10
 
   temporal:
-    image: temporalio/auto-setup:1.25.2
+    image: temporalio/auto-setup:1.25.2@sha256:b1edc1e20002d958c8182f2ae08dee877a125083683a627a44917683419ba6a8
     depends_on:
       postgres: {condition: service_healthy}
     environment:
@@ -57,29 +59,32 @@ services:
     ports: ["${HARNESS_TEMPORAL_PORT:-7233}:7233"]
 
   temporal-ui:
-    image: temporalio/ui:2.34.0
+    image: temporalio/ui:2.34.0@sha256:cb17ea423d76a8a19a269d0bcd81fc12eee1f6365acd2a56b590dafb35696a95
     depends_on: [temporal]
     environment:
       TEMPORAL_ADDRESS: temporal:7233
     ports: ["${HARNESS_TEMPORAL_UI_PORT:-8233}:8080"]
 
+  # S3-compatible artifact store. The service keeps its `minio` name (the backend's endpoint and
+  # ./dev's ports refer to it); minio/minio images are no longer published, so it runs RustFS,
+  # which serves the same S3 API, console port and /minio/health/ready probe.
   minio:
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
+    image: ghcr.io/rustfs/rustfs:1.0.0-glibc@sha256:bffcab0c9d647aab0055d1c69d340b202d0909966b385932d4ead1aeb7602858
+    command: ["rustfs"]
     environment:
-      MINIO_ROOT_USER: harness
-      MINIO_ROOT_PASSWORD: harness12345
+      RUSTFS_ACCESS_KEY: harness
+      RUSTFS_SECRET_KEY: harness12345
     ports: ["${HARNESS_MINIO_PORT:-9000}:9000", "${HARNESS_MINIO_CONSOLE_PORT:-9001}:9001"]
     volumes: [miniodata:/data]
 
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.115.1
+    image: otel/opentelemetry-collector-contrib:0.115.1@sha256:d2da12c4336a79758826700be9e21ecf4a9f7d945b7f8a58ba55ee3fa45427c8
     command: ["--config=/etc/otel/config.yaml"]
     volumes: ["./deploy/otel-collector.yaml:/etc/otel/config.yaml:ro"]
     depends_on: [jaeger]
 
   jaeger:
-    image: jaegertracing/all-in-one:1.63.0
+    image: jaegertracing/all-in-one:1.63.0@sha256:fd5697c37ba041a91cfca1d62621d32cdeb2041c0febc2f1579e5bac6f21e34b
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
     ports: ["${HARNESS_JAEGER_PORT:-16686}:16686"]
@@ -113,7 +118,8 @@ services:
   # through this; it forwards only to allowlisted registry hosts and denies the rest.
   # ACL seeded with the ecosystem defaults; add internal Artifactory/Nexus hosts here.
   egress-proxy:
-    image: ubuntu/squid:latest
+    # 6.6-24.04_beta is the image `latest` resolved to when this stack was verified.
+    image: ubuntu/squid:6.6-24.04_beta@sha256:6a097f68bae708cedbabd6188d68c7e2e7a38cedd05a176e1cc0ba29e3bbe029
     volumes: ["./deploy/squid-allowlist.conf:/etc/squid/conf.d/allowlist.conf:ro"]
     expose: ["3128"]
 

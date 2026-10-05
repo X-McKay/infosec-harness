@@ -55,6 +55,9 @@ from infosec_harness.domain.models import (
 )
 from infosec_harness.sandbox.install_sources import unapproved_install_sources
 
+# A deterministic output contract: returns the (possibly converted) output or raises ModelRetry.
+OutputValidator = Callable[[RunContext[AgentDeps], Any], Any]
+
 
 def validate_intake_evidence(
     ctx: RunContext[AgentDeps], output: ExtractedFinding
@@ -371,28 +374,12 @@ def _skipping_probe_violations(output: ProbeSource) -> list[str]:
     return problems
 
 
-MAVEN_WARMUP_REPAIR_VERSION = "maven-warmup-repair-v1"
-
-
-def _targeted_maven_warmup_repair() -> bool:
-    """Keep historical workflow retry bytes; new histories use field-targeted feedback."""
-    from temporalio import workflow
-
-    return not workflow.in_workflow() or workflow.patched(MAVEN_WARMUP_REPAIR_VERSION)
-
-
 def validate_environment_spec(
     ctx: RunContext[AgentDeps], output: EnvironmentSpec
 ) -> EnvironmentSpec:
     repo_path = _repo_path(ctx)
     framework = repo_jvm_test_framework(repo_path)
-    warmup_problems = offline_warmup_violations(output, framework)
-    targeted_warmup_problems = offline_warmup_violations(
-        output, framework, targeted_feedback=True
-    )
-    if (targeted_warmup_problems != warmup_problems
-            and _targeted_maven_warmup_repair()):
-        warmup_problems = targeted_warmup_problems
+    warmup_problems = offline_warmup_violations(output, framework, targeted_feedback=True)
     problems = (
         environment_spec_violations(output)
         + install_path_violations(output)
@@ -457,13 +444,3 @@ def validate_partial_build_scope(
             "The partial-build scope contract is incomplete:\n- " + "\n- ".join(problems)
         )
     return output
-
-
-OUTPUT_VALIDATORS: dict[str, tuple[Callable[[RunContext[AgentDeps], Any], Any], ...]] = {
-    "verdict": (validate_verdict,),
-    "probe-author": (validate_probe,),
-    "probe-repair": (validate_probe,),
-    "env-planner": (validate_environment_spec,),
-    "build-repair": (validate_environment_spec,),
-    "partial-build": (validate_environment_spec, validate_partial_build_scope),
-}

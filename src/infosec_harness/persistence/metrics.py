@@ -10,17 +10,64 @@ from collections import Counter, defaultdict
 from datetime import UTC, datetime
 from statistics import mean
 
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import load_only
 
-from infosec_harness.api.contracts import (
-    Bin,
-    Distribution,
-    MetricsResponse,
-    StageMetric,
-    TrendPoint,
-)
 from infosec_harness.persistence import db
+from infosec_harness.persistence.population import Population, run_population
+
+
+class Bin(BaseModel):
+    lower: float
+    upper: float
+    count: int
+
+
+class Distribution(BaseModel):
+    count: int
+    population: int
+    coverage: float | None
+    mean: float | None = None
+    p50: float | None = None
+    p95: float | None = None
+    maximum: float | None = None
+    bins: list[Bin] = Field(default_factory=list)
+
+
+class TrendPoint(BaseModel):
+    date: str
+    runs: int
+    tokens: float | None
+    cost_usd: float | None
+    wall_time_s: float | None
+
+
+class StageMetric(BaseModel):
+    agent: str
+    invocations: int
+    agent_time_s: float
+    tokens: int
+    known_cost_usd: float
+    cost_coverage: float
+
+
+class MetricsResponse(BaseModel):
+    schema_version: int = 1
+    as_of: str
+    population: str
+    total_runs: int
+    status_counts: dict[str, int]
+    verdict_counts: dict[str, int]
+    tokens: Distribution
+    input_tokens: Distribution
+    output_tokens: Distribution
+    cost_usd: Distribution
+    wall_time_s: Distribution
+    agent_time_s: Distribution
+    trends: list[TrendPoint]
+    stages: list[StageMetric]
+    definitions: dict[str, str]
 
 
 def distribution(values: list[float | None], bins: int = 12) -> Distribution:
@@ -47,11 +94,9 @@ def _value(run: db.TriageRun, field: str) -> float | None:
     return value if isinstance(value, (int, float)) and math.isfinite(value) else None
 
 
-async def aggregate_metrics(*, batch_id: str | None = None, population: str = "operational",
+async def aggregate_metrics(*, batch_id: str | None = None, population: Population = "operational",
                             since: datetime | None = None, until: datetime | None = None) -> MetricsResponse:
-    population_value = db.TriageRun.telemetry["population"].as_string()
-    statement = select(db.TriageRun).where(
-        population_value.is_(None) if population == "legacy" else population_value == population)
+    statement = select(db.TriageRun).where(run_population(population))
     if batch_id:
         statement = statement.where(db.TriageRun.batch_id == batch_id)
     if since:

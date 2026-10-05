@@ -10,12 +10,13 @@ import logging
 import math
 import secrets
 import time
+from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
 
 from pydantic_ai.messages import ModelResponse
-from sqlalchemy import select, update
+from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 
 from infosec_harness.inference.codec import validate_result_usage
@@ -31,7 +32,7 @@ from infosec_harness.inference.protocol import (
 from infosec_harness.persistence import db
 
 _LOG = logging.getLogger(__name__)
-_ATTEMPTS = 20
+CAS_ATTEMPTS = 20
 _DIMENSIONS = ("requests", "tokens", "cost_usd")
 
 
@@ -70,15 +71,26 @@ def _allocation(values: dict[str, float]) -> dict[str, float]:
     return dict(values)
 
 
-def _active(state: dict, request: InferenceRequest) -> dict:
+async def cas_root(session, root: db.BudgetLedger, state: dict) -> bool:
+    """Compare-and-set one root state at its read revision; on a lost race roll back."""
+    won = await session.execute(update(db.BudgetLedger).where(
+        db.BudgetLedger.root_id == root.root_id, db.BudgetLedger.revision == root.revision
+    ).values(state=state, revision=root.revision + 1))
+    if won.rowcount != 1:
+        await session.rollback()
+        return False
+    return True
+
+
+def _active(state: dict, request: InferenceRequest, now: float) -> dict:
     """Check trusted persisted binding again at the actual dispatch boundary."""
     binding = request.binding
     if binding.run_id in state.get("broker_revoked_runs", []):
         raise BrokerError("policy", "Inference run revoked")
-    if binding.expires_at <= time.time():
+    if binding.expires_at <= now:
         raise BrokerError("expired", "Inference reservation expired")
     deadline = state.get("deadline_at")
-    if deadline is None or datetime.fromisoformat(deadline).timestamp() <= time.time():
+    if deadline is None or datetime.fromisoformat(deadline).timestamp() <= now:
         raise BrokerError("expired", "Root deadline is missing or expired")
     operation = state.get("operations", {}).get(binding.operation_id)
     if (operation is None or operation.get("status") in {"settled", "closed_unknown"}
@@ -103,12 +115,12 @@ async def get(request_id: str) -> StoredDisposition | None:
         return _stored(row) if row is not None else None
 
 
-async def admit(request: InferenceRequest, *, lease_id: str,
-                allocation: dict[str, float]) -> StoredDisposition:
+async def admit(request: InferenceRequest, *, lease_id: str, allocation: dict[str, float],
+                clock: Callable[[], float] = time.time) -> StoredDisposition:
     demand = _allocation(allocation)
     if not lease_id or len(lease_id) > 128:
         raise BrokerError("identity", "Invalid executor lease")
-    for _ in range(_ATTEMPTS):
+    for _ in range(CAS_ATTEMPTS):
         async with db.session() as session:
             existing = await session.get(db.InferenceRequestRecord, request.request_id)
             if existing is not None:
@@ -120,7 +132,7 @@ async def admit(request: InferenceRequest, *, lease_id: str,
             if root is None:
                 raise BrokerError("identity", "Inference requires an existing root reservation")
             state = deepcopy(root.state)
-            operation = _active(state, request)
+            operation = _active(state, request, clock())
             consumed = operation.get("broker_allocated", dict.fromkeys(_DIMENSIONS, 0))
             updated_demand = {key: math.fsum((consumed.get(key, 0), demand[key]))
                               for key in _DIMENSIONS}
@@ -140,11 +152,7 @@ async def admit(request: InferenceRequest, *, lease_id: str,
                 raise BrokerError("budget", "Invocation allocation exhausted")
             operation.update(broker_owned=True, broker_allocated=updated_demand)
             await _checkpoint("admit_before_cas")
-            won = await session.execute(update(db.BudgetLedger).where(
-                db.BudgetLedger.root_id == root.root_id, db.BudgetLedger.revision == root.revision
-            ).values(state=state, revision=root.revision + 1))
-            if won.rowcount != 1:
-                await session.rollback()
+            if not await cas_root(session, root, state):
                 continue
             row = db.InferenceRequestRecord(
                 request_id=request.request_id, root_id=request.binding.root_id,
@@ -166,8 +174,9 @@ async def admit(request: InferenceRequest, *, lease_id: str,
     raise BrokerError("unavailable", "Bounded ledger contention exhausted")
 
 
-async def claim(request_id: str, *, lease_id: str) -> DispatchPermit:
-    for _ in range(_ATTEMPTS):
+async def claim(request_id: str, *, lease_id: str,
+                clock: Callable[[], float] = time.time) -> DispatchPermit:
+    for _ in range(CAS_ATTEMPTS):
         async with db.session() as session:
             row = await session.get(db.InferenceRequestRecord, request_id)
             if row is None:
@@ -180,16 +189,12 @@ async def claim(request_id: str, *, lease_id: str) -> DispatchPermit:
             if root is None:
                 raise BrokerError("identity", "Root reservation is missing")
             state = deepcopy(root.state)
-            operation = _active(state, InferenceRequest.model_validate(row.request))
+            operation = _active(state, InferenceRequest.model_validate(row.request), clock())
             if not operation.get("broker_owned"):
                 raise BrokerError("identity", "Request allocation is not durably held")
             operation["broker_dispatches"] = operation.get("broker_dispatches", 0) + 1
             await _checkpoint("claim_before_cas")
-            won_root = await session.execute(update(db.BudgetLedger).where(
-                db.BudgetLedger.root_id == root.root_id, db.BudgetLedger.revision == root.revision
-            ).values(state=state, revision=root.revision + 1))
-            if won_root.rowcount != 1:
-                await session.rollback()
+            if not await cas_root(session, root, state):
                 continue
             permit = DispatchPermit(request_id=request_id, lease_id=lease_id,
                                     fence=secrets.token_hex(32))
@@ -218,7 +223,7 @@ async def complete(result: InferenceResult, *, permit: DispatchPermit) -> Stored
     response = _validate_result(result)
     if result.request_id != permit.request_id:
         raise BrokerError("identity", "Result and dispatch permit differ")
-    for _ in range(_ATTEMPTS):
+    for _ in range(CAS_ATTEMPTS):
         async with db.session() as session:
             row = await session.get(db.InferenceRequestRecord, result.request_id)
             if row is None:
@@ -241,11 +246,7 @@ async def complete(result: InferenceResult, *, permit: DispatchPermit) -> Stored
                 state = deepcopy(root.state)
                 operation = state["operations"][row.operation_id]
                 operation["broker_overrun"] = {"request_id": row.request_id, **overrun}
-                won_root = await session.execute(update(db.BudgetLedger).where(
-                    db.BudgetLedger.root_id == root.root_id, db.BudgetLedger.revision == root.revision
-                ).values(state=state, revision=root.revision + 1))
-                if won_root.rowcount != 1:
-                    await session.rollback()
+                if not await cas_root(session, root, state):
                     continue
             won = await session.execute(update(db.InferenceRequestRecord).where(
                 db.InferenceRequestRecord.request_id == row.request_id,
@@ -266,7 +267,7 @@ async def complete(result: InferenceResult, *, permit: DispatchPermit) -> Stored
 
 
 async def _terminal(request_id: str, *, lease_id: str, recovery: bool) -> StoredDisposition:
-    for _ in range(_ATTEMPTS):
+    for _ in range(CAS_ATTEMPTS):
         async with db.session() as session:
             row = await session.get(db.InferenceRequestRecord, request_id)
             if row is None:
@@ -302,58 +303,60 @@ async def recover(request_id: str, *, lease_id: str) -> StoredDisposition:
     return await _terminal(request_id, lease_id=lease_id, recovery=True)
 
 
-async def revoke_run(run_id: str) -> None:
-    """Trusted controller closes existing run roots before deleting native leases.
+def _references_run(operation: dict, run_id: str) -> bool:
+    """Fencing is deliberately broad: either recorded run field referencing the run is enough."""
+    return (operation.get("run_id") == run_id
+            or operation.get("broker_binding", {}).get("run_id") == run_id)
 
-    The service must authenticate an existing run/root reference before calling this
-    administrative function. This is not an unauthenticated run-ID API. Its persisted
-    fence prevents future operation admission on each existing root; controller lifecycle
-    ownership must additionally prevent re-creating a never-registered closed run.
+
+async def revoke_run(run_id: str, *, root_id: str) -> None:
+    """Trusted controller fences one authenticated run root before deleting native leases.
+
+    Call only after :func:`validate_run_owner` authenticated ``(run_id, root_id)``; a run owns
+    exactly one root (the Temporal workflow root, or the local ``{"local_run": run}`` digest).
+    This is not an unauthenticated run-ID API. The persisted fence prevents future operation
+    admission on that root; the controller's persistent run tombstone additionally prevents
+    re-creating a closed run elsewhere.
     """
-    async with db.session() as session:
-        root_ids = (await session.execute(select(db.BudgetLedger.root_id))).scalars().all()
-    for root_id in root_ids:
-        for _ in range(_ATTEMPTS):
-            async with db.session() as session:
-                root = await session.get(db.BudgetLedger, root_id)
-                if root is None:
-                    break
-                state = deepcopy(root.state)
-                matches = [identity for identity, operation in state.get("operations", {}).items()
-                           if operation.get("run_id") == run_id
-                           or operation.get("broker_binding", {}).get("run_id") == run_id]
-                if not matches and state.get("broker_run_id") != run_id:
-                    break
-                state["broker_revoked_runs"] = sorted(set(state.get("broker_revoked_runs", [])) | {run_id})
-                for identity in matches:
-                    operation = state["operations"][identity]
-                    operation.update(broker_revoked=True, broker_owned=True)
-                    if operation.get("status") != "closed_unknown":
-                        operation["status"] = "uncertain"
-                if state == root.state:
-                    break
-                won = await session.execute(update(db.BudgetLedger).where(
-                    db.BudgetLedger.root_id == root_id, db.BudgetLedger.revision == root.revision
-                ).values(state=state, revision=root.revision + 1))
-                if won.rowcount != 1:
-                    await session.rollback()
-                    continue
-                for before, after in (("accepted", "failed_before_dispatch"),
-                                      ("dispatch_intent", "completion_unknown")):
-                    await session.execute(update(db.InferenceRequestRecord).where(
-                        db.InferenceRequestRecord.root_id == root_id,
-                        db.InferenceRequestRecord.operation_id.in_(matches),
-                        db.InferenceRequestRecord.state == before,
-                    ).values(state=after, revision=db.InferenceRequestRecord.revision + 1,
-                             updated_at=db.utcnow()))
-                await session.commit()
-                break
-        else:
-            raise BrokerError("unavailable", "Bounded run revocation contention exhausted")
+    for _ in range(CAS_ATTEMPTS):
+        async with db.session() as session:
+            root = await session.get(db.BudgetLedger, root_id)
+            if root is None:
+                raise BrokerError("identity", "Cleanup requires an existing owned root")
+            state = deepcopy(root.state)
+            matches = [identity for identity, operation in state.get("operations", {}).items()
+                       if _references_run(operation, run_id)]
+            if not matches and state.get("broker_run_id") != run_id:
+                raise BrokerError("identity", "Cleanup run does not belong to this root")
+            state["broker_revoked_runs"] = sorted(set(state.get("broker_revoked_runs", [])) | {run_id})
+            for identity in matches:
+                operation = state["operations"][identity]
+                operation.update(broker_revoked=True, broker_owned=True)
+                if operation.get("status") != "closed_unknown":
+                    operation["status"] = "uncertain"
+            if state != root.state and not await cas_root(session, root, state):
+                continue
+            # Pending rows are terminalized in the fence's transaction; a repeat is a no-op.
+            for before, after in (("accepted", "failed_before_dispatch"),
+                                  ("dispatch_intent", "completion_unknown")):
+                await session.execute(update(db.InferenceRequestRecord).where(
+                    db.InferenceRequestRecord.root_id == root_id,
+                    db.InferenceRequestRecord.operation_id.in_(matches),
+                    db.InferenceRequestRecord.state == before,
+                ).values(state=after, revision=db.InferenceRequestRecord.revision + 1,
+                         updated_at=db.utcnow()))
+            await session.commit()
+            return
+    raise BrokerError("unavailable", "Bounded run revocation contention exhausted")
 
 
 async def validate_run_owner(run_id: str, root_id: str) -> None:
-    """Trusted authenticated controller precondition for explicit run cleanup."""
+    """Trusted authenticated controller precondition for explicit run cleanup.
+
+    Authentication is deliberately strict where :func:`revoke_run` fencing is broad: an
+    operation proves ownership only when its recorded run and its controller-issued binding
+    both name the run, so one forged or stale field cannot grant cleanup authority.
+    """
     async with db.session() as session:
         root = await session.get(db.BudgetLedger, root_id)
         if root is None:
@@ -366,3 +369,36 @@ async def validate_run_owner(run_id: str, root_id: str) -> None:
                for operation in operations):
             return
     raise BrokerError("identity", "Cleanup run does not belong to this root")
+
+
+class DurableLedger:
+    """The controller's ledger bound to its injected clock (see ``controller.InferenceLedger``)."""
+
+    def __init__(self, *, clock: Callable[[], float] = time.time):
+        self.clock = clock
+
+    async def get(self, request_id: str) -> StoredDisposition | None:
+        return await get(request_id)
+
+    async def admit(self, request: InferenceRequest, *, lease_id: str,
+                    allocation: dict[str, float]) -> StoredDisposition:
+        return await admit(request, lease_id=lease_id, allocation=allocation, clock=self.clock)
+
+    async def claim(self, request_id: str, *, lease_id: str) -> DispatchPermit:
+        return await claim(request_id, lease_id=lease_id, clock=self.clock)
+
+    async def complete(self, result: InferenceResult, *,
+                       permit: DispatchPermit) -> StoredDisposition:
+        return await complete(result, permit=permit)
+
+    async def fail_before_dispatch(self, request_id: str, *, lease_id: str) -> StoredDisposition:
+        return await fail_before_dispatch(request_id, lease_id=lease_id)
+
+    async def recover(self, request_id: str, *, lease_id: str) -> StoredDisposition:
+        return await recover(request_id, lease_id=lease_id)
+
+    async def revoke_run(self, run_id: str, *, root_id: str) -> None:
+        await revoke_run(run_id, root_id=root_id)
+
+    async def validate_run_owner(self, run_id: str, root_id: str) -> None:
+        await validate_run_owner(run_id, root_id)

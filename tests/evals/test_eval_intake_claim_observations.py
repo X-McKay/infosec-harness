@@ -13,9 +13,22 @@ from pydantic_ai.models.function import FunctionModel
 from infosec_harness.agents.intake_claims import AtomicFinding, ReferenceError, reconstruct
 from infosec_harness.agents.intake_evidence import extraction_evidence_violations
 from infosec_harness.domain.models import ExtractedFinding
-from infosec_harness.evals.intake_claim_observations import RULES, atomic_summary
-from infosec_harness.evals.intake_claim_schema import ERROR_TYPES, PATHS, diagnose_messages
-from infosec_harness.evals.intake_fields import intake_field_summary
+from infosec_harness.evals.intake_fields import (
+    ATOMIC_RULES as RULES,
+)
+from infosec_harness.evals.intake_fields import (
+    SCHEMA_ERROR_TYPES as ERROR_TYPES,
+)
+from infosec_harness.evals.intake_fields import (
+    SCHEMA_PATHS as PATHS,
+)
+from infosec_harness.evals.intake_fields import (
+    atomic_summary,
+    intake_field_summary,
+)
+from infosec_harness.evals.intake_fields import (
+    schema_error_summary as diagnose_messages,
+)
 
 REPORT = "fixture.py line 12\r\nCaller input reaches a shell.\nImpact is described.\n"
 PROTOCOL = "intake-atomic-claims/v2"

@@ -28,18 +28,18 @@ def test_committed_schema_is_current():
 
 def test_max_tokens_floor_raises_small_budgets_and_leaves_large_ones():
     """A reasoning endpoint spends thinking inside max_tokens; the floor only raises."""
-    from infosec_harness.agents.models import _apply_max_tokens_floor
+    from infosec_harness.agents.models import apply_max_tokens_floor
 
-    assert _apply_max_tokens_floor({"max_tokens": 3000}, 16000) == {"max_tokens": 16000}
-    assert _apply_max_tokens_floor({"max_tokens": 32000}, 16000) == {"max_tokens": 32000}
-    assert _apply_max_tokens_floor({"max_tokens": 3000}, 0) == {"max_tokens": 3000}
-    assert _apply_max_tokens_floor(None, 0) is None
+    assert apply_max_tokens_floor({"max_tokens": 3000}, 16000) == {"max_tokens": 16000}
+    assert apply_max_tokens_floor({"max_tokens": 32000}, 16000) == {"max_tokens": 32000}
+    assert apply_max_tokens_floor({"max_tokens": 3000}, 0) == {"max_tokens": 3000}
+    assert apply_max_tokens_floor(None, 0) is None
 
 
 def test_max_tokens_floor_preserves_other_settings():
-    from infosec_harness.agents.models import _apply_max_tokens_floor
+    from infosec_harness.agents.models import apply_max_tokens_floor
 
-    out = _apply_max_tokens_floor({"max_tokens": 10, "temperature": 0.0}, 99)
+    out = apply_max_tokens_floor({"max_tokens": 10, "temperature": 0.0}, 99)
     assert out == {"max_tokens": 99, "temperature": 0.0}
 
 
@@ -58,7 +58,7 @@ def test_the_token_floor_reaches_the_setting_pydantic_ai_reports(monkeypatch):
     floor, the payload-side floor is a no-op.
     """
     from infosec_harness.agents.models import (
-        _apply_max_tokens_floor,
+        apply_max_tokens_floor,
         load_models_config,
         max_tokens_floor,
     )
@@ -77,7 +77,7 @@ def test_the_token_floor_reaches_the_setting_pydantic_ai_reports(monkeypatch):
             f"agent pydantic-ai will report on carries {effective.get('max_tokens')}"
         )
         # The payload-side floor is now redundant, which is what "they agree" means.
-        assert _apply_max_tokens_floor(effective, floor) == effective, name
+        assert apply_max_tokens_floor(effective, floor) == effective, name
         raised += declared < floor
     assert raised, "no spec sits below the floor, so this test would pass vacuously"
 
@@ -95,9 +95,9 @@ def test_the_token_floor_is_inert_where_thinking_has_its_own_budget(monkeypatch)
 
 
 def test_merge_leading_system_messages_collapses_the_prefix():
-    from infosec_harness.agents.models import _merge_leading_system_messages
+    from infosec_harness.agents.models import merge_leading_system_messages
 
-    merged = _merge_leading_system_messages([
+    merged = merge_leading_system_messages([
         {"role": "system", "content": "instructions"},
         {"role": "system", "content": "deferred capabilities"},
         {"role": "user", "content": "task"},
@@ -109,20 +109,20 @@ def test_merge_leading_system_messages_collapses_the_prefix():
 
 
 def test_merge_leading_system_messages_leaves_conforming_requests_alone():
-    from infosec_harness.agents.models import _merge_leading_system_messages
+    from infosec_harness.agents.models import merge_leading_system_messages
 
     for messages in ([{"role": "system", "content": "s"}, {"role": "user", "content": "u"}],
                      [{"role": "user", "content": "u"}]):
-        assert _merge_leading_system_messages(list(messages)) == messages
+        assert merge_leading_system_messages(list(messages)) == messages
 
 
 def test_merge_does_not_touch_a_later_system_message():
     """Only the leading run is collapsed; a mid-conversation system turn stays put."""
-    from infosec_harness.agents.models import _merge_leading_system_messages
+    from infosec_harness.agents.models import merge_leading_system_messages
 
     messages = [{"role": "system", "content": "a"}, {"role": "system", "content": "b"},
                 {"role": "user", "content": "u"}, {"role": "system", "content": "late"}]
-    assert _merge_leading_system_messages(messages) == [
+    assert merge_leading_system_messages(messages) == [
         {"role": "system", "content": "a\n\nb"},
         {"role": "user", "content": "u"},
         {"role": "system", "content": "late"},

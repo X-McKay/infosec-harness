@@ -16,12 +16,11 @@ import yaml
 
 from infosec_harness.evals.inert_gates import (
     InertReason,
-    PricingStatus,
-    announce_inert_checks,
+    audit_report_file,
     find_inert_checks,
     format_inert_notice,
-    pricing_status,
 )
+from infosec_harness.evals.pricing import PricingStatus, pricing_status
 from infosec_harness.resources import agents_dir
 
 POLICY = {
@@ -35,7 +34,7 @@ POLICY = {
 }
 
 
-def _report(*, model: str, cost: float = 0.0, metrics: dict | None = None,
+def _report(*, model: str, cost: float | None = 0.0, metrics: dict | None = None,
             gates: dict | None = None) -> dict:
     return {
         "schema_version": 1,
@@ -96,6 +95,32 @@ def test_stub_mode_says_no_model_was_called_rather_than_blaming_the_report():
     assert check.reason is InertReason.COST_STUB_MODEL
     assert not check.is_defect
     assert "stub mode" in check.detail
+
+
+@pytest.mark.parametrize("status", [PricingStatus.UNKNOWN_MODEL, PricingStatus.UNDETERMINED])
+def test_an_unpriced_model_reporting_no_cost_is_an_environment_fact_not_a_defect(status):
+    """An unpriced model reports cost as unknown (None), not 0.0. That absence is the same
+    environment fact as a zero price, and must not be filed as a broken report."""
+    report = _report(model="gateway:no-such-model", cost=None)
+    (check,) = find_inert_checks(report, POLICY, pricing=lambda _m: status)
+    assert check.reason is InertReason.COST_UNPRICED_MODEL
+    assert not check.is_defect
+    assert check.value is None
+
+
+def test_unknown_cost_under_a_priced_model_is_still_a_defect():
+    report = _report(model="anthropic:claude-sonnet-5", cost=None)
+    (check,) = find_inert_checks(report, POLICY, pricing=_priced)
+    assert check.reason is InertReason.METRIC_NOT_NUMERIC
+    assert check.is_defect
+
+
+def test_the_cost_basis_the_run_recorded_is_the_one_audited():
+    """The audit must describe the run, not whatever the price table says today."""
+    report = _report(model="gateway:Qwen3.6-35B-A3B-NVFP4", cost=None)
+    report["provenance"]["model_pricing"] = "unknown_model"
+    (check,) = find_inert_checks(report, POLICY)
+    assert check.reason is InertReason.COST_UNPRICED_MODEL
 
 
 def test_zero_cost_under_a_priced_model_is_reported_as_a_defect():
@@ -173,25 +198,30 @@ def test_an_all_live_policy_still_prints_a_confirming_line():
     assert text == "inert-gate audit: all 5 policy checks for context were live for this run."
 
 
-def test_announce_reads_report_and_policy_from_disk_and_prints_once(tmp_path):
+def test_the_audit_reads_a_report_and_its_policy_from_disk(tmp_path):
     path = tmp_path / "report.json"
     path.write_text(json.dumps(_report(model="stub:context:sonnet")))
     policy = tmp_path / "release-policy.yaml"
     policy.write_text(yaml.safe_dump(POLICY))
     lines: list[str] = []
-    checks = announce_inert_checks("context", path, policy_path=policy, echo=lines.append)
+    checks = audit_report_file(path, policy_path=policy, echo=lines.append)
     assert [c.reason for c in checks] == [InertReason.COST_STUB_MODEL]
     assert "INERT RELEASE GATES" in lines[0]
-    # Wiring the audit into both write_release_report and the CLI must not double-print.
-    assert announce_inert_checks("context", path, policy_path=policy, echo=lines.append) == []
-    assert len(lines) == 1
 
 
-def test_announce_never_raises_on_a_missing_report(tmp_path):
-    lines: list[str] = []
-    assert announce_inert_checks("context", tmp_path / "nope.json",
-                                 policy_path=tmp_path / "nope.yaml", echo=lines.append) == []
-    assert "skipped" in lines[0]
+def test_the_audit_defaults_to_the_reports_own_agent_policy(tmp_path):
+    path = tmp_path / "report.json"
+    path.write_text(json.dumps(_report(model="stub:context:sonnet",
+                                       gates={"unevidenced_safe_verdicts": 0})))
+    checks = audit_report_file(path, echo=lambda _line: None)
+    assert [c.reason for c in checks] == [InertReason.COST_STUB_MODEL]
+
+
+def test_a_report_naming_no_agent_needs_an_explicit_policy(tmp_path):
+    path = tmp_path / "report.json"
+    path.write_text(json.dumps({"metrics": {}}))
+    with pytest.raises(ValueError, match="names no agent"):
+        audit_report_file(path, echo=lambda _line: None)
 
 
 # --- the real pricing probe, and the real policies --------------------------------------

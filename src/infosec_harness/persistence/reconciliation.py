@@ -6,8 +6,6 @@ as an estimate, never as observed provider usage.
 """
 from __future__ import annotations
 
-import hashlib
-import json
 import math
 from copy import deepcopy
 from datetime import UTC, datetime
@@ -16,9 +14,9 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 from sqlalchemy import select, update
 
+from infosec_harness.domain.canonical import SHA256_PATTERN, canonical_bytes, is_sha256, sha256_hex
 from infosec_harness.persistence import budgets, db
 
-_SHA = r"^[0-9a-f]{64}$"
 _MARKER_KEYS = {"version", "authorization", "charged", "accounting_basis", "closed_operation_sha256"}
 
 
@@ -34,22 +32,27 @@ def _canonical(value):
     return value
 
 
-def _sha(value) -> str:
-    return hashlib.sha256(json.dumps(_canonical(value), sort_keys=True,
-                                    separators=(",", ":"), ensure_ascii=True,
-                                    allow_nan=False).encode()).hexdigest()
+def reconciliation_digest(value) -> str:
+    """FROZEN encoding of persisted closure markers and operator-supplied snapshot hashes.
+
+    ASCII-escaped canonical JSON of UTC-normalized values. Stored ``closed_operation_sha256``
+    markers and operator dry-run inputs depend on these exact bytes; never change it to the
+    default canonical encoding.
+    """
+    return sha256_hex(canonical_bytes(_canonical(value), ascii_only=True))
 
 
 def row_sha256(row: db.BudgetLedger | db.InferenceRequestRecord) -> str:
     """Hash every mapped column, matching private UTC-normalized snapshot encoding."""
-    return _sha({column.name: getattr(row, column.name) for column in row.__table__.columns})
+    return reconciliation_digest(
+        {column.name: getattr(row, column.name) for column in row.__table__.columns})
 
 
 class ClosureRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
     root_id: str = Field(min_length=1, max_length=512)
     operation_id: str = Field(min_length=1, max_length=512)
-    expected_root_sha256: str = Field(pattern=_SHA)
+    expected_root_sha256: str = Field(pattern=SHA256_PATTERN)
     expected_root_revision: StrictInt = Field(ge=0)
     expected_request_sha256: dict[str, str]
     unknown_request_ids: list[str]
@@ -60,8 +63,7 @@ class ClosureRequest(BaseModel):
     @model_validator(mode="after")
     def closed_allowlist(self):
         for mapping in (self.expected_request_sha256, self.evidence_sha256):
-            if not mapping or any(not key or len(key) > 512 or len(value) != 64
-                                  or any(c not in "0123456789abcdef" for c in value)
+            if not mapping or any(not key or len(key) > 512 or not is_sha256(value)
                                   for key, value in mapping.items()):
                 raise ValueError("Exact nonempty hash mappings required")
         if (not self.unknown_request_ids or self.unknown_request_ids != sorted(set(self.unknown_request_ids))
@@ -81,7 +83,7 @@ def _dimensions(values, keys):
 def _operation_hash(operation):
     clean = deepcopy(operation)
     clean.pop("unknown_reconciliation", None)
-    return _sha(clean)
+    return reconciliation_digest(clean)
 
 
 def _charged_floor(state):
@@ -232,7 +234,7 @@ def _projection(request, marker, status):
     return {"status": status, "root_id": request.root_id, "operation_id": request.operation_id,
             "unknown_request_count": len(request.unknown_request_ids),
             "charged": deepcopy(marker["charged"]), "accounting_basis": marker["accounting_basis"],
-            "authorization_sha256": _sha(marker["authorization"]),
+            "authorization_sha256": reconciliation_digest(marker["authorization"]),
             "request_tombstones_unchanged": True}
 
 

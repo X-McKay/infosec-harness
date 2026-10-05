@@ -8,19 +8,35 @@ from typing import Any
 
 from sqlalchemy import func, select, update
 
-from infosec_harness.domain.models import TriageRunOutput
-from infosec_harness.graph.manifests import persisted_manifest
+from infosec_harness.domain.models import (
+    TERMINAL_BATCH_STATUSES,
+    TERMINAL_RUN_STATUSES,
+    BatchStatus,
+    RunStatus,
+    TriageRunOutput,
+)
 from infosec_harness.persistence import db
+from infosec_harness.persistence.identity import persisted_manifest
+from infosec_harness.persistence.population import (
+    Population,
+    batch_population,
+    recorded_population,
+    run_population,
+)
+
+_FAILED_OR_CANCELLED = (RunStatus.failed, RunStatus.cancelled)
 
 
-def _run_id(batch_id: str, fingerprint: str) -> str:
+def run_id(batch_id: str, fingerprint: str) -> str:
+    """The deterministic id of one finding's run within one batch."""
     return hashlib.sha256(f"{batch_id}:{fingerprint}".encode()).hexdigest()[:24]
 
 
 async def create_batch(batch_id: str, *, source_kind: str, label: str, count: int,
-                       workflow_id: str | None = None) -> None:
+                       workflow_id: str | None = None,
+                       status: BatchStatus = BatchStatus.running) -> None:
     async with db.session() as s:
-        s.add(db.Batch(id=batch_id, source_kind=source_kind, label=label,
+        s.add(db.Batch(id=batch_id, source_kind=source_kind, label=label, status=status,
                        finding_count=count, workflow_id=workflow_id))
         await s.commit()
 
@@ -31,13 +47,12 @@ def _output_values(out: TriageRunOutput, previous: dict, operations: dict) -> di
     total_tokens = sum(i.input_tokens + i.output_tokens for i in out.invocations)
     cost = sum(i.cost_usd or 0.0 for i in out.invocations)
     latency = sum(i.latency_s for i in out.invocations)
-    own_operations = [operation for key, operation in operations.items()
-                      if out.finding.fingerprint in key]
     # Execution operations account wall-clock workload reservations. They deliberately stay
     # uncertain when a worker cannot observe the full external runtime, but that says nothing
-    # about provider token/cost usage returned by a settled agent operation. Records written
-    # before operation kinds existed are agent operations by definition.
-    agent_operations = [op for op in own_operations if op.get("kind", "agent") == "agent"]
+    # about provider token/cost usage returned by a settled agent operation.
+    agent_operations = [op for op in operations.values()
+                        if op.get("fingerprint") == out.finding.fingerprint
+                        and op["kind"] == "agent"]
     accounting_complete = all(op["status"] == "settled" for op in agent_operations)
     cost_complete = all(op["status"] == "settled" or
         op.get("record", {}).get("pricing_status") == "known_zero" for op in agent_operations)
@@ -56,7 +71,8 @@ def _output_values(out: TriageRunOutput, previous: dict, operations: dict) -> di
         "total_tokens": total_tokens if out.invocations and accounting_complete else None}
     return dict(repo_url=out.finding.repo_url, revision=out.finding.revision,
         title=out.finding.title, cwe=out.finding.cwe, severity=out.finding.severity.value,
-        status="needs_info" if out.needs_info else "complete", verdict=verdict.label.value,
+        status=RunStatus.needs_info if out.needs_info else RunStatus.complete,
+        verdict=verdict.label.value,
         confidence=verdict.confidence,
         inconclusive_reason=verdict.inconclusive_reason.value if verdict.inconclusive_reason else None,
         priority=out.result.priority.value, priority_score=out.result.priority_score,
@@ -70,52 +86,62 @@ def _output_values(out: TriageRunOutput, previous: dict, operations: dict) -> di
         cache_read_tokens=sum(i.cache_read_tokens for i in out.invocations), latency_s=latency)
 
 
-async def save_run_output(batch_id: str, out: TriageRunOutput) -> str:
-    """Persist one output atomically; a cancellation/failure fences every late write."""
+async def save_run_output(batch_id: str, out: TriageRunOutput, *,
+                          population: Population | None = None) -> str:
+    """Persist one output atomically; a cancellation/failure fences every late write.
+
+    ``population`` labels a run that was not accepted through the durable lifecycle (which
+    labels its runs at acceptance).
+    """
     out = out.model_copy(update={"manifest": persisted_manifest(out.manifest)})
-    run_id = _run_id(batch_id, out.finding.fingerprint)
+    identity = run_id(batch_id, out.finding.fingerprint)
     async with db.session() as session:
-        run = await session.get(db.TriageRun, run_id)
-        if run is not None and run.status in {"cancelled", "failed"}:
-            return run_id
+        run = await session.get(db.TriageRun, identity)
+        if run is not None and run.status in _FAILED_OR_CANCELLED:
+            return identity
         ledger = await session.get(db.BudgetLedger, batch_id)
-        values = _output_values(out, (run.telemetry or {}) if run else {},
+        previous = dict(run.telemetry or {}) if run else {}
+        if population is not None:
+            previous["population"] = population
+        values = _output_values(out, previous,
                                 ledger.state.get("operations", {}) if ledger else {})
         if run is None:
-            session.add(db.TriageRun(id=run_id, batch_id=batch_id,
+            session.add(db.TriageRun(id=identity, batch_id=batch_id,
                                     fingerprint=out.finding.fingerprint, **values))
             await session.flush()
         else:
             result = await session.execute(update(db.TriageRun).where(
-                db.TriageRun.id == run_id, db.TriageRun.status.notin_(["cancelled", "failed"])
+                db.TriageRun.id == identity, db.TriageRun.status.notin_(_FAILED_OR_CANCELLED)
             ).values(**values))
             if result.rowcount == 0:
                 await session.rollback()
-                return run_id
+                return identity
         # The conditional result write holds the row lock until replacement is committed.
         for invocation in (await session.scalars(select(db.AgentInvocation).where(
-                db.AgentInvocation.run_id == run_id))).all():
+                db.AgentInvocation.run_id == identity))).all():
             await session.delete(invocation)
         for seq, invocation in enumerate(out.invocations):
-            session.add(db.AgentInvocation(run_id=run_id, seq=seq,
+            session.add(db.AgentInvocation(run_id=identity, seq=seq,
                 **invocation.model_dump(include={"agent", "model_name", "config_hash", "input_tokens",
                     "output_tokens", "cache_read_tokens", "cache_write_tokens", "cost_usd", "cost_estimated",
                     "latency_s", "requests", "repeated_tool_calls", "tools_called", "skills_loaded"})))
         await session.commit()
-    return run_id
+    return identity
 
 
-async def finish_batch(batch_id: str, status: str = "complete") -> None:
+async def finish_batch(batch_id: str, status: BatchStatus = BatchStatus.complete) -> None:
     """First terminal transition wins; delayed retries cannot resurrect cancelled batches."""
     async with db.session() as session:
         await session.execute(update(db.Batch).where(db.Batch.id == batch_id,
-            db.Batch.status.notin_(["complete", "failed", "cancelled"])).values(status=status))
+            db.Batch.status.notin_(TERMINAL_BATCH_STATUSES)).values(status=status))
         await session.commit()
 
 
 async def list_runs(*, batch_id: str | None = None, verdict: str | None = None,
-                    limit: int = 200) -> list[dict]:
+                    limit: int = 200, population: Population | None = None) -> list[dict]:
     stmt = select(db.TriageRun).order_by(db.TriageRun.priority_score.desc().nullslast())
+    if population is not None:
+        stmt = stmt.where(run_population(population))
     if batch_id:
         stmt = stmt.where(db.TriageRun.batch_id == batch_id)
     if verdict:
@@ -123,23 +149,24 @@ async def list_runs(*, batch_id: str | None = None, verdict: str | None = None,
     stmt = stmt.limit(limit)
     async with db.session() as s:
         rows = (await s.execute(stmt)).scalars().all()
-        return [_run_summary(r) for r in rows]
+        return [run_summary(r) for r in rows]
 
 
-async def get_run(run_id: str) -> dict | None:
+async def get_run(run_id: str, population: Population | None = None) -> dict | None:
     async with db.session() as s:
         run = await s.get(db.TriageRun, run_id)
-        if run is None:
+        if run is None or (population is not None
+                           and recorded_population(run.telemetry) != population):
             return None
         invs = (await s.execute(
             select(db.AgentInvocation).where(db.AgentInvocation.run_id == run_id)
             .order_by(db.AgentInvocation.seq))).scalars().all()
         review = (await s.execute(
             select(db.VerdictReview).where(db.VerdictReview.run_id == run_id))).scalar_one_or_none()
-        detail = _run_summary(run)
+        detail = run_summary(run)
         detail["evidence"] = run.evidence
-        events = (await s.execute(select(db.RunEvent).where(db.RunEvent.run_id == run_id)
-                                  .order_by(db.RunEvent.created_at, db.RunEvent.id))).scalars().all()
+        events = (await s.execute(select(db.RunEventRecord).where(db.RunEventRecord.run_id == run_id)
+                                  .order_by(db.RunEventRecord.created_at, db.RunEventRecord.id))).scalars().all()
         detail["events"] = [{"id": e.id, "phase": e.phase, "detail": e.detail,
                               "created_at": e.created_at.isoformat()} for e in events]
         history = (await s.execute(select(db.ReviewHistory).where(db.ReviewHistory.run_id == run_id)
@@ -184,31 +211,63 @@ async def save_review(run_id: str, *, reviewer: str, decision: str, override_lab
         return True
 
 
-async def batch_summary(batch_id: str) -> dict | None:
+async def _batch_counts(session, batch_ids: list[str], population: Population | None
+                        ) -> tuple[dict[str, dict[str, int]], dict[str, dict[str, int]]]:
+    """Per-batch run status and verdict counts, under the same optional population filter.
+
+    A batch's finding count is always the number of its runs under that filter: one definition,
+    whether or not a population is selected.
+    """
+    selected = [db.TriageRun.batch_id.in_(batch_ids)]
+    if population is not None:
+        selected.append(run_population(population))
+    states: dict[str, dict[str, int]] = {identity: {} for identity in batch_ids}
+    verdicts: dict[str, dict[str, int]] = {identity: {} for identity in batch_ids}
+    for identity, status, count in (await session.execute(
+            select(db.TriageRun.batch_id, db.TriageRun.status, func.count()).where(*selected)
+            .group_by(db.TriageRun.batch_id, db.TriageRun.status))).all():
+        states[identity][status] = count
+    for identity, verdict, count in (await session.execute(
+            select(db.TriageRun.batch_id, db.TriageRun.verdict, func.count()).where(*selected)
+            .where(db.TriageRun.verdict.is_not(None))
+            .group_by(db.TriageRun.batch_id, db.TriageRun.verdict))).all():
+        verdicts[identity][verdict] = count
+    return states, verdicts
+
+
+def _batch_row(batch: db.Batch, states: dict[str, int]) -> dict:
+    return {"id": batch.id, "status": batch.status, "label": batch.label,
+            "source_kind": batch.source_kind, "finding_count": sum(states.values()),
+            "created_at": batch.created_at.isoformat()}
+
+
+async def batch_summary(batch_id: str, population: Population | None = None) -> dict | None:
     async with db.session() as s:
-        batch = await s.get(db.Batch, batch_id)
+        statement = select(db.Batch).where(db.Batch.id == batch_id)
+        if population is not None:
+            statement = statement.where(batch_population(population))
+        batch = await s.scalar(statement)
         if batch is None:
             return None
-        counts = dict((await s.execute(
-            select(db.TriageRun.verdict, func.count()).where(db.TriageRun.batch_id == batch_id)
-            .where(db.TriageRun.verdict.is_not(None))
-            .group_by(db.TriageRun.verdict))).all())
-        states = dict((await s.execute(select(db.TriageRun.status, func.count())
-            .where(db.TriageRun.batch_id == batch_id).group_by(db.TriageRun.status))).all())
+        states, verdicts = await _batch_counts(s, [batch_id], population)
         ledger = await s.get(db.BudgetLedger, batch_id)
-        return {"budget": ledger.state if ledger else None, "status_counts": states, "id": batch.id, "status": batch.status, "label": batch.label,
-                "source_kind": batch.source_kind, "finding_count": batch.finding_count,
-                "created_at": batch.created_at.isoformat(), "verdict_counts": counts}
+        return {**_batch_row(batch, states[batch_id]), "status_counts": states[batch_id],
+                "verdict_counts": verdicts[batch_id],
+                "budget": ledger.state if ledger else None}
 
 
-async def list_batches(limit: int = 100) -> list[dict]:
+async def list_batches(limit: int = 100, population: Population | None = None) -> list[dict]:
     async with db.session() as s:
-        rows = (await s.execute(select(db.Batch).order_by(db.Batch.created_at.desc()).limit(limit))).scalars().all()
-        return [{"id": b.id, "status": b.status, "label": b.label, "source_kind": b.source_kind,
-                 "finding_count": b.finding_count, "created_at": b.created_at.isoformat()} for b in rows]
+        statement = select(db.Batch)
+        if population is not None:
+            statement = statement.where(batch_population(population))
+        rows = (await s.execute(statement.order_by(db.Batch.created_at.desc())
+                                .limit(limit))).scalars().all()
+        states, _ = await _batch_counts(s, [b.id for b in rows], population)
+        return [_batch_row(b, states[b.id]) for b in rows]
 
 
-def _run_summary(r: db.TriageRun) -> dict:
+def run_summary(r: db.TriageRun) -> dict:
     return {
         "id": r.id, "batch_id": r.batch_id, "fingerprint": r.fingerprint, "title": r.title,
         "repo_url": r.repo_url, "revision": r.revision, "cwe": r.cwe, "severity": r.severity,
@@ -218,7 +277,8 @@ def _run_summary(r: db.TriageRun) -> dict:
         "early_exit": r.early_exit, "cost_usd": (r.telemetry or {}).get("cost_usd"), "total_tokens": r.total_tokens,
         "cache_read_tokens": r.cache_read_tokens, "latency_s": r.latency_s,
         "created_at": r.created_at.isoformat(), "telemetry": r.telemetry,
-        "phase": r.status if r.status in {"complete", "needs_info", "failed", "cancelled"} else (r.telemetry or {}).get("phase", r.status),
+        "phase": (r.status if r.status in TERMINAL_RUN_STATUSES
+                  else (r.telemetry or {}).get("phase", r.status)),
     }
 
 

@@ -5,6 +5,15 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
+from infosec_harness.domain.models import BatchStatus, RunStatus
+from infosec_harness.persistence.metrics import (  # noqa: F401 - response models of /api/metrics
+    Bin,
+    Distribution,
+    MetricsResponse,
+    StageMetric,
+    TrendPoint,
+)
+
 JsonObject = dict[str, JsonValue]
 
 
@@ -12,58 +21,6 @@ class _OpenPayload(BaseModel):
     """Typed known fields while retaining versioned JSON added by older/newer producers."""
 
     model_config = ConfigDict(extra="allow")
-
-
-class Bin(BaseModel):
-    lower: float
-    upper: float
-    count: int
-
-
-class Distribution(BaseModel):
-    count: int
-    population: int
-    coverage: float | None
-    mean: float | None = None
-    p50: float | None = None
-    p95: float | None = None
-    maximum: float | None = None
-    bins: list[Bin] = Field(default_factory=list)
-
-
-class TrendPoint(BaseModel):
-    date: str
-    runs: int
-    tokens: float | None
-    cost_usd: float | None
-    wall_time_s: float | None
-
-
-class StageMetric(BaseModel):
-    agent: str
-    invocations: int
-    agent_time_s: float
-    tokens: int
-    known_cost_usd: float
-    cost_coverage: float
-
-
-class MetricsResponse(BaseModel):
-    schema_version: int = 1
-    as_of: str
-    population: str
-    total_runs: int
-    status_counts: dict[str, int]
-    verdict_counts: dict[str, int]
-    tokens: Distribution
-    input_tokens: Distribution
-    output_tokens: Distribution
-    cost_usd: Distribution
-    wall_time_s: Distribution
-    agent_time_s: Distribution
-    trends: list[TrendPoint]
-    stages: list[StageMetric]
-    definitions: dict[str, str]
 
 
 class RunTelemetry(_OpenPayload):
@@ -93,7 +50,7 @@ class RunSummary(BaseModel):
     revision: str
     cwe: str | None
     severity: str
-    status: str
+    status: RunStatus
     verdict: str | None
     confidence: float | None
     inconclusive_reason: str | None
@@ -120,7 +77,7 @@ class RunPage(BaseModel):
 
 class BatchSummary(BaseModel):
     id: str
-    status: str
+    status: BatchStatus
     label: str
     source_kind: str
     finding_count: int
@@ -243,7 +200,7 @@ class HealthResponse(BaseModel):
 
 
 class CancelResponse(BaseModel):
-    status: str
+    status: BatchStatus
 
 
 GateStatus = Literal["passed", "failed", "not_checked"]

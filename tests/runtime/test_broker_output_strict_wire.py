@@ -201,7 +201,7 @@ async def test_mock_sdk_strict_output_keeps_bounded_local_validation_repair_and_
 
     from infosec_harness.agents.intake_claims import reconstruct
     from infosec_harness.agents.intake_schema import intake_openai_profile
-    from infosec_harness.inference.compat import _CompatOpenAIChatModel
+    from infosec_harness.inference.compat import CompatOpenAIChatModel
 
     calls = []
     def respond(native_request):
@@ -220,7 +220,7 @@ async def test_mock_sdk_strict_output_keeps_bounded_local_validation_repair_and_
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(respond)) as transport:
         client = AsyncOpenAI(base_url='https://provider.invalid/v1', api_key='offline', max_retries=0, http_client=transport)
         provider = OpenAIProvider(openai_client=client)
-        model = _CompatOpenAIChatModel('test-model', provider=provider,
+        model = CompatOpenAIChatModel('test-model', provider=provider,
             profile=intake_openai_profile(provider.model_profile('test-model')), strict_closed_output_tools=True)
         agent = Agent(model, output_type=AtomicFinding, retries=1 if repair else 0)
         if repair:
@@ -238,14 +238,14 @@ async def test_mock_sdk_strict_output_keeps_bounded_local_validation_repair_and_
 
 
 def test_opt_in_rejects_unqualified_sdk_profile_and_bounded_schema_expansion():
-    from infosec_harness.inference.compat import _strict_closed_outputs
+    from infosec_harness.inference.compat import strict_closed_outputs
     from infosec_harness.inference.protocol import BrokerError
 
     closed = {'type': 'object', 'properties': {'answer': {'type': 'string'}}, 'additionalProperties': False}
     params = ModelRequestParameters(output_mode='tool', output_tools=[ToolDefinition(name='final_result',
         parameters_json_schema=closed, kind='output')])
     with pytest.raises(BrokerError, match='does not support strict'):
-        _strict_closed_outputs(params, {'openai_supports_strict_tool_definition': False})
+        strict_closed_outputs(params, {'openai_supports_strict_tool_definition': False})
     defs = {'leaf': closed}
     for i in range(20):
         child = 'leaf' if i == 0 else f'level{i - 1}'
@@ -255,7 +255,7 @@ def test_opt_in_rejects_unqualified_sdk_profile_and_bounded_schema_expansion():
     params = ModelRequestParameters(output_mode='tool', output_tools=[ToolDefinition(name='final_result',
         parameters_json_schema=exploding, kind='output')])
     with pytest.raises(BrokerError, match='bound'):
-        _strict_closed_outputs(params, {})
+        strict_closed_outputs(params, {})
     assert params.output_tools[0].strict is None
 
 

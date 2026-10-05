@@ -26,13 +26,17 @@ harness eval run verdict -m sonnet
 harness eval baseline save exp-<id>
 ```
 
-Two refusals are enforced rather than documented, because a baseline that quietly lies is worse
-than no baseline — it becomes the thing every later comparison is measured against:
+These refusals are enforced rather than documented, because a baseline that quietly lies is
+worse than no baseline — it becomes the thing every later comparison is measured against:
 
-- **A truncated run is refused.** Its metrics cover only the cases that happened to run, so
-  pinning one silently redefines the denominator.
-- **A dirty working tree is refused.** The recorded SHA would name a commit that never
-  contained the code that produced the numbers, and nothing downstream could detect it.
+- **A run not recorded as complete is refused** (truncated, still running, or with no status).
+  Its metrics cover only the cases that happened to run, so pinning one silently redefines the
+  denominator.
+- **A run over less than the full dataset is refused** (a calibration or held-out split, or a
+  `--dataset` run). A baseline promises the agent's whole packaged dataset.
+- **A stub-model run is refused.** It exercises the eval machinery and measures no agent.
+- **A dirty working tree, or a run with no commit, is refused.** The recorded SHA would name a
+  commit that never contained the code that produced the numbers.
 
 ## Reading them
 
@@ -46,7 +50,7 @@ the dataset version, and the cost basis (`priced` / `zero_priced` / `stub` / `un
 The cost basis is not decoration: a self-hosted model with a declared zero rate always "wins"
 on cost against a billed one, for a reason that has nothing to do with either model.
 
-Completed agent evals also export release reports under
+Completed `harness eval run` invocations also export release reports under
 `.harness/reports/evals/<experiment-id>.json` by default. These ignored local reports retain
 individual runs; saving an accepted baseline remains an explicit, reviewed action. A truncated
 experiment remains in the database and does not produce a release report.

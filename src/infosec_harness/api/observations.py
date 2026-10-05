@@ -7,16 +7,20 @@ from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import func, or_, select
 
 from infosec_harness.api.contracts import ExperimentDetail, MetricsResponse, RunPage
-from infosec_harness.api.population import Population, operational_experiment
 from infosec_harness.persistence import db, store
 from infosec_harness.persistence.metrics import aggregate_metrics
+from infosec_harness.persistence.population import (
+    Population,
+    experiment_population,
+    run_population,
+)
 
 router = APIRouter(prefix="/api")
 
 
 @router.get("/run-page", response_model=RunPage)
 async def run_page(batch_id: str | None = None, verdict: str | None = None,
-                   population: Literal["operational", "demo", "legacy"] | None = None,
+                   population: Population | None = None,
                    metric: Literal["total_tokens", "input_tokens", "output_tokens", "cost_usd", "wall_time_s"] | None = None,
                    lower: float | None = None, upper: float | None = None,
                    upper_inclusive: bool = False,
@@ -29,10 +33,8 @@ async def run_page(batch_id: str | None = None, verdict: str | None = None,
     if metric is None and (lower is not None or upper is not None):
         raise HTTPException(422, "metric is required with distribution bounds")
     statement = select(db.TriageRun)
-    if population:
-        recorded_population = db.TriageRun.telemetry["population"].as_string()
-        statement = statement.where(recorded_population.is_(None) if population == "legacy"
-                                    else recorded_population == population)
+    if population is not None:
+        statement = statement.where(run_population(population))
     if metric:
         value = db.TriageRun.telemetry[metric].as_float()
         statement = statement.where(value.is_not(None))
@@ -50,13 +52,13 @@ async def run_page(batch_id: str | None = None, verdict: str | None = None,
         total = await session.scalar(select(func.count()).select_from(statement.subquery()))
         rows = (await session.execute(statement.order_by(db.TriageRun.priority_score.desc().nullslast(), db.TriageRun.created_at.desc(), db.TriageRun.id)
                                       .offset(offset).limit(limit))).scalars().all()
-    return RunPage(items=[store._run_summary(r) for r in rows], total=total or 0,
+    return RunPage(items=[store.run_summary(r) for r in rows], total=total or 0,
                    offset=offset, limit=limit, as_of=datetime.now(UTC).isoformat())
 
 
 @router.get("/metrics", response_model=MetricsResponse)
 async def metrics(batch_id: str | None = None,
-                  population: Literal["operational", "demo", "legacy"] = "operational",
+                  population: Population = "operational",
                   since: datetime | None = None, until: datetime | None = None) -> MetricsResponse:
     if since and until and since >= until:
         raise HTTPException(422, "since must precede until")
@@ -67,12 +69,8 @@ async def metrics(batch_id: str | None = None,
 async def experiment_detail(experiment_id: str, population: Population | None = None) -> ExperimentDetail:
     async with db.session() as session:
         statement = select(db.EvalExperiment).where(db.EvalExperiment.id == experiment_id)
-        if population == "operational":
-            statement = statement.where(operational_experiment())
-        elif population == "demo":
-            statement = statement.where(db.EvalExperiment.backend == "stub")
-        elif population == "legacy":
-            statement = statement.where(db.EvalExperiment.backend == "")
+        if population is not None:
+            statement = statement.where(experiment_population(population))
         experiment = await session.scalar(statement)
         if experiment is None:
             raise HTTPException(404, "experiment not found")

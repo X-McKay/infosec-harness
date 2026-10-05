@@ -46,7 +46,7 @@ tool_timeout: 30
 instrument: true
 metadata:
   contract_version: 1
-  version: 1.0.4
+  version: 1.0.5
   owner: appsec
   execution_class: durable
   temporal_enabled: true
@@ -73,7 +73,7 @@ metadata:
   - cwe-918-ssrf
   enabled_toolsets: []
   intake_output:
-    execution: intake-output-v4
+    execution: intake-v5
     protocol: intake-atomic-claims/v2
     acceptance_policy: intake-evidence/v1
     source_index_policy: python-splitlines-keepends-codepoints-v1

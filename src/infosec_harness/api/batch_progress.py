@@ -1,13 +1,13 @@
-"""Read-only progress from selected persisted finding records; no inferred execution."""
+"""Read-only batch progress from selected persisted finding records; no inferred execution."""
 
+from collections import defaultdict
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 
-from infosec_harness.api.population import run_population
+from infosec_harness.domain.models import TERMINAL_BATCH_STATUSES, TERMINAL_RUN_STATUSES
 from infosec_harness.persistence import db
-
-TERMINAL = {"complete", "needs_info", "failed", "cancelled"}
+from infosec_harness.persistence.population import Population, run_population
 
 
 def timestamp(value):
@@ -20,7 +20,11 @@ def timestamp(value):
         return None
 
 
-async def batch_progress(batch_ids, population=None):
+def _utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+async def batch_progress(batch_ids: list[str], population: Population | None = None) -> dict:
     if not batch_ids:
         return {}
     predicate = [db.TriageRun.batch_id.in_(batch_ids)]
@@ -45,21 +49,24 @@ async def batch_progress(batch_ids, population=None):
         events = dict(
             (
                 await session.execute(
-                    select(db.TriageRun.batch_id, func.max(db.RunEvent.created_at))
-                    .join(db.RunEvent, db.RunEvent.run_id == db.TriageRun.id)
+                    select(db.TriageRun.batch_id, func.max(db.RunEventRecord.created_at))
+                    .join(db.RunEventRecord, db.RunEventRecord.run_id == db.TriageRun.id)
                     .where(*predicate)
                     .group_by(db.TriageRun.batch_id)
                 )
             ).all()
         )
+    by_batch: dict[str, list] = defaultdict(list)
+    for row in rows:  # grouped once: linear in the selected runs, not runs x batches
+        by_batch[row[0]].append(row)
     result = {}
     for identity in batch_ids:
-        selected = [row for row in rows if row[0] == identity]
+        selected = by_batch.get(identity, [])
         states, phases, starts, ends, activity = {}, {}, [], [], []
         all_finished = bool(selected)
         for _, state, phase, accepted, completed, created, batch_state in selected:
             states[state] = states.get(state, 0) + 1
-            if state not in TERMINAL:
+            if state not in TERMINAL_RUN_STATUSES:
                 label = phase if isinstance(phase, str) and phase else state
                 phases[label] = phases.get(label, 0) + 1
             start, end = timestamp(accepted), timestamp(completed)
@@ -67,23 +74,11 @@ async def batch_progress(batch_ids, population=None):
                 starts.append(start)
             if end:
                 ends.append(end)
-            all_finished &= state in TERMINAL and batch_state in TERMINAL and end is not None
-            activity.extend(
-                x
-                for x in (
-                    start,
-                    end,
-                    created.replace(tzinfo=UTC)
-                    if created.tzinfo is None
-                    else created.astimezone(UTC),
-                )
-                if x
-            )
+            all_finished &= (state in TERMINAL_RUN_STATUSES
+                             and batch_state in TERMINAL_BATCH_STATUSES and end is not None)
+            activity.extend(x for x in (start, end, _utc(created)) if x)
         if identity in events:
-            event = events[identity]
-            activity.append(
-                event.replace(tzinfo=UTC) if event.tzinfo is None else event.astimezone(UTC)
-            )
+            activity.append(_utc(events[identity]))
         result[identity] = {
             "status_counts": states,
             "current_phases": phases,
