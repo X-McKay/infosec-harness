@@ -8,7 +8,6 @@ escaping link named like a manifest is absent rather than a crash or a read outs
 
 from __future__ import annotations
 
-import contextlib
 import json
 import os
 import re
@@ -65,7 +64,7 @@ MAX_COMPONENTS = 256
 # the safe answer for that pair.
 _JVM_FRAMEWORK_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("junit5", ("junit-jupiter", "org.junit.jupiter", "junit-platform", "junit5",
-                "useJUnitPlatform")),
+                "usejunitplatform")),
     ("junit4", ("<artifactid>junit</artifactid>", "junit-vintage", "junit:junit",
                 "'junit'", '"junit"')),
     ("testng", ("org.testng", "<artifactid>testng</artifactid>", "testng:testng",
@@ -116,6 +115,18 @@ class _Index:
             parent, _, name = rel.rpartition("/")
             self.names[parent or "."].add(name)
         self._dirs = sorted(self.names)
+
+    @classmethod
+    def from_root(cls, root: str | Path) -> _Index:
+        base = Path(root)
+        return cls(base, (rel for rel, _ in walk_files(base, skip_dirs=NON_SOURCE_DIRS)))
+
+    def java_build_texts(self, root: str = ".") -> Iterator[str]:
+        children = sorted({_relative(root, directory).split("/", 1)[0]
+                           for directory in self.subtree(root) if directory != root} - {"."})
+        directories = [root, *(_join(root, child) for child in children[:_JAVA_MODULE_DIRS])]
+        return (self.read(_join(directory, name)) for directory in directories
+                for name in _JAVA_BUILD_FILES)
 
     def subtree(self, directory: str) -> Iterator[str]:
         """Directories at or beneath ``directory`` that directly contain admitted files."""
@@ -168,20 +179,22 @@ def js_test_runners(root: Path, index: _Index | None = None, component: str = ".
     no test framework at all.
     """
     if index is None:
-        # A caller outside detection: index only the handful of files this reads.
-        candidates = ["package.json", *(p.relative_to(root).as_posix()
-                                        for directory, suffix in _NODE_TEST_FILES
-                                        for p in root.glob(f"{directory}/*{suffix}"))]
-        index = _Index(root, [rel for rel in candidates if (root / rel).is_file()])
+        index = _Index.from_root(root)
     manifest = index.read(_join(component, "package.json"))
     if not manifest:
         return []
-    declared = [name for token, name in _JS_RUNNER_TOKENS if token in manifest.lower()]
     try:
-        scripts = json.loads(manifest).get("scripts") or {}
-    except (ValueError, AttributeError):
-        scripts = {}
-    script = str(scripts.get("test") or "").lower()
+        package = json.loads(manifest)
+    except ValueError:
+        package = {}
+    if not isinstance(package, dict):
+        package = {}
+    dependencies = {name for field in ("dependencies", "devDependencies")
+                    if isinstance(values := package.get(field), dict) for name in values}
+    declared = [name for token, name in _JS_RUNNER_TOKENS if token in dependencies]
+    scripts = package.get("scripts")
+    script = scripts.get("test", "") if isinstance(scripts, dict) else ""
+    script = script.lower() if isinstance(script, str) else ""
     invoked = [name for token, name in _JS_RUNNER_TOKENS if token in script]
     if not declared and not invoked:
         for directory, suffix in _NODE_TEST_FILES:
@@ -215,11 +228,11 @@ def _detect_test_frameworks(index: _Index, root: str, langs: dict[str, int]) -> 
     fw: list[str] = []
     text = ""
     jvm_text = ""
-    for name in ("pyproject.toml", "package.json", "pom.xml", "build.gradle", "requirements.txt",
+    for name in ("pyproject.toml", "package.json", *_JAVA_BUILD_FILES, "requirements.txt",
                  "cpanfile"):
         body = index.read(_join(root, name))
         text += body.lower()
-        if name in ("pom.xml", "build.gradle"):
+        if name in _JAVA_BUILD_FILES:
             jvm_text += body
     if "pytest" in text or _has_files_under(index, _join(root, "tests")) and langs.get("python"):
         fw.append("pytest")
@@ -289,22 +302,10 @@ _JAVA_MODULE_DIRS = 40
 def java_build_texts(root: str | Path) -> list[str]:
     """The build files whose language level binds the JDK: ``root`` and its first child dirs.
 
-    Unreadable files and directories are skipped; an unreadable repository yields nothing,
-    and the JDK check then stays silent rather than guessing.
+    Uses the same confined index and candidate selection as the fingerprint. Unsafe links
+    and special files fail closed before any build file is read.
     """
-    base = Path(root)
-    candidates = [base / name for name in _JAVA_BUILD_FILES]
-    with contextlib.suppress(OSError):
-        children = [child for child in sorted(base.iterdir())
-                    if child.name not in NON_SOURCE_DIRS and child.is_dir()]
-        candidates += [child / name for child in children[:_JAVA_MODULE_DIRS]
-                       for name in _JAVA_BUILD_FILES]
-    texts = []
-    for path in candidates:
-        with contextlib.suppress(OSError):
-            if path.is_file():
-                texts.append(path.read_text(errors="replace"))
-    return texts
+    return [text for text in _Index.from_root(root).java_build_texts() if text]
 
 
 def _declared_release(index: _Index, root: str) -> int | None:
@@ -316,11 +317,7 @@ def _declared_release(index: _Index, root: str) -> int | None:
     "Source option 7 is no longer supported", a JDK too old with "invalid target release". The
     candidates are :func:`java_build_texts`'s, read through the walk's index.
     """
-    children = sorted({_relative(root, directory).split("/", 1)[0]
-                       for directory in index.subtree(root) if directory != root} - {"."})
-    directories = [root, *(_join(root, child) for child in children[:_JAVA_MODULE_DIRS])]
-    return java_release(index.read(_join(directory, name)) for directory in directories
-                        for name in _JAVA_BUILD_FILES)
+    return java_release(index.java_build_texts(root))
 
 
 def _fingerprint(index: _Index, root: str) -> StackFingerprint:
@@ -355,8 +352,7 @@ def detect_stack(root: str) -> StackFingerprint:
     Detection, repository tools, citation validation, and snapshot hashing share one link and
     special-file policy: the walk validates the tree before any manifest is read.
     """
-    base = Path(root)
-    index = _Index(base, (rel for rel, _ in walk_files(base, skip_dirs=NON_SOURCE_DIRS)))
+    index = _Index.from_root(root)
     stack = _fingerprint(index, ".")
     return stack.model_copy(update={"components": _component_profiles(index)})
 
@@ -394,4 +390,3 @@ def _component_profiles(index: _Index) -> list[ComponentProfile]:
             support=support,
         ))
     return profiles
-
