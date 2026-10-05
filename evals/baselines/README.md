@@ -6,7 +6,7 @@ These are committed. That is the whole point of them.
 
 Every run lands in the experiment store, and that is the right place for *all* of them —
 queryable, incremental, cheap to write. It is the wrong place for the few that matter later.
-The database is configured by `HARNESS_DATABASE_URL`; the offline demo uses `.harness/demo.db`.
+The database is configured by `HARNESS_DATABASE_URL`; local commands use `.harness/local.db`.
 It is not reviewed and does not travel with a clone or a release, and the number you want six weeks from now — *what did `verdict` score on
 sonnet before we changed the prompt* — is exactly the one that is gone.
 
@@ -23,8 +23,12 @@ lays the directories out:
 
 ```bash
 harness eval run verdict -m sonnet
-harness eval baseline save exp-<id>
+harness eval baseline save --latest verdict -m sonnet   # or: harness eval baseline save exp-<id>
 ```
+
+`--latest` picks the newest complete live run of that agent and tier over the full dataset
+(`-m` defaults to the agent's own tier). `harness eval release --save-baselines` records every
+passing agent at once, under the same rules.
 
 These refusals are enforced rather than documented, because a baseline that quietly lies is
 worse than no baseline — it becomes the thing every later comparison is measured against:

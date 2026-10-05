@@ -96,8 +96,7 @@ uv run alembic current
 ```
 
 The broker's durable `inference_requests` ledger table arrived in migration `0005`; apply
-through the current head (`0006`). Do not use `harness init-db` against an existing deployment
-database. To print SQL for DBA review instead of applying the migrations, use
+through the current head (`0006`) with `harness migrate`. To print SQL for DBA review instead of applying the migrations, use
 `uv run alembic upgrade head --sql`.
 
 The isolated PostgreSQL qualification command is:

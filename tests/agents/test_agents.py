@@ -35,7 +35,7 @@ def test_config_hashes_are_stable_and_distinct():
 
 def test_committed_schema_is_current():
     on_disk = json.loads((registry.get_settings().agents_dir / "agent_schema.json").read_text())
-    assert on_disk == registry.json_schema(), "run `just agents-schema` to regenerate"
+    assert on_disk == registry.json_schema(), "run `just regenerate`"
 
 
 # --- OpenAI-spec single-system-message compatibility (see agents/models.py) ---

@@ -60,7 +60,7 @@ def private_json(path: Path, value: dict):
 
 
 def managed_check(subcommand, args, timeout):
-    """Exec `harness <subcommand>` in the running worker; Compose never restarts or changes it."""
+    """Exec `harness ops <subcommand>` in the running worker; Compose never restarts it."""
     project = os.environ.get("COMPOSE_PROJECT_NAME", "")
     if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", project):
         raise ValueError("managed project unavailable")
@@ -82,6 +82,7 @@ def managed_check(subcommand, args, timeout):
         "-T",
         "worker",
         "harness",
+        "ops",
         subcommand,
         *args,
     ]

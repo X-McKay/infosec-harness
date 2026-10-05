@@ -232,6 +232,50 @@ class Settings(BaseSettings):
         return self
 
 
+# The store a developer's machine uses when no database is configured.
+LOCAL_DATABASE = Path(".harness") / "local.db"
+
+
+def local_database_path() -> Path:
+    """`.harness/local.db` in the checkout (in the working directory off a checkout)."""
+    return (source_checkout() or Path.cwd()) / LOCAL_DATABASE
+
+
+def local_database_url() -> str:
+    return f"sqlite+aiosqlite:///{local_database_path()}"
+
+
+def default_to_local_database(settings: Settings | None = None) -> Path | None:
+    """Point an unconfigured local command at `.harness/local.db`; ``None`` when configured.
+
+    Only commands that run on a developer's machine call this: evals, `submit --local`, `runs`
+    and `report`. The worker, the API and `harness migrate` keep the deployment default, so a
+    service with no database configured fails to connect instead of writing to a scratch file.
+    "Configured" means any settings source named the URL: the environment, `.env`, or the
+    `HARNESS_ENV_FILE` profile.
+    """
+    settings = settings or get_settings()
+    if "database_url" in settings.model_fields_set:
+        return None
+    path = local_database_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    settings.database_url = local_database_url()
+    return path
+
+
+def default_to_stub_models(settings: Settings | None = None) -> bool:
+    """Select stub models for a stub-only command when no model mode is configured.
+
+    Returns whether it did. A configured mode is left alone, so an explicit `live` is still
+    refused by the stub-only command rather than silently replaced.
+    """
+    settings = settings or get_settings()
+    if "model_mode" in settings.model_fields_set:
+        return False
+    settings.model_mode = "stub"
+    return True
+
+
 @lru_cache
 def get_settings() -> Settings:
     profile = os.environ.get("HARNESS_ENV_FILE")

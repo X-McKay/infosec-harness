@@ -48,7 +48,7 @@ metadata:
 ## Procedure
 
 1. Write a hypothesis, frozen baseline identity, requested change, dataset version, slices, and explicit experiment budget.
-2. Run the offline fast path first: `just check`, the focused tests, and `HARNESS_MODEL_MODE=stub uv run harness eval run <agent>` as applicable.
+2. Run the offline fast path first: `just check`, the focused tests, and `HARNESS_MODEL_MODE=stub uv run harness eval run <agent>...` (or `just eval` for every agent) as applicable.
 3. Compare controlled trials with the same cases, effective limits, environment, and scoring rules. Preserve failed attempts and unknown cost; do not treat stub quality as live-model evidence.
 4. Inspect slice regressions, safety violations, held-out cases, and provenance. Explain failures before changing the candidate.
 5. Produce a report with baseline/candidate identities, distributions, uncertainty, limitations, and a promotion recommendation or a clear no-improvement result.

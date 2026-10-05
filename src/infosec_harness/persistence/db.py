@@ -318,7 +318,7 @@ def _bootstrap(connection) -> None:
             "harness. Use an empty database, or bring it under migration control explicitly.")
     raise SchemaNotAtHead(
         f"The database schema is at revision {revision}, not {head}. Run `harness migrate` "
-        "to upgrade it before starting the service.")
+        "(`harness migrate --local` for .harness/local.db) to upgrade it before using it.")
 
 
 async def create_all() -> None:

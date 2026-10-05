@@ -12,7 +12,7 @@ and that the query finds them.
 """
 from __future__ import annotations
 
-from infosec_harness.evals.reporting import compare_models_for, list_experiments, sweep_models
+from infosec_harness.evals.reporting import compare_models_for, list_experiments, run_evals
 from infosec_harness.evals.run import run_experiment
 from infosec_harness.persistence import db
 
@@ -52,15 +52,15 @@ async def test_every_run_records_the_code_it_measured():
 
 
 async def test_a_sweep_runs_every_model_and_reports_them_together(capsys):
-    rows = await sweep_models(AGENT, ["sonnet", "haiku"])
-    assert [r["label"] for r in rows] == ["sonnet", "haiku"]
-    assert all(not r["failed"] for r in rows)
+    rows = await run_evals([AGENT], ["sonnet", "haiku"])
+    assert [r.model for r in rows] == ["sonnet", "haiku"]
+    assert all(r.status == "complete" for r in rows)
     out = capsys.readouterr().out
     # The three things a model choice turns on, in one place.
     for column in ("accuracy", "p95 lat", "$/case"):
         assert column in out
     for row in rows:
-        assert row["experiment_id"] in out, "the sweep must name its experiments to follow up on"
+        assert row.experiment_id in out, "the sweep must name its experiments to follow up on"
 
 
 async def test_the_comparison_can_be_asked_for_after_the_fact(capsys):
@@ -122,9 +122,10 @@ async def test_reports_are_written_only_where_asked_and_never_overwrite_each_oth
 async def test_a_sweep_writes_and_audits_one_report_per_model(tmp_path, capsys):
     import json
 
-    rows = await sweep_models(AGENT, ["sonnet", "haiku"], report_dir=tmp_path)
+    rows = await run_evals([AGENT], ["sonnet", "haiku"], report_dir=tmp_path)
     for row in rows:
-        report = json.loads((tmp_path / f"{row['experiment_id']}.json").read_text())
+        assert row.report == tmp_path / f"{row.experiment_id}.json"
+        report = json.loads(row.report.read_text())
         assert "inert_checks" in report and "gate_evaluation" in report
     assert capsys.readouterr().out.count("INERT RELEASE GATES") == 2
 
@@ -141,6 +142,6 @@ async def test_one_failing_model_does_not_abort_the_sweep(monkeypatch, capsys):
         return await real(agent, **kwargs)
 
     monkeypatch.setattr(reporting, "run_experiment", flaky)
-    rows = await sweep_models(AGENT, ["sonnet", "haiku"])
-    assert [(r["label"], r["failed"]) for r in rows] == [("sonnet", True), ("haiku", False)]
-    assert "sonnet: FAILED -- RuntimeError" in capsys.readouterr().out
+    rows = await run_evals([AGENT], ["sonnet", "haiku"])
+    assert [(r.model, r.status) for r in rows] == [("sonnet", "error"), ("haiku", "complete")]
+    assert f"{AGENT}: FAILED -- RuntimeError" in capsys.readouterr().out

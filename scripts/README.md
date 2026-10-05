@@ -2,7 +2,7 @@
 
 Prefer the root `./dev` and `just` commands. These scripts support those entry points and are
 not the packaged harness runtime. Read-only readiness and model-connectivity checks are CLI
-subcommands (`harness readiness`, `harness model-connectivity --model`), not scripts. Broker
+subcommands (`harness ops readiness`, `harness ops model-connectivity --model`), not scripts. Broker
 qualification runners live in `src/infosec_harness/qualification/broker/`; the `broker_*`
 scripts below are operator entry points around them.
 
@@ -18,9 +18,9 @@ scripts below are operator entry points around them.
 | `dev_setup.py` | Installs every `.mise.toml` tool (Python, uv, Node, just, Temporal CLI) and checks exact versions; checkout identity, ports, managed VM; VM stop, confirmed reset and orphaned-home gc; `./dev`, `./dev stop --vm`, `./dev reset`, `./dev gc` |
 | `dev_sandbox_check.py` | Actual sandbox/build-egress fixtures; `./dev doctor` or `./dev smoke` |
 | `ui_deployment_smoke.py` | GET-only deployed contracts, operational views, same-origin proxy and actual UI assets; `./dev reload-ui` or explicit API/web origins; creates no findings or model requests |
-| `service_validation.py` | Aggregate sanitized readiness report; `./dev validate` / `just validate-services`; runs `harness readiness` and, only with `--model`, `harness model-connectivity --model` inside the worker; optional exact-profile UI receipt |
+| `service_validation.py` | Aggregate sanitized readiness report; `./dev validate` / `just validate-services`; runs `harness ops readiness` and, only with `--model`, `harness ops model-connectivity --model` inside the worker; optional exact-profile UI receipt |
 | `dev_setup_smoke.py` | API/UI/storage readiness and Temporal demonstration; `./dev smoke` |
-| `check_api_schema.py` | Check committed OpenAPI against FastAPI; `just generated-check` |
+| `check_api_schema.py` | Check committed OpenAPI against FastAPI; `just generated-check` (`just regenerate` rewrites it) |
 | `conformance.py` | Playbook conformance through external `agentctl`; `just conformance [/path/to/playbooks/tools/agentctl]` |
 | `exploration.py` | The offline exploration measurement library the `measure_*` scripts and tests import (moved out of the shipped package) |
 | `measure_exploration.py` | Offline repository read-tool round trips; `just measure` |

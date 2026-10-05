@@ -104,7 +104,7 @@ Two stores, because they answer different questions and a single one does neithe
 | `evals/baselines/<agent>/<tier>.json` | the accepted result per agent per model | committed, reviewed | the commit it was measured at |
 
 The database is where runs go: incremental, queryable, and written after every case so a run
-killed halfway keeps what it scored. The offline demo uses `.harness/demo.db`; managed services use PostgreSQL. Neither store is
+killed halfway keeps what it scored. Local commands use `.harness/local.db`; managed services use PostgreSQL. Neither store is
 reviewed in Git or distributed with a clone. So the handful of numbers that matter later are
 promoted into the repository, one file per agent per model, reviewed in a pull request like any
 other change and readable without the database that produced them.
@@ -137,7 +137,7 @@ rather than letting the column be read straight.
 ```bash
 harness eval run verdict -m sonnet -m opus -m haiku   # one dataset, three models, one table
 harness eval compare --agent verdict                  # the same, asked after the fact
-harness eval baseline save exp-<id>                   # promote an accepted result
+harness eval baseline save --latest verdict           # promote the newest accepted result
 ```
 
 ## Where the structure still differs from the reference architecture

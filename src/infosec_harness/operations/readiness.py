@@ -196,7 +196,7 @@ async def check_runtime(timeout: float = 15, worker_hostname: str | None = None)
 
 
 def report(timeout: float = 15, worker_hostname: str | None = None) -> tuple[dict, int]:
-    """`harness readiness`: the checks as JSON, and exit status 1 unless every check passed."""
+    """`harness ops readiness`: the checks as JSON, and exit status 1 unless every check passed."""
     try:
         result = asyncio.run(check_runtime(timeout, worker_hostname))
     except Exception:

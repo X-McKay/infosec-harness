@@ -157,6 +157,6 @@ async def check_model(*, timeout: float = 90) -> dict:
 
 
 def report(timeout: float = 90) -> tuple[dict, int]:
-    """`harness model-connectivity --model`: the result, and exit status 1 only on failure."""
+    """`harness ops model-connectivity --model`: the result, and exit status 1 only on failure."""
     result = asyncio.run(check_model(timeout=timeout))
     return result, int(result["status"] == "failed")

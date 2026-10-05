@@ -33,6 +33,54 @@ web, persistence and real sandbox gates as `not_checked`; it is not a full-stack
 [Local setup](docs/development/LOCAL_SETUP.md) covers host requirements, every `./dev` command,
 live models, migrations and troubleshooting.
 
+## Common tasks
+
+Three entry points, one job each: `./dev` sets up the machine and runs the stack, `just` is the
+code loop, and `harness` is the product and its evals.
+
+| Task | Command |
+| --- | --- |
+| Set up the repository (tools, VM, stack, smoke) | `./dev` |
+| Run the tests | `./dev test` |
+| Run the evals for one agent | `harness eval run verdict` |
+| Run the evals for all agents | `harness eval run --all` |
+| Qualify a release and record its evidence | `harness eval release --save-baselines` |
+| Run one agent's evals against two models | `harness eval run verdict -m sonnet -m opus` |
+| Record a baseline | `harness eval baseline save --latest verdict` |
+
+`harness` is the console script `./dev` installs in `.venv/bin/` (activate the virtualenv, or
+use `uv run harness`). Evals call the live model you configure
+([live models](docs/development/LOCAL_SETUP.md#live-models)); prefix `HARNESS_MODEL_MODE=stub`
+to exercise the plumbing offline, which is what `just eval` does for every agent and what CI
+runs. Stub scores never measure quality. With no `HARNESS_DATABASE_URL`, eval and local
+commands store experiments in `.harness/local.db`, and reports go to `.harness/reports/`.
+A release qualification needs a live model, a clean tree at a commit and a `runsc` host:
+without the sandbox, `build-repair`'s execution checks are `not_checked` and its
+`execution_not_checked_count` gate fails by design
+([release evidence](docs/evaluation/RELEASE_EVIDENCE.md)).
+
+### Full command reference
+
+```bash
+./dev [start|check|test|status|logs|smoke|doctor|validate|reload|reload-ui|stop|reset|gc]
+just bootstrap | check | lint-fix | test | test-network | test-all | eval | generated-check
+just regenerate | measure | conformance | ui-build | ui-check | validate-services
+harness submit FINDINGS.json [--local]   # triage a batch; --local runs in-process on stub models
+harness runs | report RUN_ID             # list runs by priority; one run's full report as JSON
+harness worker | api | migrate [--local] # serve; migrate HARNESS_DATABASE_URL (or local.db)
+harness agents validate | schema
+harness eval run AGENT... | --all [-m TIER]... [--repeat N] [--dataset PATH] [--require-gates]
+harness eval release [--agent NAME]... [-m TIER] [--save-baselines]
+harness eval results | compare | calibrate | corpus
+harness eval baseline save EXPERIMENT_ID | --latest AGENT [-m TIER]
+harness eval baseline list
+harness ops readiness | model-connectivity --model   # read-only deployment checks
+```
+
+`-m`/`--model` names a model-catalogue tier (`opus`, `sonnet`, `haiku`), never a raw model id.
+`harness submit examples/findings.sample.json --local` runs the whole pipeline in-process on
+stub models; its verdicts are deliberately `inconclusive` because the stub is not a judge.
+
 ## Find your way around
 
 - [Documentation index](docs/README.md): setup, architecture, safety, evaluation and evidence.
@@ -67,34 +115,13 @@ live models, migrations and troubleshooting.
   repository-grouped warm-then-fan-out scheduling keep the shared prefix cached;
   `tests/agents/test_cache_prefix.py` and `tests/agents/test_exploration_cost.py` check both.
 - **Evidence-based tuning.** Every agent has an eval dataset and a release policy.
-  `harness eval run <agent> -m sonnet -m opus` runs one dataset against each model in turn, and
-  accepted results are committed under [`evals/baselines/`](evals/baselines/README.md).
+  `harness eval run <agent> -m sonnet -m opus` runs one dataset against each model in turn,
+  `harness eval release` qualifies a commit, and accepted results are committed under
+  [`evals/baselines/`](evals/baselines/README.md).
 - **Governed.** Each agent declares an owner, execution class, governance tier, data
   classification, model policy and an enforced per-run budget; its tier must match the risk
   scenarios it carries. See [playbook conformance](docs/architecture/PLAYBOOK_CONFORMANCE.md)
   and the [threat model](docs/threat-models/triage-system.md).
-
-## CLI
-
-```bash
-harness submit findings.json [--local]   # triage a batch; --local is an in-process stub demo
-harness runs [--verdict ... --batch-id ...]  # list runs, highest priority first
-harness report <run-id>                  # full triage report as JSON
-harness migrate                          # upgrade HARNESS_DATABASE_URL to the migration head
-harness init-db                          # create an empty database at head (tests, demos)
-harness readiness | model-connectivity --model  # read-only service checks
-harness worker | harness api
-harness agents validate | agents schema
-harness eval run <agent> [-m sonnet -m opus] [--repeat N] [--dataset PATH] [--report-dir DIR]
-harness eval corpus [--language all] [--manifest PATH] [--limit N] [--no-sandbox]
-harness eval results | compare | calibrate
-harness eval baseline save <experiment-id> | baseline list
-```
-
-`-m`/`--model` names a model-catalogue tier (`opus`, `sonnet`, `haiku`), never a raw model id.
-
-`just demo` runs the pipeline in-process on `examples/findings.sample.json` with stub models;
-its verdicts are deliberately `inconclusive` because the stub is not a judge.
 
 ## Layout
 

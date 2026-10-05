@@ -37,9 +37,9 @@ jobs:
       # Network-marked tests (wheel build and install from PyPI), run explicitly.
       - run: just test-network
       # Every agent's eval dataset, through its adapter, on the stub model. A load test of the
-      # datasets and adapters, not of quality: stub accuracy is meaningless and nothing asserts
-      # on it. The recipe fails on a dataset or adapter error and on an empty dataset glob.
-      - run: just eval-adapters
+      # datasets and adapters, not of quality: stub accuracy is meaningless and fails the gates,
+      # which this does not require. It fails when a run does not complete or no dataset exists.
+      - run: just eval
   conformance:
     # Validates the repo against the Agent / Multi-Agent Playbooks via agentctl, which lives
     # in a separate repository. Fetching and building that tool is infrastructure: when it is

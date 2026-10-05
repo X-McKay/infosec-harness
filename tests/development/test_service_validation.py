@@ -241,6 +241,7 @@ def test_managed_exec_preserves_running_environment_and_rejects_contradictory_su
         "-T",
         "worker",
         "harness",
+        "ops",
         "model-connectivity",
         "--model",
     ]

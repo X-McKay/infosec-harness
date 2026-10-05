@@ -20,7 +20,7 @@ The interface includes triage, finding evidence/review, metrics, experiments and
 
 ## API contract
 
-From the repository root, `just openapi` regenerates `openapi.json` from FastAPI and
+From the repository root, `just regenerate` regenerates `openapi.json` from FastAPI and
 `src/api/schema.d.ts` from that document. Commit both together; do not edit the generated
 TypeScript directly. Use `components["schemas"][...]` aliases (exported from
 `src/api/client.ts`) rather than hand-written response types. `just generated-check` checks

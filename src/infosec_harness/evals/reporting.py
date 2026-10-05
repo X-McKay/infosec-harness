@@ -1,8 +1,10 @@
-"""Strict experiment comparison, model sweeps, result listing, and baselines."""
+"""Strict experiment comparison, multi-agent and model-sweep runs, result listing, baselines."""
 
 from __future__ import annotations
 
+import dataclasses
 import math
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -10,8 +12,9 @@ from sqlalchemy import select
 
 from infosec_harness.evals import baselines as baseline_store
 from infosec_harness.evals.provenance import code_version
-from infosec_harness.evals.run import load_experiment, run_experiment
+from infosec_harness.evals.run import TruncatedExperiment, load_experiment, run_experiment
 from infosec_harness.persistence import db
+from infosec_harness.settings import get_settings
 
 _COMPARISON_COLUMNS: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("accuracy", ("task_success_rate",), "pct"),
@@ -267,39 +270,141 @@ def comparison_table(rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
-async def sweep_models(agent: str, models: list[str], *, overlay: Path | None = None,
-                       repeat: int = 1, report_dir: Path | None = None,
-                       dataset: Path | None = None) -> list[dict]:
-    """Run one agent's dataset once per model, then report them side by side.
+def packaged_eval_agents() -> list[str]:
+    """Every agent with a packaged eval dataset, by name.
+
+    Enumerated from the datasets rather than from the adapter table, so a dataset whose agent
+    has no adapter is run (and fails) instead of being skipped. None at all is an error: zero
+    datasets would otherwise read as zero failures.
+    """
+    root = get_settings().agents_dir
+    agents = sorted(path.parents[1].name for path in root.glob("*/evals/dataset.yaml"))
+    if not agents:
+        raise SystemExit(f"no {root}/*/evals/dataset.yaml found: an empty run proves nothing")
+    return agents
+
+
+@dataclass
+class EvalOutcome:
+    """One agent x model run, as the summary table and the exit status read it."""
+
+    agent: str
+    model: str
+    experiment_id: str
+    status: str
+    """``complete``, ``truncated`` (stored, partial) or ``error`` (nothing usable stored)."""
+    pricing: str = ""
+    metrics: dict = dataclasses.field(default_factory=dict)
+    report: Path | None = None
+    error: str = ""
+
+    @property
+    def gate_status(self) -> str:
+        # A run with no stored verdict has not been judged, which is not a pass.
+        return (self.metrics.get("gate_evaluation") or {}).get("status") or "not_checked"
+
+    @property
+    def failing_checks(self) -> list[str]:
+        evaluation = self.metrics.get("gate_evaluation") or {}
+        failing = []
+        for check in evaluation.get("checks") or []:
+            if check["status"] == "passed":
+                continue
+            value = check["value"]
+            if check["status"] == "not_checked" or value is None:
+                failing.append(f"{check['metric']}=n/a")
+                continue
+            relation = {"min": "<", "max": ">"}.get(check["bound"], "!=")
+            failing.append(f"{check['metric']}={value:g}{relation}{check['limit']:g}")
+        failing += [f"provenance:{key}" for key in evaluation.get("missing_provenance") or []]
+        return failing
+
+
+def summary_table(outcomes: list[EvalOutcome]) -> str:
+    """One row per run: what it covered, how it scored, the policy verdict and its report."""
+    headers = ["agent", "model", "status", "n", "success", "gates", "failing checks", "report"]
+    body = []
+    for outcome in outcomes:
+        metrics = outcome.metrics
+        success = metrics.get("task_success_rate")
+        body.append([
+            outcome.agent, outcome.model or "-", outcome.status,
+            f"{metrics.get('n', '-')}/{metrics.get('n_planned', '-')}",
+            f"{success:.0%}" if isinstance(success, int | float) else "-",
+            outcome.gate_status,
+            ", ".join(outcome.failing_checks) or outcome.error or "-",
+            str(outcome.report) if outcome.report else "-",
+        ])
+    widths = [max(len(row[i]) for row in [headers, *body]) for i in range(len(headers))]
+    return "\n".join([
+        "  ".join(h.ljust(w) for h, w in zip(headers, widths, strict=True)).rstrip(),
+        "  ".join("-" * w for w in widths),
+        *("  ".join(c.ljust(w) for c, w in zip(row, widths, strict=True)).rstrip()
+          for row in body),
+    ])
+
+
+def exit_status(outcomes: list[EvalOutcome], *, require_gates: bool = False) -> int:
+    """1 when a run did not complete; with ``require_gates``, also when a gate is not passed."""
+    if any(outcome.status != "complete" for outcome in outcomes):
+        return 1
+    if require_gates and any(outcome.gate_status != "passed" for outcome in outcomes):
+        return 1
+    return 0
+
+
+async def run_evals(agents: list[str], models: list[str] | None = None, *,
+                    overlay: Path | None = None, repeat: int = 1, report: Path | None = None,
+                    report_dir: Path | None = None,
+                    dataset: Path | None = None) -> list[EvalOutcome]:
+    """Run each agent's dataset once per model, then print one summary table.
 
     Sequential on purpose. These runs are the measurement, and latency is one of the things
     being measured -- running them concurrently would have them contend for the same endpoint
-    and make every number a function of how many models were in the sweep.
+    and make every number a function of how many runs were in the batch. With more than one
+    model, each agent also gets the side-by-side quality, latency and cost table.
 
-    A model that fails does not abort the sweep: its row is recorded as failed and the others
-    still produce numbers, because "opus could not complete the dataset" is itself a result
-    worth seeing next to the models that could. Every completed model writes its own release
-    report into ``report_dir`` when one is given, audited like any other.
+    A run that fails does not abort the rest: its row is recorded as truncated or errored and
+    the others still produce numbers, because "opus could not complete the dataset" is itself
+    a result worth seeing next to the runs that could.
     """
-    results: list[dict] = []
-    for tier in models:
-        print(f"\n=== {agent} @ {tier} " + "=" * 40)
-        try:
-            exp_id = await run_experiment(
-                agent, overlay=overlay, repeat=repeat, model=tier, dataset=dataset,
-                report_dir=report_dir)
-        except Exception as exc:  # includes TruncatedExperiment; the next model still runs
-            print(f"  {tier}: FAILED -- {type(exc).__name__}: {str(exc)[:200]}")
-            results.append({"label": tier, "experiment_id": getattr(exc, "experiment_id", "-"),
-                            "pricing": "", "metrics": {}, "failed": True})
-            continue
-        row = await load_experiment(exp_id)
-        results.append({"label": tier, "experiment_id": exp_id,
-                        "pricing": row.pricing, "metrics": row.metrics, "failed": False})
-    print(f"\n{agent}: {len(models)} models, {repeat} repetition(s), "
-          f"code {code_version().label()}\n")
-    print(comparison_table(results))
-    return results
+    outcomes: list[EvalOutcome] = []
+    tiers: list[str | None] = list(models or []) or [None]
+    for agent in agents:
+        ran: list[EvalOutcome] = []
+        for tier in tiers:
+            print(f"\n=== {agent}" + (f" @ {tier}" if tier else "") + " " + "=" * 40)
+            try:
+                exp_id = await run_experiment(
+                    agent, overlay=overlay, repeat=repeat, model=tier, dataset=dataset,
+                    report=report, report_dir=report_dir)
+            except TruncatedExperiment as truncated:
+                row = await load_experiment(truncated.experiment_id)
+                ran.append(EvalOutcome(
+                    agent, tier or (row.model_tier if row else ""), truncated.experiment_id,
+                    "truncated", row.pricing if row else "", (row.metrics if row else {}) or {}))
+                continue
+            except (Exception, SystemExit) as exc:  # the next run still runs
+                print(f"  {agent}: FAILED -- {type(exc).__name__}: {str(exc)[:200]}")
+                ran.append(EvalOutcome(agent, tier or "", "-", "error",
+                                       error=f"{type(exc).__name__}: {str(exc)[:80]}"))
+                continue
+            print(f"EXPERIMENT_ID={exp_id}")
+            row = await load_experiment(exp_id)
+            metrics = row.metrics or {}
+            ran.append(EvalOutcome(
+                agent, row.model_tier, exp_id, str(metrics.get("status") or "unknown"),
+                row.pricing, metrics,
+                report or (report_dir / f"{exp_id}.json" if report_dir is not None else None)))
+        if len(tiers) > 1:
+            print(f"\n{agent}: {len(tiers)} models, {repeat} repetition(s), "
+                  f"code {code_version().label()}\n")
+            print(comparison_table([
+                {"label": outcome.model or "-", "experiment_id": outcome.experiment_id,
+                 "pricing": outcome.pricing, "metrics": outcome.metrics} for outcome in ran]))
+        outcomes += ran
+    print("\n" + summary_table(outcomes))
+    return outcomes
 
 
 async def _stored_experiments(*, agent: str | None, commit: str | None) -> list:
@@ -358,6 +463,26 @@ async def compare_models_for(
     found = list(latest.values())
     _render_comparison(found, descriptive=descriptive)
     return found
+
+
+async def latest_live_experiment(agent: str, tier: str | None = None):
+    """The newest complete live run of ``agent`` on ``tier`` over its full packaged dataset.
+
+    ``tier`` defaults to the agent's own spec tier. Stub runs and partial splits are skipped
+    because neither can ever be a baseline; a dirty-tree run is *not* skipped, so the baseline
+    refusal says so instead of an older commit's result being picked silently.
+    """
+    from infosec_harness.agents import registry
+
+    tier = tier or registry.load_spec(agent).model or "sonnet"
+    for row in await _stored_experiments(agent=agent, commit=None):
+        metrics = row.metrics or {}
+        if (row.model_tier == tier and metrics.get("status") == "complete"
+                and row.pricing != "stub" and not str(row.model_name or "").startswith("stub:")
+                and (metrics.get("comparison_identity") or {}).get("split") == "full"):
+            return row
+    raise SystemExit(f"no complete live run of {agent} on {tier} over its full dataset is "
+                     f"stored; run `harness eval run {agent} -m {tier}` first")
 
 
 async def save_baseline(experiment_id: str) -> Path:

@@ -82,8 +82,8 @@ result: the override exists for explicitly labelled local development only.
 pollers for the running worker, API and worker source and model-profile consistency, API
 contracts, the UI assets and the same-origin proxy. It does not start services, migrate,
 submit findings or recover broker requests. The same checks are available to operators as
-`harness readiness` (database, schema head and Temporal pollers; `--worker-hostname`,
-`--timeout`) and `harness model-connectivity --model` (one structured-output request).
+`harness ops readiness` (database, schema head and Temporal pollers; `--worker-hostname`,
+`--timeout`) and `harness ops model-connectivity --model` (one structured-output request).
 
 ```bash
 ./dev validate --model                       # add one explicit inference request
@@ -119,9 +119,17 @@ endpoint serves, checking it, and reasoning-budget options. For Bedrock, run
 the model ids and region in `src/infosec_harness/config/models.yaml` match your account.
 
 Real assessments always run through Temporal. `harness submit --local` and the API's
-`mode: local` run stub models only. Agent evals (`harness eval run`, whose `--model` names a
-catalogue tier) and the corpus runner (`harness eval corpus`, with `--no-sandbox` to skip
-building and probing) may call a live model directly.
+`mode: local` run stub models only (`--local` selects them when `HARNESS_MODEL_MODE` is unset
+and refuses an explicit `live`). Agent evals (`harness eval run`, whose `--model` names a
+catalogue tier), the release qualification (`harness eval release`) and the corpus runner
+(`harness eval corpus`, with `--no-sandbox` to skip building and probing) may call a live model
+directly.
+
+With no `HARNESS_DATABASE_URL` from the environment, `.env` or `HARNESS_ENV_FILE`, the commands
+that run on a developer's machine (every `harness eval` command, `harness submit --local`,
+`harness runs` and `harness report`) use `.harness/local.db` in the checkout and say so once on
+stderr. The worker, the API and `harness migrate` keep the deployment default, so a service with
+no database configured fails to connect rather than writing to a scratch file.
 
 ## Without the launcher
 
@@ -131,7 +139,8 @@ building and probing) may call a live model directly.
 just bootstrap      # uv sync --locked
 just check          # ruff over src, tests and scripts; compile; validate every agent spec
 just test           # deterministic suite, stub models, per-process SQLite
-just demo           # the pipeline in-process on examples/findings.sample.json
+just eval           # every agent's eval dataset on stub models (what CI runs)
+uv run harness submit examples/findings.sample.json --local   # the pipeline in-process
 ```
 
 `just` and `uv` here must be the pinned versions: run them through
@@ -147,20 +156,21 @@ generated credentials or allocated ports, and it is not the verified setup.
 ## Database migrations
 
 The run store is versioned with Alembic; the revisions ship in
-`src/infosec_harness/persistence/migrations/`. Schema bootstrap (API startup, `harness init-db`,
-`harness submit` and eval runs) creates an empty database at head, accepts one already at head,
-and refuses anything else with the command that fixes it. The API container runs
-`harness migrate` before it serves.
+`src/infosec_harness/persistence/migrations/`. Schema bootstrap (API startup, `harness submit`
+and eval runs) creates an empty database at head, accepts one already at head, and refuses
+anything else with the command that fixes it. The API container runs `harness migrate` before
+it serves.
 
 ```bash
 uv run harness migrate            # upgrade HARNESS_DATABASE_URL to head
-just migrate                      # the same, against the demo database .harness/demo.db
+uv run harness migrate --local    # the same, against the local database .harness/local.db
 uv run alembic current            # which revision a database is at
 uv run alembic upgrade head --sql # print the SQL for a DBA-applied change
 ```
 
-`harness init-db` creates an empty database at head and is what tests, CI and `just demo` use;
-it never alters an existing table. A database with tables but no Alembic version row is refused
+`harness migrate` on an empty database builds the same schema that bootstrap creates, so there
+is no separate create command; bootstrap never alters an existing table. A database with tables
+but no Alembic version row is refused
 rather than guessed at. Changing a model in `src/infosec_harness/persistence/db.py` means adding
 a revision (`uv run alembic revision --autogenerate -m "..."`) and reviewing it: a `NOT NULL`
 column needs a server default. `tests/persistence/test_migrations.py` fails if the revisions and

@@ -163,8 +163,7 @@ def test_ci_runs_the_justfile_recipes_with_the_pinned_tools():
         assert re.fullmatch(r"jdx/mise-action@[0-9a-f]{40}", mise[0]["uses"])
         assert mise[0]["with"]["sha256"] == "${{ steps.pins.outputs.mise-sha256 }}"
     backend = [step.get("run", "") for step in workflow["jobs"]["backend"]["steps"]]
-    for recipe in ("bootstrap", "check", "generated-check", "test", "test-network",
-                   "eval-adapters"):
+    for recipe in ("bootstrap", "check", "generated-check", "test", "test-network", "eval"):
         assert f"just {recipe}" in backend
     assert workflow["jobs"]["backend"]["env"]["HARNESS_TEST_REQUIRE_TEMPORAL"] == "1"
     assert workflow["env"]["UV_PYTHON_DOWNLOADS"] == "never"
@@ -179,6 +178,23 @@ def test_justfile_lints_scripts_and_never_rewrites_the_lock():
                if re.match(r"\s+.*\buv run\b", line))
     for removed in ("up", "down", "down-reset", "worker", "api", "web-build", "web-check"):
         assert not re.search(rf"^{removed}\b.*:", text, re.MULTILINE), removed
+
+
+def test_justfile_is_the_code_loop_and_every_recipe_says_what_it_does():
+    """`just` owns the code loop; running the product and its evals is `harness`'s job."""
+    text = (ROOT / "justfile").read_text()
+    recipes = re.findall(r"^([a-z][\w-]*)\b[^\n]*:$", text, re.MULTILINE)
+    assert set(recipes) == {
+        "bootstrap", "check", "lint-fix", "generated-check", "regenerate", "test",
+        "test-network", "test-all", "eval", "measure", "conformance", "ui-build", "ui-check",
+        "validate-services"}
+    for recipe in recipes:
+        before = text.split(f"\n{recipe}", 1)[0].splitlines()[-1]
+        assert before.startswith("# "), f"{recipe} has no one-line comment"
+    # The stub adapter check is the whole of `just eval`; nothing sets a database by hand.
+    assert re.search(r"^eval \*args:\n\s+HARNESS_MODEL_MODE=stub uv run --locked harness eval "
+                     r"run --all \{\{args\}\}$", text, re.MULTILINE)
+    assert "HARNESS_DATABASE_URL" not in text
     assert not (ROOT / ".pre-commit-config.yaml").exists()
 
 

@@ -10,14 +10,17 @@
 | `../src/infosec_harness/agents/<name>/evals/` | Packaged per-agent datasets and release policies (the only definition of release gates) |
 | `../src/infosec_harness/evals/` | Evaluation implementation |
 
-Run `just eval-run` for a stub agent dataset. `harness eval run <agent>` records case results
-incrementally in `HARNESS_DATABASE_URL` and exports a release report to
+`harness eval run <agent>...` (or `--all`) records case results incrementally in
+`HARNESS_DATABASE_URL` (`.harness/local.db` when unset), prints one summary table, and exports a
+release report per run to
 `.harness/reports/evals/<experiment-id>.json` (`HARNESS_REPORTS_DIR`, `--report` or
 `--report-dir` select another location). The report carries the policy's own verdict
 (`gate_evaluation`, `not_checked` when a `required_provenance` key is missing), the checks that
 could not have failed for this run (`inert_checks`, also printed beside the report path), what
 the numbers are over (`run`: split, `n` of `n_planned`, repetitions, the case-set digest) and
-what produced them (`provenance`). Truncated runs export no report. `--dataset PATH` runs another dataset (a sealed held-out set)
+what produced them (`provenance`). Truncated runs export no report. `just eval` runs every
+agent on stub models, as CI does, and `harness eval release` is the qualification run for a
+release ([release evidence](../docs/evaluation/RELEASE_EVIDENCE.md#qualifying-a-release)). `--dataset PATH` runs another dataset (a sealed held-out set)
 against the deployed spec; such a run is labelled `split: external`. Stub scores exercise
 adapters and never establish live-model quality.
 

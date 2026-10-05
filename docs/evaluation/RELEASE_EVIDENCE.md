@@ -4,11 +4,37 @@ Accepted evidence has exactly two homes:
 
 | Evidence | Home | Recorded by |
 | --- | --- | --- |
-| An agent's accepted eval result per model | `evals/baselines/<agent>/<tier>.json` | `harness eval baseline save <experiment-id>`, reviewed in a pull request |
+| An agent's accepted eval result per model | `evals/baselines/<agent>/<tier>.json` | `harness eval release --save-baselines` or `harness eval baseline save --latest <agent>`, reviewed in a pull request |
 | Everything else: live qualification runs, sandbox and runtime checks, broker qualification, UI validation | `docs/evidence/<yyyy-mm-dd>-<topic>/` | A dated folder with a README stating what it proves and what it does not |
 
-Everything else is transient: the experiment store (`HARNESS_DATABASE_URL`) holds every run and
-case result, and reports under `.harness/reports/` belong to one checkout.
+Everything else is transient: the experiment store (`HARNESS_DATABASE_URL`, `.harness/local.db`
+when unset) holds every run and case result, and reports under `.harness/reports/` belong to one
+checkout.
+
+## Qualifying a release
+
+```bash
+harness eval release --save-baselines            # every agent, each on its own model tier
+harness eval release -m opus --agent verdict     # restrict the tier or the agents
+```
+
+The qualification run refuses stub models and a working tree that is dirty or has no commit,
+before any model is called. It then runs every agent's full packaged dataset, sequentially, on
+the live model, evaluates each agent's release policy, and prints one table (agent, model,
+status, `n` of `n_planned`, task success, gate status, failing checks, report path). Reports and
+a `summary.json` go to `.harness/reports/release/<commit>/` (under `HARNESS_REPORTS_DIR`). It
+exits 1 unless every run completed and every policy is `passed`. With `--save-baselines`, each
+passing run is recorded under `evals/baselines/` after all runs finish, through the same
+baseline rules and refusals as `harness eval baseline save`; commit those files.
+
+The execution-backed gates need a host whose sandbox actually executes, which means `runsc`
+(the `./dev` VM, or a worker host with gVisor). Without one, `build-repair`'s execution checks
+are `not_checked` and its `execution_not_checked_count` hard gate fails: that is by design, as
+an unexecuted check is not a pass, and the release is not qualified on such a host.
+
+To record the evidence, copy the sanitized `summary.json` (and any reports a reviewer needs)
+into a dated folder as described in [writing an evidence folder](#writing-an-evidence-folder),
+and commit it with the baselines.
 
 ## Release gates
 
@@ -32,7 +58,9 @@ quality-policy decision, not evidence of better agents, and it does not relax an
 regrade an earlier result ([agent-quality evidence](../evidence/2026-09-30-agent-quality/README.md)).
 `tests/development/test_release_policies.py` holds the policy invariants.
 
-`harness eval run <agent>` writes a release report to `.harness/reports/evals/`. Each fact is
+`harness eval run <agent>...` (or `--all`) writes one release report per run to
+`.harness/reports/evals/` and prints one summary table; it exits 1 when a run does not complete,
+and with `--require-gates` also when a policy is not `passed`. Each fact is
 recorded once: `run` says what the numbers are over (status, split, `n` of `n_planned`,
 repetitions, the case-set digest) and `provenance` what produced them (commit, agent version,
 config hash, model, dataset and its version, experiment id). The report also carries the

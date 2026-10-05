@@ -51,7 +51,7 @@ configuration for a thinking budget to take effect.
 
 ## Check an endpoint
 
-`./dev validate --model`, or `harness model-connectivity --model` inside a configured process,
+`./dev validate --model`, or `harness ops model-connectivity --model` inside a configured process,
 sends one structured-output request, as the verdict agent, to the selected backend with no
 retry. A pass is connectivity, not agent quality. An endpoint whose `/v1/models` returns 200 can
 still have a hung engine, so check an actual chat completion when diagnosing one. If an endpoint fails during an

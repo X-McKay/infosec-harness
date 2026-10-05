@@ -191,7 +191,7 @@ def test_cli_requires_explicit_inference_authorization(monkeypatch):
 
     from infosec_harness.cli import app
 
-    result = CliRunner().invoke(app, ["model-connectivity"])
+    result = CliRunner().invoke(app, ["ops", "model-connectivity"])
     assert result.exit_code == 2
 
 

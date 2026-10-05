@@ -22,7 +22,7 @@ Paths below are relative to `src/infosec_harness/` unless they start at the repo
 | `persistence/` | Run store (`store.py`, `db.py`), migrations, artifacts, `budgets.py` (the root ledger, the one compare-and-set retry and the closed-accounting validation), recipe cache, reconciliation; `run_telemetry.py` (the one typed `RunTelemetry`, schema 2; migration `0006` rewrote earlier records), `batch_progress.py` (read-only batch progress), `identity.py` (worker-host provenance and manifest `schema_version`), `paths.py` (workspace layout), `population.py` (operational/demo populations) |
 | `inference/` | Opt-in credential broker, one subpackage per role (below) |
 | `evals/` | `run.py` (eval runs, overlays and `--model`), `adapters.py` (per-agent scoring adapters), `dataset.py` (the one dataset loader), `gates.py` (the one release-gate evaluator), `release_report.py`, `inert_gates.py` (the audit every report gets), `metrics.py`, `messages.py` (captured-message walker), `pricing.py`, `baselines.py`, `corpus_run.py`, `calibration.py`, `execution_checks.py` and `probe_execution.py` (opt-in sandbox checks) |
-| `operations/` | Read-only `harness readiness` and `harness model-connectivity` checks |
+| `operations/` | Read-only `harness ops readiness` and `harness ops model-connectivity` checks |
 | `qualification/broker/` | Operator broker qualification runners (`python -m infosec_harness.qualification.broker.<module>`); never imported by serving code |
 | `api/`, `cli.py` | FastAPI service and contracts; the Typer CLI |
 | `_io.py` | The one atomic file writer (temp file, fsync, replace; exclusive mode via link) used by artifacts, the native adapter, the qualification runners and eval reports |
@@ -66,8 +66,8 @@ Two artifacts are generated, because their consumers are outside Python:
 
 | Generated artifact | Regenerate | Drift check |
 | --- | --- | --- |
-| `src/infosec_harness/agents/agent_schema.json` (editor schema for `agent.yaml`) | `just agents-schema` | `tests/agents/test_agents.py` |
-| `ui/openapi.json`, `ui/src/api/schema.d.ts` | `just openapi` | `just generated-check` (OpenAPI) and `npm run check:api` in `just ui-check` (client types) |
+| `src/infosec_harness/agents/agent_schema.json` (editor schema for `agent.yaml`) | `just regenerate` | `tests/agents/test_agents.py` |
+| `ui/openapi.json`, `ui/src/api/schema.d.ts` | `just regenerate` | `just generated-check` (OpenAPI) and `npm run check:api` in `just ui-check` (client types) |
 
 ## Local output ownership
 
@@ -86,7 +86,7 @@ Use absolute environment paths when invoking from elsewhere.
 | Checkout identity and credentials | `.harness/dev.env` | `./dev`; generated, mode 0600 |
 | Managed tools and downloads | `.harness/` | `./dev`; pins in `.mise.toml` and `.dev-tools/versions.env` |
 | VM state | Short path under `~/.cache/ih/` | `./dev`; recorded in `.harness/runtime-home` |
-| Demo database | `.harness/demo.db` | `just demo`, `just migrate`, `just eval-run`; `HARNESS_DATABASE_URL` |
+| Local database (experiments, local runs) | `.harness/local.db` | `harness eval ...`, `harness submit --local`, `harness runs`/`report` when `HARNESS_DATABASE_URL` is unset; `harness migrate --local` |
 | Repo snapshots, build contexts, artifacts | `.harness/workspace/` | `HARNESS_WORKSPACE_DIR`; S3 replaces the artifact store when configured |
 | Environment recipe cache | `.harness/workspace/recipes/` | `HARNESS_RECIPE_CACHE_DIR` |
 | Log snapshots | `.harness/logs/compose-*` | Full startup and `./dev logs [SERVICE]` |

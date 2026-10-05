@@ -16,8 +16,10 @@ configured runtime or provider name as execution evidence.
   `infosec_harness.evals.gates`; a missing metric is `not_checked`, never `passed`.
 - Development skills live in `.claude/skills/`; `.agents/skills` is a symlink to the same files
   for Codex. `AGENTS.md` is the shared instruction source and `CLAUDE.md` imports it.
-- The only generated files are the OpenAPI document (`just openapi`, checked by
-  `just generated-check`) and the agent JSON schema (`just agents-schema`, checked by tests).
+- The only generated files are the OpenAPI document (checked by `just generated-check`), its
+  UI client types, and the agent JSON schema (checked by tests); `just regenerate` rewrites all.
+- Three entry points, one job each: `./dev` is machine setup and the stack, `just` the code
+  loop, `harness` the product and its evals (README "Common tasks").
 - Start navigation at `docs/README.md`; dated evidence lives under `docs/evidence/`.
 
 ## Canonical commands
@@ -28,6 +30,7 @@ configured runtime or provider name as execution evidence.
 just check        # ruff over src, tests and scripts; byte-compile; validate every agent spec
 just test         # deterministic suite, stub models; excludes tests marked `network`
 just test-all     # every test, `network`-marked ones included
+just eval         # every agent's eval dataset on stub models: adapters, not quality
 just generated-check  # OpenAPI drift, without rewriting the checkout
 just ui-check     # UI formatting, generated API types (`npm run check:api`), production build
 ```
