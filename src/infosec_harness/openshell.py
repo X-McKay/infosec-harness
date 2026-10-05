@@ -187,6 +187,27 @@ def _digest(value: Any) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+def _unordered(value: Any) -> Any:
+    """Sort lists of objects (Docker reports Mounts in varying order); scalar lists keep order."""
+    if isinstance(value, dict):
+        return {key: _unordered(item) for key, item in value.items()}
+    if isinstance(value, list) and value and all(isinstance(item, dict) for item in value):
+        return sorted((_unordered(item) for item in value),
+                      key=lambda item: json.dumps(item, sort_keys=True))
+    return value
+
+
+def _changed_paths(saved: Any, fresh: Any, path: str = "", limit: int = 8) -> list[str]:
+    if isinstance(saved, dict) and isinstance(fresh, dict):
+        paths = []
+        for key in sorted(set(saved) | set(fresh)):
+            paths += _changed_paths(saved.get(key), fresh.get(key), f"{path}.{key}", limit)
+            if len(paths) >= limit:
+                break
+        return paths[:limit]
+    return [] if saved == fresh else [path or "."]
+
+
 def _sha256(stream: Any) -> str:
     digest = hashlib.sha256()
     while chunk := stream.read(65536):
@@ -501,7 +522,9 @@ class OpenShell:
                 raise OpenShellError("sandbox qualification proof is missing")
             saved = json.loads(path.read_bytes())
             if saved.get("binding") != binding or not saved.get("workload"):
-                raise OpenShellError("sandbox qualification binding changed or is incomplete")
+                changed = _changed_paths(saved.get("binding"), binding)
+                raise OpenShellError("sandbox qualification binding changed or is incomplete: "
+                                     + (", ".join(changed) or "workload proof missing"))
             return
         # Write intent before dispatch: a restart cannot blindly repeat an audit
         # whose native receipt does not retain its output stream.
@@ -686,9 +709,11 @@ class OpenShell:
                 raise OpenShellError("observed outer workload fence failed")
             return {"containers": {role: {"id": v["Id"], "started_at": v["State"]["StartedAt"]}
                                    for role, v in by_role.items()},
-                    "fence_digest": _digest({role: {key: v[key]
+                    # Observed live 2026-10-05: docker inspect returns Mounts in varying order,
+                    # so the digest is over an order-canonical view of the same fence facts.
+                    "fence_digest": _digest(_unordered({role: {key: v[key]
                         for key in ("Id", "Config", "HostConfig", "Mounts", "Image")}
-                        for role, v in by_role.items()}),
+                        for role, v in by_role.items()})),
                     "rootfs_readonly": bool(host.get("ReadonlyRootfs")),
                     "pids_limit": host["PidsLimit"], "image": workload["Image"],
                     "network_mode": host["NetworkMode"], "runtime": host["Runtime"]}

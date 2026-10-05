@@ -794,6 +794,36 @@ async def test_qualification_reuse_tolerates_routine_resource_version_bump(adapt
 
 
 @pytest.mark.asyncio
+async def test_qualification_reuse_tolerates_mount_order_but_not_mount_changes(adapter, monkeypatch):
+    """docker inspect lists Mounts in varying order (observed live, 2026-10-05: the fence
+    digest of one running sandbox flipped between two values). Order must not count as
+    drift, while a changed mount still must."""
+    boundary, native = adapter
+    original = boundary._inspection_call
+    mounts = [{"Type": "volume", "Destination": "/workspace"},
+              {"Type": "volume", "Destination": "/tmp"}]
+    calls = {"inspect": 0}
+
+    async def reordered(args):
+        raw = await original(args)
+        if args[0] == "inspect":
+            calls["inspect"] += 1
+            values = json.loads(raw)
+            values[0]["Mounts"] = mounts if calls["inspect"] % 2 else mounts[::-1]
+            return json.dumps(values)
+        return raw
+
+    monkeypatch.setattr(boundary, "_inspection_call", reordered)
+    sandbox = await boundary.create("run")
+    assert await boundary.create("run") == sandbox
+    assert len(native.observations) == 1
+    mounts[1] = {"Type": "volume", "Destination": "/var/tmp"}
+    with pytest.raises(OpenShellError, match="binding changed.*outer"):
+        await boundary.create("run")
+    assert native.deleted == [sandbox.name]
+
+
+@pytest.mark.asyncio
 async def test_qualification_reuse_survives_adapter_restart(adapter, monkeypatch):
     boundary, native = adapter
     sandbox = await boundary.create("run")
