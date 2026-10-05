@@ -750,14 +750,14 @@ async def test_ordinary_nonzero_exit_is_a_completed_replayable_receipt(adapter):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("change", ["missing", "revision", "process", "restart", "container"])
+@pytest.mark.parametrize("change", ["missing", "admission", "process", "restart", "container"])
 async def test_qualification_reuse_requires_unchanged_lifecycle(adapter, monkeypatch, change):
     boundary, native = adapter
     sandbox = await boundary.create("run")
     if change == "missing":
         boundary._record("qualification", sandbox.id).unlink()
-    elif change == "revision":
-        native.resources[sandbox.name].metadata.resource_version += 1
+    elif change == "admission":
+        native.resources[sandbox.name].status.configuration_admission.config_revision += 1
     elif change == "process":
         native.resources[sandbox.name].status.main_process_instance_id = "replacement"
     else:
@@ -779,6 +779,18 @@ async def test_qualification_reuse_requires_unchanged_lifecycle(adapter, monkeyp
         await boundary.create("run")
     assert len(native.observations) == 1
     assert native.deleted == [sandbox.name]
+
+
+@pytest.mark.asyncio
+async def test_qualification_reuse_tolerates_routine_resource_version_bump(adapter):
+    """Native status writes bump resource_version between audit and reuse (observed live,
+    2026-10-05, 9 -> 10 after one exec); the lifecycle proof must not treat that as drift."""
+    boundary, native = adapter
+    sandbox = await boundary.create("run")
+    native.resources[sandbox.name].metadata.resource_version += 1
+    assert await boundary.create("run") == sandbox
+    assert len(native.observations) == 1
+    assert native.deleted == []
 
 
 @pytest.mark.asyncio

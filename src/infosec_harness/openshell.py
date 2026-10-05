@@ -475,13 +475,19 @@ class OpenShell:
         if expected_provider:
             await self._wait_provider_ready(sandbox, providers[0])
         outer = await self._inspect(sandbox)
+        # Native status writes bump metadata.resource_version during routine activity
+        # (observed 2026-10-05: 9 -> 10 after one exec), so it cannot bind the lifecycle.
+        # Spec, admission revisions, policy hash, process instance and container identities
+        # still change whenever the workload or its policy does.
+        metadata = MessageToDict(observed.metadata, preserving_proto_field_name=True)
+        metadata.pop("resource_version", None)
         binding = {
             "sandbox": asdict(sandbox),
             "config": self.config.model_dump(mode="json"),
             "tls": {key: hashlib.sha256(value.read_bytes()).hexdigest()
                     for key, value in (("ca", self.config.tls_ca), ("cert", self.config.tls_cert),
                                        ("key", self.config.tls_key)) if value is not None},
-            "metadata": MessageToDict(observed.metadata, preserving_proto_field_name=True),
+            "metadata": metadata,
             "spec": MessageToDict(observed.spec, preserving_proto_field_name=True),
             "admission": MessageToDict(admission, preserving_proto_field_name=True),
             "process_instance": observed.status.main_process_instance_id,
