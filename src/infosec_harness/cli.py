@@ -2,13 +2,30 @@
 
 import asyncio
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import typer
 
-from infosec_harness.config import get_settings
+from infosec_harness.config import get_settings, use_settings_file
 
 app = typer.Typer(no_args_is_help=True)
+
+
+@app.callback()
+def configure(
+    settings: Path | None = typer.Option(
+        None, help="Frozen Settings JSON; HARNESS_* environment variables are then ignored."
+    ),
+):
+    """Investigate reported vulnerabilities through native OpenShell and Temporal."""
+    if settings is not None:
+        use_settings_file(settings)
+
+
+def new_report(kind: str) -> Path:
+    # Timestamped by default; an existing report is still never overwritten.
+    return Path(".harness/reports") / f"{kind}-{datetime.now(UTC):%Y%m%dT%H%M%SZ}.json"
 
 
 @app.command()
@@ -20,13 +37,17 @@ def api(host: str = "127.0.0.1", port: int = 8000):
 
 
 @app.command()
-def worker():
+def worker(task_queue: str | None = typer.Option(None, help="Drain a reported eval queue.")):
     """Run the Temporal worker with native PydanticAI model/tool activities."""
     from infosec_harness.web import connect
     from infosec_harness.workflow import create_worker
 
+    settings = get_settings()
+    if task_queue:
+        settings = settings.model_copy(update={"task_queue": task_queue})
+
     async def serve():
-        runtime = create_worker(await connect(), get_settings())
+        runtime = create_worker(await connect(settings), settings)
         await runtime.run()
 
     asyncio.run(serve())
@@ -59,25 +80,51 @@ def report(run_id: str):
 @app.command("eval")
 def evaluate(
     manifest: Path = Path("eval-corpus/manifest.json"),
-    output: Path = Path(".harness/reports/qualification.json"),
+    output: Path | None = None,
     allow_inference: bool = False,
+    owned_worker: bool = typer.Option(
+        False, help="Run a worker in this process on a fresh queue until owned cleanup ends."
+    ),
+    case: list[str] | None = typer.Option(
+        None, help="Diagnostic subset (repeatable); never qualifies a candidate."
+    ),
+    keep_going: bool = typer.Option(
+        False, help="Continue only after a terminal agent/model-level case failure."
+    ),
 ):
-    """Run the complete paired corpus once, preserving failures and unstarted cases."""
+    """Run the paired corpus once, preserving failures and unstarted cases."""
     if not allow_inference:
         raise typer.BadParameter("Live evaluation requires --allow-inference")
     from infosec_harness.evaluation import evaluate_corpus
 
-    result = asyncio.run(evaluate_corpus(manifest, output))
+    output = output or new_report("diagnostic" if case else "model")
+    result = asyncio.run(evaluate_corpus(
+        manifest, output, get_settings(), names=tuple(case or ()),
+        owned_worker=owned_worker, keep_going=keep_going,
+    ))
     typer.echo(json.dumps(result, indent=2))
     raise typer.Exit(0 if result["status"] == "passed" else 1)
 
 
 @app.command()
-def qualify(output: Path = Path(".harness/reports/openshell-qualification.json")):
+def qualify(output: Path | None = None):
     """Exercise actual native workspace/probe boundaries, without model calls."""
     from infosec_harness.qualification import qualify_runtime
 
-    result = asyncio.run(qualify_runtime(output))
+    result = asyncio.run(qualify_runtime(output or new_report("openshell")))
+    typer.echo(json.dumps(result, indent=2))
+    raise typer.Exit(0 if result["status"] == "passed" else 1)
+
+
+@app.command()
+def replay(run_id: str, output: Path | None = None):
+    """Replay one recorded workflow history with no native or model dispatch."""
+    from infosec_harness._io import write_json
+    from infosec_harness.evaluation import replay_history
+
+    result = asyncio.run(replay_history(run_id, get_settings()))
+    if output:
+        write_json(output, result, exclusive=True)
     typer.echo(json.dumps(result, indent=2))
     raise typer.Exit(0 if result["status"] == "passed" else 1)
 

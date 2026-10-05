@@ -38,13 +38,31 @@ def execution_timeout(limits: Limits) -> timedelta:
     return timedelta(seconds=limits.timeout_seconds + 600)
 
 
-async def connect() -> Client:
-    settings = get_settings()
+async def connect(settings=None) -> Client:
+    settings = settings or get_settings()
     return await Client.connect(
         settings.temporal_address,
         namespace=settings.temporal_namespace,
         plugins=[PydanticAIPlugin()],
         **temporal_connection_options(settings),
+    )
+
+
+async def start_investigation(client: Client, finding: Finding, settings, run_id: str,
+                              expected_identity: str | None = None):
+    """Start one fresh workflow ID; a duplicate is rejected rather than resent."""
+    return await client.start_workflow(
+        WORKFLOW,
+        InvestigationRequest(
+            finding=finding, limits=settings.limits, expected_worker_identity=expected_identity
+        ),
+        id=run_id,
+        task_queue=settings.task_queue,
+        result_type=InvestigationResult,
+        id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+        memo={"finding": finding.model_dump(mode="json")},
+        rpc_timeout=RPC_TIMEOUT,
+        execution_timeout=execution_timeout(settings.limits),
     )
 
 
@@ -88,19 +106,8 @@ async def health(client: TemporalClient) -> dict[str, str]:
 
 @app.post("/api/runs", response_model=RunState, status_code=202)
 async def submit(finding: Finding, client: TemporalClient) -> RunState:
-    settings = get_settings()
     run_id = PREFIX + uuid4().hex
-    request = InvestigationRequest(finding=finding, limits=settings.limits)
-    await client.start_workflow(
-        WORKFLOW,
-        request,
-        id=run_id,
-        task_queue=settings.task_queue,
-        id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
-        memo={"finding": finding.model_dump(mode="json")},
-        rpc_timeout=RPC_TIMEOUT,
-        execution_timeout=execution_timeout(settings.limits),
-    )
+    await start_investigation(client, finding, get_settings(), run_id)
     return RunState(id=run_id, status="pending", phase="queued", finding=finding)
 
 

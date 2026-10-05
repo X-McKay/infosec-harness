@@ -271,7 +271,7 @@ Full `./dev` runs native qualification. The direct command is useful after chang
 image, adapter or runtime configuration:
 
 ```bash
-uv run --locked harness qualify --output .harness/reports/native-review.json
+./dev qualify                 # writes .harness/reports/openshell-<UTC time>.json
 ```
 
 Qualification must exercise workspace and fresh offline-probe creation, native policy
@@ -285,8 +285,20 @@ served model identifier in the worker environment, and put provider credentials 
 native model provider. Run the unchanged registered corpus with:
 
 ```bash
-uv run --locked harness eval --allow-inference --output .harness/reports/model-review.json
+./dev eval [--settings settings.json] [--keep-going]   # .harness/reports/model-<UTC time>.json
+./dev eval --case pathtraversal-fixed                 # diagnostic; never qualifies
+./dev replay investigate-v11-eval-<id> --output .harness/reports/replay-<id>.json
 ```
+
+`./dev eval` runs an owned worker in-process on a fresh `investigate-v11-eval-<hex>` queue,
+recorded in the report, and keeps it up until every owned workflow and its cleanup is
+terminal. If the process is killed, drain cleanup with the same code and configuration:
+`./dev worker [--settings settings.json] --task-queue <task_queue>`. `--settings` uses exactly that
+JSON file and ignores `HARNESS_*` variables. `--keep-going` continues only after a terminal
+agent-level failure (budget or invalid model output); any timeout, transport, identity,
+native or cleanup failure stops the cohort. No case is re-run, and an incomplete cohort
+fails. `replay` re-executes the history against current workflow code with model and native
+dispatch disabled.
 
 Review the manifest, endpoint, model, dataset hashes, report destination and bounded request
 budget before dispatch. Setup, native qualification and deterministic tests make zero model

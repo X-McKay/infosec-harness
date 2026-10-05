@@ -51,6 +51,27 @@ class Settings(BaseSettings):
         return self
 
 
+class FileSettings(Settings):
+    """One explicit JSON document: no environment, dotenv or secret sources; no unknown keys."""
+
+    model_config = SettingsConfigDict(extra="forbid")
+
+    @classmethod
+    def settings_customise_sources(cls, settings_cls, init_settings, **_sources):
+        return (init_settings,)
+
+
+_explicit: Settings | None = None
+
+
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    return _explicit if _explicit is not None else Settings()
+
+
+def use_settings_file(path: Path) -> Settings:
+    """Bind one frozen configuration file. Environment variables are not merged into it."""
+    global _explicit
+    _explicit = FileSettings.model_validate_json(path.read_bytes())
+    get_settings.cache_clear()
+    return _explicit
