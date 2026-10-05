@@ -265,6 +265,29 @@ installation bound to the desired identity and revisions. Pending status may be 
 within the configured readiness deadline; failure, revocation or supersession closes
 admission without dispatching inference.
 
+## Patched gateway build
+
+The pinned 0.1.2 gateway admits at most 1,000 retained durable mutations per caller in 24
+hours, which a full cohort exceeds. `deploy/openshell/patches/` carries the tracked patch that
+makes that quota the validated config key `openshell.gateway.max_mutation_admissions_per_caller`
+(default 1000). Build the patched binary reproducibly from the exact pinned source, vendored
+crates and the pinned Rust image through the qualified build-egress builder; the build runs
+offline after the base image and `cmake` package:
+
+```bash
+B=.harness/openshell/gateway-build
+git clone https://github.com/NVIDIA/OpenShell.git "$B/src"
+git -C "$B/src" checkout "$(python3 -c 'import json;print(json.load(open(".dev-tools/openshell.json"))["commit"])')"
+(cd "$B/src" && cargo vendor --locked ../vendor > ../vendor-config.toml)
+./deploy/openshell/build_gateway.sh   # writes $B/out/{openshell-gateway,SHA256SUMS,gateway-build.json}
+```
+
+`gateway-build.json` records the upstream commit, patch hashes, Rust image digest and binary
+SHA-256; keep it with the qualification evidence. Installing the binary into the guest and
+restarting the gateway is an operator rollout step handled by `scripts/openshell_gateway.py`
+(see its module docstring); it keeps the previous binary and configuration for rollback and
+never modifies the admission ledger.
+
 ## Qualification and evaluation
 
 Full `./dev` runs native qualification. The direct command is useful after changing a policy,

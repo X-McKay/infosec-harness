@@ -1,0 +1,33 @@
+# Reproducible patched openshell-gateway: the exact pinned upstream source plus the tracked
+# patches in deploy/openshell/patches/, built offline from vendored crates with the pinned
+# Rust toolchain. Context layout (prepared by build_gateway.sh): src/ vendor/ patches/.
+# The upstream release links a static Z3 from Nix; bundled-z3 is the equivalent static link
+# from the vendored z3-src crate. No network is used after the base image and apt packages.
+ARG RUST_IMAGE=docker.io/library/rust:1.95.0-bookworm@sha256:6258907abe69656e41cd992e0b705cdcfabcbbe3db374f92ed2d47121282d4a1
+FROM ${RUST_IMAGE} AS build
+RUN apt-get update && apt-get install -y --no-install-recommends cmake \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /build
+COPY vendor /build/vendor
+COPY src /build/src
+COPY patches /build/patches
+ARG OPENSHELL_VERSION=0.1.2
+ARG CARGO_JOBS=4
+RUN set -eu; cd /build/src \
+    && for patch in /build/patches/*.patch; do git apply --check "$patch" && git apply "$patch"; done \
+    && sed -i "s/^version = \"0\\.0\\.0\"$/version = \"${OPENSHELL_VERSION}\"/" Cargo.toml \
+    && mkdir -p .cargo \
+    && printf '[source.crates-io]\nreplace-with = "vendored-sources"\n\n[source.vendored-sources]\ndirectory = "/build/vendor"\n' > .cargo/config.toml
+# GIT_DIR=/nonexistent mirrors the upstream release build: no git metadata is embedded.
+# RUSTUP_TOOLCHAIN pins the image's installed toolchain so rust-toolchain.toml cannot trigger
+# a network sync of extra components; its channel is the same 1.95.0.
+RUN --mount=type=cache,target=/build/src/target,id=ih-openshell-gateway-target \
+    set -eu; cd /build/src \
+    && GIT_DIR=/nonexistent RUSTUP_TOOLCHAIN=1.95.0 cargo build --release --offline -j "${CARGO_JOBS}" \
+       -p openshell-gateway --bin openshell-gateway --features bundled-z3 \
+    && install -D target/release/openshell-gateway /out/openshell-gateway \
+    && /out/openshell-gateway --version \
+    && cd /out && sha256sum openshell-gateway > SHA256SUMS
+
+FROM scratch
+COPY --from=build /out /
