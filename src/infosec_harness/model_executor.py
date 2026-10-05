@@ -6,7 +6,7 @@ import sys
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, TypeAdapter
+from pydantic import BaseModel, TypeAdapter
 from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestParameters
 
@@ -17,7 +17,7 @@ MAX_RESPONSE_BYTES = 512_000
 
 
 class ModelInvocation(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    # Native PydanticAI usage records preserve provider-specific extension fields.
     provider: Literal["openai", "bedrock"]
     model_name: str
     base_url: str | None = None

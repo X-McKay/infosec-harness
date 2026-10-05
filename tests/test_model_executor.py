@@ -12,8 +12,34 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.usage import RequestUsage
 
 from infosec_harness.model_executor import RESPONSE, ModelInvocation, execute
+
+
+def test_reasoning_usage_extensions_survive_next_turn_transport():
+    invocation = ModelInvocation(
+        provider="openai",
+        model_name="Qwen3.6-35B-A3B-NVFP4",
+        settings=None,
+        parameters=ModelRequestParameters(),
+        messages=[
+            ModelResponse(
+                parts=[TextPart("inspect the source")],
+                usage=RequestUsage(
+                    input_tokens=1894,
+                    output_tokens=218,
+                    output_reasoning_tokens=69,
+                    details={"reasoning_tokens": 69},
+                ),
+            ),
+            ModelRequest(parts=[UserPromptPart("continue")]),
+        ],
+    )
+    restored = ModelInvocation.model_validate_json(invocation.model_dump_json())
+    assert restored.messages[0].usage.output_reasoning_tokens == 69
+    assert RESPONSE.dump_json(restored.messages[0]) == RESPONSE.dump_json(invocation.messages[0])
+    assert restored.messages[1].parts[0].content == "continue"
 
 
 async def test_compatible_chat_preserves_instructions_with_one_leading_system(monkeypatch):
