@@ -1,45 +1,35 @@
-import { timestamp } from "@/lib/format";
-import type { RunDetail } from "@/api/client";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
+import type { RunDetail, VerdictLabel } from "@/api/client";
+import { mutations } from "@/api/queries";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { verdictLabel } from "@/lib/verdict";
+import { timestamp } from "@/lib/format";
+import { VERDICT_LABELS, verdictLabel } from "@/lib/verdict";
 
-export const REVIEW_VERDICTS = [
-  "potentially_exploitable",
-  "inconclusive",
-  "likely_not_exploitable",
-] as const;
-export type ReviewVerdict = (typeof REVIEW_VERDICTS)[number];
+// The API accepts exactly these decisions (see the backend review endpoint).
+type ReviewDecision = "confirm" | "override";
 
-type ReviewFormProps = {
-  run: RunDetail;
-  reviewer: string;
-  setReviewer: (value: string) => void;
-  decision: string;
-  setDecision: (value: string) => void;
-  overrideLabel: ReviewVerdict;
-  setOverrideLabel: (value: ReviewVerdict) => void;
-  reason: string;
-  setReason: (value: string) => void;
-  saving: boolean;
-  error: Error | null;
-  onSave: () => void;
-};
-
-export function ReviewForm({
-  run,
-  reviewer,
-  setReviewer,
-  decision,
-  setDecision,
-  overrideLabel,
-  setOverrideLabel,
-  reason,
-  setReason,
-  saving,
-  error,
-  onSave,
-}: ReviewFormProps) {
+/** Render with key={run.id}: draft and save state belong to one finding. */
+export function ReviewForm({ run }: { run: RunDetail }) {
+  const queryClient = useQueryClient();
+  const review = useMutation(mutations.review(queryClient, run.id));
+  const [reviewer, setReviewer] = useState("");
+  const [decision, setDecision] = useState<ReviewDecision>("confirm");
+  const [overrideLabel, setOverrideLabel] = useState<VerdictLabel>(
+    VERDICT_LABELS[0],
+  );
+  const [reason, setReason] = useState("");
+  const save = () =>
+    review.mutate(
+      {
+        reviewer: reviewer.trim(),
+        decision,
+        reason,
+        override_label: decision === "override" ? overrideLabel : null,
+      },
+      { onSuccess: () => setReason("") },
+    );
   return (
     <Card>
       <CardHeader>
@@ -61,7 +51,9 @@ export function ReviewForm({
             <select
               className="field mt-1 w-full"
               value={decision}
-              onChange={(event) => setDecision(event.target.value)}
+              onChange={(event) =>
+                setDecision(event.target.value as ReviewDecision)
+              }
             >
               <option value="confirm">Confirm recorded verdict</option>
               <option value="override">Override verdict</option>
@@ -75,10 +67,10 @@ export function ReviewForm({
               className="field mt-1 w-full"
               value={overrideLabel}
               onChange={(event) =>
-                setOverrideLabel(event.target.value as ReviewVerdict)
+                setOverrideLabel(event.target.value as VerdictLabel)
               }
             >
-              {REVIEW_VERDICTS.map((value) => (
+              {VERDICT_LABELS.map((value) => (
                 <option key={value} value={value}>
                   {verdictLabel(value)}
                 </option>
@@ -95,20 +87,20 @@ export function ReviewForm({
             placeholder="Explain the evidence for this review"
           />
         </label>
-        {error != null && (
+        {review.isError && (
           <p role="alert" className="text-sm text-destructive">
-            Could not save review: {error.message}
+            Could not save review: {review.error.message}
           </p>
         )}
         <Button
           disabled={
-            saving ||
+            review.isPending ||
             !reviewer.trim() ||
             (decision === "override" && !reason.trim())
           }
-          onClick={onSave}
+          onClick={save}
         >
-          {saving ? "Saving…" : "Save review"}
+          {review.isPending ? "Saving…" : "Save review"}
         </Button>
         {run.review && (
           <div className="rounded-md border bg-muted/30 p-3 text-sm">
@@ -125,7 +117,7 @@ export function ReviewForm({
             </p>
           </div>
         )}
-        {run.review_history?.length > 0 && (
+        {run.review_history.length > 0 && (
           <div>
             <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Review history
@@ -139,7 +131,7 @@ export function ReviewForm({
                   <p>
                     {entry.reviewer || "Unnamed reviewer"} · {entry.decision}
                     {entry.override_label
-                      ? ` → ${verdictLabel(String(entry.override_label))}`
+                      ? ` → ${verdictLabel(entry.override_label)}`
                       : ""}
                   </p>
                   <p className="text-xs text-muted-foreground">

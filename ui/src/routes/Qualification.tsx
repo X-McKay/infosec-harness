@@ -26,9 +26,7 @@ function StatusBadge({ status }: { status: QualificationStatus["status"] }) {
 
 export function Qualification() {
   const queryClient = useQueryClient();
-  const query = useQuery({
-    ...queries.qualification(),
-  });
+  const query = useQuery(queries.qualification());
   const data = query.data;
   return (
     <div className="space-y-6">

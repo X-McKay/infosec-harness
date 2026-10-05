@@ -1,27 +1,79 @@
 import { CircleAlert } from "lucide-react";
+import { useMemo, useState, type ReactNode } from "react";
 import type { RunDetail } from "@/api/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { money, number, seconds } from "@/lib/format";
+import { integer, money, seconds } from "@/lib/format";
+import { asRecord, isRecord, type JsonRecord } from "@/lib/json";
+import { executionProvenance, originSummary } from "@/lib/provenance";
 
-type JsonRecord = Record<string, unknown>;
 function Json({ value }: { value: unknown }) {
+  const rendered = useMemo(() => JSON.stringify(value, null, 2), [value]);
   return (
     <pre className="max-h-80 overflow-auto rounded-md bg-muted p-3 text-xs">
-      {JSON.stringify(value, null, 2)}
+      {rendered}
     </pre>
   );
 }
-function isRecord(value: unknown): value is JsonRecord {
-  return !!value && typeof value === "object" && !Array.isArray(value);
+
+/** Serializes recorded JSON only while the disclosure is open. */
+function JsonDetails({
+  summary,
+  value,
+  defaultOpen = false,
+  className,
+  summaryClassName = "cursor-pointer text-sm font-medium",
+}: {
+  summary: ReactNode;
+  value: unknown;
+  defaultOpen?: boolean;
+  className?: string;
+  summaryClassName?: string;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <details
+      className={className}
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary className={summaryClassName}>{summary}</summary>
+      {open && (
+        <div className="mt-3">
+          <Json value={value} />
+        </div>
+      )}
+    </details>
+  );
 }
-function list(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
+
+/** Warns unless every recorded execution origin is controller-authored. */
+export function EvidenceBasis({ executions }: { executions: unknown[] }) {
+  const provenance = executionProvenance(executions);
+  if (!provenance) return null;
+  return provenance.verified ? (
+    <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+      Evidence basis: every recorded probe observation, process and runner
+      origin is controller-authored ({originSummary(provenance)}).
+    </p>
+  ) : (
+    <p
+      role="note"
+      className="rounded-md border border-amber-300/60 bg-amber-50/60 p-3 text-xs text-amber-950 dark:bg-amber-950/20 dark:text-amber-100"
+    >
+      Evidence basis not verified: recorded origins are{" "}
+      {originSummary(provenance)}. Only controller-authored origins count as
+      verified; this view does not establish target binding or oracle
+      authenticity.
+    </p>
+  );
 }
+
 export function FindingEvidence({ run }: { run: RunDetail }) {
-  const evidence = isRecord(run.evidence) ? run.evidence : {};
+  const evidence = asRecord(run.evidence);
   const manifest = isRecord(evidence.manifest) ? evidence.manifest : null;
-  const context = evidence.context;
-  const executions = list(evidence.executions);
+  const executions = Array.isArray(evidence.executions)
+    ? evidence.executions
+    : [];
   return (
     <>
       <Card>
@@ -30,16 +82,9 @@ export function FindingEvidence({ run }: { run: RunDetail }) {
         </CardHeader>
         <CardContent className="space-y-4">
           <ManifestSummary manifest={manifest} />
-          <EvidenceSection title="Context" value={context} />
+          <EvidenceSection title="Context" value={evidence.context} />
           <EvidenceSection title="Executions" value={executions} />
-          <details>
-            <summary className="cursor-pointer text-sm font-medium">
-              Raw evidence JSON
-            </summary>
-            <div className="mt-3">
-              <Json value={evidence} />
-            </div>
-          </details>
+          <JsonDetails summary="Raw evidence JSON" value={evidence} />
         </CardContent>
       </Card>
       <Card>
@@ -62,32 +107,24 @@ export function FindingEvidence({ run }: { run: RunDetail }) {
                 </thead>
                 <tbody>
                   {run.invocations.map((inv, index) => (
-                    <tr key={`${String(inv.agent)}-${index}`}>
-                      <td>{String(inv.agent || "-")}</td>
+                    <tr key={`${inv.agent}-${index}`}>
+                      <td>{inv.agent || "-"}</td>
                       <td className="font-mono text-xs">
-                        {String(inv.model_name || "-")}
+                        {inv.model_name || "-"}
                       </td>
                       <td className="text-xs">
-                        {[...list(inv.tools_called), ...list(inv.skills_loaded)]
-                          .map(String)
-                          .join(", ") || "—"}
+                        {[...inv.tools_called, ...inv.skills_loaded].join(
+                          ", ",
+                        ) || "—"}
                       </td>
                       <td className="font-mono text-xs">
-                        {number(
-                          Number(inv.input_tokens || 0) +
-                            Number(inv.output_tokens || 0),
-                          0,
-                        )}
+                        {integer(inv.input_tokens + inv.output_tokens)}
                       </td>
                       <td className="font-mono text-xs">
-                        {inv.cost_usd == null
-                          ? "Unavailable"
-                          : money(Number(inv.cost_usd))}
+                        {money(inv.cost_usd)}
                       </td>
                       <td className="font-mono text-xs">
-                        {inv.latency_s == null
-                          ? "Unavailable"
-                          : seconds(Number(inv.latency_s))}
+                        {seconds(inv.latency_s)}
                       </td>
                     </tr>
                   ))}
@@ -97,14 +134,11 @@ export function FindingEvidence({ run }: { run: RunDetail }) {
           ) : (
             <p className="empty">No agent invocation records are available.</p>
           )}
-          <details className="mt-4">
-            <summary className="cursor-pointer text-sm font-medium">
-              Raw execution JSON
-            </summary>
-            <div className="mt-3">
-              <Json value={run.invocations} />
-            </div>
-          </details>
+          <JsonDetails
+            className="mt-4"
+            summary="Raw execution JSON"
+            value={run.invocations}
+          />
         </CardContent>
       </Card>
     </>
@@ -118,31 +152,15 @@ export function FindingPayloads({ run }: { run: RunDetail }) {
         <CardTitle>Finding and result payloads</CardTitle>
       </CardHeader>
       <CardContent className="grid gap-4 lg:grid-cols-2">
-        <details>
-          <summary className="cursor-pointer text-sm font-medium">
-            Raw finding JSON
-          </summary>
-          <div className="mt-3">
-            <Json value={run.finding} />
-          </div>
-        </details>
-        <details>
-          <summary className="cursor-pointer text-sm font-medium">
-            Raw result JSON
-          </summary>
-          <div className="mt-3">
-            <Json value={run.result} />
-          </div>
-        </details>
+        <JsonDetails summary="Raw finding JSON" value={run.finding} />
+        <JsonDetails summary="Raw result JSON" value={run.result} />
       </CardContent>
     </Card>
   );
 }
 
 function manifestValue(manifest: JsonRecord, section: string, key: string) {
-  const value = isRecord(manifest[section])
-    ? manifest[section][key]
-    : undefined;
+  const value = asRecord(manifest[section])[key];
   return typeof value === "string" ||
     typeof value === "number" ||
     typeof value === "boolean"
@@ -181,9 +199,12 @@ function ManifestSummary({ manifest }: { manifest: JsonRecord | null }) {
         <h2 id="manifest-identity" className="text-sm font-semibold">
           Execution identity
         </h2>
-        <p className="text-xs text-muted-foreground">
-          Safe source and environment metadata recorded with this run.
-        </p>
+        {fields.length > 0 && (
+          <p className="text-xs text-muted-foreground">
+            Source and environment identity as recorded in this run's manifest.
+            Recorded identity is not execution evidence.
+          </p>
+        )}
       </div>
       {fields.length ? (
         <dl className="grid gap-3 text-sm sm:grid-cols-2">
@@ -202,22 +223,28 @@ function ManifestSummary({ manifest }: { manifest: JsonRecord | null }) {
     </section>
   );
 }
+const SECTION_SUMMARY =
+  "flex cursor-pointer items-center gap-2 text-sm font-medium";
 function EvidenceSection({ title, value }: { title: string; value: unknown }) {
-  return (
-    <details open={value != null}>
-      <summary className="flex cursor-pointer items-center gap-2 text-sm font-medium">
-        <CircleAlert className="h-4 w-4 text-primary" />
-        {title}
-      </summary>
-      <div className="mt-3">
-        {value == null ? (
-          <p className="text-sm text-muted-foreground">
-            No {title.toLowerCase()} evidence recorded.
-          </p>
-        ) : (
-          <Json value={value} />
-        )}
-      </div>
+  const summary = (
+    <>
+      <CircleAlert className="h-4 w-4 text-primary" />
+      {title}
+    </>
+  );
+  return value == null ? (
+    <details>
+      <summary className={SECTION_SUMMARY}>{summary}</summary>
+      <p className="mt-3 text-sm text-muted-foreground">
+        No {title.toLowerCase()} evidence recorded.
+      </p>
     </details>
+  ) : (
+    <JsonDetails
+      summary={summary}
+      summaryClassName={SECTION_SUMMARY}
+      value={value}
+      defaultOpen
+    />
   );
 }

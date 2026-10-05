@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { ExperimentCase, ExperimentSummary } from "../api/client.ts";
 import {
   caseCost,
   caseNumber,
@@ -7,39 +8,46 @@ import {
   comparisonPoints,
   gateObservations,
   metricNumber,
-  numeric,
   percentile,
   qualityFraction,
-  record,
-  text,
 } from "./evaluation.ts";
 
 // Small report-shaped fixtures exercise interpretation only, never operational data.
-const experiment = (metrics = {}, fields = {}) => ({
+const experiment = (
+  metrics: ExperimentSummary["metrics"] = {},
+  fields: Partial<ExperimentSummary> = {},
+): ExperimentSummary => ({
   id: "report-a",
   agent: "verdict",
   dataset: "triage",
   dataset_version: "v1",
+  git_sha: "",
+  overlay: "",
+  repetitions: 1,
+  config_hash: "",
+  git_dirty: false,
+  model_name: "",
+  backend: "",
+  pricing: "",
+  harness_version: "",
+  created_at: "",
   metrics,
   ...fields,
 });
-const caseRecord = (scores = {}, fields = {}) => ({
+const caseRecord = (
+  scores: ExperimentCase["scores"] = {},
+  fields: Partial<ExperimentCase> = {},
+): ExperimentCase => ({
+  case_name: "case",
+  repetition: 0,
+  passed: true,
   scores,
   cost_usd: 0,
   latency_s: null,
   ...fields,
 });
 
-test("metric interpretation accepts finite measurements without coercing absent data", () => {
-  for (const invalid of [null, undefined, "1", NaN, Infinity, -Infinity])
-    assert.equal(numeric(invalid), null);
-  assert.equal(numeric(0), 0);
-  assert.equal(text(""), null);
-  assert.equal(text(1), null);
-  assert.equal(text("complete"), "complete");
-  assert.deepEqual(record([1]), {});
-  assert.deepEqual(record(null), {});
-  assert.deepEqual(record({ n: 0 }), { n: 0 });
+test("metric lookup prefers direct finite measurements over distributions", () => {
   assert.equal(
     metricNumber({ accuracy: 0, distributions: { accuracy: 1 } }, "accuracy"),
     0,
@@ -84,6 +92,14 @@ test("absent gate measurements remain unknown and never establish promotion", ()
   const quality = gateObservations(experiment({ accuracy: 0.8 }))[0];
   assert.equal(quality.status, "unknown");
   assert.equal(quality.detail, "80.0% accuracy; case numerator unavailable.");
+});
+
+// Regression: a recorded case fraction without an accuracy measurement used to render
+// "0.0% accuracy", fabricating a measurement.
+test("a case fraction without recorded accuracy never reports zero accuracy", () => {
+  const quality = gateObservations(experiment({ passed: 3, n: 4 }))[0];
+  assert.equal(quality.status, "unknown");
+  assert.equal(quality.detail, "3 / 4 cases passed · accuracy unavailable");
 });
 
 test("recorded gates retain measured fractions, budget findings, and completion counts", () => {
@@ -148,9 +164,14 @@ test("descriptive points use matching complete reports with measured accuracy an
     experiment(
       {
         status: "complete",
-        distributions: { accuracy_mean: 0.9, mean_cost_usd: 0.2 },
+        distributions: { accuracy_mean: 0.9, cost_usd_per_case: 0.2 },
       },
       { id: "nested" },
+    ),
+    // No evaluation writes mean_cost_usd; it is not read as a cost measurement.
+    experiment(
+      { status: "complete", accuracy: 0.7, mean_cost_usd: 0.1 },
+      { id: "unproduced-alias" },
     ),
   ];
   assert.deepEqual(

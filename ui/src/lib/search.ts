@@ -1,23 +1,22 @@
 /** URL filters shared by chart drill-downs and the findings queue. */
-import type { RunPageQuery } from "@/api/client";
+import type { RunPageQuery } from "../api/client.ts";
 
-type Population = "operational";
-type Metric = NonNullable<RunPageQuery["metric"]>;
-const METRICS = new Set<Metric>([
+export type FindingMetric = NonNullable<RunPageQuery["metric"]>;
+const METRICS = new Set<string>([
   "total_tokens",
   "input_tokens",
   "output_tokens",
   "cost_usd",
   "wall_time_s",
-]);
+] satisfies FindingMetric[]);
 
+// Population is not route state: the API client always requests operational records.
 export type FindingSearch = {
   verdict: string;
   batch_id: string;
   search: string;
   offset: number;
-  population?: Population;
-  metric?: Metric;
+  metric?: FindingMetric;
   lower?: number;
   upper?: number;
   upper_inclusive?: boolean;
@@ -26,14 +25,13 @@ export type FindingSearch = {
 export function parseFindingSearch(
   search: Record<string, unknown>,
 ): FindingSearch {
-  const metric = String(search.metric || "") as Metric;
+  const metric = String(search.metric || "");
   return {
     verdict: String(search.verdict || ""),
     batch_id: String(search.batch_id || ""),
     search: String(search.search || ""),
     offset: positiveOffset(search.offset),
-    population: "operational",
-    metric: METRICS.has(metric) ? metric : undefined,
+    metric: METRICS.has(metric) ? (metric as FindingMetric) : undefined,
     lower: finiteNumber(search.lower),
     upper: finiteNumber(search.upper),
     upper_inclusive:
@@ -72,11 +70,28 @@ export function findingPageQuery(search: FindingSearch): RunPageQuery {
     verdict: search.verdict || undefined,
     search: search.search || undefined,
     offset: search.offset,
-    population: "operational",
     metric: search.metric,
     lower: search.lower,
     upper: search.upper,
     upper_inclusive: search.upper_inclusive,
+  };
+}
+
+/** Queue filters for one histogram bin; the final bin includes its upper edge. */
+export function histogramSearch(
+  metric: FindingMetric,
+  bin: { lower: number; upper: number },
+  last: boolean,
+): FindingSearch {
+  return {
+    verdict: "",
+    batch_id: "",
+    search: "",
+    offset: 0,
+    metric,
+    lower: bin.lower,
+    upper: bin.upper,
+    upper_inclusive: last,
   };
 }
 

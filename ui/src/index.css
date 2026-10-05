@@ -3,45 +3,6 @@
 @tailwind utilities;
 
 :root {
-  --background: 0 0% 100%;
-  --foreground: 222 47% 11%;
-  --card: 0 0% 100%;
-  --card-foreground: 222 47% 11%;
-  --primary: 222 47% 31%;
-  --primary-foreground: 210 40% 98%;
-  --muted: 210 40% 96%;
-  --muted-foreground: 215 16% 47%;
-  --destructive: 0 72% 51%;
-  --destructive-foreground: 210 40% 98%;
-  --border: 214 32% 91%;
-  --input: 214 32% 91%;
-  --ring: 222 47% 31%;
-  --radius: 0.5rem;
-}
-.dark {
-  --background: 222 47% 8%;
-  --foreground: 210 40% 96%;
-  --card: 222 47% 11%;
-  --card-foreground: 210 40% 96%;
-  --primary: 210 40% 90%;
-  --primary-foreground: 222 47% 11%;
-  --muted: 217 33% 17%;
-  --muted-foreground: 215 20% 65%;
-  --destructive: 0 63% 45%;
-  --destructive-foreground: 210 40% 98%;
-  --border: 217 33% 20%;
-  --input: 217 33% 20%;
-  --ring: 213 27% 70%;
-}
-* {
-  border-color: hsl(var(--border));
-}
-body {
-  background: hsl(var(--background));
-  color: hsl(var(--foreground));
-  font-family: ui-sans-serif, system-ui, sans-serif;
-}
-:root {
   --background: 240 12% 98%;
   --foreground: 240 10% 12%;
   --card: 0 0% 100%;
@@ -50,9 +11,12 @@ body {
   --primary-foreground: 0 0% 100%;
   --muted: 240 8% 94%;
   --muted-foreground: 240 5% 43%;
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 210 40% 98%;
   --border: 240 8% 88%;
   --input: 240 8% 88%;
   --ring: 242 69% 58%;
+  --radius: 0.5rem;
 }
 .dark {
   --background: 240 8% 8%;
@@ -63,11 +27,19 @@ body {
   --primary-foreground: 240 8% 8%;
   --muted: 240 6% 15%;
   --muted-foreground: 240 5% 64%;
+  --destructive: 0 63% 45%;
+  --destructive-foreground: 210 40% 98%;
   --border: 240 5% 21%;
   --input: 240 5% 21%;
   --ring: 242 85% 75%;
 }
+* {
+  border-color: hsl(var(--border));
+}
 body {
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: ui-sans-serif, system-ui, sans-serif;
   margin: 0;
   -webkit-font-smoothing: antialiased;
   font-size: 14px;

@@ -53,7 +53,7 @@ test("configured names never imply measured connectivity", () => {
   assert.match(modelNames([]), /unavailable/);
 });
 test("recorded failed and passed connectivity remain distinct", () => {
-  for (const status of ["failed", "passed"]) {
+  for (const status of ["failed", "passed"] as const) {
     const result = connectivityPresentation({
       status,
       checked_at: "2026-10-04T15:00:00Z",

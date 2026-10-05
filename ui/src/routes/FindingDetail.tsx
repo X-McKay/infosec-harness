@@ -1,30 +1,24 @@
-import { queries, queryKeys } from "@/api/queries";
+import { queries } from "@/api/queries";
 import { ApiError } from "@/api/http";
-import { runActive } from "@/lib/status";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Link, useParams, useSearch } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
 import { ArrowLeft } from "lucide-react";
-import { api } from "@/api/client";
 import { EventTimeline } from "@/components/findings/EventTimeline";
 import {
+  EvidenceBasis,
   FindingEvidence,
   FindingPayloads,
 } from "@/components/findings/FindingEvidence";
-import { ReviewForm, REVIEW_VERDICTS } from "@/components/findings/ReviewForm";
+import { ReviewForm } from "@/components/findings/ReviewForm";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { QueryState, Freshness } from "@/components/QueryState";
-import { findingNeighbors, queueSearch } from "@/lib/search";
-import { money, number, seconds } from "@/lib/format";
+import { queueSearch } from "@/lib/search";
+import { integer, money, percent, seconds } from "@/lib/format";
+import { asRecord, text } from "@/lib/json";
 import { verdictLabel, verdictVariant } from "@/lib/verdict";
 
-type JsonRecord = Record<string, unknown>;
-
-function isRecord(value: unknown): value is JsonRecord {
-  return !!value && typeof value === "object" && !Array.isArray(value);
-}
 function notFound(error: unknown) {
   return error instanceof ApiError && error.status === 404;
 }
@@ -33,40 +27,10 @@ export function FindingDetail() {
   const { runId } = useParams({ from: "/runs/$runId" });
   const search = useSearch({ from: "/runs/$runId" });
   const returnSearch = queueSearch(search);
-  const queryClient = useQueryClient();
-  const query = useQuery({
-    ...queries.run(runId),
-    refetchInterval: (current) =>
-      current.state.data && runActive(current.state.data.status) ? 2000 : false,
-  });
+  const query = useQuery(queries.run(runId));
   const navigation = useQuery({
-    queryKey: queryKeys.findingNeighbors(runId, returnSearch),
-    queryFn: () => findingNeighbors(runId, returnSearch, api.runPage),
+    ...queries.findingNeighbors(runId, returnSearch),
     enabled: search.from_queue && !!query.data,
-  });
-  const [reviewer, setReviewer] = useState("");
-  const [decision, setDecision] = useState("confirm");
-  const [overrideLabel, setOverrideLabel] = useState<
-    (typeof REVIEW_VERDICTS)[number]
-  >(REVIEW_VERDICTS[0]);
-  const [reason, setReason] = useState("");
-  useEffect(() => {
-    setReason("");
-    setDecision("confirm");
-    setOverrideLabel(REVIEW_VERDICTS[0]);
-  }, [runId]);
-  const review = useMutation({
-    mutationFn: () =>
-      api.review(runId, {
-        reviewer: reviewer.trim(),
-        decision,
-        reason,
-        override_label: decision === "override" ? overrideLabel : null,
-      }),
-    onSuccess: () => {
-      setReason("");
-      void queryClient.invalidateQueries({ queryKey: queryKeys.run(runId) });
-    },
   });
   const run = query.data;
 
@@ -97,12 +61,12 @@ export function FindingDetail() {
     );
   if (!run) return null;
 
-  const verdict = isRecord(run.result?.verdict) ? run.result.verdict : {};
-  const evidence = isRecord(run.evidence) ? run.evidence : {};
+  const verdict = asRecord(run.result?.verdict);
+  const evidence = asRecord(run.evidence);
   const executions = Array.isArray(evidence.executions)
     ? evidence.executions
     : [];
-  const telemetry = run.telemetry || {};
+  const telemetry = run.telemetry ?? {};
   const hasTelemetry =
     telemetry.cost_usd != null ||
     telemetry.total_tokens != null ||
@@ -133,7 +97,7 @@ export function FindingDetail() {
         </div>
       </div>
       {search.from_queue && (
-        <div
+        <nav
           className="flex flex-wrap items-center justify-between gap-3"
           aria-label="Finding navigation"
         >
@@ -176,7 +140,7 @@ export function FindingDetail() {
               retry={() => void navigation.refetch()}
             />
           )}
-        </div>
+        </nav>
       )}
       <Freshness
         at={query.dataUpdatedAt}
@@ -194,26 +158,13 @@ export function FindingDetail() {
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
             <p>
-              {String(
-                verdict.rationale ||
-                  run.inconclusive_reason ||
-                  "No rationale recorded.",
-              )}
+              {text(verdict.rationale) ||
+                run.inconclusive_reason ||
+                "No rationale recorded."}
             </p>
-            {executions.length > 0 && (
-              <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
-                Evidence basis: probe observations use legacy self-reported
-                markers. This adapter does not independently verify target
-                binding or oracle authenticity.
-              </p>
-            )}
+            <EvidenceBasis executions={executions} />
             <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-              <span>
-                Confidence{" "}
-                {run.confidence == null
-                  ? "Unavailable"
-                  : `${Math.round(run.confidence * 100)}%`}
-              </span>
+              <span>Confidence {percent(run.confidence, 0)}</span>
               <span>Environment {run.environment_scope || "Unavailable"}</span>
               <span>Phase {run.phase || run.status}</span>
             </div>
@@ -224,30 +175,9 @@ export function FindingDetail() {
             <CardTitle>Telemetry</CardTitle>
           </CardHeader>
           <CardContent className="grid grid-cols-3 gap-3 text-sm">
-            <Metric
-              label="Cost"
-              value={
-                telemetry.cost_usd == null
-                  ? "Unavailable"
-                  : money(telemetry.cost_usd)
-              }
-            />
-            <Metric
-              label="Tokens"
-              value={
-                telemetry.total_tokens == null
-                  ? "Unavailable"
-                  : number(telemetry.total_tokens, 0)
-              }
-            />
-            <Metric
-              label="Wall time"
-              value={
-                telemetry.wall_time_s == null
-                  ? "Unavailable"
-                  : seconds(telemetry.wall_time_s)
-              }
-            />
+            <Metric label="Cost" value={money(telemetry.cost_usd)} />
+            <Metric label="Tokens" value={integer(telemetry.total_tokens)} />
+            <Metric label="Wall time" value={seconds(telemetry.wall_time_s)} />
             {!hasTelemetry && (
               <p className="col-span-3 text-xs text-muted-foreground">
                 Durable telemetry is not recorded for this run. Legacy aggregate
@@ -257,27 +187,14 @@ export function FindingDetail() {
             {!hasTelemetry && (
               <p className="col-span-3 text-xs text-muted-foreground">
                 Legacy aggregate: {money(run.cost_usd)} ·{" "}
-                {number(run.total_tokens, 0)} tokens · {seconds(run.latency_s)}
+                {integer(run.total_tokens)} tokens · {seconds(run.latency_s)}
               </p>
             )}
           </CardContent>
         </Card>
       </div>
 
-      <ReviewForm
-        run={run}
-        reviewer={reviewer}
-        setReviewer={setReviewer}
-        decision={decision}
-        setDecision={setDecision}
-        overrideLabel={overrideLabel}
-        setOverrideLabel={setOverrideLabel}
-        reason={reason}
-        setReason={setReason}
-        saving={review.isPending}
-        error={review.isError ? review.error : null}
-        onSave={() => review.mutate()}
-      />
+      <ReviewForm key={run.id} run={run} />
       <FindingEvidence run={run} />
       <EventTimeline events={run.events || []} />
       <FindingPayloads run={run} />

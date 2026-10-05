@@ -1,14 +1,13 @@
-import { batchActive } from "./status.ts";
-export const workflowActive = batchActive;
+import { terminal } from "./status.ts";
 
 /** Missing terminal timestamps cannot become a continuously growing duration. */
 export function elapsedSeconds(
   startedAt: string | null | undefined,
   completedAt: string | null | undefined,
-  status: string,
+  active: boolean,
   now: number,
 ): number | null {
-  if (!startedAt || (!completedAt && !workflowActive(status))) return null;
+  if (!startedAt || (!completedAt && !active)) return null;
   const start = Date.parse(startedAt);
   const end = completedAt ? Date.parse(completedAt) : now;
   return Number.isFinite(start) && Number.isFinite(end) && end >= start
@@ -16,6 +15,7 @@ export function elapsedSeconds(
     : null;
 }
 
+/** Run status counts; unrecognized non-terminal states count as active rather than vanishing. */
 export function workflowCounts(counts: Record<string, number>) {
   return {
     complete: counts.complete ?? 0,
@@ -23,7 +23,7 @@ export function workflowCounts(counts: Record<string, number>) {
     cancelled: counts.cancelled ?? 0,
     needsInfo: counts.needs_info ?? 0,
     active: Object.entries(counts)
-      .filter(([status]) => workflowActive(status))
+      .filter(([status]) => !terminal(status))
       .reduce((total, [, count]) => total + count, 0),
   };
 }

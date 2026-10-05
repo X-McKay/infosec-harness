@@ -1,22 +1,17 @@
+import type { ExperimentCase } from "@/api/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { money, seconds } from "@/lib/format";
-
+import { integer, money, percent, seconds } from "@/lib/format";
 import {
   caseCost,
   caseResources,
   percentile,
-  type Experiment,
-  type ExperimentCase,
+  type ComparisonPoint,
 } from "@/lib/evaluation";
 
 export function ResourceDistribution({ cases }: { cases?: ExperimentCase[] }) {
   const { latencies, tokens } = caseResources(cases);
   const rows = [
-    {
-      label: "Tokens",
-      values: tokens,
-      format: (value: number) => Math.round(value).toLocaleString(),
-    },
+    { label: "Tokens", values: tokens, format: integer },
     { label: "Latency", values: latencies, format: seconds },
   ];
   return (
@@ -55,8 +50,8 @@ export function ResourceDistribution({ cases }: { cases?: ExperimentCase[] }) {
                         ? `${row.values.length} / ${(cases || []).length}`
                         : "Unavailable"}
                     </td>
-                    <td>{p50 == null ? "Unavailable" : row.format(p50)}</td>
-                    <td>{p95 == null ? "Unavailable" : row.format(p95)}</td>
+                    <td>{row.format(p50)}</td>
+                    <td>{row.format(p95)}</td>
                     <td>
                       {row.values.length
                         ? `${row.format(Math.min(...row.values))} – ${row.format(Math.max(...row.values))}`
@@ -94,22 +89,15 @@ export function CaseTable({ cases }: { cases?: ExperimentCase[] }) {
                 </tr>
               </thead>
               <tbody>
-                {cases.map((item, index) => {
-                  const cost = caseCost(item);
-                  return (
-                    <tr key={`${item.case_name}-${item.repetition}-${index}`}>
-                      <th scope="row">{item.case_name}</th>
-                      <td>{item.repetition}</td>
-                      <td>{item.passed ? "Passed" : "Failed"}</td>
-                      <td>
-                        {item.latency_s == null
-                          ? "Unavailable"
-                          : seconds(item.latency_s)}
-                      </td>
-                      <td>{cost == null ? "Unavailable" : money(cost)}</td>
-                    </tr>
-                  );
-                })}
+                {cases.map((item, index) => (
+                  <tr key={`${item.case_name}-${item.repetition}-${index}`}>
+                    <th scope="row">{item.case_name}</th>
+                    <td>{item.repetition}</td>
+                    <td>{item.passed ? "Passed" : "Failed"}</td>
+                    <td>{seconds(item.latency_s)}</td>
+                    <td>{money(caseCost(item))}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
@@ -121,11 +109,7 @@ export function CaseTable({ cases }: { cases?: ExperimentCase[] }) {
   );
 }
 
-export function Scatter({
-  points,
-}: {
-  points: Array<{ experiment: Experiment; accuracy: number; cost: number }>;
-}) {
+export function Scatter({ points }: { points: ComparisonPoint[] }) {
   const maxCost = Math.max(...points.map((point) => point.cost), 0.0001);
   return (
     <div className="space-y-3">
@@ -183,7 +167,7 @@ export function Scatter({
               <title>
                 {point.experiment.agent} ·{" "}
                 {point.experiment.model_name || "model unavailable"} ·{" "}
-                {(point.accuracy * 100).toFixed(1)}% · {money(point.cost)}
+                {percent(point.accuracy)} · {money(point.cost)}
               </title>
             </circle>
           );

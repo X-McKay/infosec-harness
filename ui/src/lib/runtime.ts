@@ -1,17 +1,16 @@
 /** Presentation only: configured identity is never measured execution evidence. */
-export type Measurement = {
-  status: "not_checked" | "passed" | "failed";
-  checked_at?: string | null;
-  detail: string;
-};
+import type { BrokerStatus, ModelConnectivity } from "../api/client.ts";
 
-export function brokerPresentation(broker: {
-  configured: boolean;
-  status: string;
-  stale: boolean;
-  unresolved_requests?: number | null;
-  conservatively_closed_requests?: number | null;
-}) {
+export function brokerPresentation(
+  broker: Pick<
+    BrokerStatus,
+    | "configured"
+    | "status"
+    | "stale"
+    | "unresolved_requests"
+    | "conservatively_closed_requests"
+  >,
+) {
   return {
     label: broker.configured
       ? broker.status.replaceAll("_", " ")
@@ -30,7 +29,9 @@ export function modelNames(names: string[] | undefined) {
     : "Configured model names unavailable";
 }
 
-export function connectivityPresentation(measurement: Measurement | undefined) {
+export function connectivityPresentation(
+  measurement: ModelConnectivity | undefined,
+) {
   if (!measurement || !measurement.checked_at) {
     return {
       status: "not_checked" as const,

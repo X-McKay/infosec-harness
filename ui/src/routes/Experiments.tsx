@@ -7,24 +7,13 @@ import { Freshness, QueryState } from "@/components/QueryState";
 import { ExperimentContent } from "@/components/evaluations/ExperimentReport";
 
 export function Experiments() {
-  const listQuery = useQuery({
-    ...queries.experiments(),
-  });
+  const listQuery = useQuery(queries.experiments());
   const experiments = listQuery.data || [];
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = selectedId
     ? experiments.find((item) => item.id === selectedId)
     : experiments[0];
-  const detailQuery = useQuery({
-    ...queries.experiment(selected?.id),
-    refetchInterval: (query) => {
-      const status =
-        query.state.data?.metrics.status ?? selected?.metrics.status;
-      return status === "running" || status === "pending" || status === "queued"
-        ? 10000
-        : false;
-    },
-  });
+  const detailQuery = useQuery(queries.experiment(selected?.id));
 
   return (
     <div className="space-y-6">
@@ -76,7 +65,7 @@ export function Experiments() {
             .
           </p>
           <p className="mt-2 text-xs">
-            Refreshes every 10 seconds while this view is active.
+            Use Refresh to check for new evaluations.
           </p>
         </div>
       )}
@@ -85,7 +74,6 @@ export function Experiments() {
           experiments={experiments}
           selected={selected}
           setSelectedId={setSelectedId}
-          detail={detailQuery.data}
           detailQuery={detailQuery}
         />
       )}

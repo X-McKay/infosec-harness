@@ -1,23 +1,22 @@
-/** Finding polling deliberately recognizes only recorded active run states. */
-const ACTIVE_RUN = new Set([
-  "pending",
-  "accepted",
-  "running",
-  "preparing",
-  "building",
-  "probing",
-  "triaging",
-]);
-const TERMINAL_BATCH = new Set([
-  "complete",
-  "needs_info",
-  "failed",
-  "cancelled",
-]);
+/**
+ * One activity policy per recorded entity. The backend stores a run as pending or running
+ * until it reaches a terminal value; batches and evaluations have their own lifecycles.
+ */
+const TERMINAL = new Set(["complete", "needs_info", "failed", "cancelled"]);
+const ACTIVE_RUN = new Set(["pending", "running"]);
+
+export function terminal(status: string): boolean {
+  return TERMINAL.has(status);
+}
+/** Run polling recognizes only recorded active states; unknown states stop polling. */
 export function runActive(status: string): boolean {
   return ACTIVE_RUN.has(status);
 }
-/** Unknown batch states remain active so refreshes do not silently stop. */
+/** Unknown batch states (e.g. cancellation_requested) stay active so refreshes do not silently stop. */
 export function batchActive(status: string): boolean {
-  return !TERMINAL_BATCH.has(status);
+  return !terminal(status);
+}
+/** Evaluations record running, truncated or complete; only running ones change. */
+export function experimentActive(status: unknown): boolean {
+  return status === "running";
 }
