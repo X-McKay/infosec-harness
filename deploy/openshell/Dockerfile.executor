@@ -6,9 +6,10 @@ ARG HTTPS_PROXY
 COPY requirements.txt /tmp/requirements.txt
 RUN python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r /tmp/requirements.txt \
     && rm /tmp/requirements.txt
-COPY infosec_harness /opt/executor/infosec_harness
-ENV PYTHONPATH=/opt/executor PYTHONDONTWRITEBYTECODE=1
+COPY infosec_harness /usr/local/lib/python3.12/site-packages/infosec_harness
+RUN mkdir -p /workspace && chown 65532:65532 /workspace
+ENV PYTHONDONTWRITEBYTECODE=1
 USER 65532:65532
 WORKDIR /tmp
 ENTRYPOINT []
-CMD ["python", "-m", "infosec_harness.inference.executor", "--config", "/tmp/ih-lease.json"]
+CMD ["python", "-I", "-m", "infosec_harness.model_executor"]

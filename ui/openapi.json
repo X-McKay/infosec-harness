@@ -2,183 +2,24 @@
   "openapi": "3.1.0",
   "info": {
     "title": "InfoSec Harness",
-    "version": "2.0.0.dev0"
+    "version": "3.0.0.dev0"
   },
   "paths": {
-    "/api/run-page": {
+    "/api/health": {
       "get": {
-        "summary": "Run Page",
-        "operationId": "run_page_api_run_page_get",
-        "parameters": [
-          {
-            "name": "batch_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Batch Id"
-            }
-          },
-          {
-            "name": "verdict",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Verdict"
-            }
-          },
-          {
-            "name": "population",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "enum": [
-                    "operational",
-                    "demo"
-                  ],
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Population"
-            }
-          },
-          {
-            "name": "metric",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "enum": [
-                    "total_tokens",
-                    "input_tokens",
-                    "output_tokens",
-                    "cost_usd",
-                    "wall_time_s",
-                    "agent_time_s"
-                  ],
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Metric"
-            }
-          },
-          {
-            "name": "lower",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "number"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Lower"
-            }
-          },
-          {
-            "name": "upper",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "number"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Upper"
-            }
-          },
-          {
-            "name": "upper_inclusive",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "boolean",
-              "default": false,
-              "title": "Upper Inclusive"
-            }
-          },
-          {
-            "name": "search",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "default": "",
-              "title": "Search"
-            }
-          },
-          {
-            "name": "offset",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "default": 0,
-              "title": "Offset"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 200,
-              "minimum": 1,
-              "default": 50,
-              "title": "Limit"
-            }
-          }
-        ],
+        "summary": "Health",
+        "operationId": "health_api_health_get",
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RunPage"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object",
+                  "title": "Response Health Api Health Get"
                 }
               }
             }
@@ -186,272 +27,27 @@
         }
       }
     },
-    "/api/metrics": {
-      "get": {
-        "summary": "Metrics",
-        "operationId": "metrics_api_metrics_get",
-        "parameters": [
-          {
-            "name": "batch_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Batch Id"
-            }
-          },
-          {
-            "name": "population",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "enum": [
-                "operational",
-                "demo"
-              ],
-              "type": "string",
-              "default": "operational",
-              "title": "Population"
-            }
-          },
-          {
-            "name": "since",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "format": "date-time"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Since"
-            }
-          },
-          {
-            "name": "until",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "format": "date-time"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Until"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MetricsResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/experiments": {
-      "get": {
-        "summary": "Experiments",
-        "description": "Newest first. Summaries carry headline measurements; full metrics are per experiment.",
-        "operationId": "experiments_api_experiments_get",
-        "parameters": [
-          {
-            "name": "population",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "enum": [
-                    "operational",
-                    "demo"
-                  ],
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Population"
-            }
-          },
-          {
-            "name": "offset",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "default": 0,
-              "title": "Offset"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 100,
-              "minimum": 1,
-              "default": 50,
-              "title": "Limit"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ExperimentPage"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/experiments/{experiment_id}": {
-      "get": {
-        "summary": "Experiment Detail",
-        "operationId": "experiment_detail_api_experiments__experiment_id__get",
-        "parameters": [
-          {
-            "name": "experiment_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Experiment Id"
-            }
-          },
-          {
-            "name": "population",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "enum": [
-                    "operational",
-                    "demo"
-                  ],
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Population"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ExperimentDetail"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/runtime-status": {
-      "get": {
-        "summary": "Runtime Status",
-        "operationId": "runtime_status_api_runtime_status_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RuntimeStatus"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/batches": {
+    "/api/runs": {
       "post": {
         "summary": "Submit",
-        "operationId": "submit_api_batches_post",
+        "operationId": "submit_api_runs_post",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SubmitRequest"
+                "$ref": "#/components/schemas/Finding"
               }
             }
           }
         },
         "responses": {
-          "200": {
+          "202": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BatchAccepted"
+                  "$ref": "#/components/schemas/RunState"
                 }
               }
             }
@@ -469,27 +65,24 @@
         }
       },
       "get": {
-        "summary": "Batches",
-        "operationId": "batches_api_batches_get",
+        "summary": "Runs",
+        "operationId": "runs_api_runs_get",
         "parameters": [
           {
-            "name": "population",
+            "name": "page_token",
             "in": "query",
             "required": false,
             "schema": {
               "anyOf": [
                 {
-                  "enum": [
-                    "operational",
-                    "demo"
-                  ],
-                  "type": "string"
+                  "type": "string",
+                  "maxLength": 8192
                 },
                 {
                   "type": "null"
                 }
               ],
-              "title": "Population"
+              "title": "Page Token"
             }
           }
         ],
@@ -499,108 +92,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/BatchSummary"
-                  },
-                  "title": "Response Batches Api Batches Get"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/batches/ado": {
-      "post": {
-        "summary": "Submit Ado",
-        "operationId": "submit_ado_api_batches_ado_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SubmitADORequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AdoBatchAccepted"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/batches/{batch_id}": {
-      "get": {
-        "summary": "Batch",
-        "operationId": "batch_api_batches__batch_id__get",
-        "parameters": [
-          {
-            "name": "batch_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Batch Id"
-            }
-          },
-          {
-            "name": "population",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "enum": [
-                    "operational",
-                    "demo"
-                  ],
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Population"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BatchDetail"
+                  "$ref": "#/components/schemas/RunPage"
                 }
               }
             }
@@ -631,26 +123,6 @@
               "type": "string",
               "title": "Run Id"
             }
-          },
-          {
-            "name": "population",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "enum": [
-                    "operational",
-                    "demo"
-                  ],
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Population"
-            }
           }
         ],
         "responses": {
@@ -659,7 +131,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RunDetail"
+                  "$ref": "#/components/schemas/RunState"
                 }
               }
             }
@@ -677,10 +149,10 @@
         }
       }
     },
-    "/api/runs/{run_id}/review": {
+    "/api/runs/{run_id}/cancel": {
       "post": {
-        "summary": "Review",
-        "operationId": "review_api_runs__run_id__review_post",
+        "summary": "Cancel",
+        "operationId": "cancel_api_runs__run_id__cancel_post",
         "parameters": [
           {
             "name": "run_id",
@@ -692,98 +164,17 @@
             }
           }
         ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ReviewRequest"
-              }
-            }
-          }
-        },
         "responses": {
-          "200": {
+          "202": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ReviewSaved"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/config": {
-      "get": {
-        "summary": "Config",
-        "operationId": "config_api_config_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ConfigResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/health": {
-      "get": {
-        "summary": "Health",
-        "operationId": "health_api_health_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HealthResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/batches/{batch_id}/cancel": {
-      "post": {
-        "summary": "Cancel Batch",
-        "operationId": "cancel_batch_api_batches__batch_id__cancel_post",
-        "parameters": [
-          {
-            "name": "batch_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Batch Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CancelResponse"
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Cancel Api Runs  Run Id  Cancel Post"
                 }
               }
             }
@@ -804,532 +195,52 @@
   },
   "components": {
     "schemas": {
-      "AdoBatchAccepted": {
+      "Citation": {
         "properties": {
-          "batch_id": {
+          "path": {
             "type": "string",
-            "title": "Batch Id"
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Path"
           },
-          "imported": {
+          "start_line": {
             "type": "integer",
-            "title": "Imported"
-          }
-        },
-        "type": "object",
-        "required": [
-          "batch_id",
-          "imported"
-        ],
-        "title": "AdoBatchAccepted"
-      },
-      "AgentConfig": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "title": "Name"
+            "minimum": 1.0,
+            "title": "Start Line"
           },
-          "model_tier": {
-            "type": "string",
-            "title": "Model Tier"
-          },
-          "config_hash": {
-            "type": "string",
-            "title": "Config Hash"
-          },
-          "resolved_model": {
-            "type": "string",
-            "title": "Resolved Model"
-          }
-        },
-        "type": "object",
-        "required": [
-          "name",
-          "model_tier",
-          "config_hash",
-          "resolved_model"
-        ],
-        "title": "AgentConfig"
-      },
-      "BatchAccepted": {
-        "properties": {
-          "batch_id": {
-            "type": "string",
-            "title": "Batch Id"
-          }
-        },
-        "type": "object",
-        "required": [
-          "batch_id"
-        ],
-        "title": "BatchAccepted"
-      },
-      "BatchDetail": {
-        "properties": {
-          "id": {
-            "type": "string",
-            "title": "Id"
-          },
-          "status": {
-            "$ref": "#/components/schemas/BatchStatus"
-          },
-          "label": {
-            "type": "string",
-            "title": "Label"
-          },
-          "source_kind": {
-            "type": "string",
-            "title": "Source Kind"
-          },
-          "finding_count": {
+          "end_line": {
             "type": "integer",
-            "title": "Finding Count"
-          },
-          "created_at": {
-            "type": "string",
-            "title": "Created At"
-          },
-          "status_counts": {
-            "additionalProperties": {
-              "type": "integer"
-            },
-            "type": "object",
-            "title": "Status Counts"
-          },
-          "current_phases": {
-            "additionalProperties": {
-              "type": "integer"
-            },
-            "type": "object",
-            "title": "Current Phases"
-          },
-          "started_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Started At"
-          },
-          "completed_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Completed At"
-          },
-          "last_activity_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Last Activity At"
-          },
-          "budget": {
-            "anyOf": [
-              {
-                "additionalProperties": {
-                  "$ref": "#/components/schemas/JsonValue"
-                },
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Budget"
-          },
-          "verdict_counts": {
-            "additionalProperties": {
-              "type": "integer"
-            },
-            "type": "object",
-            "title": "Verdict Counts"
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "status",
-          "label",
-          "source_kind",
-          "finding_count",
-          "created_at",
-          "status_counts",
-          "budget",
-          "verdict_counts"
-        ],
-        "title": "BatchDetail"
-      },
-      "BatchStatus": {
-        "type": "string",
-        "enum": [
-          "accepted",
-          "running",
-          "cancellation_requested",
-          "complete",
-          "failed",
-          "cancelled"
-        ],
-        "title": "BatchStatus",
-        "description": "Persisted lifecycle of one submitted batch."
-      },
-      "BatchSummary": {
-        "properties": {
-          "id": {
-            "type": "string",
-            "title": "Id"
-          },
-          "status": {
-            "$ref": "#/components/schemas/BatchStatus"
-          },
-          "label": {
-            "type": "string",
-            "title": "Label"
-          },
-          "source_kind": {
-            "type": "string",
-            "title": "Source Kind"
-          },
-          "finding_count": {
-            "type": "integer",
-            "title": "Finding Count"
-          },
-          "created_at": {
-            "type": "string",
-            "title": "Created At"
-          },
-          "status_counts": {
-            "additionalProperties": {
-              "type": "integer"
-            },
-            "type": "object",
-            "title": "Status Counts"
-          },
-          "current_phases": {
-            "additionalProperties": {
-              "type": "integer"
-            },
-            "type": "object",
-            "title": "Current Phases"
-          },
-          "started_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Started At"
-          },
-          "completed_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Completed At"
-          },
-          "last_activity_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Last Activity At"
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "status",
-          "label",
-          "source_kind",
-          "finding_count",
-          "created_at"
-        ],
-        "title": "BatchSummary"
-      },
-      "Bin": {
-        "properties": {
-          "lower": {
-            "type": "number",
-            "title": "Lower"
-          },
-          "upper": {
-            "type": "number",
-            "title": "Upper"
-          },
-          "count": {
-            "type": "integer",
-            "title": "Count"
-          }
-        },
-        "type": "object",
-        "required": [
-          "lower",
-          "upper",
-          "count"
-        ],
-        "title": "Bin"
-      },
-      "BrokerStatus": {
-        "properties": {
-          "configured": {
-            "type": "boolean",
-            "title": "Configured"
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "passed",
-              "failed",
-              "not_checked"
-            ],
-            "title": "Status"
-          },
-          "checked_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Checked At"
-          },
-          "stale": {
-            "type": "boolean",
-            "title": "Stale",
-            "default": true
-          },
-          "unresolved_requests": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Unresolved Requests"
-          },
-          "conservatively_closed_requests": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Conservatively Closed Requests"
-          },
-          "detail": {
-            "type": "string",
-            "title": "Detail"
-          }
-        },
-        "type": "object",
-        "required": [
-          "configured",
-          "status",
-          "detail"
-        ],
-        "title": "BrokerStatus"
-      },
-      "CancelResponse": {
-        "properties": {
-          "status": {
-            "$ref": "#/components/schemas/BatchStatus"
-          }
-        },
-        "type": "object",
-        "required": [
-          "status"
-        ],
-        "title": "CancelResponse"
-      },
-      "ConfigResponse": {
-        "properties": {
-          "model_mode": {
-            "type": "string",
-            "title": "Model Mode"
-          },
-          "agents": {
-            "items": {
-              "$ref": "#/components/schemas/AgentConfig"
-            },
-            "type": "array",
-            "title": "Agents"
-          }
-        },
-        "type": "object",
-        "required": [
-          "model_mode",
-          "agents"
-        ],
-        "title": "ConfigResponse"
-      },
-      "Distribution": {
-        "properties": {
-          "count": {
-            "type": "integer",
-            "title": "Count"
-          },
-          "population": {
-            "type": "integer",
-            "title": "Population"
-          },
-          "coverage": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Coverage"
-          },
-          "mean": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Mean"
-          },
-          "p50": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "P50"
-          },
-          "p95": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "P95"
-          },
-          "maximum": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Maximum"
-          },
-          "bins": {
-            "items": {
-              "$ref": "#/components/schemas/Bin"
-            },
-            "type": "array",
-            "title": "Bins"
-          }
-        },
-        "type": "object",
-        "required": [
-          "count",
-          "population",
-          "coverage"
-        ],
-        "title": "Distribution"
-      },
-      "ExecutionObservations": {
-        "properties": {
-          "precondition_reached": {
-            "type": "boolean",
-            "title": "Precondition Reached"
-          },
-          "sink_returned": {
-            "type": "boolean",
-            "title": "Sink Returned"
-          },
-          "oracle_fired": {
-            "type": "boolean",
-            "title": "Oracle Fired"
-          },
-          "origin": {
-            "type": "string",
-            "enum": [
-              "controller",
-              "self_reported_marker",
-              "parsed_untrusted_output"
-            ],
-            "title": "Origin"
+            "minimum": 1.0,
+            "title": "End Line"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "precondition_reached",
-          "sink_returned",
-          "oracle_fired",
-          "origin"
+          "path",
+          "start_line",
+          "end_line"
         ],
-        "title": "ExecutionObservations",
-        "description": "The exploit markers the probe printed."
+        "title": "Citation"
       },
-      "ExecutionOrigins": {
+      "Evidence": {
         "properties": {
-          "process": {
-            "$ref": "#/components/schemas/ExecutionProcess"
+          "id": {
+            "type": "string",
+            "title": "Id"
           },
-          "observations": {
-            "$ref": "#/components/schemas/ExecutionObservations"
+          "kind": {
+            "type": "string",
+            "enum": [
+              "command",
+              "probe"
+            ],
+            "title": "Kind"
           },
-          "runner": {
-            "$ref": "#/components/schemas/ExecutionRunner"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "process",
-          "observations",
-          "runner"
-        ],
-        "title": "ExecutionOrigins",
-        "description": "The origin-labelled sections of the controller's execution record (sandbox.evidence)."
-      },
-      "ExecutionProcess": {
-        "properties": {
+          "command": {
+            "type": "string",
+            "title": "Command"
+          },
           "exit_code": {
             "anyOf": [
               {
@@ -1341,444 +252,109 @@
             ],
             "title": "Exit Code"
           },
+          "stdout": {
+            "type": "string",
+            "title": "Stdout",
+            "default": ""
+          },
+          "stderr": {
+            "type": "string",
+            "title": "Stderr",
+            "default": ""
+          },
           "timed_out": {
             "type": "boolean",
-            "title": "Timed Out"
+            "title": "Timed Out",
+            "default": false
           },
-          "duration_s": {
-            "type": "number",
-            "title": "Duration S"
+          "output_truncated": {
+            "type": "boolean",
+            "title": "Output Truncated",
+            "default": false
           },
-          "origin": {
+          "sandbox_id": {
             "type": "string",
-            "enum": [
-              "controller",
-              "self_reported_marker",
-              "parsed_untrusted_output"
-            ],
-            "title": "Origin"
+            "title": "Sandbox Id"
+          },
+          "source_digest": {
+            "type": "string",
+            "title": "Source Digest"
+          },
+          "observations": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Observations"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
+          "id",
+          "kind",
+          "command",
           "exit_code",
-          "timed_out",
-          "duration_s",
-          "origin"
+          "sandbox_id",
+          "source_digest"
         ],
-        "title": "ExecutionProcess",
-        "description": "The probe process as the controller observed it."
+        "title": "Evidence",
+        "description": "Process fields are observed; text and observations remain untrusted claims."
       },
-      "ExecutionRunner": {
+      "Finding": {
         "properties": {
-          "zero_test_signal": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Zero Test Signal"
-          },
-          "origin": {
-            "type": "string",
-            "enum": [
-              "controller",
-              "self_reported_marker",
-              "parsed_untrusted_output"
-            ],
-            "title": "Origin"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "zero_test_signal",
-          "origin"
-        ],
-        "title": "ExecutionRunner",
-        "description": "The runner's own zero-test phrase, or None when its output contained none."
-      },
-      "ExperimentCase": {
-        "properties": {
-          "case_name": {
-            "type": "string",
-            "title": "Case Name"
-          },
-          "repetition": {
-            "type": "integer",
-            "title": "Repetition"
-          },
-          "passed": {
-            "type": "boolean",
-            "title": "Passed"
-          },
-          "scores": {
-            "additionalProperties": {
-              "$ref": "#/components/schemas/JsonValue"
-            },
-            "type": "object",
-            "title": "Scores"
-          },
-          "cost_usd": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cost Usd"
-          },
-          "latency_s": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Latency S"
-          }
-        },
-        "type": "object",
-        "required": [
-          "case_name",
-          "repetition",
-          "passed",
-          "scores",
-          "cost_usd",
-          "latency_s"
-        ],
-        "title": "ExperimentCase"
-      },
-      "ExperimentDetail": {
-        "properties": {
-          "id": {
-            "type": "string",
-            "title": "Id"
-          },
-          "agent": {
-            "type": "string",
-            "title": "Agent"
-          },
-          "metrics": {
-            "additionalProperties": {
-              "$ref": "#/components/schemas/JsonValue"
-            },
-            "type": "object",
-            "title": "Metrics"
-          },
-          "cases": {
-            "items": {
-              "$ref": "#/components/schemas/ExperimentCase"
-            },
-            "type": "array",
-            "title": "Cases"
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "agent",
-          "metrics",
-          "cases"
-        ],
-        "title": "ExperimentDetail"
-      },
-      "ExperimentPage": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/ExperimentSummary"
-            },
-            "type": "array",
-            "title": "Items"
-          },
-          "total": {
-            "type": "integer",
-            "title": "Total"
-          },
-          "offset": {
-            "type": "integer",
-            "title": "Offset"
-          },
-          "limit": {
-            "type": "integer",
-            "title": "Limit"
-          }
-        },
-        "type": "object",
-        "required": [
-          "items",
-          "total",
-          "offset",
-          "limit"
-        ],
-        "title": "ExperimentPage"
-      },
-      "ExperimentStatus": {
-        "type": "string",
-        "enum": [
-          "running",
-          "complete",
-          "truncated"
-        ],
-        "title": "ExperimentStatus",
-        "description": "Persisted lifecycle of one eval experiment (`evals.run.run_experiment`)."
-      },
-      "ExperimentSummary": {
-        "properties": {
-          "id": {
-            "type": "string",
-            "title": "Id"
-          },
-          "agent": {
-            "type": "string",
-            "title": "Agent"
-          },
-          "status": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ExperimentStatus"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "dataset": {
-            "type": "string",
-            "title": "Dataset"
-          },
-          "dataset_version": {
-            "type": "string",
-            "title": "Dataset Version"
-          },
-          "git_sha": {
-            "type": "string",
-            "title": "Git Sha"
-          },
-          "overlay": {
-            "type": "string",
-            "title": "Overlay"
-          },
-          "repetitions": {
-            "type": "integer",
-            "title": "Repetitions"
-          },
-          "config_hash": {
-            "type": "string",
-            "title": "Config Hash"
-          },
-          "git_dirty": {
-            "type": "boolean",
-            "title": "Git Dirty"
-          },
-          "model_name": {
-            "type": "string",
-            "title": "Model Name"
-          },
-          "backend": {
-            "type": "string",
-            "title": "Backend"
-          },
-          "pricing": {
-            "type": "string",
-            "title": "Pricing"
-          },
-          "harness_version": {
-            "type": "string",
-            "title": "Harness Version"
-          },
-          "created_at": {
-            "type": "string",
-            "title": "Created At"
-          },
-          "task_success_rate": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Task Success Rate"
-          },
-          "average_cost_usd": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Average Cost Usd"
-          },
-          "p50_latency_s": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "P50 Latency S"
-          },
-          "p95_latency_s": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "P95 Latency S"
-          },
-          "passed": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Passed"
-          },
-          "cases_completed": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cases Completed"
-          },
-          "cases_planned": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cases Planned"
-          },
-          "budget_exhausted_count": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Budget Exhausted Count"
-          },
-          "gate_status": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Gate Status"
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "agent",
-          "status",
-          "dataset",
-          "dataset_version",
-          "git_sha",
-          "overlay",
-          "repetitions",
-          "config_hash",
-          "git_dirty",
-          "model_name",
-          "backend",
-          "pricing",
-          "harness_version",
-          "created_at",
-          "task_success_rate",
-          "average_cost_usd",
-          "p50_latency_s",
-          "p95_latency_s",
-          "passed",
-          "cases_completed",
-          "cases_planned",
-          "budget_exhausted_count",
-          "gate_status"
-        ],
-        "title": "ExperimentSummary",
-        "description": "One experiment's identity and headline measurements; full metrics are per experiment.\n\nEvery measurement is None when the stored report did not record it as a finite number."
-      },
-      "FindingInput": {
-        "properties": {
-          "external_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "External Id",
-            "description": "ID in the originating system"
-          },
           "title": {
             "type": "string",
+            "maxLength": 1000,
+            "minLength": 1,
             "title": "Title"
           },
           "description": {
             "type": "string",
+            "maxLength": 100000,
             "title": "Description",
             "default": ""
           },
           "repo_url": {
             "type": "string",
-            "title": "Repo Url",
-            "description": "Git URL or a local path visible to the worker"
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Repo Url"
           },
           "revision": {
             "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
             "title": "Revision",
-            "description": "Commit SHA, tag, or branch",
             "default": "HEAD"
           },
           "source_mode": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SourceMode"
-              },
-              {
-                "type": "null"
-              }
+            "type": "string",
+            "enum": [
+              "git_revision",
+              "working_snapshot"
             ],
-            "description": "Explicit source identity mode; omitted for backwards-compatible inference"
+            "title": "Source Mode",
+            "default": "git_revision"
           },
           "file_path": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 4000
               },
               {
                 "type": "null"
@@ -1786,80 +362,17 @@
             ],
             "title": "File Path"
           },
-          "start_line": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Start Line"
-          },
-          "end_line": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "End Line"
-          },
-          "symbol": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Symbol"
-          },
           "cwe": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "pattern": "^CWE-[0-9]+$"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Cwe",
-            "description": "e.g. CWE-89"
-          },
-          "severity": {
-            "$ref": "#/components/schemas/Severity",
-            "default": "unknown"
-          },
-          "source_tool": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Source Tool"
-          },
-          "source_kind": {
-            "$ref": "#/components/schemas/FindingSourceKind",
-            "default": "generic_json"
-          },
-          "ado_work_item_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Ado Work Item Id"
+            "title": "Cwe"
           }
         },
         "additionalProperties": false,
@@ -1868,17 +381,7 @@
           "title",
           "repo_url"
         ],
-        "title": "FindingInput",
-        "description": "The published generic JSON schema an external process submits (D1).\n\nOnly ``repo_url`` and ``title`` are required; anything missing is extracted from\n``description`` by the intake agent or the finding is parked as ``needs_info``."
-      },
-      "FindingSourceKind": {
-        "type": "string",
-        "enum": [
-          "generic_json",
-          "ado",
-          "free_text"
-        ],
-        "title": "FindingSourceKind"
+        "title": "Finding"
       },
       "HTTPValidationError": {
         "properties": {
@@ -1893,767 +396,64 @@
         "type": "object",
         "title": "HTTPValidationError"
       },
-      "HealthResponse": {
+      "InvestigationResult": {
         "properties": {
-          "status": {
+          "finding": {
+            "$ref": "#/components/schemas/Finding"
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/Verdict"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            },
+            "type": "array",
+            "title": "Evidence"
+          },
+          "source_digest": {
             "type": "string",
-            "title": "Status"
-          }
-        },
-        "type": "object",
-        "required": [
-          "status"
-        ],
-        "title": "HealthResponse"
-      },
-      "InvocationRecord": {
-        "properties": {
-          "agent": {
+            "title": "Source Digest"
+          },
+          "model": {
             "type": "string",
-            "title": "Agent"
+            "title": "Model"
           },
-          "model_name": {
-            "type": "string",
-            "title": "Model Name"
-          },
-          "config_hash": {
-            "type": "string",
-            "title": "Config Hash"
-          },
-          "input_tokens": {
-            "type": "integer",
-            "title": "Input Tokens"
-          },
-          "output_tokens": {
-            "type": "integer",
-            "title": "Output Tokens"
-          },
-          "cache_read_tokens": {
-            "type": "integer",
-            "title": "Cache Read Tokens"
-          },
-          "cache_write_tokens": {
-            "type": "integer",
-            "title": "Cache Write Tokens"
-          },
-          "cost_usd": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cost Usd"
-          },
-          "cost_estimated": {
-            "type": "boolean",
-            "title": "Cost Estimated"
-          },
-          "latency_s": {
-            "type": "number",
-            "title": "Latency S"
-          },
-          "requests": {
-            "type": "integer",
-            "title": "Requests"
-          },
-          "repeated_tool_calls": {
+          "usage": {
             "additionalProperties": {
-              "type": "integer"
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "type": "object",
-            "title": "Repeated Tool Calls"
+            "title": "Usage"
           },
-          "tools_called": {
+          "limitations": {
             "items": {
               "type": "string"
             },
             "type": "array",
-            "title": "Tools Called"
-          },
-          "skills_loaded": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Skills Loaded"
-          }
-        },
-        "type": "object",
-        "required": [
-          "agent",
-          "model_name",
-          "config_hash",
-          "input_tokens",
-          "output_tokens",
-          "cache_read_tokens",
-          "cache_write_tokens",
-          "cost_usd",
-          "cost_estimated",
-          "latency_s",
-          "requests",
-          "repeated_tool_calls",
-          "tools_called",
-          "skills_loaded"
-        ],
-        "title": "InvocationRecord"
-      },
-      "JsonValue": {},
-      "MetricsResponse": {
-        "properties": {
-          "schema_version": {
-            "type": "integer",
-            "title": "Schema Version",
-            "default": 1
-          },
-          "as_of": {
-            "type": "string",
-            "title": "As Of"
-          },
-          "population": {
-            "type": "string",
-            "title": "Population"
-          },
-          "total_runs": {
-            "type": "integer",
-            "title": "Total Runs"
-          },
-          "status_counts": {
-            "additionalProperties": {
-              "type": "integer"
-            },
-            "type": "object",
-            "title": "Status Counts"
-          },
-          "verdict_counts": {
-            "additionalProperties": {
-              "type": "integer"
-            },
-            "type": "object",
-            "title": "Verdict Counts"
-          },
-          "tokens": {
-            "$ref": "#/components/schemas/Distribution"
-          },
-          "input_tokens": {
-            "$ref": "#/components/schemas/Distribution"
-          },
-          "output_tokens": {
-            "$ref": "#/components/schemas/Distribution"
-          },
-          "cost_usd": {
-            "$ref": "#/components/schemas/Distribution"
-          },
-          "wall_time_s": {
-            "$ref": "#/components/schemas/Distribution"
-          },
-          "agent_time_s": {
-            "$ref": "#/components/schemas/Distribution"
-          },
-          "trends": {
-            "items": {
-              "$ref": "#/components/schemas/TrendPoint"
-            },
-            "type": "array",
-            "title": "Trends"
-          },
-          "stages": {
-            "items": {
-              "$ref": "#/components/schemas/StageMetric"
-            },
-            "type": "array",
-            "title": "Stages"
-          },
-          "definitions": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "type": "object",
-            "title": "Definitions"
-          }
-        },
-        "type": "object",
-        "required": [
-          "as_of",
-          "population",
-          "total_runs",
-          "status_counts",
-          "verdict_counts",
-          "tokens",
-          "input_tokens",
-          "output_tokens",
-          "cost_usd",
-          "wall_time_s",
-          "agent_time_s",
-          "trends",
-          "stages",
-          "definitions"
-        ],
-        "title": "MetricsResponse"
-      },
-      "ModelConnectivity": {
-        "properties": {
-          "status": {
-            "type": "string",
-            "enum": [
-              "passed",
-              "failed",
-              "not_checked"
-            ],
-            "title": "Status",
-            "default": "not_checked"
-          },
-          "checked_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Checked At"
-          },
-          "detail": {
-            "type": "string",
-            "title": "Detail",
-            "default": "No recorded inference check is available for the active profile."
-          }
-        },
-        "type": "object",
-        "title": "ModelConnectivity"
-      },
-      "ProbeExecution": {
-        "properties": {
-          "attempt": {
-            "type": "integer",
-            "title": "Attempt"
-          },
-          "exit_code": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Exit Code"
-          },
-          "timed_out": {
-            "type": "boolean",
-            "title": "Timed Out",
-            "default": false
-          },
-          "oracle_fired": {
-            "type": "boolean",
-            "title": "Oracle Fired"
-          },
-          "precondition_reached": {
-            "type": "boolean",
-            "title": "Precondition Reached"
-          },
-          "sink_returned": {
-            "type": "boolean",
-            "title": "Sink Returned",
-            "default": false
-          },
-          "runner_reported_no_tests": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Runner Reported No Tests"
-          },
-          "stdout_tail": {
-            "type": "string",
-            "title": "Stdout Tail",
-            "default": ""
-          },
-          "stderr_tail": {
-            "type": "string",
-            "title": "Stderr Tail",
-            "default": ""
-          },
-          "duration_s": {
-            "type": "number",
-            "title": "Duration S",
-            "default": 0.0
-          },
-          "log_artifact": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Log Artifact"
-          },
-          "source_artifact": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Source Artifact"
-          },
-          "origins": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ExecutionOrigins"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "title": "Limitations"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "attempt",
-          "exit_code",
-          "oracle_fired",
-          "precondition_reached"
-        ],
-        "title": "ProbeExecution"
-      },
-      "ReviewRecord": {
-        "properties": {
-          "reviewer": {
-            "type": "string",
-            "title": "Reviewer",
-            "default": ""
-          },
-          "decision": {
-            "type": "string",
-            "title": "Decision"
-          },
-          "override_label": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Override Label"
-          },
-          "reason": {
-            "type": "string",
-            "title": "Reason",
-            "default": ""
-          },
-          "created_at": {
-            "type": "string",
-            "title": "Created At"
-          }
-        },
-        "type": "object",
-        "required": [
-          "decision",
-          "created_at"
-        ],
-        "title": "ReviewRecord"
-      },
-      "ReviewRequest": {
-        "properties": {
-          "reviewer": {
-            "type": "string",
-            "title": "Reviewer",
-            "default": ""
-          },
-          "decision": {
-            "type": "string",
-            "enum": [
-              "confirm",
-              "override"
-            ],
-            "title": "Decision"
-          },
-          "override_label": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/VerdictLabel"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "reason": {
-            "type": "string",
-            "title": "Reason",
-            "default": ""
-          }
-        },
-        "type": "object",
-        "required": [
-          "decision"
-        ],
-        "title": "ReviewRequest"
-      },
-      "ReviewSaved": {
-        "properties": {
-          "ok": {
-            "type": "boolean",
-            "title": "Ok"
-          }
-        },
-        "type": "object",
-        "required": [
-          "ok"
-        ],
-        "title": "ReviewSaved"
-      },
-      "RunDetail": {
-        "properties": {
-          "id": {
-            "type": "string",
-            "title": "Id"
-          },
-          "batch_id": {
-            "type": "string",
-            "title": "Batch Id"
-          },
-          "fingerprint": {
-            "type": "string",
-            "title": "Fingerprint"
-          },
-          "title": {
-            "type": "string",
-            "title": "Title"
-          },
-          "repo_url": {
-            "type": "string",
-            "title": "Repo Url"
-          },
-          "revision": {
-            "type": "string",
-            "title": "Revision"
-          },
-          "cwe": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cwe"
-          },
-          "severity": {
-            "type": "string",
-            "title": "Severity"
-          },
-          "status": {
-            "$ref": "#/components/schemas/RunStatus"
-          },
-          "verdict": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Verdict"
-          },
-          "confidence": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Confidence"
-          },
-          "inconclusive_reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Inconclusive Reason"
-          },
-          "priority": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Priority"
-          },
-          "priority_score": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Priority Score"
-          },
-          "environment_scope": {
-            "type": "string",
-            "title": "Environment Scope"
-          },
-          "early_exit": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Early Exit"
-          },
-          "cost_usd": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cost Usd"
-          },
-          "total_tokens": {
-            "type": "integer",
-            "title": "Total Tokens"
-          },
-          "cache_read_tokens": {
-            "type": "integer",
-            "title": "Cache Read Tokens"
-          },
-          "latency_s": {
-            "type": "number",
-            "title": "Latency S"
-          },
-          "created_at": {
-            "type": "string",
-            "title": "Created At"
-          },
-          "telemetry": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/RunTelemetry"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "phase": {
-            "type": "string",
-            "title": "Phase"
-          },
-          "evidence": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/RunEvidence"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "events": {
-            "items": {
-              "$ref": "#/components/schemas/RunEvent"
-            },
-            "type": "array",
-            "title": "Events"
-          },
-          "review_history": {
-            "items": {
-              "$ref": "#/components/schemas/ReviewRecord"
-            },
-            "type": "array",
-            "title": "Review History"
-          },
-          "finding": {
-            "additionalProperties": {
-              "$ref": "#/components/schemas/JsonValue"
-            },
-            "type": "object",
-            "title": "Finding"
-          },
-          "result": {
-            "anyOf": [
-              {
-                "additionalProperties": {
-                  "$ref": "#/components/schemas/JsonValue"
-                },
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Result"
-          },
-          "invocations": {
-            "items": {
-              "$ref": "#/components/schemas/InvocationRecord"
-            },
-            "type": "array",
-            "title": "Invocations"
-          },
-          "review": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ReviewRecord"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "batch_id",
-          "fingerprint",
-          "title",
-          "repo_url",
-          "revision",
-          "cwe",
-          "severity",
-          "status",
-          "verdict",
-          "confidence",
-          "inconclusive_reason",
-          "priority",
-          "priority_score",
-          "environment_scope",
-          "early_exit",
-          "cost_usd",
-          "total_tokens",
-          "cache_read_tokens",
-          "latency_s",
-          "created_at",
-          "telemetry",
-          "phase",
-          "evidence",
-          "events",
-          "review_history",
           "finding",
-          "result",
-          "invocations",
-          "review"
+          "verdict",
+          "evidence",
+          "source_digest",
+          "model"
         ],
-        "title": "RunDetail"
-      },
-      "RunEvent": {
-        "properties": {
-          "id": {
-            "type": "string",
-            "title": "Id"
-          },
-          "phase": {
-            "type": "string",
-            "title": "Phase"
-          },
-          "detail": {
-            "type": "string",
-            "title": "Detail"
-          },
-          "created_at": {
-            "type": "string",
-            "title": "Created At"
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "phase",
-          "detail",
-          "created_at"
-        ],
-        "title": "RunEvent"
-      },
-      "RunEvidence": {
-        "properties": {
-          "schema_version": {
-            "type": "integer",
-            "title": "Schema Version"
-          },
-          "manifest": {
-            "additionalProperties": {
-              "$ref": "#/components/schemas/JsonValue"
-            },
-            "type": "object",
-            "title": "Manifest"
-          },
-          "context": {
-            "anyOf": [
-              {
-                "additionalProperties": {
-                  "$ref": "#/components/schemas/JsonValue"
-                },
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Context"
-          },
-          "executions": {
-            "items": {
-              "$ref": "#/components/schemas/ProbeExecution"
-            },
-            "type": "array",
-            "title": "Executions"
-          },
-          "invocations": {
-            "items": {
-              "additionalProperties": {
-                "$ref": "#/components/schemas/JsonValue"
-              },
-              "type": "object"
-            },
-            "type": "array",
-            "title": "Invocations"
-          }
-        },
-        "type": "object",
-        "required": [
-          "schema_version",
-          "manifest",
-          "context",
-          "executions",
-          "invocations"
-        ],
-        "title": "RunEvidence",
-        "description": "The per-stage evidence persisted with a run's output."
+        "title": "InvestigationResult"
       },
       "RunPage": {
         "properties": {
@@ -2664,45 +464,80 @@
             "type": "array",
             "title": "Items"
           },
-          "total": {
-            "type": "integer",
-            "title": "Total"
-          },
-          "offset": {
-            "type": "integer",
-            "title": "Offset"
-          },
-          "limit": {
-            "type": "integer",
-            "title": "Limit"
-          },
-          "as_of": {
-            "type": "string",
-            "title": "As Of"
+          "next_page_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Page Token"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
-          "items",
-          "total",
-          "offset",
-          "limit",
-          "as_of"
+          "items"
         ],
         "title": "RunPage"
       },
-      "RunStatus": {
-        "type": "string",
-        "enum": [
-          "pending",
-          "running",
-          "complete",
-          "needs_info",
-          "failed",
-          "cancelled"
+      "RunState": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "running",
+              "completed",
+              "failed",
+              "cancelled"
+            ],
+            "title": "Status"
+          },
+          "phase": {
+            "type": "string",
+            "title": "Phase"
+          },
+          "finding": {
+            "$ref": "#/components/schemas/Finding"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InvestigationResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "phase",
+          "finding"
         ],
-        "title": "RunStatus",
-        "description": "Persisted lifecycle of one finding's triage run."
+        "title": "RunState"
       },
       "RunSummary": {
         "properties": {
@@ -2710,45 +545,19 @@
             "type": "string",
             "title": "Id"
           },
-          "batch_id": {
-            "type": "string",
-            "title": "Batch Id"
-          },
-          "fingerprint": {
-            "type": "string",
-            "title": "Fingerprint"
-          },
           "title": {
             "type": "string",
             "title": "Title"
           },
-          "repo_url": {
-            "type": "string",
-            "title": "Repo Url"
-          },
-          "revision": {
-            "type": "string",
-            "title": "Revision"
-          },
-          "cwe": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cwe"
-          },
-          "severity": {
-            "type": "string",
-            "title": "Severity"
-          },
           "status": {
-            "$ref": "#/components/schemas/RunStatus"
+            "type": "string",
+            "title": "Status"
           },
-          "verdict": {
+          "started_at": {
+            "type": "string",
+            "title": "Started At"
+          },
+          "closed_at": {
             "anyOf": [
               {
                 "type": "string"
@@ -2757,542 +566,18 @@
                 "type": "null"
               }
             ],
-            "title": "Verdict"
-          },
-          "confidence": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Confidence"
-          },
-          "inconclusive_reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Inconclusive Reason"
-          },
-          "priority": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Priority"
-          },
-          "priority_score": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Priority Score"
-          },
-          "environment_scope": {
-            "type": "string",
-            "title": "Environment Scope"
-          },
-          "early_exit": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Early Exit"
-          },
-          "cost_usd": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cost Usd"
-          },
-          "total_tokens": {
-            "type": "integer",
-            "title": "Total Tokens"
-          },
-          "cache_read_tokens": {
-            "type": "integer",
-            "title": "Cache Read Tokens"
-          },
-          "latency_s": {
-            "type": "number",
-            "title": "Latency S"
-          },
-          "created_at": {
-            "type": "string",
-            "title": "Created At"
-          },
-          "telemetry": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/RunTelemetry"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "phase": {
-            "type": "string",
-            "title": "Phase"
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "batch_id",
-          "fingerprint",
-          "title",
-          "repo_url",
-          "revision",
-          "cwe",
-          "severity",
-          "status",
-          "verdict",
-          "confidence",
-          "inconclusive_reason",
-          "priority",
-          "priority_score",
-          "environment_scope",
-          "early_exit",
-          "cost_usd",
-          "total_tokens",
-          "cache_read_tokens",
-          "latency_s",
-          "created_at",
-          "telemetry",
-          "phase"
-        ],
-        "title": "RunSummary"
-      },
-      "RunTelemetry": {
-        "properties": {
-          "schema_version": {
-            "type": "integer",
-            "const": 2,
-            "title": "Schema Version",
-            "default": 2
-          },
-          "population": {
-            "type": "string",
-            "enum": [
-              "operational",
-              "demo"
-            ],
-            "title": "Population"
-          },
-          "phase": {
-            "type": "string",
-            "title": "Phase"
-          },
-          "accepted_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Accepted At"
-          },
-          "updated_at": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Updated At"
-          },
-          "completed_at": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Completed At"
-          },
-          "wall_time_s": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Wall Time S"
-          },
-          "agent_time_s": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Agent Time S"
-          },
-          "cost_usd": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cost Usd"
-          },
-          "known_cost_usd": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Known Cost Usd"
-          },
-          "accounting_complete": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Accounting Complete"
-          },
-          "cost_accounting_complete": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cost Accounting Complete"
-          },
-          "known_tokens": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Known Tokens"
-          },
-          "input_tokens": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Input Tokens"
-          },
-          "output_tokens": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Output Tokens"
-          },
-          "cost_coverage": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cost Coverage"
-          },
-          "total_tokens": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Total Tokens"
+            "title": "Closed At"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "population",
-          "phase",
-          "accepted_at"
+          "id",
+          "title",
+          "status",
+          "started_at"
         ],
-        "title": "RunTelemetry"
-      },
-      "RuntimeStatus": {
-        "properties": {
-          "environment": {
-            "type": "string",
-            "title": "Environment"
-          },
-          "model_mode": {
-            "type": "string",
-            "title": "Model Mode"
-          },
-          "assessment_transport": {
-            "type": "string",
-            "title": "Assessment Transport"
-          },
-          "api_source_commit": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Api Source Commit"
-          },
-          "as_of": {
-            "type": "string",
-            "title": "As Of"
-          },
-          "database_backend": {
-            "type": "string",
-            "title": "Database Backend"
-          },
-          "temporal_mode": {
-            "type": "string",
-            "title": "Temporal Mode"
-          },
-          "broker": {
-            "$ref": "#/components/schemas/BrokerStatus"
-          },
-          "model_names": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Model Names"
-          },
-          "model_connectivity": {
-            "$ref": "#/components/schemas/ModelConnectivity"
-          }
-        },
-        "type": "object",
-        "required": [
-          "environment",
-          "model_mode",
-          "assessment_transport",
-          "as_of",
-          "database_backend",
-          "temporal_mode",
-          "broker"
-        ],
-        "title": "RuntimeStatus"
-      },
-      "Severity": {
-        "type": "string",
-        "enum": [
-          "critical",
-          "high",
-          "medium",
-          "low",
-          "info",
-          "unknown"
-        ],
-        "title": "Severity"
-      },
-      "SourceMode": {
-        "type": "string",
-        "enum": [
-          "git_revision",
-          "working_snapshot"
-        ],
-        "title": "SourceMode"
-      },
-      "StageMetric": {
-        "properties": {
-          "agent": {
-            "type": "string",
-            "title": "Agent"
-          },
-          "invocations": {
-            "type": "integer",
-            "title": "Invocations"
-          },
-          "agent_time_s": {
-            "type": "number",
-            "title": "Agent Time S"
-          },
-          "tokens": {
-            "type": "integer",
-            "title": "Tokens"
-          },
-          "known_cost_usd": {
-            "type": "number",
-            "title": "Known Cost Usd"
-          },
-          "cost_coverage": {
-            "type": "number",
-            "title": "Cost Coverage"
-          }
-        },
-        "type": "object",
-        "required": [
-          "agent",
-          "invocations",
-          "agent_time_s",
-          "tokens",
-          "known_cost_usd",
-          "cost_coverage"
-        ],
-        "title": "StageMetric"
-      },
-      "SubmitADORequest": {
-        "properties": {
-          "work_item_ids": {
-            "items": {
-              "type": "integer"
-            },
-            "type": "array",
-            "title": "Work Item Ids"
-          },
-          "label": {
-            "type": "string",
-            "title": "Label",
-            "default": ""
-          }
-        },
-        "type": "object",
-        "required": [
-          "work_item_ids"
-        ],
-        "title": "SubmitADORequest"
-      },
-      "SubmitRequest": {
-        "properties": {
-          "findings": {
-            "items": {
-              "$ref": "#/components/schemas/FindingInput"
-            },
-            "type": "array",
-            "title": "Findings"
-          },
-          "label": {
-            "type": "string",
-            "title": "Label",
-            "default": ""
-          },
-          "mode": {
-            "type": "string",
-            "enum": [
-              "local",
-              "temporal"
-            ],
-            "title": "Mode",
-            "default": "temporal"
-          }
-        },
-        "type": "object",
-        "required": [
-          "findings"
-        ],
-        "title": "SubmitRequest"
-      },
-      "TrendPoint": {
-        "properties": {
-          "date": {
-            "type": "string",
-            "title": "Date"
-          },
-          "runs": {
-            "type": "integer",
-            "title": "Runs"
-          },
-          "tokens": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Tokens"
-          },
-          "cost_usd": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cost Usd"
-          },
-          "wall_time_s": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Wall Time S"
-          }
-        },
-        "type": "object",
-        "required": [
-          "date",
-          "runs",
-          "tokens",
-          "cost_usd",
-          "wall_time_s"
-        ],
-        "title": "TrendPoint"
+        "title": "RunSummary"
       },
       "ValidationError": {
         "properties": {
@@ -3334,14 +619,47 @@
         ],
         "title": "ValidationError"
       },
-      "VerdictLabel": {
-        "type": "string",
-        "enum": [
-          "potentially_exploitable",
-          "likely_not_exploitable",
-          "inconclusive"
+      "Verdict": {
+        "properties": {
+          "label": {
+            "type": "string",
+            "enum": [
+              "potentially_exploitable",
+              "likely_not_exploitable",
+              "inconclusive"
+            ],
+            "title": "Label"
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 12000,
+            "minLength": 1,
+            "title": "Summary"
+          },
+          "evidence_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 10,
+            "title": "Evidence Ids"
+          },
+          "citations": {
+            "items": {
+              "$ref": "#/components/schemas/Citation"
+            },
+            "type": "array",
+            "maxItems": 30,
+            "title": "Citations"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "label",
+          "summary"
         ],
-        "title": "VerdictLabel"
+        "title": "Verdict"
       }
     }
   }

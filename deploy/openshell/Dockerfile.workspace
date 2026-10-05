@@ -1,0 +1,14 @@
+# Trusted multi-language toolbox; runtime instances are owned and confined by OpenShell.
+FROM python:3.12.13-slim@sha256:229a2c5bfa27522db7815ea81f9bed70af17ccb9de9fc7ad142b1877b5830d36
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+RUN apt-mark hold libssl3t64 openssl openssl-provider-legacy perl-base \
+    && apt-get update && apt-get install --no-upgrade -y --no-install-recommends \
+    ca-certificates nodejs npm default-jdk-headless maven perl cpanminus gcc make \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /workspace && chown 65532:65532 /workspace
+ENV PYTHONDONTWRITEBYTECODE=1
+USER 65532:65532
+WORKDIR /workspace
+ENTRYPOINT []
+CMD ["sleep", "infinity"]

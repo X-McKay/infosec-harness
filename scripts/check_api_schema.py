@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from infosec_harness.api.app import app
+from infosec_harness.web import app
 
 
 def main() -> int:

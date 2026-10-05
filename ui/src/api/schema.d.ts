@@ -4,15 +4,15 @@
  */
 
 export interface paths {
-    "/api/run-page": {
+    "/api/health": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Run Page */
-        get: operations["run_page_api_run_page_get"];
+        /** Health */
+        get: operations["health_api_health_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -21,123 +21,18 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/metrics": {
+    "/api/runs": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Metrics */
-        get: operations["metrics_api_metrics_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/experiments": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Experiments
-         * @description Newest first. Summaries carry headline measurements; full metrics are per experiment.
-         */
-        get: operations["experiments_api_experiments_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/experiments/{experiment_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Experiment Detail */
-        get: operations["experiment_detail_api_experiments__experiment_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/runtime-status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Runtime Status */
-        get: operations["runtime_status_api_runtime_status_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/batches": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Batches */
-        get: operations["batches_api_batches_get"];
+        /** Runs */
+        get: operations["runs_api_runs_get"];
         put?: never;
         /** Submit */
-        post: operations["submit_api_batches_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/batches/ado": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Submit Ado */
-        post: operations["submit_ado_api_batches_ado_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/batches/{batch_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Batch */
-        get: operations["batch_api_batches__batch_id__get"];
-        put?: never;
-        post?: never;
+        post: operations["submit_api_runs_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -161,7 +56,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/runs/{run_id}/review": {
+    "/api/runs/{run_id}/cancel": {
         parameters: {
             query?: never;
             header?: never;
@@ -170,59 +65,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Review */
-        post: operations["review_api_runs__run_id__review_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/config": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Config */
-        get: operations["config_api_config_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/health": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Health */
-        get: operations["health_api_health_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/batches/{batch_id}/cancel": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Cancel Batch */
-        post: operations["cancel_batch_api_batches__batch_id__cancel_post"];
+        /** Cancel */
+        post: operations["cancel_api_runs__run_id__cancel_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -233,332 +77,62 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** AdoBatchAccepted */
-        AdoBatchAccepted: {
-            /** Batch Id */
-            batch_id: string;
-            /** Imported */
-            imported: number;
+        /** Citation */
+        Citation: {
+            /** Path */
+            path: string;
+            /** Start Line */
+            start_line: number;
+            /** End Line */
+            end_line: number;
         };
-        /** AgentConfig */
-        AgentConfig: {
-            /** Name */
-            name: string;
-            /** Model Tier */
-            model_tier: string;
-            /** Config Hash */
-            config_hash: string;
-            /** Resolved Model */
-            resolved_model: string;
-        };
-        /** BatchAccepted */
-        BatchAccepted: {
-            /** Batch Id */
-            batch_id: string;
-        };
-        /** BatchDetail */
-        BatchDetail: {
+        /**
+         * Evidence
+         * @description Process fields are observed; text and observations remain untrusted claims.
+         */
+        Evidence: {
             /** Id */
             id: string;
-            status: components["schemas"]["BatchStatus"];
-            /** Label */
-            label: string;
-            /** Source Kind */
-            source_kind: string;
-            /** Finding Count */
-            finding_count: number;
-            /** Created At */
-            created_at: string;
-            /** Status Counts */
-            status_counts: {
-                [key: string]: number;
-            };
-            /** Current Phases */
-            current_phases?: {
-                [key: string]: number;
-            };
-            /** Started At */
-            started_at?: string | null;
-            /** Completed At */
-            completed_at?: string | null;
-            /** Last Activity At */
-            last_activity_at?: string | null;
-            /** Budget */
-            budget: {
-                [key: string]: components["schemas"]["JsonValue"];
-            } | null;
-            /** Verdict Counts */
-            verdict_counts: {
-                [key: string]: number;
-            };
-        };
-        /**
-         * BatchStatus
-         * @description Persisted lifecycle of one submitted batch.
-         * @enum {string}
-         */
-        BatchStatus: "accepted" | "running" | "cancellation_requested" | "complete" | "failed" | "cancelled";
-        /** BatchSummary */
-        BatchSummary: {
-            /** Id */
-            id: string;
-            status: components["schemas"]["BatchStatus"];
-            /** Label */
-            label: string;
-            /** Source Kind */
-            source_kind: string;
-            /** Finding Count */
-            finding_count: number;
-            /** Created At */
-            created_at: string;
-            /** Status Counts */
-            status_counts?: {
-                [key: string]: number;
-            };
-            /** Current Phases */
-            current_phases?: {
-                [key: string]: number;
-            };
-            /** Started At */
-            started_at?: string | null;
-            /** Completed At */
-            completed_at?: string | null;
-            /** Last Activity At */
-            last_activity_at?: string | null;
-        };
-        /** Bin */
-        Bin: {
-            /** Lower */
-            lower: number;
-            /** Upper */
-            upper: number;
-            /** Count */
-            count: number;
-        };
-        /** BrokerStatus */
-        BrokerStatus: {
-            /** Configured */
-            configured: boolean;
             /**
-             * Status
+             * Kind
              * @enum {string}
              */
-            status: "passed" | "failed" | "not_checked";
-            /** Checked At */
-            checked_at?: string | null;
-            /**
-             * Stale
-             * @default true
-             */
-            stale: boolean;
-            /** Unresolved Requests */
-            unresolved_requests?: number | null;
-            /** Conservatively Closed Requests */
-            conservatively_closed_requests?: number | null;
-            /** Detail */
-            detail: string;
-        };
-        /** CancelResponse */
-        CancelResponse: {
-            status: components["schemas"]["BatchStatus"];
-        };
-        /** ConfigResponse */
-        ConfigResponse: {
-            /** Model Mode */
-            model_mode: string;
-            /** Agents */
-            agents: components["schemas"]["AgentConfig"][];
-        };
-        /** Distribution */
-        Distribution: {
-            /** Count */
-            count: number;
-            /** Population */
-            population: number;
-            /** Coverage */
-            coverage: number | null;
-            /** Mean */
-            mean?: number | null;
-            /** P50 */
-            p50?: number | null;
-            /** P95 */
-            p95?: number | null;
-            /** Maximum */
-            maximum?: number | null;
-            /** Bins */
-            bins?: components["schemas"]["Bin"][];
-        };
-        /**
-         * ExecutionObservations
-         * @description The exploit markers the probe printed.
-         */
-        ExecutionObservations: {
-            /** Precondition Reached */
-            precondition_reached: boolean;
-            /** Sink Returned */
-            sink_returned: boolean;
-            /** Oracle Fired */
-            oracle_fired: boolean;
-            /**
-             * Origin
-             * @enum {string}
-             */
-            origin: "controller" | "self_reported_marker" | "parsed_untrusted_output";
-        };
-        /**
-         * ExecutionOrigins
-         * @description The origin-labelled sections of the controller's execution record (sandbox.evidence).
-         */
-        ExecutionOrigins: {
-            process: components["schemas"]["ExecutionProcess"];
-            observations: components["schemas"]["ExecutionObservations"];
-            runner: components["schemas"]["ExecutionRunner"];
-        };
-        /**
-         * ExecutionProcess
-         * @description The probe process as the controller observed it.
-         */
-        ExecutionProcess: {
+            kind: "command" | "probe";
+            /** Command */
+            command: string;
             /** Exit Code */
             exit_code: number | null;
-            /** Timed Out */
+            /**
+             * Stdout
+             * @default
+             */
+            stdout: string;
+            /**
+             * Stderr
+             * @default
+             */
+            stderr: string;
+            /**
+             * Timed Out
+             * @default false
+             */
             timed_out: boolean;
-            /** Duration S */
-            duration_s: number;
             /**
-             * Origin
-             * @enum {string}
+             * Output Truncated
+             * @default false
              */
-            origin: "controller" | "self_reported_marker" | "parsed_untrusted_output";
-        };
-        /**
-         * ExecutionRunner
-         * @description The runner's own zero-test phrase, or None when its output contained none.
-         */
-        ExecutionRunner: {
-            /** Zero Test Signal */
-            zero_test_signal: string | null;
-            /**
-             * Origin
-             * @enum {string}
-             */
-            origin: "controller" | "self_reported_marker" | "parsed_untrusted_output";
-        };
-        /** ExperimentCase */
-        ExperimentCase: {
-            /** Case Name */
-            case_name: string;
-            /** Repetition */
-            repetition: number;
-            /** Passed */
-            passed: boolean;
-            /** Scores */
-            scores: {
-                [key: string]: components["schemas"]["JsonValue"];
+            output_truncated: boolean;
+            /** Sandbox Id */
+            sandbox_id: string;
+            /** Source Digest */
+            source_digest: string;
+            /** Observations */
+            observations?: {
+                [key: string]: boolean | string | number | null;
             };
-            /** Cost Usd */
-            cost_usd: number | null;
-            /** Latency S */
-            latency_s: number | null;
         };
-        /** ExperimentDetail */
-        ExperimentDetail: {
-            /** Id */
-            id: string;
-            /** Agent */
-            agent: string;
-            /** Metrics */
-            metrics: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
-            /** Cases */
-            cases: components["schemas"]["ExperimentCase"][];
-        };
-        /** ExperimentPage */
-        ExperimentPage: {
-            /** Items */
-            items: components["schemas"]["ExperimentSummary"][];
-            /** Total */
-            total: number;
-            /** Offset */
-            offset: number;
-            /** Limit */
-            limit: number;
-        };
-        /**
-         * ExperimentStatus
-         * @description Persisted lifecycle of one eval experiment (`evals.run.run_experiment`).
-         * @enum {string}
-         */
-        ExperimentStatus: "running" | "complete" | "truncated";
-        /**
-         * ExperimentSummary
-         * @description One experiment's identity and headline measurements; full metrics are per experiment.
-         *
-         *     Every measurement is None when the stored report did not record it as a finite number.
-         */
-        ExperimentSummary: {
-            /** Id */
-            id: string;
-            /** Agent */
-            agent: string;
-            status: components["schemas"]["ExperimentStatus"] | null;
-            /** Dataset */
-            dataset: string;
-            /** Dataset Version */
-            dataset_version: string;
-            /** Git Sha */
-            git_sha: string;
-            /** Overlay */
-            overlay: string;
-            /** Repetitions */
-            repetitions: number;
-            /** Config Hash */
-            config_hash: string;
-            /** Git Dirty */
-            git_dirty: boolean;
-            /** Model Name */
-            model_name: string;
-            /** Backend */
-            backend: string;
-            /** Pricing */
-            pricing: string;
-            /** Harness Version */
-            harness_version: string;
-            /** Created At */
-            created_at: string;
-            /** Task Success Rate */
-            task_success_rate: number | null;
-            /** Average Cost Usd */
-            average_cost_usd: number | null;
-            /** P50 Latency S */
-            p50_latency_s: number | null;
-            /** P95 Latency S */
-            p95_latency_s: number | null;
-            /** Passed */
-            passed: number | null;
-            /** Cases Completed */
-            cases_completed: number | null;
-            /** Cases Planned */
-            cases_planned: number | null;
-            /** Budget Exhausted Count */
-            budget_exhausted_count: number | null;
-            /** Gate Status */
-            gate_status: string | null;
-        };
-        /**
-         * FindingInput
-         * @description The published generic JSON schema an external process submits (D1).
-         *
-         *     Only ``repo_url`` and ``title`` are required; anything missing is extracted from
-         *     ``description`` by the intake agent or the finding is parked as ``needs_info``.
-         */
-        FindingInput: {
-            /**
-             * External Id
-             * @description ID in the originating system
-             */
-            external_id?: string | null;
+        /** Finding */
+        Finding: {
             /** Title */
             title: string;
             /**
@@ -566,521 +140,81 @@ export interface components {
              * @default
              */
             description: string;
-            /**
-             * Repo Url
-             * @description Git URL or a local path visible to the worker
-             */
+            /** Repo Url */
             repo_url: string;
             /**
              * Revision
-             * @description Commit SHA, tag, or branch
              * @default HEAD
              */
             revision: string;
-            /** @description Explicit source identity mode; omitted for backwards-compatible inference */
-            source_mode?: components["schemas"]["SourceMode"] | null;
+            /**
+             * Source Mode
+             * @default git_revision
+             * @enum {string}
+             */
+            source_mode: "git_revision" | "working_snapshot";
             /** File Path */
             file_path?: string | null;
-            /** Start Line */
-            start_line?: number | null;
-            /** End Line */
-            end_line?: number | null;
-            /** Symbol */
-            symbol?: string | null;
-            /**
-             * Cwe
-             * @description e.g. CWE-89
-             */
+            /** Cwe */
             cwe?: string | null;
-            /** @default unknown */
-            severity: components["schemas"]["Severity"];
-            /** Source Tool */
-            source_tool?: string | null;
-            /** @default generic_json */
-            source_kind: components["schemas"]["FindingSourceKind"];
-            /** Ado Work Item Id */
-            ado_work_item_id?: number | null;
         };
-        /**
-         * FindingSourceKind
-         * @enum {string}
-         */
-        FindingSourceKind: "generic_json" | "ado" | "free_text";
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
-        /** HealthResponse */
-        HealthResponse: {
-            /** Status */
-            status: string;
-        };
-        /** InvocationRecord */
-        InvocationRecord: {
-            /** Agent */
-            agent: string;
-            /** Model Name */
-            model_name: string;
-            /** Config Hash */
-            config_hash: string;
-            /** Input Tokens */
-            input_tokens: number;
-            /** Output Tokens */
-            output_tokens: number;
-            /** Cache Read Tokens */
-            cache_read_tokens: number;
-            /** Cache Write Tokens */
-            cache_write_tokens: number;
-            /** Cost Usd */
-            cost_usd: number | null;
-            /** Cost Estimated */
-            cost_estimated: boolean;
-            /** Latency S */
-            latency_s: number;
-            /** Requests */
-            requests: number;
-            /** Repeated Tool Calls */
-            repeated_tool_calls: {
-                [key: string]: number;
+        /** InvestigationResult */
+        InvestigationResult: {
+            finding: components["schemas"]["Finding"];
+            verdict: components["schemas"]["Verdict"];
+            /** Evidence */
+            evidence: components["schemas"]["Evidence"][];
+            /** Source Digest */
+            source_digest: string;
+            /** Model */
+            model: string;
+            /** Usage */
+            usage?: {
+                [key: string]: number | null;
             };
-            /** Tools Called */
-            tools_called: string[];
-            /** Skills Loaded */
-            skills_loaded: string[];
-        };
-        JsonValue: unknown;
-        /** MetricsResponse */
-        MetricsResponse: {
-            /**
-             * Schema Version
-             * @default 1
-             */
-            schema_version: number;
-            /** As Of */
-            as_of: string;
-            /** Population */
-            population: string;
-            /** Total Runs */
-            total_runs: number;
-            /** Status Counts */
-            status_counts: {
-                [key: string]: number;
-            };
-            /** Verdict Counts */
-            verdict_counts: {
-                [key: string]: number;
-            };
-            tokens: components["schemas"]["Distribution"];
-            input_tokens: components["schemas"]["Distribution"];
-            output_tokens: components["schemas"]["Distribution"];
-            cost_usd: components["schemas"]["Distribution"];
-            wall_time_s: components["schemas"]["Distribution"];
-            agent_time_s: components["schemas"]["Distribution"];
-            /** Trends */
-            trends: components["schemas"]["TrendPoint"][];
-            /** Stages */
-            stages: components["schemas"]["StageMetric"][];
-            /** Definitions */
-            definitions: {
-                [key: string]: string;
-            };
-        };
-        /** ModelConnectivity */
-        ModelConnectivity: {
-            /**
-             * Status
-             * @default not_checked
-             * @enum {string}
-             */
-            status: "passed" | "failed" | "not_checked";
-            /** Checked At */
-            checked_at?: string | null;
-            /**
-             * Detail
-             * @default No recorded inference check is available for the active profile.
-             */
-            detail: string;
-        };
-        /** ProbeExecution */
-        ProbeExecution: {
-            /** Attempt */
-            attempt: number;
-            /** Exit Code */
-            exit_code: number | null;
-            /**
-             * Timed Out
-             * @default false
-             */
-            timed_out: boolean;
-            /** Oracle Fired */
-            oracle_fired: boolean;
-            /** Precondition Reached */
-            precondition_reached: boolean;
-            /**
-             * Sink Returned
-             * @default false
-             */
-            sink_returned: boolean;
-            /** Runner Reported No Tests */
-            runner_reported_no_tests?: string | null;
-            /**
-             * Stdout Tail
-             * @default
-             */
-            stdout_tail: string;
-            /**
-             * Stderr Tail
-             * @default
-             */
-            stderr_tail: string;
-            /**
-             * Duration S
-             * @default 0
-             */
-            duration_s: number;
-            /** Log Artifact */
-            log_artifact?: string | null;
-            /** Source Artifact */
-            source_artifact?: string | null;
-            origins?: components["schemas"]["ExecutionOrigins"] | null;
-        };
-        /** ReviewRecord */
-        ReviewRecord: {
-            /**
-             * Reviewer
-             * @default
-             */
-            reviewer: string;
-            /** Decision */
-            decision: string;
-            /** Override Label */
-            override_label?: string | null;
-            /**
-             * Reason
-             * @default
-             */
-            reason: string;
-            /** Created At */
-            created_at: string;
-        };
-        /** ReviewRequest */
-        ReviewRequest: {
-            /**
-             * Reviewer
-             * @default
-             */
-            reviewer: string;
-            /**
-             * Decision
-             * @enum {string}
-             */
-            decision: "confirm" | "override";
-            override_label?: components["schemas"]["VerdictLabel"] | null;
-            /**
-             * Reason
-             * @default
-             */
-            reason: string;
-        };
-        /** ReviewSaved */
-        ReviewSaved: {
-            /** Ok */
-            ok: boolean;
-        };
-        /** RunDetail */
-        RunDetail: {
-            /** Id */
-            id: string;
-            /** Batch Id */
-            batch_id: string;
-            /** Fingerprint */
-            fingerprint: string;
-            /** Title */
-            title: string;
-            /** Repo Url */
-            repo_url: string;
-            /** Revision */
-            revision: string;
-            /** Cwe */
-            cwe: string | null;
-            /** Severity */
-            severity: string;
-            status: components["schemas"]["RunStatus"];
-            /** Verdict */
-            verdict: string | null;
-            /** Confidence */
-            confidence: number | null;
-            /** Inconclusive Reason */
-            inconclusive_reason: string | null;
-            /** Priority */
-            priority: string | null;
-            /** Priority Score */
-            priority_score: number | null;
-            /** Environment Scope */
-            environment_scope: string;
-            /** Early Exit */
-            early_exit: string | null;
-            /** Cost Usd */
-            cost_usd: number | null;
-            /** Total Tokens */
-            total_tokens: number;
-            /** Cache Read Tokens */
-            cache_read_tokens: number;
-            /** Latency S */
-            latency_s: number;
-            /** Created At */
-            created_at: string;
-            telemetry: components["schemas"]["RunTelemetry"] | null;
-            /** Phase */
-            phase: string;
-            evidence: components["schemas"]["RunEvidence"] | null;
-            /** Events */
-            events: components["schemas"]["RunEvent"][];
-            /** Review History */
-            review_history: components["schemas"]["ReviewRecord"][];
-            /** Finding */
-            finding: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
-            /** Result */
-            result: {
-                [key: string]: components["schemas"]["JsonValue"];
-            } | null;
-            /** Invocations */
-            invocations: components["schemas"]["InvocationRecord"][];
-            review: components["schemas"]["ReviewRecord"] | null;
-        };
-        /** RunEvent */
-        RunEvent: {
-            /** Id */
-            id: string;
-            /** Phase */
-            phase: string;
-            /** Detail */
-            detail: string;
-            /** Created At */
-            created_at: string;
-        };
-        /**
-         * RunEvidence
-         * @description The per-stage evidence persisted with a run's output.
-         */
-        RunEvidence: {
-            /** Schema Version */
-            schema_version: number;
-            /** Manifest */
-            manifest: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
-            /** Context */
-            context: {
-                [key: string]: components["schemas"]["JsonValue"];
-            } | null;
-            /** Executions */
-            executions: components["schemas"]["ProbeExecution"][];
-            /** Invocations */
-            invocations: {
-                [key: string]: components["schemas"]["JsonValue"];
-            }[];
+            /** Limitations */
+            limitations?: string[];
         };
         /** RunPage */
         RunPage: {
             /** Items */
             items: components["schemas"]["RunSummary"][];
-            /** Total */
-            total: number;
-            /** Offset */
-            offset: number;
-            /** Limit */
-            limit: number;
-            /** As Of */
-            as_of: string;
+            /** Next Page Token */
+            next_page_token?: string | null;
         };
-        /**
-         * RunStatus
-         * @description Persisted lifecycle of one finding's triage run.
-         * @enum {string}
-         */
-        RunStatus: "pending" | "running" | "complete" | "needs_info" | "failed" | "cancelled";
+        /** RunState */
+        RunState: {
+            /** Id */
+            id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "running" | "completed" | "failed" | "cancelled";
+            /** Phase */
+            phase: string;
+            finding: components["schemas"]["Finding"];
+            result?: components["schemas"]["InvestigationResult"] | null;
+            /** Error */
+            error?: string | null;
+        };
         /** RunSummary */
         RunSummary: {
             /** Id */
             id: string;
-            /** Batch Id */
-            batch_id: string;
-            /** Fingerprint */
-            fingerprint: string;
             /** Title */
             title: string;
-            /** Repo Url */
-            repo_url: string;
-            /** Revision */
-            revision: string;
-            /** Cwe */
-            cwe: string | null;
-            /** Severity */
-            severity: string;
-            status: components["schemas"]["RunStatus"];
-            /** Verdict */
-            verdict: string | null;
-            /** Confidence */
-            confidence: number | null;
-            /** Inconclusive Reason */
-            inconclusive_reason: string | null;
-            /** Priority */
-            priority: string | null;
-            /** Priority Score */
-            priority_score: number | null;
-            /** Environment Scope */
-            environment_scope: string;
-            /** Early Exit */
-            early_exit: string | null;
-            /** Cost Usd */
-            cost_usd: number | null;
-            /** Total Tokens */
-            total_tokens: number;
-            /** Cache Read Tokens */
-            cache_read_tokens: number;
-            /** Latency S */
-            latency_s: number;
-            /** Created At */
-            created_at: string;
-            telemetry: components["schemas"]["RunTelemetry"] | null;
-            /** Phase */
-            phase: string;
-        };
-        /** RunTelemetry */
-        RunTelemetry: {
-            /**
-             * Schema Version
-             * @default 2
-             * @constant
-             */
-            schema_version: 2;
-            /**
-             * Population
-             * @enum {string}
-             */
-            population: "operational" | "demo";
-            /** Phase */
-            phase: string;
-            /**
-             * Accepted At
-             * Format: date-time
-             */
-            accepted_at: string;
-            /** Updated At */
-            updated_at?: string | null;
-            /** Completed At */
-            completed_at?: string | null;
-            /** Wall Time S */
-            wall_time_s?: number | null;
-            /** Agent Time S */
-            agent_time_s?: number | null;
-            /** Cost Usd */
-            cost_usd?: number | null;
-            /** Known Cost Usd */
-            known_cost_usd?: number | null;
-            /** Accounting Complete */
-            accounting_complete?: boolean | null;
-            /** Cost Accounting Complete */
-            cost_accounting_complete?: boolean | null;
-            /** Known Tokens */
-            known_tokens?: number | null;
-            /** Input Tokens */
-            input_tokens?: number | null;
-            /** Output Tokens */
-            output_tokens?: number | null;
-            /** Cost Coverage */
-            cost_coverage?: number | null;
-            /** Total Tokens */
-            total_tokens?: number | null;
-        };
-        /** RuntimeStatus */
-        RuntimeStatus: {
-            /** Environment */
-            environment: string;
-            /** Model Mode */
-            model_mode: string;
-            /** Assessment Transport */
-            assessment_transport: string;
-            /** Api Source Commit */
-            api_source_commit?: string | null;
-            /** As Of */
-            as_of: string;
-            /** Database Backend */
-            database_backend: string;
-            /** Temporal Mode */
-            temporal_mode: string;
-            broker: components["schemas"]["BrokerStatus"];
-            /** Model Names */
-            model_names?: string[];
-            model_connectivity?: components["schemas"]["ModelConnectivity"];
-        };
-        /**
-         * Severity
-         * @enum {string}
-         */
-        Severity: "critical" | "high" | "medium" | "low" | "info" | "unknown";
-        /**
-         * SourceMode
-         * @enum {string}
-         */
-        SourceMode: "git_revision" | "working_snapshot";
-        /** StageMetric */
-        StageMetric: {
-            /** Agent */
-            agent: string;
-            /** Invocations */
-            invocations: number;
-            /** Agent Time S */
-            agent_time_s: number;
-            /** Tokens */
-            tokens: number;
-            /** Known Cost Usd */
-            known_cost_usd: number;
-            /** Cost Coverage */
-            cost_coverage: number;
-        };
-        /** SubmitADORequest */
-        SubmitADORequest: {
-            /** Work Item Ids */
-            work_item_ids: number[];
-            /**
-             * Label
-             * @default
-             */
-            label: string;
-        };
-        /** SubmitRequest */
-        SubmitRequest: {
-            /** Findings */
-            findings: components["schemas"]["FindingInput"][];
-            /**
-             * Label
-             * @default
-             */
-            label: string;
-            /**
-             * Mode
-             * @default temporal
-             * @enum {string}
-             */
-            mode: "local" | "temporal";
-        };
-        /** TrendPoint */
-        TrendPoint: {
-            /** Date */
-            date: string;
-            /** Runs */
-            runs: number;
-            /** Tokens */
-            tokens: number | null;
-            /** Cost Usd */
-            cost_usd: number | null;
-            /** Wall Time S */
-            wall_time_s: number | null;
+            /** Status */
+            status: string;
+            /** Started At */
+            started_at: string;
+            /** Closed At */
+            closed_at?: string | null;
         };
         /** ValidationError */
         ValidationError: {
@@ -1095,11 +229,20 @@ export interface components {
             /** Context */
             ctx?: Record<string, never>;
         };
-        /**
-         * VerdictLabel
-         * @enum {string}
-         */
-        VerdictLabel: "potentially_exploitable" | "likely_not_exploitable" | "inconclusive";
+        /** Verdict */
+        Verdict: {
+            /**
+             * Label
+             * @enum {string}
+             */
+            label: "potentially_exploitable" | "likely_not_exploitable" | "inconclusive";
+            /** Summary */
+            summary: string;
+            /** Evidence Ids */
+            evidence_ids?: string[];
+            /** Citations */
+            citations?: components["schemas"]["Citation"][];
+        };
     };
     responses: never;
     parameters: never;
@@ -1109,19 +252,32 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    run_page_api_run_page_get: {
+    health_api_health_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+        };
+    };
+    runs_api_runs_get: {
         parameters: {
             query?: {
-                batch_id?: string | null;
-                verdict?: string | null;
-                population?: ("operational" | "demo") | null;
-                metric?: ("total_tokens" | "input_tokens" | "output_tokens" | "cost_usd" | "wall_time_s" | "agent_time_s") | null;
-                lower?: number | null;
-                upper?: number | null;
-                upper_inclusive?: boolean;
-                search?: string;
-                offset?: number;
-                limit?: number;
+                page_token?: string | null;
             };
             header?: never;
             path?: never;
@@ -1149,158 +305,7 @@ export interface operations {
             };
         };
     };
-    metrics_api_metrics_get: {
-        parameters: {
-            query?: {
-                batch_id?: string | null;
-                population?: "operational" | "demo";
-                since?: string | null;
-                until?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MetricsResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    experiments_api_experiments_get: {
-        parameters: {
-            query?: {
-                population?: ("operational" | "demo") | null;
-                offset?: number;
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ExperimentPage"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    experiment_detail_api_experiments__experiment_id__get: {
-        parameters: {
-            query?: {
-                population?: ("operational" | "demo") | null;
-            };
-            header?: never;
-            path: {
-                experiment_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ExperimentDetail"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    runtime_status_api_runtime_status_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RuntimeStatus"];
-                };
-            };
-        };
-    };
-    batches_api_batches_get: {
-        parameters: {
-            query?: {
-                population?: ("operational" | "demo") | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BatchSummary"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    submit_api_batches_post: {
+    submit_api_runs_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -1309,83 +314,17 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["SubmitRequest"];
+                "application/json": components["schemas"]["Finding"];
             };
         };
         responses: {
             /** @description Successful Response */
-            200: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["BatchAccepted"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    submit_ado_api_batches_ado_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SubmitADORequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AdoBatchAccepted"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    batch_api_batches__batch_id__get: {
-        parameters: {
-            query?: {
-                population?: ("operational" | "demo") | null;
-            };
-            header?: never;
-            path: {
-                batch_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BatchDetail"];
+                    "application/json": components["schemas"]["RunState"];
                 };
             };
             /** @description Validation Error */
@@ -1401,9 +340,7 @@ export interface operations {
     };
     run_api_runs__run_id__get: {
         parameters: {
-            query?: {
-                population?: ("operational" | "demo") | null;
-            };
+            query?: never;
             header?: never;
             path: {
                 run_id: string;
@@ -1418,7 +355,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RunDetail"];
+                    "application/json": components["schemas"]["RunState"];
                 };
             };
             /** @description Validation Error */
@@ -1432,7 +369,7 @@ export interface operations {
             };
         };
     };
-    review_api_runs__run_id__review_post: {
+    cancel_api_runs__run_id__cancel_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -1441,90 +378,17 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ReviewRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ReviewSaved"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    config_api_config_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            200: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ConfigResponse"];
-                };
-            };
-        };
-    };
-    health_api_health_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HealthResponse"];
-                };
-            };
-        };
-    };
-    cancel_batch_api_batches__batch_id__cancel_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                batch_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CancelResponse"];
+                    "application/json": {
+                        [key: string]: string;
+                    };
                 };
             };
             /** @description Validation Error */

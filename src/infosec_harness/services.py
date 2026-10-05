@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from infosec_harness.settings import Settings
+    from infosec_harness.config import Settings
 
 
 def temporal_connection_options(settings: Settings) -> dict[str, Any]:
@@ -13,12 +13,23 @@ def temporal_connection_options(settings: Settings) -> dict[str, Any]:
 
     options: dict[str, Any] = {}
     if settings.temporal_tls:
-        if any((settings.temporal_tls_ca_file, settings.temporal_tls_client_cert,
-                settings.temporal_tls_server_name)):
+        if any(
+            (
+                settings.temporal_tls_ca_file,
+                settings.temporal_tls_client_cert,
+                settings.temporal_tls_server_name,
+            )
+        ):
             options["tls"] = TLSConfig(
-                server_root_ca_cert=settings.temporal_tls_ca_file.read_bytes() if settings.temporal_tls_ca_file else None,
-                client_cert=settings.temporal_tls_client_cert.read_bytes() if settings.temporal_tls_client_cert else None,
-                client_private_key=settings.temporal_tls_client_key.read_bytes() if settings.temporal_tls_client_key else None,
+                server_root_ca_cert=settings.temporal_tls_ca_file.read_bytes()
+                if settings.temporal_tls_ca_file
+                else None,
+                client_cert=settings.temporal_tls_client_cert.read_bytes()
+                if settings.temporal_tls_client_cert
+                else None,
+                client_private_key=settings.temporal_tls_client_key.read_bytes()
+                if settings.temporal_tls_client_key
+                else None,
                 domain=settings.temporal_tls_server_name,
             )
         else:
