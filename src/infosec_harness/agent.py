@@ -228,6 +228,23 @@ async def validate_verdict(ctx: RunContext[InvestigationDeps], verdict: Verdict)
         )
         or any(item.observations["vulnerability_observed"] is not expected for item in qualified)
     ):
+        if any(
+            item.kind == "probe"
+            and item.id in verdict.evidence_ids
+            and item.exit_code == 0
+            and item.observations.get("source_verified") is True
+            and item.observations.get("origin") != "self_reported"
+            for item in evidence
+        ):
+            raise ModelRetry(
+                "The cited run_probe has no valid final observation marker. Print HARNESS_PROBE "
+                "prefix plus the exact five boolean JSON observation fields required by the "
+                "probe skill on the SAME final stdout line, with no extra fields such as details. "
+                "In Python: print('HARNESS_PROBE '+json.dumps(observations)). Derive observation "
+                "values from actual target and control checks. JSON followed by a separate "
+                "HARNESS_PROBE line is invalid. Correct the probe, execute a new run_probe and "
+                "cite its exact ID, or return inconclusive."
+            )
         raise ModelRetry(
             "A definitive verdict needs source citations and the exact ID of a successful, "
             "complete, source-verified offline run_probe with target/oracle and both controls "
@@ -309,6 +326,7 @@ def build_agent(openshell: OpenShell, model: Model) -> Agent[InvestigationDeps, 
         """Run offline from /workspace/repo; only that directory transfers, including added files.
 
         Prepare probes/dependencies there, not /tmp. Cite the exact full returned Evidence.id.
+        Load the probe skill for the required final HARNESS_PROBE + JSON line format.
         Failed or incomplete probes support inconclusive, not a definitive verdict.
         """
         sandbox = await openshell.create(

@@ -8,7 +8,7 @@ relevant language and CWE skills. Write a new probe without modifying any origin
 file. Inspect the actual function signature and preconditions rather than inventing a
 standalone reimplementation of the vulnerable function.
 
-Use `write_file` to add probe files and `execute` for preparation. Call `run_probe` to execute
+Use `write` to add probe files and `execute` for preparation. Call `run_probe` to execute
 inside a fresh offline OpenShell sandbox. It copies the prepared workspace, checks original
 source bytes against the immutable snapshot, and records actual process results. Changes to
 original source invalidate the probe; do not patch the target to manufacture a conclusion.
@@ -26,6 +26,14 @@ Print exactly one final line with this shape, filling booleans from actual obser
 
 ```text
 HARNESS_PROBE {"target_reached":true,"oracle_valid":true,"positive_control":true,"negative_control":true,"vulnerability_observed":false}
+```
+
+The prefix and JSON must be on the same final stdout line. Printing JSON and then a
+standalone `HARNESS_PROBE` line is invalid. Include only these five boolean fields;
+print details earlier. In Python, after deriving `observations` from the actual checks:
+
+```python
+print('HARNESS_PROBE '+json.dumps(observations))
 ```
 
 Never print a successful control without executing it. Marker values are self-reported claims,

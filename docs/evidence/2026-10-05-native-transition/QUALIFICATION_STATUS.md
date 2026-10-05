@@ -7,7 +7,9 @@ The rewrite is implemented and pushed. Live release qualification remains **bloc
 A fresh cohort exposed an evidence-feedback defect, corrected in `f7b6656` with generation
 v11. The following cohort captured an OpenShell policy-generation change closing the
 active model tunnel; see [native provider readiness](NATIVE_PROVIDER_READINESS.md).
-The next candidate gates model admission on observed native provider readiness.
+The readiness-gated candidate completed eleven model calls, then exhausted output
+corrections on malformed probe markers; see [marker feedback](PROBE_MARKER_FEEDBACK.md).
+The next candidate adds explicit one-line marker feedback without changing thresholds.
 No candidate is qualified for promotion, and no improved accuracy claim is supported.
 
 ## Gates

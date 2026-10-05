@@ -304,6 +304,7 @@ async def test_verdict_validator_requires_complete_matching_offline_evidence(fai
 
     observations = dict(
         workspace_digest="workspace",
+        origin="self_reported",
         source_verified=True,
         target_reached=True,
         oracle_valid=True,
@@ -442,3 +443,86 @@ async def test_failed_offline_probe_and_successful_workspace_execution_require_i
     assert len(shell.executions) == 2
     assert calls == 4
     assert shell.closed == ["probe-probe:1:offline"]
+
+
+async def test_split_probe_marker_feedback_repairs_with_new_bounded_probe():
+    from pydantic_ai.messages import RetryPromptPart
+
+    from infosec_harness.agent import parse_probe_observations
+
+    observations = dict(
+        target_reached=True,
+        oracle_valid=True,
+        positive_control=True,
+        negative_control=True,
+        vulnerability_observed=True,
+    )
+    split_marker = (
+        json.dumps({**observations, "details": "observed controls"}) + "\nHARNESS_PROBE\n"
+    )
+    assert parse_probe_observations(split_marker) == {}
+    shell = FakeOpenShell()
+    native_execute = shell.execute
+
+    async def execute(sandbox, command, **kwargs):
+        await native_execute(sandbox, command, **kwargs)
+        stdout = (
+            split_marker
+            if len(shell.executions) == 1
+            else "HARNESS_PROBE " + json.dumps(observations) + "\n"
+        )
+        return CommandResult(0, stdout, "")
+
+    shell.execute = execute
+    calls = 0
+
+    def respond(messages, info):
+        nonlocal calls
+        calls += 1
+        if calls in (1, 3):
+            if calls == 3:
+                feedback = [
+                    part.content
+                    for message in messages
+                    if isinstance(message, ModelRequest)
+                    for part in message.parts
+                    if isinstance(part, RetryPromptPart)
+                ]
+                assert "SAME final stdout line" in feedback[-1]
+                assert "print('HARNESS_PROBE '+json.dumps(observations))" in feedback[-1]
+                assert "no extra fields such as details" in feedback[-1]
+                assert "actual target and control checks" in feedback[-1]
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "run_probe",
+                        {"command": "python probe.py"},
+                        tool_call_id="split" if calls == 1 else "repaired",
+                    )
+                ]
+            )
+        response = final_response(
+            info, evidence_ids=["probe:1:split" if calls == 2 else "probe:3:repaired"]
+        )
+        response.parts[0].args.update(
+            label="potentially_exploitable",
+            citations=[dict(path="sink.py", start_line=1, end_line=1)],
+        )
+        return response
+
+    request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
+    result = await build_agent(shell, FunctionModel(respond)).run(
+        "Inspect",
+        deps=InvestigationDeps(
+            run_id="run",
+            sandbox=await shell.create("run"),
+            source_digest="digest",
+            snapshot_path="/fixture",
+            request=request,
+        ),
+    )
+    assert result.output.label == "potentially_exploitable"
+    assert result.output.evidence_ids == ["probe:3:repaired"]
+    assert len(shell.executions) == 2
+    assert calls == 4
+    assert shell.executions[0][2] != shell.executions[1][2]
