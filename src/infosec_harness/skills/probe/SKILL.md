@@ -13,6 +13,13 @@ inside a fresh offline OpenShell sandbox. It copies the prepared workspace, chec
 source bytes against the immutable snapshot, and records actual process results. Changes to
 original source invalidate the probe; do not patch the target to manufacture a conclusion.
 
+Archive checks reject symlinks, hardlinks and special files, including generated artifacts.
+If an experiment creates temporary links or special files, remove only those exact
+probe-created artifacts in a `finally` block before the process exits. Use `os.path.lexists`
+to detect dangling symlinks. Preserve original source files. A completed command whose
+post-execution archive is rejected remains unverified; inspect the probe and explicitly
+run a corrected new probe, or return inconclusive. Never relabel its old receipt.
+
 The probe must exercise the real target and report evidence for both controls:
 
 - A positive control demonstrates the observation/oracle can detect the claimed behavior.

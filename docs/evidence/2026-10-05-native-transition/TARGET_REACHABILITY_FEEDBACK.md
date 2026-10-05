@@ -62,3 +62,36 @@ Private evidence: `.harness/openshell/private/live-eval-v11-201cc101da4a/`.
 | `cohort.json` | `a3cfd39728a499931efbb15210c3b16bbed0ec67e9b31de8dbe057cba5f70a26` |
 | `sixth-case-failure.json` | `41ae404e40fd8d159568a08a63e75fcc38d946329c11e744186f1db3aa449b4c` |
 | `sixth-case-history.json` | `224298bf709ce354be5df5c232b1d466e25710dc9c8d5c5a9c9d804af8ff96d8` |
+
+## Generated artifact rejection
+
+The bounded one-case diagnostic on `9cd4adf` failed before verdict validation. The second
+probe exited zero but left a generated symlink `data/link_to_outside` pointing to `../outside`.
+Read-only tar-header inspection identified that exact member; no archive was extracted on
+the worker. Post-execution source verification correctly rejected the archive metadata.
+This was a completed known command, not uncertain dispatch. The agent had not loaded the
+probe skill, and its two probes lacked valid final observation markers.
+
+The correction preserves the archive prohibition, and adds generic cleanup guidance:
+remove agent-created symlinks and special files in finally before returning, without
+changing original source. Always-visible instructions require loading the probe skill.
+Only the narrowly typed post-execution metadata rejection returns incomplete evidence
+with cleanup feedback after a completed command. It cannot qualify a definitive verdict.
+Unknown execution, identity failure, capture failure and source mutation still propagate;
+there is no automatic command retry. The agent may explicitly prepare a new probe.
+
+The workflow graph and Evidence contract are unchanged; native activity behavior changes
+require a new frozen worker identity/queue and do not resume old work.
+
+Private evidence: `.harness/openshell/private/live-eval-v11-073ba6b9f94c/`.
+
+| Report | SHA-256 |
+| --- | --- |
+| `diagnostic.json` | `8b195d5f2b3a1b34c697bfdc991f1844de34347a91274096918fde03a234ab9c` |
+| `diagnostic-history.json` | `13755d7bb7aa4f5f3486843e73c3391b6845076c573201efe7216283d384774e` |
+
+All four owned diagnostic sandbox records were closed; exact owned-ID reconciliation passed.
+Focused agent/OpenShell regressions passed (97); generated contracts, lint and compilation
+passed. The completed native history (169 events) replayed with zero external dispatches.
+
+Full deterministic suite: 267 passed, one network test deselected, with required real Temporal.

@@ -366,7 +366,9 @@ async def test_verdict_validator_requires_complete_matching_offline_evidence(fai
         )
         verdict.evidence_ids.append(exploratory.id)
     if failure:
-        match = "target_reached must be true" if failure == "target_reached" else "definitive verdict"
+        match = (
+            "target_reached must be true" if failure == "target_reached" else "definitive verdict"
+        )
         with pytest.raises(ModelRetry, match=match):
             await validate_verdict(ctx, verdict)
     else:
@@ -625,3 +627,122 @@ async def test_blocked_target_feedback_requires_new_complete_probe():
     assert len(shell.executions) == 2
     assert calls == 4
     assert shell.executions[0][2] != shell.executions[1][2]
+
+
+@pytest.mark.parametrize("failure", ["unsafe", "unknown", "boundary", "source"])
+async def test_post_probe_integrity_failure_recovery_is_narrow(failure):
+    from infosec_harness.openshell import (
+        ExecutionUnknown,
+        OpenShellError,
+        UnsafeSnapshotMetadata,
+    )
+
+    shell = FakeOpenShell()
+    native_execute = shell.execute
+    claims = dict(
+        target_reached=True,
+        oracle_valid=True,
+        positive_control=True,
+        negative_control=True,
+        vulnerability_observed=False,
+    )
+
+    async def execute(sandbox, command, **kwargs):
+        await native_execute(sandbox, command, **kwargs)
+        return CommandResult(0, "HARNESS_PROBE " + json.dumps(claims), "")
+
+    errors = {
+        "unsafe": UnsafeSnapshotMetadata("source snapshot contains unsafe archive metadata"),
+        "unknown": ExecutionUnknown("source snapshot has an unknown prior outcome"),
+        "boundary": OpenShellError("source native identity changed"),
+        "source": OpenShellError("workspace changed or deleted original source"),
+    }
+
+    async def verify_source(sandbox, *, expected_source, operation_id):
+        if len(shell.executions) == 1:
+            raise errors[failure]
+
+    shell.execute = execute
+    shell.verify_source = verify_source
+    calls = 0
+
+    def respond(messages, info):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "run_probe",
+                        {"command": "python probe.py"},
+                        tool_call_id="unsafe" if calls == 1 else "corrected",
+                    )
+                ]
+            )
+        if calls == 2:
+            returned = [
+                part.content
+                for message in messages
+                if isinstance(message, ModelRequest)
+                for part in message.parts
+                if isinstance(part, ToolReturnPart) and part.tool_name == "run_probe"
+            ][-1]
+            returned = returned.model_dump()
+            assert returned["id"] == "probe:1:unsafe"
+            assert returned["exit_code"] == 0
+            assert returned["observations"]["source_verified"] is False
+            assert "finally block" in returned["observations"]["integrity_feedback"]
+            assert "not retried" in returned["observations"]["integrity_feedback"]
+        if calls == 3:
+            # The invalid probe cannot qualify even with matching claims and citations.
+            from pydantic_ai.messages import RetryPromptPart
+
+            feedback = [
+                part.content
+                for message in messages
+                if isinstance(message, ModelRequest)
+                for part in message.parts
+                if isinstance(part, RetryPromptPart)
+            ][-1]
+            assert "source-verified" in feedback
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "run_probe",
+                        {"command": "python corrected.py"},
+                        tool_call_id="corrected",
+                    )
+                ]
+            )
+        response = final_response(
+            info, evidence_ids=["probe:1:unsafe" if calls == 2 else "probe:3:corrected"]
+        )
+        response.parts[0].args.update(
+            label="likely_not_exploitable",
+            citations=[dict(path="sink.py", start_line=1, end_line=1)],
+        )
+        return response
+
+    request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
+    deps = InvestigationDeps(
+        run_id="run",
+        sandbox=await shell.create("run"),
+        source_digest="digest",
+        snapshot_path="/fixture",
+        request=request,
+    )
+    agent = build_agent(shell, FunctionModel(respond))
+    if failure == "unsafe":
+        result = await agent.run("Inspect", deps=deps)
+        assert result.output.label == "likely_not_exploitable"
+        assert result.output.evidence_ids == ["probe:3:corrected"]
+        assert len(shell.executions) == 2
+        assert calls == 4
+        assert shell.closed == ["probe-probe:1:unsafe", "probe-probe:3:corrected"]
+        assert shell.executions[0][2] != shell.executions[1][2]
+    else:
+        with pytest.raises(type(errors[failure]), match=str(errors[failure])):
+            await agent.run("Inspect", deps=deps)
+        assert len(shell.executions) == 1
+        assert calls == 1
+        assert shell.closed == ["probe-probe:1:unsafe"]

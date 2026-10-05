@@ -37,6 +37,10 @@ class OpenShellError(RuntimeError):
     """A boundary could not be established or observed."""
 
 
+class UnsafeSnapshotMetadata(OpenShellError):
+    """A captured archive failed metadata admission; execution outcome is separate."""
+
+
 class ExecutionUnknown(OpenShellError):
     """Dispatch may have happened. Never automatically resend this operation."""
 
@@ -801,7 +805,7 @@ print(base64.b64encode(data).decode())
                         if (path.is_absolute() or ".." in path.parts or path in seen
                                 or not (member.isfile() or member.isdir())
                                 or count > 65536 or size > self.config.max_transfer_bytes):
-                            raise OpenShellError("source snapshot contains unsafe archive metadata")
+                            raise UnsafeSnapshotMetadata("source snapshot contains unsafe archive metadata")
                         seen.add(path)
                         if member.isfile():
                             stream = tar.extractfile(member)

@@ -21,7 +21,7 @@ from temporalio.worker import ActivityInboundInterceptor, Interceptor
 
 from .model_executor import MAX_INVOCATION_BYTES
 from .models import Evidence, InvestigationRequest, Verdict, WorkerIdentity
-from .openshell import OpenShell, Sandbox
+from .openshell import OpenShell, Sandbox, UnsafeSnapshotMetadata
 
 MAX_HISTORY_BYTES = 32 * 1024 * 1024
 
@@ -319,6 +319,8 @@ def build_agent(openshell: OpenShell, model: Model) -> Agent[InvestigationDeps, 
 
         Prepare probes/dependencies there, not /tmp. Cite the exact full returned Evidence.id.
         Load the probe skill for the required final HARNESS_PROBE + JSON line format.
+        Remove only probe-created symlinks/special files in a finally block before exit;
+        archive verification rejects them. Never change original source files.
         Failed or incomplete probes support inconclusive, not a definitive verdict.
         """
         sandbox = await openshell.create(
@@ -333,11 +335,24 @@ def build_agent(openshell: OpenShell, model: Model) -> Agent[InvestigationDeps, 
                 expected_source=Path(ctx.deps.snapshot_path),
             )
             evidence = await command_tool(ctx, command, sandbox, "probe")
-            await openshell.verify_source(
-                sandbox,
-                expected_source=Path(ctx.deps.snapshot_path),
-                operation_id=operation_id(ctx, "verify"),
-            )
+            try:
+                await openshell.verify_source(
+                    sandbox,
+                    expected_source=Path(ctx.deps.snapshot_path),
+                    operation_id=operation_id(ctx, "verify"),
+                )
+            except UnsafeSnapshotMetadata:
+                if evidence.exit_code is None:
+                    raise
+                evidence.observations["source_verified"] = False
+                evidence.observations["integrity_feedback"] = (
+                    "Post-execution archive metadata was rejected. This completed command "
+                    "is not source-verified evidence. Remove only probe-created symlinks or "
+                    "special files in a finally block before exit; preserve original source. "
+                    "Use lexists for dangling symlinks. Inspect the probe and explicitly run "
+                    "a corrected new probe, or return inconclusive. This command was not retried."
+                )
+                return evidence
             if digest:
                 evidence.observations["workspace_digest"] = digest
                 evidence.observations["source_verified"] = True
@@ -371,8 +386,10 @@ def build_agent(openshell: OpenShell, model: Model) -> Agent[InvestigationDeps, 
             "helpful. Do not infer exploitability from a command's exit code alone. Cite actual "
             "source lines and exact full execution evidence ids returned by tools, including "
             "their tool-call suffixes. run_probe transfers only /workspace/repo and starts there; "
-            "prepare files and dependencies there, not /tmp. A probe is an observation, "
-            "not an independent oracle. A likely_not_exploitable verdict requires a concrete "
+            "prepare files and dependencies there, not /tmp. "
+            "Load the probe skill before authoring or running a probe. "
+            "A probe is an observation, not an independent oracle. "
+            "A likely_not_exploitable verdict requires a concrete "
             "blocking condition; a potentially_exploitable verdict requires a concrete attacker "
             "path. State uncertainty, missing dependencies and failed prerequisites explicitly. "
             "For definitive verdicts a successful offline probe must print an exact final line "

@@ -21,6 +21,7 @@ from infosec_harness.openshell import (
     OpenShellConfig,
     OpenShellError,
     Profile,
+    UnsafeSnapshotMetadata,
     _path,
 )
 
@@ -510,7 +511,7 @@ async def test_hostile_archive_is_not_restored_or_extracted_on_host(adapter, nam
     member.type = kind
     member.linkname = "/etc/passwd" if kind in (tarfile.SYMTYPE, tarfile.LNKTYPE) else ""
     native.archive = archive(member)
-    with pytest.raises(OpenShellError, match="unsafe archive"):
+    with pytest.raises(UnsafeSnapshotMetadata, match="unsafe archive"):
         await boundary.copy_workspace(source, probe, operation_id="copy-activity")
     assert len(native.execs) == 1
 

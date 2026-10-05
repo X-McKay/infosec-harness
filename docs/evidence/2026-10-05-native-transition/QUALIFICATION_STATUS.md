@@ -8,8 +8,11 @@ five cases correctly, then `pathtraversal-fixed` exhausted two output correction
 the model interpreted target_reached as exploit/sink reachability and earlier exploratory
 citations caused format feedback to mask the semantic explanation. Thirty cases remained
 unstarted. See [target reachability feedback](TARGET_REACHABILITY_FEEDBACK.md).
-A correction clarifies probe semantics and validation feedback without changing admission,
-labels, thresholds or budgets. No candidate is qualified for promotion.
+Unified feedback corrects the masking defect without changing admission, labels, thresholds
+or budgets. A bounded diagnostic on `9cd4adf` then failed post-probe verification because
+the probe left a generated symlink. The next correction preserves that boundary and returns
+unverified evidence only for a known completed command with rejected archive metadata.
+No candidate is qualified for promotion.
 
 Earlier confirmed defects and bounded fixes are recorded in
 [verdict feedback](VERDICT_FEEDBACK.md), [native provider readiness](NATIVE_PROVIDER_READINESS.md)
@@ -19,7 +22,7 @@ and [marker feedback](PROBE_MARKER_FEEDBACK.md). Original failed reports are pre
 
 | Gate | Status | Evidence / limit |
 | --- | --- | --- |
-| Deterministic regression suite | passed | 263 tests with `HARNESS_TEST_REQUIRE_TEMPORAL=1` |
+| Deterministic regression suite | passed | 267 tests with `HARNESS_TEST_REQUIRE_TEMPORAL=1` |
 | Real Temporal replay, restart, cancellation and identity | passed | Includes two-worker model/tool/skill rejection, cleanup ownership and repeated cancellation |
 | Lint, compilation, generated contracts and instructions | passed | Local checks and backend CI |
 | Lightweight UI | passed | Five tests, types/build, browser inspection and managed control-plane readiness; web CI |
