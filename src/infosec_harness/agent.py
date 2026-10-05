@@ -20,10 +20,19 @@ from temporalio.common import RetryPolicy
 from temporalio.worker import ActivityInboundInterceptor, Interceptor
 
 from .model_executor import MAX_INVOCATION_BYTES
-from .models import Evidence, InvestigationRequest, Verdict, WorkerIdentity
+from .models import (
+    Evidence,
+    InvestigationRequest,
+    Verdict,
+    WorkerIdentity,
+    definitive_support,
+)
 from .openshell import OpenShell, Sandbox, UnsafeSnapshotMetadata
 
 MAX_HISTORY_BYTES = 32 * 1024 * 1024
+AGENT_NAME = "investigator"
+# PydanticAI registers every native model/tool activity of this agent under this prefix.
+GUARDED_ACTIVITY_PREFIX = f"agent__{AGENT_NAME}__"
 
 
 class InvestigationDeps(BaseModel):
@@ -47,7 +56,7 @@ class WorkerIdentityInterceptor(Interceptor):
 
         class Guard(ActivityInboundInterceptor):
             async def execute_activity(self, input):
-                if activity.info().activity_type.startswith("agent__investigator__"):
+                if activity.info().activity_type.startswith(GUARDED_ACTIVITY_PREFIX):
                     deps = input.args[1] if len(input.args) > 1 else None
                     if (
                         not isinstance(deps, InvestigationDeps)
@@ -213,21 +222,10 @@ async def validate_verdict(ctx: RunContext[InvestigationDeps], verdict: Verdict)
         )
     if verdict.label == "inconclusive":
         return verdict
-    expected = verdict.label == "potentially_exploitable"
-    qualified = [
-        item
-        for item in evidence
-        if item.complete_verified_probe and item.source_digest == ctx.deps.source_digest
-    ]
-    if (
-        not verdict.citations
-        or not any(
-            item.id in verdict.evidence_ids
-            and item.observations["vulnerability_observed"] is expected
-            for item in qualified
-        )
-        or any(item.observations["vulnerability_observed"] is not expected for item in qualified)
-    ):
+    corroborated, contrary = definitive_support(
+        verdict, [item for item in evidence if item.source_digest == ctx.deps.source_digest]
+    )
+    if not corroborated or contrary:
         raise ModelRetry(
             "A definitive verdict needs source citations and the exact ID of a successful, "
             "complete, source-verified offline run_probe with target_reached, oracle_valid "
@@ -290,23 +288,20 @@ def build_agent(openshell: OpenShell, model: Model) -> Agent[InvestigationDeps, 
             operation_id=identity,
             timeout=ctx.deps.request.limits.command_timeout_seconds,
         )
-        observations = parse_probe_observations(result.stdout) if kind == "probe" else {}
-        observations["report_excerpted"] = any(
-            len(value.encode()) > 4096 for value in (command, result.stdout, result.stderr)
-        )
+        # Tool returns enter durable history; return bounded excerpts only.
         return Evidence(
             id=identity,
             kind="probe" if kind == "probe" else "command",
-            command=command.encode()[:4096].decode(errors="ignore"),
+            command=command,
             exit_code=result.exit_code,
-            stdout=result.stdout.encode()[:4096].decode(errors="ignore"),
-            stderr=result.stderr.encode()[:4096].decode(errors="ignore"),
+            stdout=result.stdout,
+            stderr=result.stderr,
             timed_out=False,
             output_truncated=result.output_truncated,
             sandbox_id=sandbox.id,
             source_digest=ctx.deps.source_digest,
-            observations=observations,
-        )
+            observations=parse_probe_observations(result.stdout) if kind == "probe" else {},
+        ).excerpt()
 
     @tools.tool
     async def execute(ctx: RunContext[InvestigationDeps], command: str) -> Evidence:
@@ -372,7 +367,7 @@ def build_agent(openshell: OpenShell, model: Model) -> Agent[InvestigationDeps, 
     )
     agent = Agent(
         model,
-        name="investigator",
+        name=AGENT_NAME,
         deps_type=InvestigationDeps,
         output_type=Verdict,
         toolsets=[tools],

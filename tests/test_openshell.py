@@ -815,3 +815,13 @@ async def test_incomplete_qualification_is_never_audited_again(adapter):
     with pytest.raises(OpenShellError, match="incomplete"):
         await boundary.create("run")
     assert len(native.observations) == 1 and native.deleted == [sandbox.name]
+
+
+def test_profile_limits_are_parsed_once_and_never_dumped(tmp_path):
+    image = "sha256:" + "a" * 64
+    profile = Profile(image=image, policy=tmp_path / "policy.yaml", cpu="1500m", memory="2Gi")
+    assert (profile.cpu_cores, profile.memory_bytes) == (1.5, 2 * 1024**3)
+    default = Profile(image=image, policy=tmp_path / "policy.yaml")
+    assert (default.cpu_cores, default.memory_bytes) == (1, 512 * 1024**2)
+    # model_dump is part of every saved lifecycle binding; derived limits must not appear.
+    assert set(profile.model_dump()) == {"image", "policy", "cpu", "memory", "provider"}

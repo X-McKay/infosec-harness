@@ -19,7 +19,13 @@ from temporalio.worker import ExecuteActivityInput, Worker
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 from test_agent import FakeOpenShell
 
-from infosec_harness.agent import InvestigationDeps, WorkerIdentityInterceptor, build_agent
+from infosec_harness.agent import (
+    AGENT_NAME,
+    GUARDED_ACTIVITY_PREFIX,
+    InvestigationDeps,
+    WorkerIdentityInterceptor,
+    build_agent,
+)
 from infosec_harness.models import Finding, InvestigationRequest, WorkerIdentity
 from infosec_harness.openshell import Sandbox
 from infosec_harness.workflow import (
@@ -71,6 +77,22 @@ async def test_guard_checks_prepared_and_current_identity_before_handler(monkeyp
         downstream.execute_activity.assert_not_awaited()
 
 
+def test_guard_prefix_matches_every_registered_native_activity():
+    """Renaming the agent must not silently disable the identity guard."""
+    from temporalio import activity
+
+    agent = build_agent(FakeOpenShell(), FunctionModel(lambda messages, info: None))
+    assert agent.name == AGENT_NAME
+    names = {
+        activity._Definition.from_callable(fn).name
+        for fn in TemporalDurability.from_agent(agent).temporal_activities
+    }
+    assert "agent__investigator__model_request" in names
+    assert names and all(name.startswith(GUARDED_ACTIVITY_PREFIX) for name in names)
+    lifecycle = ("prepare_investigation", "finalize_investigation", "cleanup_investigation")
+    assert not any(name.startswith(GUARDED_ACTIVITY_PREFIX) for name in lifecycle)
+
+
 async def test_cleanup_remains_available_after_identity_drift(monkeypatch):
     current = [identity()]
     guard = WorkerIdentityInterceptor(lambda: current[0])
@@ -117,7 +139,7 @@ class IdentityDispatchWorkflow:
                 "cleanup_investigation",
                 CleanupInvestigation(
                     run_id=workflow.info().workflow_id,
-                    expected_worker_identity=prepared.worker_identity.fingerprint,
+                    expected_worker_identity=prepared.deps.worker_identity.fingerprint,
                 ),
                 start_to_close_timeout=timedelta(seconds=10),
                 retry_policy=RetryPolicy(maximum_attempts=1),

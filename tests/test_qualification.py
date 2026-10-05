@@ -26,10 +26,6 @@ async def test_runtime_qualification_uses_actual_directory_upload_contract(tmp_p
                 exit_code=0, stdout=source_bytes.decode(), output_truncated=False
             )
 
-        async def download(self, sandbox, path, destination):
-            assert path == "/workspace/qualification/input.txt"
-            destination.write_bytes(source_bytes)
-
         async def close(self, sandbox):
             closes.append(sandbox.id)
 

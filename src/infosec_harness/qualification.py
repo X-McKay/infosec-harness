@@ -62,10 +62,6 @@ async def qualify_runtime(output: Path) -> dict:
                     or result.output_truncated
                 ):
                     raise RuntimeError("Native execution roundtrip failed")
-                downloaded = Path(directory) / "download.txt"
-                await runtime.download(sandbox, "/workspace/qualification/input.txt", downloaded)
-                if downloaded.read_bytes() != (source / "input.txt").read_bytes():
-                    raise RuntimeError("Native artifact download changed bytes")
                 row["roundtrip"] = "passed"
                 again = await runtime.execute(
                     sandbox,

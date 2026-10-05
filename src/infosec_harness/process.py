@@ -1,9 +1,9 @@
-"""The one owned subprocess runner for native CLIs, Docker and Git.
+"""The one owned subprocess runner (used for Git).
 
-Every child gets its own process group and an explicit environment. Output is captured with
-a bound per stream. A timeout or cancellation kills the whole group and reaps it before the
-caller regains control, including while further cancellation requests arrive: an owned child
-must never keep mutating state after its caller has given up on it.
+Every child gets its own process group, an explicit environment and no stdin. Output is
+captured with a bound per stream. A timeout or cancellation kills the whole group and reaps it
+before the caller regains control, including while further cancellation requests arrive: an
+owned child must never keep mutating state after its caller has given up on it.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ _DRAIN_GRACE_S = 5.0
 
 @dataclass(frozen=True)
 class ProcessResult:
-    """The one result shape for every owned child (Docker, Git, native CLIs).
+    """The one result shape for every owned child.
 
     Output is decoded with replacement characters: it is untrusted text for display and
     parsing, never bytes the harness re-executes. A caller that needs strict decoding has no
@@ -66,18 +66,6 @@ async def _drain(stream: asyncio.StreamReader | None, sink: _Tail) -> None:
         sink.add(chunk)
 
 
-async def _feed(process: asyncio.subprocess.Process, data: bytes | None) -> None:
-    if data is None or process.stdin is None:
-        return
-    try:
-        process.stdin.write(data)
-        await process.stdin.drain()
-        process.stdin.close()
-        await process.stdin.wait_closed()
-    except (BrokenPipeError, ConnectionResetError):
-        pass  # The child exited or closed stdin without reading everything; not our failure.
-
-
 def _kill_group(process: asyncio.subprocess.Process) -> None:
     with suppress(ProcessLookupError, PermissionError):
         os.killpg(process.pid, signal.SIGKILL)
@@ -103,10 +91,8 @@ async def run_bounded(
     *,
     env: Mapping[str, str],
     timeout: float,
-    stdin: bytes | None = None,
     capture_limit: int = 64_000,
     cwd: str | None = None,
-    stderr_to_stdout: bool = False,
 ) -> ProcessResult:
     """Run ``argv`` to completion or to ``timeout`` (then kill its group); never raise on exit.
 
@@ -119,9 +105,9 @@ async def run_bounded(
             *argv,
             env=dict(env),
             cwd=cwd,
-            stdin=asyncio.subprocess.PIPE if stdin is not None else asyncio.subprocess.DEVNULL,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT if stderr_to_stdout else asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
         )
     )
@@ -139,19 +125,18 @@ async def run_bounded(
         asyncio.ensure_future(_drain(process.stdout, out)),
         asyncio.ensure_future(_drain(process.stderr, err)),
     ]
-    feeder = asyncio.ensure_future(_feed(process, stdin))
     waiter = asyncio.ensure_future(process.wait())
     timed_out = False
     try:
         async with asyncio.timeout(timeout):
-            await asyncio.shield(asyncio.gather(waiter, feeder, *readers))
+            await asyncio.shield(asyncio.gather(waiter, *readers))
     except TimeoutError:
         timed_out = True
         _kill_group(process)
-        await _reap(waiter, [feeder, *readers])
+        await _reap(waiter, readers)
     except BaseException:
         _kill_group(process)
-        await _reap(waiter, [feeder, *readers])
+        await _reap(waiter, readers)
         raise
     return ProcessResult(
         exit_code=None if timed_out else process.returncode,

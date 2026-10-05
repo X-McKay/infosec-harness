@@ -26,7 +26,7 @@ with workflow.unsafe.imports_passed_through():
         InvestigationResult,
         RunState,
         Verdict,
-        WorkerIdentity,
+        definitive_support,
     )
     from .openshell import OpenShell
     from .process import _finish
@@ -34,9 +34,9 @@ with workflow.unsafe.imports_passed_through():
 
 
 class PreparedInvestigation(BaseModel):
+    # Default extra='ignore' keeps decoding v11 payloads that duplicated
+    # deps.snapshot_path and deps.worker_identity at this level.
     deps: InvestigationDeps
-    snapshot_path: str
-    worker_identity: WorkerIdentity | None = None
 
 
 class FinalizeInvestigation(BaseModel):
@@ -89,16 +89,14 @@ class InvestigationActivities:
                 request=request,
                 worker_identity=self.bound_identity,
             ),
-            snapshot_path=str(snapshot.path),
-            worker_identity=self.bound_identity,
         )
 
     @activity.defn(name="finalize_investigation")
     async def finalize(self, payload: FinalizeInvestigation) -> InvestigationResult:
         self.check_identity()
-        if payload.prepared.worker_identity != self.bound_identity:
-            raise ValueError("Investigation changed worker identity before finalization")
         deps = payload.prepared.deps
+        if deps.worker_identity != self.bound_identity:
+            raise ValueError("Investigation changed worker identity before finalization")
         evidence = []
         for receipt in self.openshell.receipts(deps.run_id):
             identity = receipt.operation_id
@@ -132,7 +130,7 @@ class InvestigationActivities:
         if any(identity not in known for identity in payload.verdict.evidence_ids):
             raise ValueError("Verdict cites an execution without a trusted OpenShell receipt")
         for citation in payload.verdict.citations:
-            validate_citation(payload.prepared.snapshot_path, citation)
+            validate_citation(deps.snapshot_path, citation)
         limitations = []
         if any(item.output_truncated for item in evidence):
             limitations.append(
@@ -148,18 +146,8 @@ class InvestigationActivities:
         verdict = payload.verdict
         report_ids = set(verdict.evidence_ids)
         if verdict.label != "inconclusive":
-            expected = verdict.label == "potentially_exploitable"
-            qualified = [item for item in evidence if item.complete_verified_probe]
-            corroborated = any(
-                item.id in verdict.evidence_ids
-                and item.observations["vulnerability_observed"] is expected
-                for item in qualified
-            )
-            contrary = [
-                item
-                for item in qualified
-                if item.observations["vulnerability_observed"] is not expected
-            ]
+            # Same admission rule as the validator, over receipt-rebuilt evidence only.
+            corroborated, contrary = definitive_support(verdict, evidence)
             if contrary:
                 limitations.append(
                     "Successful source-verified offline probes reported contradictory observations: "
@@ -172,8 +160,8 @@ class InvestigationActivities:
                     if len(report_ids) >= 10:
                         break
                     report_ids.add(item.id)
-            if not verdict.citations or not corroborated or contrary:
-                if not verdict.citations or not corroborated:
+            if not corroborated or contrary:
+                if not corroborated:
                     limitations.append(
                         f"Proposed {verdict.label} verdict lacked a cited successful offline probe with both controls and source citations."
                     )
@@ -189,23 +177,7 @@ class InvestigationActivities:
                     }
                 )
         # Native receipts retain full bounded output. Reports contain cited and contrary excerpts.
-        reported = []
-        for item in evidence:
-            if item.id not in report_ids:
-                continue
-            excerpted = any(
-                len(value.encode()) > 4096 for value in (item.command, item.stdout, item.stderr)
-            )
-            reported.append(
-                item.model_copy(
-                    update={
-                        "command": item.command.encode()[:4096].decode(errors="ignore"),
-                        "stdout": item.stdout.encode()[:4096].decode(errors="ignore"),
-                        "stderr": item.stderr.encode()[:4096].decode(errors="ignore"),
-                        "observations": {**item.observations, "report_excerpted": excerpted},
-                    }
-                )
-            )
+        reported = [item.excerpt() for item in evidence if item.id in report_ids]
         if any(item.observations.get("report_excerpted") for item in reported):
             limitations.append(
                 "Report output excerpts are bounded; full native receipts remain in the private execution state."
@@ -216,7 +188,7 @@ class InvestigationActivities:
             evidence=reported,
             source_digest=deps.source_digest,
             model=self.model_name,
-            worker_identity=payload.prepared.worker_identity,
+            worker_identity=deps.worker_identity,
             usage=payload.usage,
             limitations=limitations,
         )
@@ -322,8 +294,9 @@ class InvestigationWorkflow(PydanticAIWorkflow):
                             CleanupInvestigation(
                                 run_id=run_id,
                                 expected_worker_identity=(
-                                    prepared.worker_identity.fingerprint
-                                    if prepared is not None and prepared.worker_identity is not None
+                                    prepared.deps.worker_identity.fingerprint
+                                    if prepared is not None
+                                    and prepared.deps.worker_identity is not None
                                     else request.expected_worker_identity
                                 ),
                             ),

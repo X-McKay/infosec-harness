@@ -21,14 +21,6 @@ async def test_timeout_is_reported_and_output_bound_keeps_tail():
 
 
 @pytest.mark.asyncio
-async def test_stdin_closed_early_by_child_is_not_a_runner_failure():
-    result = await run_bounded(
-        [sys.executable, "-c", "import os; os.close(0)"], env={}, timeout=10, stdin=b"x" * 4_000_000
-    )
-    assert result.exit_code == 0 and not result.timed_out
-
-
-@pytest.mark.asyncio
 async def test_child_receives_only_the_explicit_environment(monkeypatch):
     monkeypatch.setenv("IH_AMBIENT_SECRET", "must-not-leak")
     result = await run_bounded(

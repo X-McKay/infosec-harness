@@ -9,7 +9,6 @@ iterator retains an unbounded copy of stdout and stderr.
 from __future__ import annotations
 
 import asyncio
-import base64
 import hashlib
 import io
 import ipaddress
@@ -95,6 +94,16 @@ class Profile(BaseModel):
     memory: str = Field(default="512Mi", pattern=r"^[1-9][0-9]*(?:Mi|Gi)$")
     provider: str | None = None
 
+    # Plain properties, never computed fields: model_dump is part of every saved
+    # lifecycle binding, so a dumped field would invalidate existing proofs.
+    @property
+    def memory_bytes(self) -> int:
+        return int(self.memory[:-2]) * 1024 ** (2 if self.memory.endswith("Mi") else 3)
+
+    @property
+    def cpu_cores(self) -> float:
+        return int(self.cpu[:-1]) / 1000 if self.cpu.endswith("m") else int(self.cpu)
+
 
 class OpenShellConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -176,6 +185,13 @@ class ExecutionReceipt:
 
 def _digest(value: Any) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _sha256(stream: Any) -> str:
+    digest = hashlib.sha256()
+    while chunk := stream.read(65536):
+        digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _request_id(key: str) -> str:
@@ -346,6 +362,12 @@ class OpenShell:
         return await asyncio.to_thread(self._stub.GetSandbox,
             self._pb.GetSandboxRequest(workspace_scope=self._scope, name=name), timeout=30)
 
+    async def _corroborate(self, sandbox: Sandbox, mismatch: str) -> None:
+        """Recheck the exact native id and the outer fence immediately before dispatch."""
+        if (await self._get(sandbox.name)).sandbox.metadata.id != sandbox.id:
+            raise OpenShellError(mismatch)
+        await self._inspect(sandbox)
+
     def _key(self, sandbox: Sandbox) -> str:
         return _digest([self.config.workspace, sandbox.run_id, sandbox.profile, sandbox.slot])
 
@@ -487,8 +509,6 @@ class OpenShell:
         except (ValueError, TypeError):
             raise OpenShellError("confinement probe returned invalid evidence") from None
         config = self.config.profiles[sandbox.profile]
-        memory = int(config.memory[:-2]) * (1024 ** (2 if config.memory.endswith("Mi") else 3))
-        cpu = int(config.cpu[:-1]) / 1000 if config.cpu.endswith("m") else int(config.cpu)
         try:
             quota, period = (int(v) for v in proof["cpu"].split())
             valid = (proof["uid"] == 65532 and proof["nnp"] == "1" and proof["seccomp"] == "2"
@@ -498,8 +518,8 @@ class OpenShell:
                      and all(proof[k] is True for k in ("filesystem_denied", "shared_tmp_denied",
                          "symlink_escape_denied", "workspace_writable", "network_denied",
                          "sockets_absent", "credentials_absent", "null_sink_verified"))
-                     and 0 < int(proof["memory"]) <= memory
-                     and 0 < quota / period <= cpu)
+                     and 0 < int(proof["memory"]) <= config.memory_bytes
+                     and 0 < quota / period <= config.cpu_cores)
         except (ValueError, KeyError, TypeError, AttributeError, ZeroDivisionError):
             valid = False
         if result[0].exit_code != 0 or result[0].output_truncated or not valid:
@@ -637,8 +657,6 @@ class OpenShell:
             workload = by_role["sandbox"]
             host = workload["HostConfig"]
             config = self.config.profiles[sandbox.profile]
-            memory = int(config.memory[:-2]) * 1024 ** (2 if config.memory.endswith("Mi") else 3)
-            cpu = int(config.cpu[:-1]) / 1000 if config.cpu.endswith("m") else int(config.cpu)
             observed_cpu = (host.get("NanoCpus", 0) / 1e9 or
                             host.get("CpuQuota", 0) / (host.get("CpuPeriod", 0) or 100000))
             valid = (all(v["Config"]["Labels"].get("openshell.ai/sandbox-id") == sandbox.id
@@ -654,7 +672,8 @@ class OpenShell:
                 and not host.get("Devices") and not host.get("DeviceRequests")
                 and host.get("PidMode", "") != "host" and host.get("IpcMode", "") != "host"
                 and 0 < host.get("PidsLimit", 0) <= 1024
-                and 0 < host.get("Memory", 0) <= memory and 0 < observed_cpu <= cpu
+                and 0 < host.get("Memory", 0) <= config.memory_bytes
+                and 0 < observed_cpu <= config.cpu_cores
                 and all(m["Type"] == "volume" and "docker.sock" not in m["Destination"]
                         for m in workload.get("Mounts", [])))
             if not valid:
@@ -746,10 +765,7 @@ class OpenShell:
             except FileExistsError:
                 return replay()
             try:
-                observed = (await self._get(sandbox.name)).sandbox
-                if observed.metadata.id != sandbox.id:
-                    raise OpenShellError("native workload identity changed")
-                await self._inspect(sandbox)
+                await self._corroborate(sandbox, "native workload identity changed")
                 result, _ = await asyncio.to_thread(self._stream, sandbox, args, timeout, stdin,
                     _request_id(key), self.config.max_output_bytes)
             except asyncio.CancelledError:
@@ -808,42 +824,6 @@ class OpenShell:
         if result.exit_code:
             raise OpenShellError("source upload failed")
 
-    async def download(self, sandbox: Sandbox, path: str, destination: Path) -> None:
-        self._owned(sandbox)
-        _path(path)
-        # Encode a bounded regular file; never unpack hostile archives on the worker.
-        script = """
-import base64,os,stat,sys
-parts=sys.argv[1].split('/')[2:]
-assert parts and all(p not in ('','..','.') for p in parts)
-fd=os.open('/workspace',os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
-for component in parts[:-1]:
- new=os.open(component,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=fd)
- os.close(fd);fd=new
-f=os.open(parts[-1],os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=fd)
-assert stat.S_ISREG(os.fstat(f).st_mode)
-limit=int(sys.argv[2]); data=bytearray()
-while len(data)<=limit:
- chunk=os.read(f,min(65536,limit+1-len(data)))
- if not chunk: break
- data.extend(chunk)
-assert len(data)<=limit
-print(base64.b64encode(data).decode())
-"""
-        limit = min(self.config.max_transfer_bytes, (self.config.max_output_bytes - 1024) * 3 // 4)
-        result = await self.execute(sandbox, [_PYTHON, "-I", "-c", script, path, str(limit)],
-            operation_id="download:" + _digest([path, str(destination)]), timeout=30)
-        if result.exit_code or result.output_truncated:
-            raise OpenShellError("artifact export failed")
-        try:
-            data = base64.b64decode(result.stdout.strip(), validate=True)
-        except ValueError:
-            raise OpenShellError("invalid artifact export") from None
-        if len(data) > limit:
-            raise OpenShellError("artifact export exceeds bound")
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_bytes(destination, data)
-
     async def _snapshot(self, source: Sandbox, *, operation_id: str,
                         expected_source: Path | None) -> tuple[bytes, Path, str | None]:
         """Capture and compare source bytes; never extract repository code on the worker."""
@@ -866,10 +846,7 @@ print(base64.b64encode(data).decode())
             else:
                 self._save(record, {"source": asdict(source), "operation_id": operation_id}, exclusive=True)
                 try:
-                    observed = (await self._get(source.name)).sandbox
-                    if observed.metadata.id != source.id:
-                        raise OpenShellError("source native identity changed")
-                    await self._inspect(source)
+                    await self._corroborate(source, "source native identity changed")
                     result, raw = await asyncio.to_thread(self._stream, source,
                         ["/usr/bin/tar", "-C", "/workspace/repo", "-cf", "-", "."],
                         60, None, _request_id(key), self.config.max_transfer_bytes, True)
@@ -899,10 +876,7 @@ print(base64.b64encode(data).decode())
                         if member.isfile():
                             stream = tar.extractfile(member)
                             assert stream is not None
-                            digest = hashlib.sha256()
-                            while chunk := stream.read(65536):
-                                digest.update(chunk)
-                            archived_files[path] = (digest.hexdigest(), member.mode & 0o111)
+                            archived_files[path] = (_sha256(stream), member.mode & 0o111)
             except tarfile.TarError:
                 raise OpenShellError("source snapshot is not a valid archive") from None
             original_files = {}
@@ -917,12 +891,10 @@ print(base64.b64encode(data).decode())
                         total += original.stat().st_size
                         if total > self.config.max_transfer_bytes or len(original_files) >= 65536:
                             raise OpenShellError("original source snapshot exceeds bound")
-                        digest = hashlib.sha256()
                         with original.open("rb") as stream:
-                            while chunk := stream.read(65536):
-                                digest.update(chunk)
+                            content_digest = _sha256(stream)
                         name = PurePosixPath(original.relative_to(expected_source).as_posix())
-                        identity = (digest.hexdigest(), original.stat().st_mode & 0o111)
+                        identity = (content_digest, original.stat().st_mode & 0o111)
                         original_files[str(name)] = identity
                         if archived_files.get(name) != identity:
                             raise OpenShellError("workspace changed or deleted original source")

@@ -746,3 +746,122 @@ async def test_post_probe_integrity_failure_recovery_is_narrow(failure):
         assert len(shell.executions) == 1
         assert calls == 1
         assert shell.closed == ["probe-probe:1:unsafe"]
+
+
+async def test_tool_return_evidence_keeps_history_shape_and_bounds():
+    """Tool returns are durable history: pin exact bytes, 4096-byte bounds and flag order."""
+    from pydantic_core import to_json
+
+    shell = FakeOpenShell()
+    native_execute = shell.execute
+    claims = dict(
+        target_reached=True,
+        oracle_valid=True,
+        positive_control=True,
+        negative_control=True,
+        vulnerability_observed=False,
+    )
+    # An odd leading byte puts the 4096-byte cut inside a two-byte character.
+    stdout = "x" + "é" * 3000 + "\nHARNESS_PROBE " + json.dumps(claims)
+
+    async def execute(sandbox, command, **kwargs):
+        await native_execute(sandbox, command, **kwargs)
+        return CommandResult(0, stdout, "err")
+
+    shell.execute = execute
+    returned = []
+
+    def respond(messages, info):
+        if not shell.executions:
+            return ModelResponse(
+                parts=[ToolCallPart("execute", {"command": "c" * 5000}, tool_call_id="cmd")]
+            )
+        if len(shell.executions) == 1:
+            return ModelResponse(
+                parts=[ToolCallPart("run_probe", {"command": "python p.py"}, tool_call_id="p")]
+            )
+        returned.extend(
+            part.content
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        )
+        return final_response(info)
+
+    await build_agent(shell, FunctionModel(respond)).run(
+        "Inspect",
+        deps=InvestigationDeps(
+            run_id="run",
+            sandbox=await shell.create("run"),
+            source_digest="digest",
+            snapshot_path="/fixture",
+            request=InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture")),
+        ),
+    )
+    output = {"exit_code": 0, "stdout": "x" + "é" * 2047, "stderr": "err", "timed_out": False}
+    expected = [
+        {
+            "id": "execute:1:cmd",
+            "kind": "command",
+            "command": "c" * 4096,
+            **output,
+            "output_truncated": False,
+            "sandbox_id": "workspace-",
+            "source_digest": "digest",
+            "observations": {"report_excerpted": True},
+        },
+        {
+            "id": "probe:2:p",
+            "kind": "probe",
+            "command": "python p.py",
+            **output,
+            "output_truncated": False,
+            "sandbox_id": "probe-probe:2:p",
+            "source_digest": "digest",
+            "observations": {
+                **claims,
+                "origin": "self_reported",
+                "report_excerpted": True,
+                "workspace_digest": "workspace-digest",
+                "source_verified": True,
+            },
+        },
+    ]
+    assert [to_json(item) for item in returned] == [
+        json.dumps(item, separators=(",", ":"), ensure_ascii=False).encode() for item in expected
+    ]
+
+
+def test_definitive_support_requires_citations_cited_match_and_no_contrary():
+    from infosec_harness.models import Citation, Evidence, Verdict, definitive_support
+
+    def probe(identity, observed, **changes):
+        return Evidence(
+            id=identity,
+            kind="probe",
+            command="probe",
+            exit_code=0,
+            sandbox_id="probe",
+            source_digest="digest",
+            observations={
+                "target_reached": True,
+                "oracle_valid": True,
+                "positive_control": True,
+                "negative_control": True,
+                "vulnerability_observed": observed,
+                "workspace_digest": "workspace-digest",
+                "source_verified": True,
+                **changes,
+            },
+        )
+
+    cited = [Citation(path="sink.py", start_line=1, end_line=1)]
+    verdict = Verdict(label="potentially_exploitable", summary="s", evidence_ids=["a"])
+    matching, contrary = probe("a", True), probe("b", False)
+    incomplete = probe("c", False, negative_control=False)
+    assert definitive_support(verdict, [matching]) == (False, [])
+    verdict = verdict.model_copy(update={"citations": cited})
+    assert definitive_support(verdict, [matching, incomplete]) == (True, [])
+    assert definitive_support(verdict, [probe("z", True)]) == (False, [])
+    assert definitive_support(verdict, [matching, contrary]) == (True, [contrary])

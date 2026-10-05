@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -97,6 +98,39 @@ class Evidence(Contract):
             )
             and type(self.observations.get("vulnerability_observed")) is bool
         )
+
+    def excerpt(self, limit: int = 4096) -> Evidence:
+        """Bound command/output text; ``report_excerpted`` is computed from the full values."""
+        fields = {key: getattr(self, key) for key in ("command", "stdout", "stderr")}
+        excerpted = any(len(value.encode()) > limit for value in fields.values())
+        return self.model_copy(
+            update={
+                **{key: value.encode()[:limit].decode(errors="ignore") for key, value in fields.items()},
+                "observations": {**self.observations, "report_excerpted": excerpted},
+            }
+        )
+
+
+def definitive_support(
+    verdict: Verdict, evidence: Iterable[Evidence]
+) -> tuple[bool, list[Evidence]]:
+    """Return ``(corroborated, contrary)`` for a definitive verdict.
+
+    Pure admission rule: source citations plus a cited complete source-verified probe whose
+    ``vulnerability_observed`` matches the label; any contrary qualified probe blocks it.
+    Callers own evidence provenance and must build ``evidence`` independently.
+    """
+    expected = verdict.label == "potentially_exploitable"
+    qualified = [item for item in evidence if item.complete_verified_probe]
+    corroborated = bool(verdict.citations) and any(
+        item.id in verdict.evidence_ids
+        and item.observations["vulnerability_observed"] is expected
+        for item in qualified
+    )
+    contrary = [
+        item for item in qualified if item.observations["vulnerability_observed"] is not expected
+    ]
+    return corroborated, contrary
 
 
 class InvestigationResult(Contract):

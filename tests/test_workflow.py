@@ -17,6 +17,7 @@ from test_agent import FakeOpenShell, final_response
 
 from infosec_harness.agent import InvestigationDeps, build_agent
 from infosec_harness.models import Citation, Finding, InvestigationRequest, Limits, Verdict
+from infosec_harness.openshell import Sandbox
 from infosec_harness.workflow import (
     FinalizeInvestigation,
     InvestigationActivities,
@@ -34,6 +35,19 @@ def runner():
     )
 
 
+def test_prepared_investigation_decodes_v11_payload_with_duplicated_fields(tmp_path):
+    deps = InvestigationDeps(
+        run_id="run",
+        sandbox=Sandbox("id", "run", "name", "workspace"),
+        source_digest="digest",
+        snapshot_path=str(tmp_path),
+        request=InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture")),
+    )
+    # v11 histories carried copies of deps.snapshot_path and deps.worker_identity here.
+    legacy = {"deps": deps.model_dump(mode="json"), "snapshot_path": "/other", "worker_identity": None}
+    assert PreparedInvestigation.model_validate(legacy) == PreparedInvestigation(deps=deps)
+
+
 async def test_finalize_rejects_invented_receipt_and_source_lines(tmp_path):
     shell = FakeOpenShell()
     activities = InvestigationActivities(shell, None, "fixture")
@@ -43,10 +57,9 @@ async def test_finalize_rejects_invented_receipt_and_source_lines(tmp_path):
             run_id="run",
             sandbox=await shell.create("run"),
             source_digest="digest",
-            snapshot_path="/fixture",
+            snapshot_path=str(tmp_path),
             request=request,
         ),
-        snapshot_path=str(tmp_path),
     )
     verdict = Verdict(label="inconclusive", summary="Evidence absent", evidence_ids=["invented"])
     with pytest.raises(ValueError, match="trusted OpenShell receipt"):
@@ -265,10 +278,9 @@ async def test_definitive_verdict_without_execution_becomes_inconclusive(tmp_pat
             run_id="run",
             sandbox=await shell.create("run"),
             source_digest="digest",
-            snapshot_path="/fixture",
+            snapshot_path=str(tmp_path),
             request=request,
         ),
-        snapshot_path=str(tmp_path),
     )
     verdict = Verdict(label=label, summary="No tests ran.")
     result = await InvestigationActivities(shell, None, "fixture").finalize(
@@ -291,10 +303,9 @@ async def test_negative_verdict_requires_both_declared_controls(tmp_path, negati
             run_id="run",
             sandbox=await shell.create("run"),
             source_digest="digest",
-            snapshot_path="/fixture",
+            snapshot_path=str(tmp_path),
             request=request,
         ),
-        snapshot_path=str(tmp_path),
     )
     (tmp_path / "sink.py").write_text("source\n")
     probe = await shell.create("run", profile="probe")
@@ -352,7 +363,6 @@ async def test_report_excerpts_do_not_invalidate_complete_native_probe(tmp_path)
             snapshot_path=str(tmp_path),
             request=request,
         ),
-        snapshot_path=str(tmp_path),
     )
     (tmp_path / "sink.py").write_text("source\n")
     marker = {
@@ -618,7 +628,6 @@ async def test_complete_contrary_probe_prevents_definitive_verdict_even_when_unc
             snapshot_path=str(tmp_path),
             request=request,
         ),
-        snapshot_path=str(tmp_path),
     )
     (tmp_path / "sink.py").write_text("source\n")
     expected = label == "potentially_exploitable"
@@ -674,7 +683,6 @@ async def test_incomplete_contrary_probe_is_not_a_qualified_observation(tmp_path
             snapshot_path=str(tmp_path),
             request=request,
         ),
-        snapshot_path=str(tmp_path),
     )
     (tmp_path / "sink.py").write_text("source\n")
     for name, observed in (("matching", False), ("contrary", True)):
