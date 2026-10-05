@@ -80,7 +80,7 @@ The inbound service transport and instance lifecycle APIs are feasibility gates.
 
 ## Model transport contract
 
-The implemented internal protocol is `ih-inference-v1`; [the frozen protocol](PROTOCOL.md) and `inference/protocol.py` define its wire contract. It MUST round-trip the supported PydanticAI message and response types without lossy text conversion. The initial milestone supports non-streaming requests; unsupported streaming MUST be rejected explicitly.
+The implemented internal protocol is `ih-inference-v1`; [the frozen protocol](PROTOCOL.md) and `inference/wire/protocol.py` define its wire contract. It MUST round-trip the supported PydanticAI message and response types without lossy text conversion. The initial milestone supports non-streaming requests; unsupported streaming MUST be rejected explicitly.
 
 | Direction | Required fields |
 | --- | --- |
@@ -110,8 +110,8 @@ OpenAI-compatible backends may configure `enable_thinking: false` or `true` for 
 that support Qwen's `chat_template_kwargs.enable_thinking` request option. Omission preserves
 provider defaults and historical serialized identities. The optional value is a strict boolean
 in backend capabilities, operator profiles and immutable executor contracts; every value must
-match exactly. Per-agent backend mappings can select a cloned backend with thinking disabled
-without changing other agents. The trusted adapter constructs only this fixed body extension;
+match exactly. One backend serves every agent, so the value applies to all of them; there is
+no per-agent backend mapping. The trusted adapter constructs only this fixed body extension;
 arbitrary agent-supplied body/header extensions remain blocked. Admission rendering includes
 the extension, and direct and brokered paths produce the same option. Non-OpenAI backends
 reject it. This does not establish provider support or qualify model quality.
@@ -211,7 +211,7 @@ The controller MUST persist lease ownership and reconcile instances after its ow
 ### Implemented lease lifecycle and error classification
 
 Leases follow a persisted state machine (`LeaseState` in
-`src/infosec_harness/inference/openshell.py`): `creating` to `ready`, `quarantined` or
+`src/infosec_harness/inference/native/openshell.py`): `creating` to `ready`, `quarantined` or
 `revoked`; `ready` and `quarantined` to `revoked`; `revoked` (repeatable after a partial
 failure) to `sandbox_deleted`, then `deleted`. Nothing leaves `deleted`, and any other transition
 is an identity failure. A deleted lease's secret record is replaced by a secret-free archive
@@ -222,8 +222,13 @@ ledger validates the run's owner root before revocation.
 Failures carry a stable class. Malformed or inconsistent controller, executor or ledger input
 (validation errors, lease-state or ownership mismatches, checksum drift) is `identity`; an
 unreachable ledger, database or gateway, a proxy fault and a channel timeout are `unavailable`.
-These changes are in the executor's packaged sources, so the executor image must be rebuilt and
-freshly qualified before a brokered deployment uses them.
+Failures are logged as `IH_INFERENCE_FAILURE boundary=<boundary> category=<category>`
+(`src/infosec_harness/inference/wire/diagnostics.py`), without payloads or exception text.
+
+The executor reads and checks its lease file before it parses a request. Child processes the
+broker starts receive an environment with every `AWS_*` and `HARNESS_BROKER_*` variable
+removed. These changes are in the executor's packaged sources, so the executor image must
+be rebuilt and freshly qualified before a brokered deployment uses them.
 
 ## Configuration and provenance changes
 

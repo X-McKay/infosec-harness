@@ -14,8 +14,8 @@ the pipeline and the CLI. Each fact has one home; the table says which.
 | [threat-models/triage-system.md](threat-models/triage-system.md) | Trust boundaries, adversaries, runtime safety gates and the risk assessment |
 | [evaluation/RELEASE_EVIDENCE.md](evaluation/RELEASE_EVIDENCE.md) | Release gates, baselines, held-out runs, and where accepted evidence is recorded |
 | [evaluation/CORPUS_SOURCES.md](evaluation/CORPUS_SOURCES.md) | External corpus sources, licensing and harvested ground-truth limits |
-| [operations/MODEL_ENDPOINTS.md](operations/MODEL_ENDPOINTS.md) | Connecting an OpenAI-compatible gateway, checking it, and reasoning-budget options |
-| [operations/QUALIFICATION_DASHBOARD.md](operations/QUALIFICATION_DASHBOARD.md) | What the UI's Qualification and runtime-status views read and how operator receipts are verified |
+| [operations/MODEL_ENDPOINTS.md](operations/MODEL_ENDPOINTS.md) | Connecting an OpenAI-compatible gateway, the one-backend model configuration, checking it, and reasoning-budget options |
+| [operations/QUALIFICATION_DASHBOARD.md](operations/QUALIFICATION_DASHBOARD.md) | What the UI's Qualification, runtime-status and evidence-basis views read, polling, and how operator receipts are verified |
 | [broker/README.md](broker/README.md) | The opt-in credential broker: [specification](broker/SPEC.md), [wire protocol](broker/PROTOCOL.md) and [operator runbook](broker/RUNBOOK.md) |
 
 Dated, point-in-time evidence (validation runs, qualification checkpoints, feasibility records

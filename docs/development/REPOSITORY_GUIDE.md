@@ -7,32 +7,44 @@ Paths below are relative to `src/infosec_harness/` unless they start at the repo
 | Module | Responsibility |
 | --- | --- |
 | `domain/models.py`, `domain/canonical.py` | Typed findings, plans, verdicts and shared contracts; canonical JSON bytes and SHA-256 digests |
-| `agents/` | Agent specs, eval datasets and release policies (`agents/<name>/`), the risk scenario library, the registry (agent bindings and `EXECUTION_GENERATION`), model factory, capabilities, prompt renderer (`render.py`), repository read tools (`repo_tools.py`), budgets, stubs and validators |
-| `graph/triage.py`, `graph/prepare.py` | The per-finding triage graph and component preparation |
-| `graph/pipeline.py`, `graph/workloads.py` | Grouping, scheduling and per-finding orchestration, and the build/smoke/probe workloads, shared by the in-process and durable paths |
+| `agents/` | Agent specs, eval datasets and release policies (`agents/<name>/`), the risk scenario library, the registry (agent bindings and `EXECUTION_GENERATION`), model factory, capabilities (which enforce the tool policies), prompt renderer (`render.py`), repository read tools (`repo_tools.py`), `trajectory.py` (tools called and skills loaded per run), budgets, stubs and validators |
+| `graph/triage.py`, `graph/prepare.py`, `graph/local.py` | The per-finding triage graph, component preparation, and in-process discovery and preparation |
+| `graph/pipeline.py`, `graph/workloads.py`, `graph/failures.py` | Grouping, scheduling and per-finding orchestration, the build/smoke/probe workloads, and failure classification, shared by the in-process and durable paths |
 | `graph/ops.py`, `graph/manifests.py`, `graph/scoring.py` | The execution interface, secret-free reproduction manifests, prioritization |
-| `workflows/workflows.py`, `workflows/activities.py`, `workflows/worker.py` | Temporal workflows (`TriageBatch`, `ComponentPreparation`, `FindingTriage`), activities and the worker |
+| `workflows/workflows.py`, `workflows/activities.py`, `workflows/persistence_activities.py`, `workflows/worker.py` | Temporal workflows (`TriageBatch`, `ComponentPreparation`, `FindingTriage`), activities, the activities that write the durable record, and the worker |
+| `workflows/payloads.py`, `workflows/activity_options.py` | Typed workflow and activity arguments; activity timeouts and retry policies |
 | `workflows/submission.py`, `workflows/local_run.py`, `workflows/writeback.py` | Durable submission and cancellation; in-process stub runs; Azure DevOps comment write-back |
-| `workflows/accounting.py`, `workflows/progress.py` | Root budget reservations and persisted progress |
-| `sandbox/docker.py`, `sandbox/policy.py`, `sandbox/process.py` | gVisor Docker runner, the runtime gate, and the one owned subprocess runner for Docker, Git and native CLIs; `sandbox/k8s.py` only renders Pod specs |
+| `workflows/accounting.py` | Root budget reservations |
+| `sandbox/docker.py` | The runtime gate and probe/shell/build execution; re-exports the sandbox's public names |
+| `sandbox/{errors,markers,output,image,engine,boundary}.py` | Failure classes; stdout markers; parsing untrusted runner output; Dockerfile and image identity; the Docker CLI; egress network and builder verification |
+| `sandbox/controls.py`, `sandbox/evidence.py`, `sandbox/policy.py`, `sandbox/process.py` | Positive and negative control tests; the controller's execution record; base-image allowlist and build-spec validation; the one owned subprocess runner for Docker, Git and native CLIs |
 | `repo/` | Hardened Git checkout under `local_repo_roots`, access checks, component and stack detection |
-| `persistence/` | Run store (`store.py`, `db.py`), migrations, artifacts, budgets, recipe cache, reconciliation; `identity.py` (worker-host provenance), `paths.py` (workspace layout), `population.py` (demo/eval/operational populations) |
-| `inference/` | Opt-in credential broker: protocol, admission, ledger, controller, executor and OpenShell adapter |
-| `evals/` | `run.py` and `adapters.py` (eval runs), `dataset.py` (the one dataset loader), `gates.py` (the one release-gate evaluator), `release_report.py`, `metrics.py`, `messages.py` (captured-message walker), `pricing.py`, `overlays.py`, `baselines.py`, `corpus_run.py`, `calibration.py`, `inert_gates.py` |
+| `persistence/` | Run store (`store.py`, `db.py`), migrations, artifacts, budgets, recipe cache, reconciliation; `run_telemetry.py` (the one typed `RunTelemetry`, schema 2; migration `0006` rewrote earlier records), `batch_progress.py` (read-only batch progress), `identity.py` (worker-host provenance and manifest `schema_version`), `paths.py` (workspace layout), `population.py` (operational/demo populations) |
+| `inference/` | Opt-in credential broker, one subpackage per role (below) |
+| `evals/` | `run.py` (eval runs, overlays and `--model`), `adapters.py` (per-agent scoring adapters), `dataset.py` (the one dataset loader), `gates.py` (the one release-gate evaluator), `release_report.py`, `inert_gates.py` (the audit every report gets), `metrics.py`, `messages.py` (captured-message walker), `pricing.py`, `baselines.py`, `corpus_run.py`, `calibration.py`, `execution_checks.py` and `probe_execution.py` (opt-in sandbox checks) |
 | `operations/` | Read-only `harness readiness` and `harness model-connectivity` checks |
 | `qualification/broker/` | Operator broker qualification runners (`python -m infosec_harness.qualification.broker.<module>`); never imported by serving code |
 | `api/`, `cli.py` | FastAPI service and contracts; the Typer CLI |
 | `intake/`, `integrations/` | Input adapters and Azure DevOps integration |
 | `config/`, `skills/`, `tools/` | Packaged model catalogue and reference broker catalog, runtime skills, tool policies |
 
+| `inference/` subpackage | Modules |
+| --- | --- |
+| `wire/` | `protocol`, `auth`, `codec`, `http_service`, `diagnostics`, `timing`: the `ih-inference-v1` schema and shared HTTP plumbing |
+| `catalog/` | `profiles`, `policy`: broker catalog profiles and native policy identity |
+| `executor/` | `service`, `compat`, `rendering`: the executor (`python -m infosec_harness.inference.executor`) |
+| `worker/` | `transport`, `invocations`, `identity`, `unbound`, `provenance`: the harness worker's client |
+| `controller/` | `service`, `admission`, `ledger`, `issuance`, `deployment`: the controller; its factory is `infosec_harness.inference.controller.deployment:controller_factory` |
+| `native/` | `openshell`: the OpenShell adapter and lease lifecycle |
+
 | Repository directory | Responsibility |
 | --- | --- |
 | `ui/` | Frontend source, generated API types and build configuration |
-| `tests/` | `agents/`, `runtime/`, `persistence/`, `evals/`, `development/` and `qualification/` (offline regressions for the broker qualification runners); shared fixtures in `tests/conftest.py` |
+| `tests/` | `agents/` (with the skill lint in `agents/skill_support/`), `runtime/`, `persistence/`, `evals/`, `development/` and `qualification/` (offline regressions for the broker qualification runners); shared fixtures in `tests/conftest.py` |
 | `eval-corpus/` | Paired fixture repositories, ground truth and harvested case metadata |
 | `evals/` | Committed baselines, sealed held-out sets, calibration plans and agent overlays |
 | `docs/` | Living documentation, indexed by `docs/README.md`; dated evidence under `docs/evidence/` |
-| `scripts/`, `.claude/skills/` | Developer tools and development skills (`.agents/skills` is a symlink) |
+| `scripts/`, `.claude/skills/` | Developer tools, including the offline exploration measurement library (`scripts/exploration.py`), and development skills (`.agents/skills` is a symlink) |
 | `deploy/` | Compose support, egress proxy, dev VM, Kubernetes and OpenShell deployment material |
 
 Runtime data stays inside the Python package so installed wheels work from unrelated working
@@ -80,13 +92,12 @@ Use absolute environment paths when invoking from elsewhere.
 | Full-stack database and S3 objects | Checkout compose volumes | Kept by `./dev stop`; deleted only by `./dev reset` |
 | Frontend output and dependencies | `ui/dist/`, `ui/node_modules/` | Vite, TypeScript and `npm ci` |
 
-An eval release report carries `run` (status, split, `n` of `n_planned`, the case-set digest and
-dataset path), the policy verdict `gate_evaluation`, and `inert_checks` (policy checks that could
-not have failed for this run). Only complete runs export a report; a truncated experiment keeps
-its incremental results in the database. Reports are written through a same-directory temporary
-file and an atomic rename, which prevents partial JSON but is not a power-loss guarantee.
-`harness report <run-id>` prints to stdout; redirect it under `.harness/reports/triage/` to keep
-one.
+An eval release report's contents are described in
+[release evidence](../evaluation/RELEASE_EVIDENCE.md#release-gates). Only complete runs export a
+report; a truncated experiment keeps its incremental results in the database. Reports are written
+through a same-directory temporary file and an atomic rename, which prevents partial JSON but is
+not a power-loss guarantee. `harness report <run-id>` prints to stdout; redirect it under
+`.harness/reports/triage/` to keep one.
 
 Committed baselines under `evals/baselines/` and dated folders under `docs/evidence/` are the
 only source-controlled evidence ([how evidence is recorded](../evaluation/RELEASE_EVIDENCE.md)).

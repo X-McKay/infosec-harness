@@ -79,15 +79,25 @@ in-process with stub models only and is refused otherwise; real assessments alwa
 Temporal. At startup the API bootstraps an empty database at the migration head and refuses a
 database at any other revision: run `harness migrate` first.
 
+Read endpoints take `population=operational` or `population=demo`; any other value, including
+the retired `legacy`, is a 422. An omitted population is unfiltered, except that
+`GET /api/metrics` defaults to `operational`. Runs are listed only through the paginated
+`GET /api/run-page`. `GET /api/experiments` is paginated (`offset`, `limit` 1-100, default 50)
+and returns slim summaries; `GET /api/experiments/{id}` returns one experiment's metrics and
+cases.
+
 ## Deploying a new execution generation
 
 Temporal workflow types and durable agent identities carry the execution generation from
-`EXECUTION_GENERATION` in `src/infosec_harness/agents/registry.py` (currently `v6`:
-`TriageBatch-v6`, `ComponentPreparation-v6`, `FindingTriage-v6`, and agent identities such as
-`verdict-v6`). Workers register only the current generation, and histories recorded by an earlier
-generation are not replayable by design. Before deploying a worker with a new generation, let
-in-flight batches finish or terminate them, then resubmit any that were cut short as new
-batches. Workflow ids are opaque (`batch:<batch-id>`); do not parse them.
+`EXECUTION_GENERATION` in `src/infosec_harness/agents/registry.py` (currently `v7`:
+`TriageBatch-v7`, `ComponentPreparation-v7`, `FindingTriage-v7`, and agent identities such as
+`verdict-v7`). Workers register only the current generation, and histories recorded by an
+earlier generation are not replayable by design. `v7` changed what histories record: workflow
+and activity arguments are the typed models in `src/infosec_harness/workflows/payloads.py`, and
+every activity's timeout and retry policy comes from
+`src/infosec_harness/workflows/activity_options.py`. Before deploying a worker with a new
+generation, let in-flight batches finish or terminate them, then resubmit any that were cut
+short as new batches. Workflow ids are opaque (`batch:<batch-id>`); do not parse them.
 
 ## Kubernetes and testing
 

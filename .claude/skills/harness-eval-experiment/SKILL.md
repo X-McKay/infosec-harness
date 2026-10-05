@@ -3,7 +3,7 @@ name: harness-eval-experiment
 description: Run a controlled InfoSec Harness experiment that changes prompts, models, tools, skills, or orchestration behavior.
 metadata:
   owner: harness-maintainers
-  version: 1.0.2
+  version: 1.0.3
   compatibility: Codex and Claude repository development clients
   source_revision: repository-layout-v1
   playbook_revision: 9e7fc03f2e1253be3e2adea10663ddf429646cea
@@ -33,6 +33,11 @@ metadata:
   `evals/gates.py` from each agent's `release-policy.yaml`, and datasets load through
   `evals/dataset.py`; broker qualification runners are `qualification/broker/` and read-only
   service checks `operations/`.
+- Workflow and activity arguments are typed in `workflows/payloads.py`. The sandbox's public
+  surface is `sandbox/docker.py` (runtime gate and execution) over `errors`, `markers`, `output`,
+  `image`, `engine`, `boundary`, `controls` and `evidence`. The credential broker is
+  `inference/`, one subpackage per role: `wire`, `catalog`, `executor`, `worker`, `controller`,
+  `native`.
 - Dated evidence goes to `docs/evidence/<yyyy-mm-dd>-<topic>/`; accepted agent results to
   `evals/baselines/`.
 - Agent overlays live in `evals/experiments/overlays/`; typed calibration plans live in

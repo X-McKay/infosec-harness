@@ -79,7 +79,7 @@ Set `HARNESS_MODELS_CONFIG` and `HARNESS_BROKER_CONFIG` to the operator-managed 
 broker files. Before enabling traffic, inspect the secret-free resolved contracts:
 
 ```bash
-uv run python -m infosec_harness.inference.deployment --print-contracts
+uv run python -m infosec_harness.inference.controller.deployment --print-contracts
 ```
 
 The output reports each agent's contract and digest. Confirm only intentionally brokered
@@ -87,7 +87,7 @@ agents show `transport: brokered`; check profile, endpoint, policy digest, image
 effective settings, output floor, and retry setting against approved change records. The
 deployment factory uses these same contracts as native-spec keys.
 
-Apply the additive database migration against the intended broker database before starting
+Apply the database migrations against the intended broker database before starting
 the controller:
 
 ```bash
@@ -95,9 +95,10 @@ uv run harness migrate
 uv run alembic current
 ```
 
-The current migration head is `0005`, adding the durable `inference_requests` ledger table.
-Do not use `harness init-db` against an existing deployment database. To print SQL for DBA
-review instead of applying the migration, use `uv run alembic upgrade head --sql`.
+The broker's durable `inference_requests` ledger table arrived in migration `0005`; apply
+through the current head (`0006`). Do not use `harness init-db` against an existing deployment
+database. To print SQL for DBA review instead of applying the migrations, use
+`uv run alembic upgrade head --sql`.
 
 The isolated PostgreSQL qualification command is:
 
@@ -136,7 +137,7 @@ HARNESS_MODELS_CONFIG=<operator-models-yaml> \
 HARNESS_BROKER_CONFIG=<operator-broker-yaml> \
 HARNESS_BROKER_NATIVE_CONFIG=<operator-native-deployment-yaml> \
 uv run python -m infosec_harness.inference.controller \
-  --factory infosec_harness.inference.deployment:controller_factory \
+  --factory infosec_harness.inference.controller.deployment:controller_factory \
   --host <controller-bind-address> --port <controller-port> \
   --cert <controller-server-certificate> --key <controller-server-private-key> \
   --client-ca <worker-client-ca>
@@ -300,8 +301,8 @@ direct agent cases and the direct production graph passed on the authorized loca
 Native live compatibility failed; native live full-graph and held-out quality are not checked.
 These records do not approve opt-in rollout; the packaged catalog remains disabled.
 
-For native inference failures, fixed executor markers distinguish provider, codec and ledger
-stages without exposing payloads or exceptions. The final local-provider investigation also
+For native inference failures, the fixed `IH_INFERENCE_FAILURE boundary=` log marker
+distinguishes provider, codec and ledger stages without exposing payloads or exceptions. The final local-provider investigation also
 captured a stale policy generation from an exact owned supervisor. The generation guard closes
 active streams when policy changes or quarantine is published. Preserve this boundary. Establish
 the actual activation/quarantine trigger before proposing remediation; do not infer it from

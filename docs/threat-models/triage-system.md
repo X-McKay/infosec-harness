@@ -42,8 +42,9 @@ exploitability without a marker having fired, whatever it believes about the cod
 These checks run in code on every relevant path; a configuration file or an instruction cannot
 switch them off.
 
-- **Sandbox runtime.** `sandbox.policy.ensure_runtime_available` refuses to build or probe unless
-  the configured runtime is `runsc` and the Docker daemon advertises it, and a `Settings`
+- **Sandbox runtime.** `sandbox.docker.ensure_runtime_available` refuses to build or probe
+  unless the configured runtime is `runsc` and the daemon's `docker info` JSON shows it both
+  registered and the default runtime (buildx build steps inherit the default), and a `Settings`
   validator refuses any other runtime at startup. Only `HARNESS_ALLOW_INSECURE_RUNTIME=true`
   selects or skips the runtime, for local development (CONDITION-002).
 - **Containers.** Builds, probes and the sandbox shell tool run non-root, with all capabilities
@@ -51,14 +52,25 @@ switch them off.
   directories. Probes and the shell tool never have a network. Build steps reach the network
   only through the operator's allowlisting proxy on an internal network; the allowlist is
   operator configuration, never derived from the repository.
+- **Base images.** `sandbox.policy.validate_base_image` admits a base image only when an
+  `allowed_base_registries` entry covers it: a bare host admits every repository on it, and a
+  host plus namespace matches whole path components (`docker.io/library` admits official images,
+  not `docker.io/library-evil/x`). The default is `["docker.io/library", "public.ecr.aws"]`.
 - **Image cache.** A cached image is reused only if its tag (which includes the build-boundary
   mode) and its provenance label match what this harness built (`IMAGE_FORMAT_VERSION` 4).
+- **Execution evidence.** Each probe execution persists the controller's origin-labelled record
+  (`unit-probe-execution/v2`) as `ProbeExecution.origins`: `process.origin` is `controller`
+  (exit code, timeout and duration observed by the harness), `observations.origin` is
+  `self_reported_marker` (markers the probe printed) and `runner.origin` is
+  `parsed_untrusted_output`. Only `controller` is harness evidence; the UI's evidence-basis
+  notice warns unless every recorded origin is `controller`.
 - **Repository sources.** Remote repositories must be HTTPS. A local path or `file://`
   `repo_url` is accepted only beneath `HARNESS_LOCAL_REPO_ROOTS`, which is empty by default; the
   development profile sets it to the eval corpus, and `harness eval corpus` admits only its own
   manifest's directory for the life of that process. Git runs with a minimal environment (no system
   or global config, no prompts, no credential helpers), `--` argument separators and an
-  explicit protocol allowlist.
+  explicit protocol allowlist. Stack detection reads only regular files from one validated walk
+  of the snapshot, so a directory, special file or escaping link named like a manifest is absent.
 - **Prompt encoding.** Every value placed in a prompt is one line of JSON with `</` escaped, so
   repository or finding text cannot close its block or open a section of its own. This narrows
   prompt injection to the content of a value; it does not make that content trustworthy.
@@ -172,7 +184,7 @@ backend? What false-negative rate is acceptable once measured with the sandbox e
 | --- | --- | --- |
 | false_negative_rate_on_exploitable | `harness eval corpus` with the sandbox enabled | the headline quality signal; cannot be measured until CONDITION-001 is met |
 | unevidenced_exploitable_verdicts | the verdict evidence contract | must be zero; non-zero means the deterministic contract was bypassed |
-| sandbox_runtime_missing_count | `sandbox.policy.ensure_runtime_available` | non-zero outside development means probes are failing closed, as intended |
+| sandbox_runtime_missing_count | `sandbox.docker.ensure_runtime_available` | non-zero outside development means probes are failing closed, as intended |
 | insecure_runtime_override_enabled | `settings.allow_insecure_runtime` | must be false outside development |
 | budget_exhausted_count | UsageLimits breaches recorded per run | a rise means runs are being stopped rather than answered |
 | average_cost_per_finding | per-invocation cost accounting | catches a repair loop regressing into a storm |

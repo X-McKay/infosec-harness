@@ -158,8 +158,9 @@ can run against the wheel), evaluators in `src/infosec_harness/evals/`, fixtures
 checks use shared root fixtures. The directory conventions are recorded in
 [REPOSITORY_GUIDE.md](../development/REPOSITORY_GUIDE.md#directory-conventions).
 
-**No `activities/`, `runtime/`, `observability/` or `policy/` packages.** Activities are one
-module (`workflows/activities.py`), observability is `telemetry.py`, and policy is split
+**No `activities/`, `runtime/`, `observability/` or `policy/` packages.** Activities are two
+modules (`workflows/activities.py` and the durable-record writes in
+`workflows/persistence_activities.py`), observability is `telemetry.py`, and policy is split
 between `tools/policies.py` and `agents/governance.py`. Each is currently a file's worth of
 code; promoting a file to a package before it needs to be one adds a directory, not structure.
 
@@ -169,8 +170,8 @@ Development skills live under `.claude/skills/`; `.agents/skills` is a symlink t
 files for Codex. These are distinct from packaged runtime skills.
 
 `src/infosec_harness/graph/manifests.py` builds persisted harness, repository, environment and capability manifests.
-They carry versioned runtime/policy digests and resolved agent configuration; the implementation
-and `tests/runtime/test_snapshot_integrity.py` establish the current fields. The manifest is persisted
+The persisting worker adds the manifest `schema_version` and its packaged-source identity; the
+implementation and `tests/runtime/test_snapshot_integrity.py` establish the current fields. The manifest is persisted
 with triage output rather than represented solely by an opaque configuration hash.
 
 Completed agent evals automatically export reports under `.harness/reports/evals/`; these

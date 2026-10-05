@@ -23,8 +23,13 @@ The catalogue maps each model tier (`opus`, `sonnet`, `haiku`) to a concrete mod
 backend. The `gateway:` column must name ids the endpoint actually serves
 (`curl "$HARNESS_MODEL_BASE_URL/models"`). To change that mapping, prices or any other backend
 setting, copy `src/infosec_harness/config/models.yaml` to an operator-owned file, edit it, and
-point `HARNESS_MODELS_CONFIG` at the copy. Per-agent routing uses
-`agents.<name>.backend` in that file.
+point `HARNESS_MODELS_CONFIG` at the copy.
+
+One backend serves every agent: `HARNESS_MODEL_BACKEND`, else the file's `default_backend`.
+There is no per-agent routing. The file holds only `backends`, `default_backend`,
+`model_catalog` and `model_policies`; any other key, including the retired
+`agents.<name>.backend`, is rejected. A tier an agent or `harness eval run --model` names must
+be in `model_catalog` with a model for the selected backend, or live resolution fails.
 
 Settings worth knowing on an OpenAI-compatible backend:
 
@@ -47,9 +52,9 @@ configuration for a thinking budget to take effect.
 ## Check an endpoint
 
 `./dev validate --model`, or `harness model-connectivity --model` inside a configured process,
-sends one structured-output request to the configured verdict backend with no retry. A pass is
-connectivity, not agent quality. An endpoint whose `/v1/models` returns 200 can still have a hung
-engine, so check an actual chat completion when diagnosing one. If an endpoint fails during an
+sends one structured-output request, as the verdict agent, to the selected backend with no
+retry. A pass is connectivity, not agent quality. An endpoint whose `/v1/models` returns 200 can
+still have a hung engine, so check an actual chat completion when diagnosing one. If an endpoint fails during an
 evaluation, stop the cohort, keep its scored, interrupted and unstarted attempts, and start any
 resumed run as a new cohort: never stitch partial scores from two runs together.
 

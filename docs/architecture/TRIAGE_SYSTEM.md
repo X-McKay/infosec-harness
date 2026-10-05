@@ -93,13 +93,27 @@ prompt prefix. Grouping, scheduling, the per-finding pipeline and failure record
 with the in-process path, which runs stub models only; real assessments always run on Temporal.
 
 Workflow type names and agent activity identities carry the execution generation
-(`EXECUTION_GENERATION`, currently `v6`). There are no retained earlier generations and no
-`workflow.patched` branches: a history recorded by an earlier generation is not replayable, so a
-deployment drains or terminates in-flight batches first
+(`EXECUTION_GENERATION`, currently `v7`). Workflow and activity arguments are typed models
+(`src/infosec_harness/workflows/payloads.py`) validated on both sides of the Temporal boundary,
+and every activity's retry policy bounds its attempts or names its non-retryable errors
+(`src/infosec_harness/workflows/activity_options.py`). There are no retained earlier generations
+and no `workflow.patched` branches: a history recorded by an earlier generation is not
+replayable, so a deployment drains or terminates in-flight batches first
 ([service environments](../development/SERVICE_ENVIRONMENTS.md#deploying-a-new-execution-generation)).
-Workflow ids are opaque. The probe adapter contract recorded in each result's manifest is
-`ADAPTER_CONTRACT_VERSION` (`unit-probe-adapters/v2`) in
-`src/infosec_harness/agents/ecosystem_contract.py`.
+Workflow ids are opaque. Each result persists a manifest (`schema_version` 3, assigned in
+`src/infosec_harness/persistence/identity.py`) whose environment section records the probe
+adapter contract `ADAPTER_CONTRACT_VERSION` (`unit-probe-adapters/v2`, in
+`src/infosec_harness/agents/ecosystem_contract.py`) and `adapter_profiles`: `{id, support}` per
+recognised ecosystem profile, plus each unmapped language as unsupported.
+
+**Accounting.** Every batch, durable or in-process, is accepted with a root budget ledger that
+pins each agent's configuration digest; an agent reservation against a ledger that pins none,
+or with a different digest, is refused (`src/infosec_harness/persistence/budgets.py`). There is
+no unaccounted mode. A run's usage (`RunTelemetry`, schema 2, in
+`src/infosec_harness/persistence/run_telemetry.py`) is complete only when every recorded agent
+call has exactly one ledger operation and every one of them settled; otherwise totals stay
+unknown rather than zero, with the known part recorded separately. In-process runs reserve nothing in the ledger, so they report their
+usage as not fully accounted.
 
 ## Prompt construction
 

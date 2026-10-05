@@ -2,9 +2,10 @@
 
 Status: frozen wire protocol v1 (`ih-inference-v1`), implemented.
 
-`src/infosec_harness/inference/protocol.py` is the canonical strict wire schema. PydanticAI 2.49 typed messages,
-request parameters, settings, and responses are serialized with a restricted codec; text,
-local tool calls/results, retry prompts, and structured output definitions are supported.
+`src/infosec_harness/inference/wire/protocol.py` is the canonical strict wire schema. PydanticAI
+2.49 typed messages, request parameters, settings, and responses are serialized with a
+restricted codec; text, local tool calls/results, retry prompts, and structured output
+definitions are supported.
 Remote media, uploaded files, native tools, streaming, custom URLs/headers, extra-body,
 and unknown settings/parts are rejected before admission. The three existing Bedrock cache
 settings are preserved as known inert fields on the OpenAI path with strict value validation;
@@ -61,7 +62,10 @@ different payload/binding/contract is conflict with zero send. Result retries re
 saved response. Failure after dispatch intent, including response parsing or lost commit,
 retains possible spend and fails explicitly. Replacement attempts are deferred: operator
 recovery returns an explicit unsupported disposition, never a fresh automatic dispatch.
-Cancellation revokes admission and the native lease without claiming upstream cancellation.
+`/v1/infer` for a request whose row already failed before dispatch returns `expired`; it is
+never re-admitted. A ledger-channel `Authorization` header that is not a well-formed `Bearer`
+token is a 401. Cancellation revokes admission and the native lease without claiming upstream
+cancellation.
 Controller restart reconciles only resources bearing its deployment/run/contract ownership;
 foreign resources are never adopted or removed. Tombstones persist past lease cleanup.
 
@@ -75,16 +79,18 @@ Expired worker bindings retain their inference-dispatch expiry check. Lost ackno
 may instead call authenticated `/v1/results`, a read-only lookup of the identical retained
 request. Its channel signature lifetime is independent of reservation expiry because it
 cannot provision, admit, claim, or send. Missing, pending, failed and unknown records return
-an explicit disposition. A saved result is returned with its already committed provenance.
+an explicit disposition. A saved result is returned with its already committed provenance, and
+the worker accepts a result only when that controller provenance is complete and matches the
+admitted contract (contract and policy digests, executor and supervisor images, profile).
 The change preserves the distinction between identity authentication and spending authority.
 
 
 Observed native schema required one policy identity refinement: provider-composed network
-map labels include per-lease resource UUIDs. `src/infosec_harness/inference/policy.py` removes only generated
-`_provider_` map labels and their matching redundant `name` field, retaining every rule,
+map labels include per-lease resource UUIDs. `src/infosec_harness/inference/catalog/policy.py`
+removes only generated `_provider_` map labels and their matching redundant `name` field, retaining every rule,
 default, authored label, ordering within rules, and duplicate rule count. Composed entries
-are sorted by canonical bytes. The native adapter separately verifies exact attachment,
-profile export digest, provider resource revision, and lease ownership before comparison.
+are sorted by canonical bytes. The native adapter separately verifies exact attachment by
+native provider ID (duplicate provider names are rejected), profile export digest, provider resource revision, and lease ownership before comparison.
 Extra/broader rules, altered process/filesystem/TLS permissions, or inconsistent generated
 names fail readiness. Credential resource labels do not change the permission identity.
 

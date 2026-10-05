@@ -13,9 +13,11 @@ production rollout is authorized.
 | [RUNBOOK.md](RUNBOOK.md) | Operator files, contract inspection, starting controller and worker, rotation, recovery, conservative closure of unknown holds, qualification runners |
 | [OpenShell deployment](../../deploy/openshell/README.md) | Building the executor image, native acceptance and the real-provider pilot |
 
-Code lives in `src/infosec_harness/inference/`; qualification runners in
-`src/infosec_harness/qualification/broker/`. Phase names (P0 to P8) and every measurement are
-dated records under [`docs/evidence/`](../evidence/README.md): the
+Code lives in `src/infosec_harness/inference/`, one subpackage per role (`wire`, `catalog`,
+`executor`, `worker`, `controller`, `native`; see the
+[repository guide](../development/REPOSITORY_GUIDE.md#where-to-change-things)); qualification
+runners in `src/infosec_harness/qualification/broker/`. Phase names (P0 to P8) and every
+measurement are dated records under [`docs/evidence/`](../evidence/README.md): the
 [implementation plan and records](../evidence/2026-10-01-broker-implementation/README.md),
 [OpenShell feasibility](../evidence/2026-10-01-openshell-feasibility/README.md), the
 [full evaluation](../evidence/2026-10-02-broker-full-eval/README.md) and the latest

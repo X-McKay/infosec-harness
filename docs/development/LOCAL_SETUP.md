@@ -56,8 +56,9 @@ separate PostgreSQL databases. Every image is pinned by digest. The dev profile 
 `HARNESS_LOCAL_REPO_ROOTS` to the eval corpus and the launcher's smoke fixture, so assessments
 can use those local repositories; any other local `repo_url` is refused.
 
-`./dev reload-ui` checks the typed runtime and qualification endpoints through both the API and
-the web proxy, the operational collections (empty is valid) and the served assets. It submits
+`./dev reload-ui` checks the typed runtime status, configuration (every agent present) and
+operational batch, run-page, experiment and metrics reads through both the API and the web proxy
+(empty is valid), and the served assets. Its report counts agents under `agents`. It submits
 nothing, writes nothing and makes no model request, and it waits up to 60 seconds for transient
 startup failures. Restarting the API runs its normal startup, so accepted submissions may resume.
 For explicit release identity checks run `scripts/ui_deployment_smoke.py` with
@@ -90,7 +91,7 @@ submit findings or recover broker requests. The same checks are available to ope
 ./dev validate --expected-source-commit "$(git rev-parse HEAD)"
 ```
 
-The model check makes one request with no retry against the configured live verdict backend.
+The model check makes one request with no retry, as the verdict agent, against the live backend.
 Stub, brokered and unsupported profiles stay `not_checked` without a request. A successful call
 is connectivity, not an agent evaluation. Reports are private, atomically written JSON under
 `.harness/reports/service-validation/` (`--report` selects another path); exit codes are 0
@@ -118,9 +119,9 @@ endpoint serves, checking it, and reasoning-budget options. For Bedrock, run
 the model ids and region in `src/infosec_harness/config/models.yaml` match your account.
 
 Real assessments always run through Temporal. `harness submit --local` and the API's
-`mode: local` run stub models only. Agent evals (`harness eval run`) and the corpus runner
-(`harness eval corpus`, with `--no-sandbox` to skip building and probing) may call a live model
-directly.
+`mode: local` run stub models only. Agent evals (`harness eval run`, whose `--model` names a
+catalogue tier) and the corpus runner (`harness eval corpus`, with `--no-sandbox` to skip
+building and probing) may call a live model directly.
 
 ## Without the launcher
 
@@ -177,9 +178,9 @@ because runsc cannot use Docker's embedded DNS on an internal bridge. Probes and
 shell tool have no network. Kubernetes manifests for an isolated probe namespace are under
 `deploy/k8s/`.
 
-For a manual setup, install `runsc`, register it as a Docker runtime, and check with
-`docker info --format '{{json .Runtimes}}'`; that is discovery only, and an actual execution must
-also pass.
+For a manual setup, install `runsc`, register it as a Docker runtime and make it the daemon's
+default runtime (buildx build steps inherit the default). The worker parses `docker info` JSON and
+requires both; that is discovery only, and an actual execution must also pass.
 
 ## Package dependency compatibility
 

@@ -60,9 +60,9 @@ live models, migrations and troubleshooting.
 - **Sandbox.** Build and probe containers run under gVisor, non-root, read-only root,
   resource-capped, and with no network at probe time. Any runtime other than `runsc` is refused
   unless `HARNESS_ALLOW_INSECURE_RUNTIME=true` is set for local development.
-- **Models.** AWS Bedrock or an operator-configured OpenAI-compatible endpoint, switchable per
-  deployment and per agent. `stub` mode runs the whole pipeline deterministically with no
-  credentials.
+- **Models.** AWS Bedrock or an operator-configured OpenAI-compatible endpoint; one backend,
+  selected per deployment, serves every agent. `stub` mode runs the whole pipeline
+  deterministically with no credentials.
 - **Prompt caching.** A stable-to-volatile prompt layout, pinned model settings per agent and
   repository-grouped warm-then-fan-out scheduling keep the shared prefix cached;
   `tests/agents/test_cache_prefix.py` and `tests/agents/test_exploration_cost.py` check both.
@@ -87,9 +87,11 @@ harness worker | harness api
 harness agents validate | agents schema
 harness eval run <agent> [-m sonnet -m opus] [--repeat N] [--dataset PATH] [--report-dir DIR]
 harness eval corpus [--language all] [--manifest PATH] [--limit N] [--no-sandbox]
-harness eval results | compare | calibrate | inert-gates REPORT
+harness eval results | compare | calibrate
 harness eval baseline save <experiment-id> | baseline list
 ```
+
+`-m`/`--model` names a model-catalogue tier (`opus`, `sonnet`, `haiku`), never a raw model id.
 
 `just demo` runs the pipeline in-process on `examples/findings.sample.json` with stub models;
 its verdicts are deliberately `inconclusive` because the stub is not a judge.
@@ -113,7 +115,7 @@ src/infosec_harness/
   sandbox/              # gVisor Docker runner, isolation policy, bounded subprocesses
   repo/                 # hardened checkout, access checks, component and stack detection
   persistence/          # run store, artifacts, accounting, recipe cache, alembic migrations
-  inference/            # opt-in credential broker: protocol, controller, executor, ledger
+  inference/            # opt-in credential broker: wire, catalog, worker, controller, executor, native
   evals/                # datasets, adapters, gates, reports, baselines, corpus and calibration
   operations/           # read-only readiness and model-connectivity checks
   qualification/broker/ # operator broker qualification runners (not imported by serving code)

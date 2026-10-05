@@ -13,8 +13,8 @@ managed VM, project identity, credentials or allocated ports. Every image in bot
 and the backend `Dockerfile` is pinned by version and digest; the Python, uv and Node versions
 must equal `.mise.toml`, and `tests/development/test_dev_experience.py` checks both. The artifact
 store keeps its `minio` service name but runs RustFS (S3-compatible, same ports and health
-probe), because MinIO images are no longer published. Kubernetes manifests and a Pod renderer
-exist; Kubernetes probe submission is not implemented.
+probe), because MinIO images are no longer published. Kubernetes manifests exist; Kubernetes
+probe submission is not implemented.
 
 The development overlay rotates container logs at 10 MiB with three files per service. Successful
 full startup and `./dev logs [service]` save bounded snapshots under `.harness/logs/`. Operational

@@ -30,7 +30,9 @@ backend schema drift; `npm run check:api` and CI check client drift.
 `population=operational`, overriding any caller value. Route state, query keys and views do
 not carry a population. Query options, polling policy and mutations live in
 `src/api/queries.ts`; runs, batches and evaluations each have one activity helper in
-`src/lib/status.ts`.
+`src/lib/status.ts`, and a list polls only while one of its items is active. Evaluations read
+`/api/experiments` a page at a time and full metrics per experiment. The Qualification view
+reads only `/api/runtime-status`.
 
 ## Tests
 
@@ -47,8 +49,8 @@ parameter properties), which type stripping does not support.
 
 Finding text, probe output and model output are untrusted: render them as React text, never
 with `dangerouslySetInnerHTML` or as link targets. Recorded or configured values are not
-execution evidence; the evidence-basis notice warns unless every recorded execution origin is
-controller-authored.
+execution evidence; the evidence-basis notice (`src/lib/provenance.ts`) is derived from each
+execution's persisted `origins` and warns unless every recorded origin is `controller`.
 
 The `Dockerfile` pins Node and nginx by version and index digest. `nginx.conf` serves the
 bundle with gzip, a same-origin Content-Security-Policy, `X-Content-Type-Options`,
