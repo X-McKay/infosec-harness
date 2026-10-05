@@ -82,8 +82,17 @@ def _docker_environment() -> dict[str, str]:
 
 
 async def _run(argv: list[str], *, stdin: bytes | None = None, timeout: float) -> ProcResult:
-    result = await run_bounded(argv, env=_docker_environment(), timeout=timeout, stdin=stdin,
-                               capture_limit=MAX_CAPTURE)
+    from infosec_harness.sandbox.policy import SandboxUnavailable
+
+    try:
+        result = await run_bounded(argv, env=_docker_environment(), timeout=timeout, stdin=stdin,
+                                   capture_limit=MAX_CAPTURE)
+    except FileNotFoundError as e:
+        # A host with no Docker client is a sandbox that is unavailable, not a programming
+        # error: callers already fail closed on SandboxUnavailable, and nothing executed.
+        raise SandboxUnavailable(
+            f"cannot run {argv[0]!r}: the Docker client is not installed on this host ({e})"
+        ) from e
     return ProcResult(
         exit_code=result.returncode,
         stdout=result.stdout.decode(errors="replace"),

@@ -96,6 +96,7 @@ async def run_in_sandbox(ctx: RunContext[AgentDeps], command: str) -> str:
     Returns exit code, stdout and stderr tails.
     """
     from infosec_harness.sandbox import docker
+    from infosec_harness.sandbox.policy import SandboxUnavailable
 
     if not ctx.deps.sandbox_image:
         raise ModelRetry("No sandbox image is configured for this run.")
@@ -106,8 +107,13 @@ async def run_in_sandbox(ctx: RunContext[AgentDeps], command: str) -> str:
     # Diagnostic commands get no external egress. A repository/model-authored command cannot
     # widen the build allowlist or bypass its proxy; dependency installation belongs to the
     # controlled build phase.
-    res = await docker.run_shell(ctx.deps.sandbox_image, command, timeout=180,
-                                 idempotency_key=key)
+    try:
+        res = await docker.run_shell(ctx.deps.sandbox_image, command, timeout=180,
+                                     idempotency_key=key)
+    except SandboxUnavailable as e:
+        # Fail closed and say so: no command ran, so the model gets no fabricated fact and must
+        # plan without one. The build phase re-checks the runtime and fails closed on its own.
+        return f"[sandbox unavailable: {e}]\nNo command was executed."
     return (
         f"[exit code: {res.exit_code}{' (timed out)' if res.timed_out else ''}]\n"
         f"[stdout]\n{docker.tail(res.stdout, 3000)}\n[stderr]\n{docker.tail(res.stderr, 3000)}"
