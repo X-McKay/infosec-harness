@@ -72,10 +72,12 @@ class Native:
         assert len(request.name) <= 19 and all(len(v) <= 63 for v in request.labels.values())
         self.creates.append(request)
         sandbox = pb.Sandbox(metadata=data.ObjectMeta(id=str(uuid.uuid4()), name=request.name,
-            labels=request.labels), spec=request.spec,
+            labels=request.labels, resource_version=1), spec=request.spec,
             status=pb.SandboxStatus(phase=pb.SANDBOX_PHASE_READY, configuration_activated=True,
+                main_process_instance_id="process-1",
                 configuration_admission=pb.SandboxConfigurationAdmission(
-                    state=pb.CONFIGURATION_ADMISSION_STATE_ACCEPTED)))
+                    state=pb.CONFIGURATION_ADMISSION_STATE_ACCEPTED, instance_id="instance-1",
+                    config_revision=1, policy_hash="policy-1")))
         self.resources[request.name] = sandbox
         return pb.SandboxResponse(sandbox=sandbox)
 
@@ -150,7 +152,8 @@ def adapter(tmp_path, monkeypatch):
                      if value.metadata.id.replace("-", "") == args[1])
         values = [{"Config": {"Labels": {"openshell.ai/sandbox-id": ident,
                     "openshell.ai/isolation-role": role}, "User": "65532:65532"},
-                   "State": {"Running": True}, "Image": image,
+                   "Id": ident.replace("-", "") if role == "sandbox" else "bb",
+                   "State": {"Running": True, "StartedAt": "2026-10-05T00:00:00Z"}, "Image": image,
                    "HostConfig": {"Runtime": "runc", "NetworkMode": "none", "Privileged": False,
                     "CapDrop": ["ALL"], "SecurityOpt": ["no-new-privileges:true"],
                     "Memory": 536870912, "NanoCpus": 1000000000,
@@ -178,16 +181,16 @@ async def test_native_create_and_exec_receipt_replay(adapter):
 
 
 @pytest.mark.asyncio
-async def test_repeated_model_admission_observes_anew_without_replaying_commands(adapter):
+async def test_repeated_model_admission_reuses_qualification_without_replaying_commands(adapter):
     boundary, native = adapter
     sandbox = await boundary.create("run", profile="model")
     first = await boundary.execute(sandbox, "model request", operation_id="model:2", timeout=3)
     again = await boundary.create("run", profile="model")
     second = await boundary.execute(again, "next model request", operation_id="model:3", timeout=3)
     assert sandbox == again and len(native.creates) == 1
-    assert len(native.observations) == 2
-    assert native.observations[0].request_id != native.observations[1].request_id
-    assert native.observations[0].command == native.observations[1].command
+    assert len(native.observations) == 1
+    qualification = json.loads(next((boundary.config.state_dir / "qualification").glob("*.json")).read_bytes())
+    assert qualification["request_id"] == native.observations[0].request_id
     command_ids = [request.request_id for request in native.execs]
     assert await boundary.execute(again, "model request", operation_id="model:2", timeout=3) == first
     assert await boundary.execute(again, "next model request", operation_id="model:3", timeout=3) == second
@@ -744,3 +747,71 @@ async def test_ordinary_nonzero_exit_is_a_completed_replayable_receipt(adapter):
     assert native.deleted == []
     assert await boundary.execute(sandbox, "exit 2", operation_id="activity", timeout=3) == result
     assert len(native.execs) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["missing", "revision", "process", "restart", "container"])
+async def test_qualification_reuse_requires_unchanged_lifecycle(adapter, monkeypatch, change):
+    boundary, native = adapter
+    sandbox = await boundary.create("run")
+    if change == "missing":
+        boundary._record("qualification", sandbox.id).unlink()
+    elif change == "revision":
+        native.resources[sandbox.name].metadata.resource_version += 1
+    elif change == "process":
+        native.resources[sandbox.name].status.main_process_instance_id = "replacement"
+    else:
+        original = boundary._inspection_call
+
+        async def altered(args):
+            value = await original(args)
+            if args[0] == "inspect":
+                containers = json.loads(value)
+                if change == "restart":
+                    containers[0]["State"]["StartedAt"] = "2026-10-05T01:00:00Z"
+                else:
+                    containers[1]["Id"] = "cc"
+                return json.dumps(containers)
+            return value
+
+        monkeypatch.setattr(boundary, "_inspection_call", altered)
+    with pytest.raises(OpenShellError, match="qualification|ownership"):
+        await boundary.create("run")
+    assert len(native.observations) == 1
+    assert native.deleted == [sandbox.name]
+
+
+@pytest.mark.asyncio
+async def test_qualification_reuse_survives_adapter_restart(adapter, monkeypatch):
+    boundary, native = adapter
+    sandbox = await boundary.create("run")
+    restarted = OpenShell(boundary.config)
+    monkeypatch.setattr(restarted, "_inspection_call", boundary._inspection_call)
+    assert await restarted.create("run") == sandbox
+    assert len(native.observations) == 1
+
+
+@pytest.mark.asyncio
+async def test_reused_qualification_still_rejects_new_provider_attachment(adapter, monkeypatch):
+    boundary, native = adapter
+    sandbox = await boundary.create("run")
+    monkeypatch.setattr(native, "ListSandboxProviders", lambda request, timeout:
+        pb.ListSandboxProvidersResponse(providers=[data.Provider(
+            metadata=data.ObjectMeta(id="provider-id", name="unexpected", workspace="default",
+                                     resource_version=1), type="openai")]))
+    with pytest.raises(OpenShellError, match="provider attachment"):
+        await boundary.create("run")
+    assert len(native.observations) == 1 and native.deleted == [sandbox.name]
+
+
+@pytest.mark.asyncio
+async def test_incomplete_qualification_is_never_audited_again(adapter):
+    boundary, native = adapter
+    sandbox = await boundary.create("run")
+    path = boundary._record("qualification", sandbox.id)
+    saved = json.loads(path.read_bytes())
+    saved.pop("workload")
+    boundary._save(path, saved)
+    with pytest.raises(OpenShellError, match="incomplete"):
+        await boundary.create("run")
+    assert len(native.observations) == 1 and native.deleted == [sandbox.name]

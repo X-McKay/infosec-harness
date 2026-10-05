@@ -45,6 +45,48 @@ class ExecutionUnknown(OpenShellError):
     """Dispatch may have happened. Never automatically resend this operation."""
 
 
+def native_operation_accounting(state_dir: Path, run_id: str) -> dict:
+    """Project trusted durable receipts without contacting native services.
+
+    An intent can precede dispatch. Unknown counts therefore include possible,
+    not proven, native operations. These records do not expose native ledger
+    occupancy, retention, read RPCs or cleanup operations.
+    """
+    if not state_dir.is_dir():
+        raise OpenShellError("native receipt directory is unavailable")
+    categories = {}
+    for folder, category in (("sandboxes", "create"), ("qualification", "admission_exec"),
+                             ("operations", "exec"), ("transfers", "workspace_capture")):
+        completed = unknown = 0
+        for path in (state_dir / folder).glob("*.json"):
+            saved = json.loads(path.read_bytes())
+            sandbox = saved.get("sandbox", saved.get("source", saved.get("binding", {}).get("sandbox", {})))
+            if sandbox.get("run_id") != run_id:
+                continue
+            acknowledged = {
+                "sandboxes": bool(sandbox.get("id")),
+                "qualification": "workload" in saved,
+                "operations": "result" in saved,
+                "transfers": "sha256" in saved,
+            }[folder]
+            completed += acknowledged
+            unknown += not acknowledged
+        categories[category] = {"completed": completed, "unknown": unknown}
+    return {
+        "status": "observed" if any(sum(row.values()) for row in categories.values()) else "not_checked",
+        "source": "trusted local durable native-boundary receipts",
+        "categories": categories,
+        "total": {key: sum(row[key] for row in categories.values())
+                  for key in ("completed", "unknown")},
+        "native_ledger_occupancy": "not_checked",
+        "limitations": ["Unknown intents may not have reached native dispatch.",
+                        "Absent local receipts do not prove zero operations or visibility of a remote worker.",
+                        "Read RPCs, cleanup, native ledger retention and occupancy are not counted.",
+                        "Transfers count capture execs; restore/upload/download execs appear under exec.",
+                        "Legacy qualification receipts can overwrite repeated audits; those counts are lower bounds."],
+    }
+
+
 class Profile(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     image: str = Field(pattern=r"^(?:[^\s]+@)?sha256:[0-9a-f]{64}$")
@@ -315,13 +357,21 @@ class OpenShell:
             raise OpenShellError("invalid run id")
         if self._fenced(run_id):
             raise OpenShellError("investigation has been closed")
-        spec = self._spec(profile)
         key = _digest([self.config.workspace, run_id, profile, slot])
         name = "ih-" + hashlib.sha256(key.encode()).hexdigest()[:16]
         path = self._record("sandboxes", key)
         labels = {"ih.owner": _OWNER, "ih.run": hashlib.sha256(run_id.encode()).hexdigest()[:32],
                   "ih.profile": profile}
         async with self._locks.setdefault(key, asyncio.Lock()):
+            initial = not path.exists()
+            try:
+                spec = self._spec(profile)
+            except BaseException:
+                if not initial:
+                    saved = json.loads(path.read_bytes())
+                    if not saved.get("closed"):
+                        await asyncio.shield(self.close(Sandbox(**saved["sandbox"])))
+                raise
             if path.exists():
                 saved = json.loads(path.read_bytes())
                 if saved.get("closed"):
@@ -366,7 +416,7 @@ class OpenShell:
                     raise OpenShellError("investigation closed during native create")
                 await asyncio.to_thread(self._client.wait_ready, name, workspace=self.config.workspace,
                                         timeout_seconds=self.config.ready_timeout_seconds)
-                await self._verify(sandbox, spec, labels)
+                await self._verify(sandbox, spec, labels, initial=initial)
                 if self._fenced(run_id):
                     raise OpenShellError("investigation closed during qualification")
             except BaseException:
@@ -374,10 +424,14 @@ class OpenShell:
                 raise
             return sandbox
 
-    async def _verify(self, sandbox: Sandbox, spec: Any, labels: dict[str, str]) -> None:
+    async def _verify(self, sandbox: Sandbox, spec: Any, labels: dict[str, str],
+                      *, initial: bool = False) -> None:
         observed = (await self._get(sandbox.name)).sandbox
         admission = observed.status.configuration_admission
-        if (observed.metadata.id != sandbox.id or dict(observed.metadata.labels) != labels
+        if (observed.metadata.id != sandbox.id or observed.metadata.resource_version <= 0
+                or not admission.instance_id or admission.config_revision <= 0
+                or not admission.policy_hash or not observed.status.main_process_instance_id
+                or dict(observed.metadata.labels) != labels
                 or observed.status.phase != self._pb.SANDBOX_PHASE_READY
                 or admission.state != self._pb.CONFIGURATION_ADMISSION_STATE_ACCEPTED
                 or not observed.status.configuration_activated
@@ -399,12 +453,34 @@ class OpenShell:
         if expected_provider:
             await self._wait_provider_ready(sandbox, providers[0])
         outer = await self._inspect(sandbox)
-        # Each admission is a new observation, not a replay of the prior probe.
-        # Native terminal exec receipts do not retain their output streams.
-        # An uncertain observation closes this sandbox through create's guard;
-        # model/repository operations retain their stable IDs and receipt fence.
+        binding = {
+            "sandbox": asdict(sandbox),
+            "config": self.config.model_dump(mode="json"),
+            "tls": {key: hashlib.sha256(value.read_bytes()).hexdigest()
+                    for key, value in (("ca", self.config.tls_ca), ("cert", self.config.tls_cert),
+                                       ("key", self.config.tls_key)) if value is not None},
+            "metadata": MessageToDict(observed.metadata, preserving_proto_field_name=True),
+            "spec": MessageToDict(observed.spec, preserving_proto_field_name=True),
+            "admission": MessageToDict(admission, preserving_proto_field_name=True),
+            "process_instance": observed.status.main_process_instance_id,
+            "policy_version": observed.status.current_policy_version,
+            "providers": [MessageToDict(p, preserving_proto_field_name=True) for p in providers],
+            "outer": outer,
+        }
+        path = self._record("qualification", sandbox.id)
+        if not initial:
+            if not path.exists():
+                raise OpenShellError("sandbox qualification proof is missing")
+            saved = json.loads(path.read_bytes())
+            if saved.get("binding") != binding or not saved.get("workload"):
+                raise OpenShellError("sandbox qualification binding changed or is incomplete")
+            return
+        # Write intent before dispatch: a restart cannot blindly repeat an audit
+        # whose native receipt does not retain its output stream.
+        request_id = str(uuid.uuid4())
+        self._save(path, {"binding": binding, "request_id": request_id}, exclusive=True)
         result = await asyncio.to_thread(self._stream, sandbox, [_PYTHON, "-I", "-c", _PROBE], 10, None,
-                                        str(uuid.uuid4()),
+                                        request_id,
                                         self.config.max_output_bytes)
         try:
             proof = json.loads(result[0].stdout)
@@ -428,8 +504,9 @@ class OpenShell:
             valid = False
         if result[0].exit_code != 0 or result[0].output_truncated or not valid:
             raise OpenShellError("actual workload confinement was not established")
-        self._save(self._record("qualification", sandbox.id),
-            {"sandbox": asdict(sandbox), "outer": outer, "workload": proof,
+        self._save(path,
+            {"binding": binding, "request_id": request_id,
+             "sandbox": asdict(sandbox), "outer": outer, "workload": proof,
              "landlock_compatibility": observed.spec.policy.landlock.compatibility})
 
     async def _wait_provider_ready(self, sandbox: Sandbox, provider: Any) -> None:
@@ -543,7 +620,7 @@ class OpenShell:
         return data.decode()
 
     async def _inspect(self, sandbox: Sandbox, *, deleted: bool = False) -> dict[str, Any] | None:
-        ids = (await self._inspection_call(["ps", "-a", "-q", "--filter",
+        ids = (await self._inspection_call(["ps", "-a", "-q", "--no-trunc", "--filter",
                f"label=openshell.ai/sandbox-id={sandbox.id}"])).split()
         if deleted:
             if ids:
@@ -554,7 +631,8 @@ class OpenShell:
         try:
             containers = json.loads(await self._inspection_call(["inspect", *ids]))
             by_role = {v["Config"]["Labels"]["openshell.ai/isolation-role"]: v for v in containers}
-            if set(by_role) != {"sandbox", "supervisor"} or len(containers) != 2:
+            if (set(by_role) != {"sandbox", "supervisor"} or len(containers) != 2
+                    or {v["Id"] for v in containers} != set(ids)):
                 raise OpenShellError("ambiguous native workload ownership")
             workload = by_role["sandbox"]
             host = workload["HostConfig"]
@@ -564,7 +642,9 @@ class OpenShell:
             observed_cpu = (host.get("NanoCpus", 0) / 1e9 or
                             host.get("CpuQuota", 0) / (host.get("CpuPeriod", 0) or 100000))
             valid = (all(v["Config"]["Labels"].get("openshell.ai/sandbox-id") == sandbox.id
-                         and v["State"]["Running"] for v in containers)
+                         and v["State"]["Running"]
+                         and v["Id"] and v["State"]["StartedAt"]
+                         and not v["State"]["StartedAt"].startswith("0001-") for v in containers)
                 and workload["Image"] == config.image.split("@")[-1]
                 and by_role["supervisor"]["Image"] == self.config.supervisor_image
                 and host["Runtime"] == "runc" and host["NetworkMode"] == "none"
@@ -579,7 +659,12 @@ class OpenShell:
                         for m in workload.get("Mounts", [])))
             if not valid:
                 raise OpenShellError("observed outer workload fence failed")
-            return {"rootfs_readonly": bool(host.get("ReadonlyRootfs")),
+            return {"containers": {role: {"id": v["Id"], "started_at": v["State"]["StartedAt"]}
+                                   for role, v in by_role.items()},
+                    "fence_digest": _digest({role: {key: v[key]
+                        for key in ("Id", "Config", "HostConfig", "Mounts", "Image")}
+                        for role, v in by_role.items()}),
+                    "rootfs_readonly": bool(host.get("ReadonlyRootfs")),
                     "pids_limit": host["PidsLimit"], "image": workload["Image"],
                     "network_mode": host["NetworkMode"], "runtime": host["Runtime"]}
         except (ValueError, KeyError, TypeError, AttributeError, ZeroDivisionError):

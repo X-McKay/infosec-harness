@@ -60,6 +60,50 @@ The quota-blocked diagnostic completed four model responses before admission was
 Both owned sandbox records were closed and exact owned-ID reconciliation passed.
 Completed native history replay passed (169 events, zero model/native dispatches).
 
+## Lifecycle reuse and operation accounting
+
+The harness now performs the confinement audit once per sandbox lifecycle. A durable
+proof binds the sandbox's native ID, metadata/spec/configuration revisions, process
+identity, provider attachment, TLS configuration and actual container identities/start
+times. Every reuse still checks current native readiness, provider readiness and the
+outer fence. Missing, incomplete or changed proof closes owned work; it never repeats
+an uncertain audit. The audit request ID is persisted before dispatch. Worker/adapter
+restart uses this same proof. Per-investigation workspace/model sandboxes and per-probe
+sandboxes remain separate. No workflow scheduling contract changed; v11 remains current.
+
+Evaluation reports now count local durable create, admission, execution and capture
+receipts separately from model tokens and tool calls. Incomplete intents remain unknown.
+Native ledger occupancy, remote-worker visibility and cleanup are not established by
+these counts. Legacy proof files overwrote repeated audits, so historical counts are
+lower bounds. These observations and cohort estimates do not authorize dispatch or
+establish a native capacity budget.
+
+Read-only projection of the five completed cases and one failed case in the preserved
+`live-eval-v11-201cc101da4a/cohort.json` found 257 completed receipt operations, with
+completed-case counts ranging from 28 to 49. Retaining those observed operations and
+extrapolating to the 30 unobserved cases gives **1,097–1,727** operations. This is a
+historical workload estimate, not qualification of the new reuse behavior; unsampled
+cases can exceed that range. A full cohort cannot be assumed to fit a 1,000-claim window.
+
+A fresh read-only gateway observation at **2026-10-05 21:35:36 UTC** still found
+1,000 claims, 995 completed, five unresolved and zero expired successes. No native or
+model dispatch was attempted. Earliest expiry remains as recorded above.
+
+Official release inspection found latest stable still
+[v0.1.2](https://github.com/NVIDIA/OpenShell/releases/tag/v0.1.2). The admission source
+on [inspected main](https://github.com/NVIDIA/OpenShell/blob/be7af99ff2eacba807d82b69adb0c3d4eaa32158/crates/openshell-server/src/grpc/mutation_replay.rs)
+is byte-identical to the pinned implementation; there is no supported capacity setting
+or admission reconciliation API. Resolving sustained capacity requires an upstream
+bounded configurable quota and occupancy API. Reclaiming unresolved entries requires
+native execution evidence while preserving permanent non-reexecution fences for unknown
+outcomes. Upgrading to an unqualified development build does not resolve this limit.
+
+Validation: **279 deterministic tests passed**, one network test deselected, with required
+Temporal CLI 1.9.1. Lint, compilation and generated API/instruction checks passed.
+Historical native replay again passed: 169 events, zero native/model dispatches.
+Native lifecycle reuse and current live quality remain **not_checked** because admission
+capacity is unavailable. Existing failed Maven and full-cohort gates remain unchanged.
+
 | Report | SHA-256 |
 | --- | --- |
 | `diagnostic.json` | `66fc2702a8fb7cdd44ae56b54b3c260d6f8281be921a9513b07f057459d18aef` |

@@ -25,12 +25,12 @@ and [marker feedback](PROBE_MARKER_FEEDBACK.md). Original failed reports are pre
 
 | Gate | Status | Evidence / limit |
 | --- | --- | --- |
-| Deterministic regression suite | passed | 269 tests with `HARNESS_TEST_REQUIRE_TEMPORAL=1` |
+| Deterministic regression suite | passed | 279 tests with `HARNESS_TEST_REQUIRE_TEMPORAL=1`, Temporal CLI 1.9.1 |
 | Real Temporal replay, restart, cancellation and identity | passed | Includes two-worker model/tool/skill rejection, cleanup ownership and repeated cancellation |
 | Lint, compilation, generated contracts and instructions | passed | Local checks and backend CI |
 | Lightweight UI | passed | Five tests, types/build, browser inspection and managed control-plane readiness; web CI |
 | Native workspace/probe confinement and lifecycle | not_checked | Actual observations passed on `c34f1cc`; repeat for the newest correction is blocked by native admission capacity |
-| Repeated native model admission | passed | Same provider-attached sandbox, including a new adapter instance, without replaying commands |
+| Repeated native model admission / lifecycle proof reuse | not_checked | Earlier repeated-admission observations passed; the new proof reuse needs native repetition after capacity reopens |
 | Minimal executor / multi-turn usage decoding | passed | New native image imports and usage-extension preservation; no inference needed for decode proof |
 | Real self-hosted model dispatch | passed | Typed native smoke and completed production model responses; this is connectivity evidence only |
 | Full 36-case live cohort | failed | Latest candidate: five correct completions; sixth workflow failed; 30 cases unstarted |

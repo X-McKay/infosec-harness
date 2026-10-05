@@ -37,6 +37,7 @@ async def qualify_runtime(output: Path) -> dict:
                 "boundary": "passed",
                 "roundtrip": "not_checked",
                 "saved_operation": "not_checked",
+                "sandbox_reuse": "not_checked",
                 "cleanup": "not_checked",
             }
             with tempfile.TemporaryDirectory() as directory:
@@ -80,6 +81,12 @@ async def qualify_runtime(output: Path) -> dict:
                 if again != result:
                     raise RuntimeError("Saved operation changed")
                 row["saved_operation"] = "passed"
+            # A fresh adapter must consume the same durable confinement proof.
+            # create() rechecks current native identity and fences on every reuse.
+            recovered = OpenShell(OpenShellConfig.load(settings.openshell_config))
+            if await recovered.create(run_id, profile=profile) != sandbox:
+                raise RuntimeError("Sandbox reuse changed native identity")
+            row["sandbox_reuse"] = "passed"
             await runtime.close(sandbox)
             await runtime.close(sandbox)
             row["cleanup"] = "passed"

@@ -286,3 +286,42 @@ async def test_result_transport_outage_is_bounded_and_cancelled_once(
     client.start_workflow.assert_awaited_once()
     handle.result.assert_awaited_once()
     handle.cancel.assert_awaited_once()
+
+
+def test_native_receipt_counts_include_unknown_and_do_not_double_count_replay(tmp_path):
+    from infosec_harness.openshell import native_operation_accounting
+
+    sandbox = {"run_id": "run", "id": "native-id"}
+    records = {
+        "sandboxes": [{"sandbox": sandbox}, {"sandbox": {"run_id": "run", "id": ""}}],
+        "qualification": [{"binding": {"sandbox": sandbox}, "workload": {}},
+                          {"binding": {"sandbox": sandbox}}],
+        "operations": [{"sandbox": sandbox, "result": {}}, {"sandbox": sandbox},
+                       {"sandbox": {"run_id": "other"}, "result": {}}],
+        "transfers": [{"source": sandbox, "sha256": "digest"}, {"source": sandbox}],
+    }
+    for folder, values in records.items():
+        directory = tmp_path / folder
+        directory.mkdir()
+        for index, value in enumerate(values):
+            (directory / f"{index}.json").write_text(json.dumps(value))
+    first = native_operation_accounting(tmp_path, "run")
+    assert first["total"] == {"completed": 4, "unknown": 4}
+    assert first["categories"]["exec"] == {"completed": 1, "unknown": 1}
+    assert first["native_ledger_occupancy"] == "not_checked"
+    assert native_operation_accounting(tmp_path, "run") == first
+
+
+def test_cohort_estimate_preserves_failed_observations_and_uses_completed_samples():
+    def row(status, completed, unknown):
+        return {"status": status, "native_operations": {
+            "status": "observed", "total": {"completed": completed, "unknown": unknown}}}
+
+    rows = [row("completed", 4, 0), row("completed", 6, 1),
+            row("failed", 30, 2), {"status": "unstarted"}]
+    estimate = evaluation.cohort_operation_estimate(rows)
+    assert estimate["observed_totals"] == {"completed": 40, "unknown": 3}
+    assert estimate["observed_attempt_range_per_case"] == [4, 7]
+    assert estimate["estimated_cohort_attempt_range"] == [47, 50]
+    assert estimate["native_capacity"] == "not_checked"
+    assert evaluation.cohort_operation_estimate([row("failed", 2, 1)])["status"] == "not_checked"
