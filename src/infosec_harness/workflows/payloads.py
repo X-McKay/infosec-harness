@@ -123,3 +123,10 @@ class SettleArgs(_Payload):
     operation_id: str
     observed: dict[str, float] | None
     record: dict[str, Any]
+
+
+class CloseBrokerRunArgs(_Payload):
+    """Close one workflow run's broker leases; issuance takes ``InvocationRequest`` itself."""
+
+    run_id: str = Field(min_length=1)
+    root_id: str = Field(min_length=1)

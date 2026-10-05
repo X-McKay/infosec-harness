@@ -6,7 +6,7 @@ import re
 from datetime import UTC, datetime
 from typing import Literal, TypedDict
 
-from infosec_harness.agents.registry import AGENT_BINDINGS
+from infosec_harness.agents.registry import BINDINGS
 from infosec_harness.api.contracts import ModelConnectivity
 from infosec_harness.api.evidence_io import (
     STRICT,
@@ -46,8 +46,8 @@ def model_runtime() -> tuple[list[str], ModelConnectivity]:
     observation = ModelConnectivity()
     names = []
     try:
-        for name in AGENT_BINDINGS:
-            label = models.resolved_model_name(name, load_spec(name).model)
+        for name in BINDINGS:
+            label = models.resolve_config(name, load_spec(name).model).resolved_model
             if not re.fullmatch(r"[a-zA-Z0-9._:/-]{1,200}", label):
                 raise ValueError("invalid model label")
             names.append(label)

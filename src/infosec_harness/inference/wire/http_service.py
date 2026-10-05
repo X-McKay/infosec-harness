@@ -14,9 +14,13 @@ from urllib.parse import urlsplit
 import httpcore
 import httpx
 
-from .auth import CREDENTIAL_HEADERS
-from .diagnostics import record_failure, report_remote_diagnostic, sanitize_diagnostic
-from .protocol import (
+from infosec_harness.inference.wire.auth import CREDENTIAL_HEADERS
+from infosec_harness.inference.wire.diagnostics import (
+    record_failure,
+    report_remote_diagnostic,
+    sanitize_diagnostic,
+)
+from infosec_harness.inference.wire.protocol import (
     ERROR_CODES,
     ERROR_STATUS,
     MAX_BODY_BYTES,
@@ -25,7 +29,7 @@ from .protocol import (
     canonical_bytes,
     fixed_https_url,
 )
-from .timing import SERVER_TIMEOUT_S
+from infosec_harness.inference.wire.timing import SERVER_TIMEOUT_S
 
 
 def broker_error_body(error: BrokerError) -> dict:

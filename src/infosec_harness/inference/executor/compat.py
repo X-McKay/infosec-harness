@@ -9,9 +9,8 @@ from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from infosec_harness.agents.intake_schema import intake_openai_profile
-
-from .codec import check_schemas
-from .protocol import BrokerError, validate_thinking_token_budget
+from infosec_harness.inference.wire.codec import check_schemas
+from infosec_harness.inference.wire.protocol import BrokerError, validate_thinking_token_budget
 
 
 def merge_leading_system_messages(messages: list[Any]) -> list[Any]:

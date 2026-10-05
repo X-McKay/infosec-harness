@@ -175,7 +175,7 @@ class MockProvider:
 
 
 def configuration() -> dict:
-    from infosec_harness.inference.protocol import BrokerError, ExecutorContract
+    from infosec_harness.inference.wire.protocol import BrokerError, ExecutorContract
 
     value = json.loads(Path(os.environ["IH_NATIVE_FIXTURE_CONFIG"]).read_text())
     contract = ExecutorContract.model_validate(value["contract"])
@@ -193,7 +193,7 @@ def evidence_directory() -> Path:
 
 
 def reference(value: dict | None = None):
-    from infosec_harness.inference.protocol import ExecutorContract, InvocationRequest
+    from infosec_harness.inference.wire.protocol import ExecutorContract, InvocationRequest
 
     value = configuration() if value is None else value
     scope = value["scope"]
@@ -207,11 +207,10 @@ def reference(value: dict | None = None):
 
 
 def controller_factory():
-    from infosec_harness.inference import admission
-    from infosec_harness.inference.controller import Controller
-    from infosec_harness.inference.http_service import JsonChannel
-    from infosec_harness.inference.openshell import NativeDeploymentConfig
-    from infosec_harness.inference.protocol import (
+    from infosec_harness.inference.controller.service import Controller, admission
+    from infosec_harness.inference.native.openshell import NativeDeploymentConfig
+    from infosec_harness.inference.wire.http_service import JsonChannel
+    from infosec_harness.inference.wire.protocol import (
         INFER_PATH,
         BrokerError,
         ReservationBinding,
@@ -284,7 +283,7 @@ def controller_factory():
 
 
 async def post(channel, origin, path, body):
-    from infosec_harness.inference.auth import AUTH_HEADER, sign_request
+    from infosec_harness.inference.wire.auth import AUTH_HEADER, sign_request
 
     return await channel.post(origin + path, body,
         {AUTH_HEADER: sign_request(WORKER_KEY, "POST", path, body, int(time.time()) + 30)})
@@ -296,13 +295,13 @@ async def worker() -> None:
 
     from infosec_harness.agents.render import render_prompt
     from infosec_harness.domain.models import StackFingerprint
-    from infosec_harness.inference.http_service import JsonChannel
-    from infosec_harness.inference.protocol import (
+    from infosec_harness.inference.wire.http_service import JsonChannel
+    from infosec_harness.inference.wire.protocol import (
         INVOCATIONS_PATH,
         ReservationBinding,
         canonical_bytes,
     )
-    from infosec_harness.inference.transport import BrokerModel
+    from infosec_harness.inference.worker.transport import BrokerModel
 
     value = configuration()
     channel = JsonChannel(ca_file=value["controller_ca"])
@@ -328,9 +327,9 @@ async def worker() -> None:
 async def prove() -> None:
     from sqlalchemy import select
 
-    from infosec_harness.inference.auth import AUTH_HEADER
-    from infosec_harness.inference.http_service import JsonChannel
-    from infosec_harness.inference.protocol import (
+    from infosec_harness.inference.wire.auth import AUTH_HEADER
+    from infosec_harness.inference.wire.http_service import JsonChannel
+    from infosec_harness.inference.wire.protocol import (
         INFER_PATH,
         LEDGER_CLAIM_PATH,
         RESULTS_PATH,

@@ -651,7 +651,7 @@ def native_configs(monkeypatch, configuration):
     import infosec_harness.qualification.broker.workflow  # noqa: F401
     from infosec_harness.agents import durable
     from infosec_harness.agents.models import BackendConfig
-    from infosec_harness.inference.profiles import BrokerConfig
+    from infosec_harness.inference.catalog.profiles import BrokerConfig
 
     contract = BrokerConfig.model_validate(broker_catalog()).resolve_contract(
         "context", "gateway", MODEL, {"max_tokens": 1024},

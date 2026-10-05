@@ -100,7 +100,7 @@ cases:
       The install command invokes the right plugin at the right version and still warms
       nothing, because nothing ran.
     expect_violations:
-      - "by *running* a test"
+      - "warms the declared Surefire provider"
     environment_spec:
       base_image: maven:3.9-eclipse-temurin-21
       install_commands:

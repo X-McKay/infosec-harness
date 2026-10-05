@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 
 from infosec_harness.sandbox.markers import (
-    CANARY_PREFIX,
+    FILE_ORACLE_PREFIX,
     ORACLE_PREFIX,
     PRECONDITION_PREFIX,
     SINK_RETURNED_PREFIX,
@@ -17,7 +17,7 @@ from infosec_harness.sandbox.markers import (
 
 
 def _oracle_fired(output: str, nonce: str) -> bool:
-    return f"{ORACLE_PREFIX}{nonce}" in output or f"{CANARY_PREFIX}{nonce}" in output
+    return f"{ORACLE_PREFIX}{nonce}" in output or f"{FILE_ORACLE_PREFIX}{nonce}" in output
 
 
 def oracle_signals(output: str, nonce: str) -> tuple[bool, bool]:

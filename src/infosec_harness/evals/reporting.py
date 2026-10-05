@@ -206,7 +206,7 @@ def _print_pairwise(b, c) -> None:
     print(f"  coverage    {b.metrics.get('n', 0)}/{b.metrics.get('n_planned', '?')} -> "
           f"{c.metrics.get('n', 0)}/{c.metrics.get('n_planned', '?')} case runs "
           f"({b.metrics.get('status') or 'unknown'} -> {c.metrics.get('status') or 'unknown'})")
-    for key in ("task_success_rate", "cost_usd_per_case", "avg_tokens", "cache_hit_ratio"):
+    for key in ("task_success_rate", "average_cost_usd", "avg_tokens", "cache_hit_ratio"):
         print(f"  {key:18} {delta(key)}")
     print(f"  baseline confusion: {b.metrics.get('confusion')}")
     print(f"  candidate confusion: {c.metrics.get('confusion')}")

@@ -19,11 +19,11 @@ from pydantic import BaseModel, Field, model_validator
 from pydantic_ai.models import Model
 
 from infosec_harness.domain.canonical import canonical_bytes, sha256_hex
-from infosec_harness.inference.compat import (
+from infosec_harness.inference.executor.compat import (
     CompatOpenAIChatModel,
     apply_max_tokens_floor,
 )
-from infosec_harness.inference.protocol import (
+from infosec_harness.inference.wire.protocol import (
     BrokerError,
     ExecutorContract,
     ReservationBinding,
@@ -235,7 +235,7 @@ def _stub_config(agent_name: str, tier: str, requested: dict[str, Any], durable:
         backend_name="stub",
         backend_kind="stub",
         requested_model=tier,
-        resolved_model=resolved_model_name(agent_name, tier),
+        resolved_model=f"stub:{agent_name}:{tier}",
         requested_settings=requested,
         effective_settings=requested,
         capability_profile=CapabilityProfile(prompt_caching="unsupported"),
@@ -286,12 +286,8 @@ def resolve_config(
         if source not in {"custom", "custom-zero"}:
             raise BrokerError("budget", "Broker v1 requires explicit reviewed backend price ceilings")
         broker_contract = broker_catalog().resolve_contract(
-            agent_name, backend_name, model_id, effective, backend_endpoint=backend.base_url,
-            atomic_intake=atomic_intake, merge_system_messages=backend.merge_system_messages,
-            min_max_tokens=backend.min_max_tokens,
-            strict_closed_output_tools=backend.strict_closed_output_tools,
-            enable_thinking=backend.enable_thinking,
-            thinking_token_budget=backend.thinking_token_budget,
+            agent_name, backend_name, model_id, effective, backend=backend,
+            atomic_intake=atomic_intake,
         )
         retries = 0
         credential_reference = broker_contract.provider_binding
@@ -384,16 +380,6 @@ def resolve(agent_name: str, tier: str, *, durable: bool = False, atomic_intake:
     return _build_live(backend, cfg.model_id(tier, backend), durable, atomic_intake)
 
 
-def resolved_model_name(agent_name: str, tier: str) -> str:
-    """The ``<backend>:<model id>`` an agent's tier resolves to (``stub:<agent>:<tier>`` in
-    stub mode); :func:`resolve_config` records the same value as ``resolved_model``."""
-    if get_settings().model_mode == "stub":
-        return f"stub:{agent_name}:{tier}"
-    cfg = load_models_config()
-    backend = cfg.selected_backend()
-    return f"{backend}:{cfg.model_id(tier, backend)}"
-
-
 def _backend_and_bare_model(model_name: str) -> tuple[str, str]:
     """Return the selected backend and its model id without guessing across backends."""
     cfg = load_models_config()
@@ -406,7 +392,7 @@ def _backend_and_bare_model(model_name: str) -> tuple[str, str]:
 def strip_backend_prefix(model_name: str) -> str:
     """Drop a leading ``<backend>:`` from a recorded model name.
 
-    :func:`resolved_model_name` records ``"gateway:Qwen3.6-35B-A3B-NVFP4"`` so a run is
+    :func:`resolve_config` records ``"gateway:Qwen3.6-35B-A3B-NVFP4"`` so a run is
     attributable to the backend that served it, but every price table — genai-prices and the
     configured fallbacks alike — is keyed on the bare model id. Looking a prefixed name up
     silently found nothing, so *all* configured prices were dead and cost came back None for
@@ -525,20 +511,21 @@ def estimate_cost(model_name: str, usage: Any) -> tuple[float | None, bool]:
 
 @lru_cache
 def broker_catalog():
-    from infosec_harness.inference.profiles import load_broker_config
+    from infosec_harness.agents.registry import BINDINGS
+    from infosec_harness.inference.catalog.profiles import load_broker_config
     path = get_settings().broker_config
     if path is None:
         raise BrokerError("policy", "Brokered backend requires HARNESS_BROKER_CONFIG")
-    return load_broker_config(path)
+    return load_broker_config(path, agents=tuple(BINDINGS))
 
 
 def _broker_model(agent_name, tier, binding, contract, *, atomic_intake=False):
-    from infosec_harness.inference.transport import BrokerModel
+    from infosec_harness.inference.worker.transport import BrokerModel
     cfg = load_models_config()
     if binding is None or contract is None:
         from temporalio import workflow
         if workflow.in_workflow():
-            from infosec_harness.inference.unbound import UnboundBrokerModel
+            from infosec_harness.inference.worker.unbound import UnboundBrokerModel
             backend_name = cfg.selected_backend()
             return UnboundBrokerModel(cfg.model_id(tier, backend_name), atomic_intake=atomic_intake)
         raise BrokerError("identity", "Brokered inference requires controller-issued invocation binding")
@@ -549,15 +536,11 @@ def _broker_model(agent_name, tier, binding, contract, *, atomic_intake=False):
     catalog = broker_catalog()
     expected = catalog.resolve_contract(
         agent_name, backend_name, cfg.model_id(tier, backend_name), contract.model_settings,
-        backend_endpoint=backend.base_url, atomic_intake=atomic_intake,
-        merge_system_messages=backend.merge_system_messages, min_max_tokens=backend.min_max_tokens,
-        strict_closed_output_tools=backend.strict_closed_output_tools,
-        enable_thinking=backend.enable_thinking,
-        thinking_token_budget=backend.thinking_token_budget,
+        backend=backend, atomic_intake=atomic_intake,
     )
     if expected.digest != contract.digest or binding.contract_digest != contract.digest:
         raise BrokerError("identity", "Invocation contract differs from worker deployment")
-    from infosec_harness.inference.identity import current_request_identity
+    from infosec_harness.inference.worker.identity import current_request_identity
     return BrokerModel(contract=contract, binding=binding, request_identity=current_request_identity,
                        controller_url=catalog.controller.url,
                        secret_env=catalog.controller.hmac_env, ca_file=catalog.controller.ca_file,

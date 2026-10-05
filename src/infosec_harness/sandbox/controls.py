@@ -11,7 +11,7 @@ plan names a provider or selector the project's framework does not use, a real p
 and runs and prints nothing, `precondition_reached` is false, and the case is recorded as a
 probe defect or a clean negative. Nothing says "your recipe cannot run any test here".
 
-The canary says exactly that, and it does so **without knowing which frameworks exist**. It
+The control test says exactly that, and it does so **without knowing which frameworks exist**. It
 writes a test that only prints the three markers, runs it through the project's real
 `test_command`, and requires all three back. A recipe that cannot carry a marker cannot carry a
 probe, whatever the toolchain is -- so this catches JUnit 4 answered as JUnit 5, vitest answered
@@ -40,8 +40,8 @@ from infosec_harness.sandbox.policy import jvm_class_selector
 
 # Deliberately distinct from any finding's oracle nonce: this proves the transport, and must
 # never be mistaken for evidence about a vulnerability.
-CANARY_NONCE = "harness-canary-0000"
-NEGATIVE_CANARY_NONCE = "harness-canary-negative-0000"
+POSITIVE_CONTROL_NONCE = "harness-canary-0000"
+NEGATIVE_CONTROL_NONCE = "harness-canary-negative-0000"
 CONTROL_RESULT_PREFIX = "HARNESS_CONTROL_RESULT::"
 CONTROL_PROTOCOL = "unit-probe-controls/v1"
 
@@ -151,7 +151,7 @@ public class {class_name} {{
 '''
 
 
-def canary_for(language: str, test_command: str, *, nonce: str = CANARY_NONCE,
+def control_test_for(language: str, test_command: str, *, nonce: str = POSITIVE_CONTROL_NONCE,
                oracle: bool = True,
                ) -> tuple[str, str] | None:
     """`(test_file_path, content)` for a language, or None when we cannot write one.
@@ -174,7 +174,7 @@ def canary_for(language: str, test_command: str, *, nonce: str = CANARY_NONCE,
     return None
 
 
-def missing_markers(output: str, *, nonce: str = CANARY_NONCE) -> list[str]:
+def missing_markers(output: str, *, nonce: str = POSITIVE_CONTROL_NONCE) -> list[str]:
     """Which of the three markers did not survive the round trip."""
     return [name for name, prefix in (
         ("precondition", PRECONDITION_PREFIX),

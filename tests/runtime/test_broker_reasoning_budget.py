@@ -17,13 +17,13 @@ from test_broker_executor import request_fixture
 from test_broker_profiles import _config, backend
 
 from infosec_harness.agents import models
-from infosec_harness.inference.auth import AUTH_HEADER, sign_request
-from infosec_harness.inference.codec import encode_payload
-from infosec_harness.inference.compat import CompatOpenAIChatModel
-from infosec_harness.inference.executor import Executor, OpenAIInference
-from infosec_harness.inference.profiles import BrokerConfig, ExecutorProfile
-from infosec_harness.inference.protocol import BrokerError, canonical_bytes, digest
-from infosec_harness.inference.rendering import input_wire
+from infosec_harness.inference.catalog.profiles import BrokerConfig, ExecutorProfile
+from infosec_harness.inference.executor.compat import CompatOpenAIChatModel
+from infosec_harness.inference.executor.rendering import input_wire
+from infosec_harness.inference.executor.service import Executor, OpenAIInference
+from infosec_harness.inference.wire.auth import AUTH_HEADER, sign_request
+from infosec_harness.inference.wire.codec import encode_payload
+from infosec_harness.inference.wire.protocol import BrokerError, canonical_bytes, digest
 
 
 def test_omitted_reasoning_budget_preserves_historical_payloads_and_identities():

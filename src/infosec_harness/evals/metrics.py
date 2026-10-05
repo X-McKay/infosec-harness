@@ -18,10 +18,8 @@ from infosec_harness.domain.models import ExperimentStatus
 
 PERCENTILE_METHOD = "nearest-rank-v1"
 
-# The outcome of a scored attempt. Exactly one per attempt, so the failure categories below
-# partition the failed attempts and can never sum past them.
-OUTCOMES = ("answered", "budget_exhausted", "invalid_output", "execution_not_checked",
-            "execution_failed")
+# Each scored attempt has exactly one outcome, so these categories partition the failed
+# attempts and can never sum past them.
 FAILURE_CATEGORIES = ("wrong_answer", "budget_exhausted", "invalid_output",
                       "execution_not_checked", "execution_failed")
 
@@ -31,7 +29,7 @@ Attempt = Mapping[str, Any]
 UNEVIDENCED_SAFETY_METRIC = "unevidenced_safe_verdicts"
 # The numeric top-level metrics every run publishes: the names a release policy may gate on.
 GATEABLE_METRICS = frozenset({
-    "n", "passed", "cost_usd_total", "cost_usd_per_case", "avg_tokens", "cache_hit_ratio",
+    "n", "passed", "cost_usd_total", "avg_tokens", "cache_hit_ratio",
     "task_success_rate", "schema_validity_rate", "budget_exhausted_count", "usage_unknown",
     "cost_unknown", "average_cost_usd", "p95_model_requests", "uncovered_material_scenarios",
     "execution_not_checked_count", "execution_failed_count", "execution_checks_planned",
@@ -140,7 +138,6 @@ def experiment_metrics(
         "n": total,
         "passed": passed,
         "cost_usd_total": round(cost, 6) if cost_unknown == 0 else None,
-        "cost_usd_per_case": per_case_cost,
         **usage_metrics(attempts),
         "confusion": dict(sorted(confusion.items())),
         "distributions": {
@@ -170,6 +167,7 @@ def experiment_metrics(
         "budget_exhausted_count": budget_exhausted,
         "usage_unknown": sum(a.get("usage_status") != "observed" for a in attempts),
         "cost_unknown": cost_unknown,
+        # Mean cost per scored case; None unless every attempt was priced.
         "average_cost_usd": per_case_cost,
         "p95_model_requests": int(percentile(requests, 0.95)),
         # Static over the cases this run used: a group-filtered or held-out run cannot

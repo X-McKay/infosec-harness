@@ -41,11 +41,12 @@ async def qualify(env_file: Path, host: str) -> int:
     report = {"run_id": run_id, "gate": "postgresql-ledger-recovery", "status": "failed",
               "database": database, "cleanup": "not_checked", "provider_dispatches": 0,
               "provider_scope": "no provider or sandbox calls", "process_exit_code": None}
-    sources = ("src/infosec_harness/inference/ledger.py",
-               "src/infosec_harness/inference/admission.py",
-               "src/infosec_harness/inference/rendering.py",
-               "src/infosec_harness/inference/diagnostics.py",
-               "src/infosec_harness/inference/protocol.py",
+    sources = ("src/infosec_harness/inference/controller/ledger.py",
+               "src/infosec_harness/inference/controller/admission.py",
+               "src/infosec_harness/inference/executor/rendering.py",
+               "src/infosec_harness/inference/wire/diagnostics.py",
+               "src/infosec_harness/inference/wire/protocol.py",
+               "src/infosec_harness/persistence/budgets.py",
                "src/infosec_harness/persistence/migrations/versions/0005_inference_request_ledger.py")
     report["source_digests"] = {path: hashlib.sha256((ROOT / path).read_bytes()).hexdigest()
                                 for path in sources}

@@ -95,7 +95,7 @@ async def test_pending_submissions_uses_exact_status_and_nonnull_payload(lifecyc
 async def test_reconcile_only_submission_candidates_never_resumes_unknown_holds(
     lifecycle_database, monkeypatch
 ):
-    from infosec_harness.inference import controller, ledger
+    from infosec_harness.inference.controller import service as controller
     from infosec_harness.workflows import worker
 
     rows = await seed_submission_states(lifecycle_database)
@@ -154,7 +154,6 @@ async def test_reconcile_only_submission_candidates_never_resumes_unknown_holds(
     monkeypatch.setattr(worker, "connect", forbidden)
     monkeypatch.setattr(controller.Controller, "infer", forbidden, raising=False)
     monkeypatch.setattr(controller.Controller, "revoke_run", forbidden, raising=False)
-    monkeypatch.setattr(ledger, "recover", forbidden, raising=False)
     await runner.reconcile_submissions()
     # Only a payload that validates as the workflow input is started; an invalid one fails its
     # batch instead of being retried forever.

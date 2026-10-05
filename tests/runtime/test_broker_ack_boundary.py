@@ -11,16 +11,16 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserProm
 from pydantic_ai.models import ModelRequestParameters
 from test_openshell_controller import controller_fixture
 
-from infosec_harness.inference.codec import encode_response
-from infosec_harness.inference.controller import Completion
-from infosec_harness.inference.protocol import (
+from infosec_harness.inference.controller.service import Completion
+from infosec_harness.inference.wire.codec import encode_response
+from infosec_harness.inference.wire.protocol import (
     BrokerError,
     InferenceRequest,
     InferenceResult,
     TransientBrokerError,
     canonical_bytes,
 )
-from infosec_harness.inference.transport import BrokerModel
+from infosec_harness.inference.worker.transport import BrokerModel
 
 
 def setup_boundary(tmp_path, monkeypatch, *, saved, detached=False):

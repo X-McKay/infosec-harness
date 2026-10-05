@@ -24,12 +24,12 @@ from contextlib import suppress
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from infosec_harness.agents.registry import AGENT_BINDINGS
-from infosec_harness.inference.openshell import OwnedLeases
+from infosec_harness.agents.registry import BINDINGS
+from infosec_harness.inference.native.openshell import OwnedLeases
 from infosec_harness.qualification.broker.support import private_write
 from infosec_harness.qualification.broker.validators import ROOT
 
-AGENTS = tuple(AGENT_BINDINGS)
+AGENTS = tuple(BINDINGS)
 
 
 SERVICE_MODEL_ACTIVITY_TIMEOUT_S = 20
@@ -137,7 +137,7 @@ def environment(manifest: dict) -> dict[str, str]:
 class FakeNativeAdapter(OwnedLeases):
     """TEST ONLY: no sandbox, native policy, or secret isolation claims."""
     def __init__(self, manifest: dict):
-        from infosec_harness.inference.openshell import LeaseStore
+        from infosec_harness.inference.native.openshell import LeaseStore
         self.manifest = manifest
         self.deployment = "qualification-" + manifest["run_id"]
         self.store = LeaseStore(Path(manifest["directory"]) / "leases")
@@ -149,7 +149,7 @@ class FakeNativeAdapter(OwnedLeases):
 
     def spec(self, contract):
         from infosec_harness.agents.registry import resolved_agent_configs
-        from infosec_harness.inference.protocol import BrokerError
+        from infosec_harness.inference.wire.protocol import BrokerError
         allowed = [value.model.broker_contract for value in resolved_agent_configs().values()]
         if contract not in allowed:
             raise BrokerError("identity")
@@ -160,9 +160,9 @@ class FakeNativeAdapter(OwnedLeases):
             return await self._ensure(run_id, contract)
 
     async def _ensure(self, run_id, contract):
-        from infosec_harness.inference.executor import ExecutorSettings
-        from infosec_harness.inference.openshell import Lease
-        from infosec_harness.inference.protocol import BrokerError
+        from infosec_harness.inference.native.openshell import Lease
+        from infosec_harness.inference.wire.protocol import BrokerError
+        from infosec_harness.inference.wire.settings import ExecutorSettings
         self.spec(contract)
         if self.store.is_run_revoked(run_id):
             raise BrokerError("policy")
@@ -197,7 +197,7 @@ class FakeNativeAdapter(OwnedLeases):
         return lease
 
     async def verify(self, lease):
-        from infosec_harness.inference.protocol import BrokerError
+        from infosec_harness.inference.wire.protocol import BrokerError
         if lease.deployment != self.deployment or lease.status != "ready":
             raise BrokerError("identity")
         return {"native_id": lease.native_id, "policy_digest": lease.contract.policy_digest,
@@ -273,7 +273,7 @@ def run_provider(manifest: dict) -> None:
             final = next((tool for tool in tools if "summary" in tool.get("parameters", {}).get("properties", {})), None)
             if qualification_agent is not None:
                 from infosec_harness.agents.stubs import _STUBS
-                arguments = {} if qualification_agent == "intake" else _STUBS[qualification_agent](user_text)
+                arguments = _STUBS[qualification_agent](user_text)
                 expected = "final_result_inconclusive" if qualification_agent == "verdict" else "final_result"
                 output = next((tool for tool in tools if tool["name"] == expected), None)
                 if output is None:
@@ -301,7 +301,7 @@ def run_provider(manifest: dict) -> None:
             self.end_headers()
             self.wfile.write(encoded)
     server = ThreadingHTTPServer(("127.0.0.1", manifest["provider_port"]), Handler)
-    from infosec_harness.inference.http_service import server_tls
+    from infosec_harness.inference.wire.http_service import server_tls
     server.socket = server_tls(manifest["pki"]["server_cert"], manifest["pki"]["server_key"]).wrap_socket(server.socket, server_side=True)
     server.serve_forever()
 
@@ -309,18 +309,18 @@ def run_provider(manifest: dict) -> None:
 def run_executor(manifest: dict, config: dict) -> None:
     import httpx2
 
-    from infosec_harness.inference.executor import (
+    from infosec_harness.inference.executor.service import (
         Executor,
-        ExecutorSettings,
         NativeLedgerChannel,
         OpenAIInference,
     )
-    from infosec_harness.inference.http_service import JsonChannel, serve, server_tls
-    from infosec_harness.inference.protocol import (
+    from infosec_harness.inference.wire.http_service import JsonChannel, serve, server_tls
+    from infosec_harness.inference.wire.protocol import (
         LEDGER_CLAIM_PATH,
         LEDGER_COMPLETE_PATH,
         LEDGER_CREDENTIAL_ENV,
     )
+    from infosec_harness.inference.wire.settings import ExecutorSettings
     settings = ExecutorSettings.model_validate(config["settings"])
 
     class MockLedgerSubstitution(JsonChannel):
@@ -375,9 +375,12 @@ def run_executor(manifest: dict, config: dict) -> None:
 
 
 def run_controller(manifest: dict) -> None:
-    from infosec_harness.inference.controller import Controller
-    from infosec_harness.inference.http_service import JsonChannel, serve, server_tls
-    from infosec_harness.inference.issuance import build_reservation_policy, issue_invocation
+    from infosec_harness.inference.controller.issuance import (
+        build_reservation_policy,
+        issue_invocation,
+    )
+    from infosec_harness.inference.controller.service import Controller
+    from infosec_harness.inference.wire.http_service import JsonChannel, serve, server_tls
     from infosec_harness.persistence import db
     async def bootstrap():
         await db.create_all()
@@ -385,7 +388,7 @@ def run_controller(manifest: dict) -> None:
     asyncio.run(bootstrap())
     class ObservedController(Controller):
         async def infer(self, request):
-            from infosec_harness.inference.protocol import BrokerError
+            from infosec_harness.inference.wire.protocol import BrokerError
             try:
                 return await super().infer(request)
             except BrokerError as exc:

@@ -508,6 +508,7 @@ class AgentBinding:
         return self.domain_type if self.output_type is None else self.output_type
 
 
+# Every agents/<name>/agent.yaml must appear here and vice versa (``validate_all``).
 BINDINGS: dict[str, AgentBinding] = {
     "intake": AgentBinding(
         ExtractedFinding, output_type=AtomicFinding, validators=(_validate_atomic_intake,),
@@ -534,13 +535,10 @@ BINDINGS: dict[str, AgentBinding] = {
         capabilities=lambda _spec: [PrepareOutputTools(prepare_verdict_tools)]),
 }
 
-# name -> domain output type. Every agents/<name>/agent.yaml must appear here and vice versa.
-AGENT_BINDINGS: dict[str, type[BaseModel]] = {name: b.domain_type for name, b in BINDINGS.items()}
-
 # Temporal derives model/tool activity identities from the agent's name. Bumping this retires
 # every recorded activity identity at once: histories from an earlier generation are not
 # replayable by design and must be retried as new workflows.
-EXECUTION_GENERATION = "v6"
+EXECUTION_GENERATION = "v7"
 
 
 def binding_for(name: str) -> AgentBinding:
@@ -600,7 +598,7 @@ def _code_capabilities(name: str, spec: AgentSpec, binding: AgentBinding, *, dur
     if model_factory.get_settings().model_mode == "live":
         cfg = model_factory.load_models_config()
         if cfg.backends[cfg.selected_backend()].transport == "brokered":
-            from infosec_harness.inference.identity import BrokerRequestIdentity
+            from infosec_harness.inference.worker.identity import BrokerRequestIdentity
             capabilities.append(BrokerRequestIdentity())
     # Cross-cutting robustness, attached in code (see ALLOWED_CAPABILITIES note).
     if _capability_toolsets(spec):
@@ -706,6 +704,10 @@ def validate_all() -> list[str]:
                 problems.append(
                     f"{name}: instructions must be static (no Handlebars templates, §6.2)"
                 )
+            # Stub mode resolves any tier name, so an uncatalogued tier would otherwise fail
+            # only at live resolution.
+            if spec.model and spec.model not in model_factory.load_models_config().model_catalog:
+                problems.append(f"{name}: model tier {spec.model!r} is not in the model catalogue")
             build_agent(name, durable=True)
         except Exception as e:  # noqa: BLE001 - report every broken spec
             problems.append(f"{name}: {type(e).__name__}: {e}")

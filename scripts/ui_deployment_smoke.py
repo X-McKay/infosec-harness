@@ -12,7 +12,7 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 from pydantic import TypeAdapter
 
-from infosec_harness.agents.registry import AGENT_BINDINGS
+from infosec_harness.agents.registry import BINDINGS
 from infosec_harness.api.contracts import (
     BatchSummary,
     ConfigResponse,
@@ -135,7 +135,7 @@ def check(api_url, web_url, *, timeout=60, expected_source_commit=None,
                     origin + "/api/experiments?population=operational", "json")).total
                 config = ConfigResponse.model_validate_json(fetch(origin + "/api/config", "json"))
                 agents = [agent.name for agent in config.agents]
-                if len(agents) != len(AGENT_BINDINGS) or set(agents) != set(AGENT_BINDINGS):
+                if len(agents) != len(BINDINGS) or set(agents) != set(BINDINGS):
                     raise SmokeFailure("incomplete agent configuration")
                 if config.model_mode != runtime.model_mode:
                     raise SmokeFailure("deployment identity mismatch")
@@ -170,7 +170,7 @@ def check(api_url, web_url, *, timeout=60, expected_source_commit=None,
         for url, kind in sorted(assets):
             if not fetch(url, kind):
                 raise SmokeFailure("empty asset")
-        return {"status": "passed", "agents": len(AGENT_BINDINGS),
+        return {"status": "passed", "agents": len(BINDINGS),
                 "operational_counts": counts, "assets": len(assets), "writes": 0}
     finally:
         if owned:

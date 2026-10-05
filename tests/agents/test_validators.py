@@ -10,6 +10,7 @@ from infosec_harness.domain.models import (
     VerdictFacts,
     VerdictLabel,
 )
+from infosec_harness.sandbox.output import no_tests_executed
 
 
 def v(label, **kw):
@@ -1010,11 +1011,10 @@ def test_a_proper_class_selector_is_accepted():
 def test_surefires_own_no_match_wording_is_recognised_as_a_zero_test_run():
     """The two halves must meet: the validator stops the bad selector being written, and if one
     slips through, the runner's output is still classified rather than left to be inferred."""
-    from infosec_harness.sandbox import docker
 
     output = ('[ERROR] No tests matching pattern "src/test/java/com/example/UserDaoTest.java" '
               'were executed!\n')
-    reason = docker.no_tests_executed(output)
+    reason = no_tests_executed(output)
     assert reason is not None and "matched no test class" in reason
     assert "not a negative result" in reason
 
@@ -1135,7 +1135,7 @@ def test_the_jdk_a_base_image_provides_is_read_past_the_build_tool_version():
 def test_the_oldest_declared_language_level_is_the_binding_one():
     """A pom with source 7 and target 8 needs a JDK that still accepts 7, so the lower number
     is the constraint."""
-    from infosec_harness.agents.ecosystem_contract import declared_java_release
+    from infosec_harness.repo.detect import declared_java_release
 
     pom = ("<properties><maven.compiler.source>1.7</maven.compiler.source>"
            "<maven.compiler.target>1.8</maven.compiler.target></properties>")

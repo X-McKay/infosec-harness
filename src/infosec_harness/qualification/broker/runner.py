@@ -61,10 +61,9 @@ def prepare_case(agent: str, manifest: RealProviderManifest):
     """Public workflow input plus host-only scorer and expected label for one frozen case."""
     import yaml
 
-    from infosec_harness.agents.intake_contracts import render_intake_prompt
-    from infosec_harness.agents.render import render_prompt
+    from infosec_harness.agents.render import render_intake_prompt, render_prompt
     from infosec_harness.evals.adapters import ADAPTERS
-    from infosec_harness.inference.protocol import digest
+    from infosec_harness.inference.wire.protocol import digest
     path = AGENTS_DIR / agent / "evals/dataset.yaml"
     frozen = manifest.datasets[agent]
     if Path(frozen.path).resolve() != path.resolve():
@@ -98,11 +97,11 @@ def output_class(agent: str):
         PartialEnvironmentOutput,
         PlannedEnvironmentOutput,
     )
-    from infosec_harness.agents.registry import AGENT_BINDINGS
+    from infosec_harness.agents.registry import BINDINGS
     if agent == "verdict":
         return InconclusiveOutput
     return {"env-planner": PlannedEnvironmentOutput, "context": ContextOutput,
-            "partial-build": PartialEnvironmentOutput}.get(agent, AGENT_BINDINGS[agent])
+            "partial-build": PartialEnvironmentOutput}.get(agent, BINDINGS[agent].domain_type)
 
 
 def score_output(agent: str, output, predict, expected) -> dict:
@@ -152,7 +151,7 @@ async def run_local_case(manifest: RealProviderManifest, phase: str, agent: str,
 
     from infosec_harness.agents.registry import load_spec, resolve_agent_config
     from infosec_harness.graph.ops import LocalOps
-    from infosec_harness.inference.protocol import digest
+    from infosec_harness.inference.wire.protocol import digest
 
     inputs, predict, expected, case_digest = prepare_case(agent, manifest)
     ops = LocalOps(sandbox=True, recipe_cache=False)
@@ -210,8 +209,8 @@ def _summarize(report: dict, gates: tuple[str, ...]) -> None:
 
 
 async def run_local(manifest: RealProviderManifest, phase: str, report_path: Path) -> dict:
-    from infosec_harness.agents.registry import AGENT_BINDINGS
-    if set(CASES) != set(AGENT_BINDINGS):
+    from infosec_harness.agents.registry import BINDINGS
+    if set(CASES) != set(BINDINGS):
         raise ValueError("Every registered agent must have a frozen case")
     report = {"phase": phase, "status": "running", "provider": manifest.endpoint, "model": manifest.model,
               "cases": [], "accuracy_scope": "one frozen case per agent; not a release-quality accuracy gate"}
@@ -298,7 +297,7 @@ async def run_temporal(manifest: RealProviderManifest, report_path: Path) -> dic
     from temporalio.client import Client
 
     from infosec_harness.agents.outputs import InconclusiveOutput, NegativeOutput, PositiveOutput
-    from infosec_harness.inference import invocations
+    from infosec_harness.inference.worker import invocations
     from infosec_harness.qualification.broker.workflow import RealProviderWorkflow
     for agent in CASES:
         inputs, _predict, _expected, case_digest = prepare_case(agent, manifest)

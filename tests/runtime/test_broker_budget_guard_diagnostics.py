@@ -5,9 +5,10 @@ from types import SimpleNamespace
 import pytest
 from test_broker_executor import request_fixture
 
-from infosec_harness.inference import admission, ledger, rendering
-from infosec_harness.inference.http_service import broker_error_body
-from infosec_harness.inference.protocol import BrokerError
+from infosec_harness.inference.controller import admission, ledger
+from infosec_harness.inference.executor import rendering
+from infosec_harness.inference.wire.http_service import broker_error_body
+from infosec_harness.inference.wire.protocol import BrokerError
 
 
 @pytest.mark.asyncio

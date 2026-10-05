@@ -8,7 +8,7 @@ import re
 import time
 from collections.abc import Mapping
 
-from .protocol import MAX_BODY_BYTES, SIGNED_PATHS, BrokerError
+from infosec_harness.inference.wire.protocol import MAX_BODY_BYTES, SIGNED_PATHS, BrokerError
 
 AUTH_HEADER = "X-Harness-Admission"
 # Credential headers: a request may carry each at most once.

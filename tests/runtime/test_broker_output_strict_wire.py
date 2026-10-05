@@ -14,8 +14,8 @@ from test_broker_executor import request_fixture
 
 from infosec_harness.agents.intake_claims import AtomicFinding
 from infosec_harness.domain.models import EnvironmentSpec
-from infosec_harness.inference.codec import decode_payload, encode_payload
-from infosec_harness.inference.rendering import input_wire
+from infosec_harness.inference.executor.rendering import input_wire
+from infosec_harness.inference.wire.codec import decode_payload, encode_payload
 
 
 @pytest.mark.parametrize('strict', [None, False, True])
@@ -133,8 +133,8 @@ def test_flag_off_keeps_historical_contract_profile_and_capability_identity():
     from test_broker_profiles import _config, backend
 
     from infosec_harness.agents.models import BackendConfig, CapabilityProfile
-    from infosec_harness.inference.profiles import BrokerConfig
-    from infosec_harness.inference.protocol import digest
+    from infosec_harness.inference.catalog.profiles import BrokerConfig
+    from infosec_harness.inference.wire.protocol import digest
 
     request, _ = request_fixture()
     for value in (request.contract, CapabilityProfile(), BackendConfig(kind='openai_compatible')):
@@ -164,8 +164,8 @@ async def test_actual_sdk_executor_wire_matches_admission_opt_in_and_never_resen
 
     import httpx2
 
-    from infosec_harness.inference.executor import OpenAIInference
-    from infosec_harness.inference.protocol import digest
+    from infosec_harness.inference.executor.service import OpenAIInference
+    from infosec_harness.inference.wire.protocol import digest
 
     request, _ = request_fixture()
     contract = request.contract.model_copy(update={'atomic_intake': True, 'strict_closed_output_tools': True})
@@ -201,7 +201,7 @@ async def test_mock_sdk_strict_output_keeps_bounded_local_validation_repair_and_
 
     from infosec_harness.agents.intake_claims import reconstruct
     from infosec_harness.agents.intake_schema import intake_openai_profile
-    from infosec_harness.inference.compat import CompatOpenAIChatModel
+    from infosec_harness.inference.executor.compat import CompatOpenAIChatModel
 
     calls = []
     def respond(native_request):
@@ -238,8 +238,8 @@ async def test_mock_sdk_strict_output_keeps_bounded_local_validation_repair_and_
 
 
 def test_opt_in_rejects_unqualified_sdk_profile_and_bounded_schema_expansion():
-    from infosec_harness.inference.compat import strict_closed_outputs
-    from infosec_harness.inference.protocol import BrokerError
+    from infosec_harness.inference.executor.compat import strict_closed_outputs
+    from infosec_harness.inference.wire.protocol import BrokerError
 
     closed = {'type': 'object', 'properties': {'answer': {'type': 'string'}}, 'additionalProperties': False}
     params = ModelRequestParameters(output_mode='tool', output_tools=[ToolDefinition(name='final_result',

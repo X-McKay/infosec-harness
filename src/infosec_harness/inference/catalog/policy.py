@@ -6,7 +6,7 @@ is verified independently. Authored labels and all rule content retain their exa
 """
 from copy import deepcopy
 
-from infosec_harness.inference.protocol import BrokerError, canonical_bytes, digest
+from infosec_harness.inference.wire.protocol import BrokerError, canonical_bytes, digest
 
 
 def canonical_policy(policy: dict) -> dict:

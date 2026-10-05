@@ -12,14 +12,24 @@ from typing import Any, Protocol
 
 from pydantic import Field
 
-from .admission import ReservationPolicy, authorize
-from .auth import AUTH_HEADER, header_value, sign_request, verify_headers
-from .codec import decode_payload, decode_response
-from .diagnostics import record_failure
-from .http_service import JsonChannel, parse_request, serve, server_tls
-from .ledger import DurableLedger
-from .openshell import Lease, NativeSpec
-from .protocol import (
+from infosec_harness.inference.controller.admission import ReservationPolicy, authorize
+from infosec_harness.inference.controller.ledger import DurableLedger
+from infosec_harness.inference.native.openshell import Lease, NativeSpec
+from infosec_harness.inference.wire.auth import (
+    AUTH_HEADER,
+    header_value,
+    sign_request,
+    verify_headers,
+)
+from infosec_harness.inference.wire.codec import decode_payload, decode_response
+from infosec_harness.inference.wire.diagnostics import record_failure
+from infosec_harness.inference.wire.http_service import (
+    JsonChannel,
+    parse_request,
+    serve,
+    server_tls,
+)
+from infosec_harness.inference.wire.protocol import (
     INFER_PATH,
     INVOCATIONS_PATH,
     LEDGER_CLAIM_PATH,
@@ -39,7 +49,7 @@ from .protocol import (
     canonical_bytes,
     parse_model,
 )
-from .timing import (
+from infosec_harness.inference.wire.timing import (
     CONTROLLER_TIMEOUT_S,
     EXECUTOR_TIMEOUT_S,
     PREPARATION_TIMEOUT_S,

@@ -1,7 +1,7 @@
 """Worker client for controller-issued invocations, shared by local, eval and Temporal runs.
 
 No database, provider credential or native authority is loaded here; issuance itself is the
-controller's :mod:`infosec_harness.inference.issuance`.
+controller's :mod:`infosec_harness.inference.controller.issuance`.
 """
 from __future__ import annotations
 
@@ -11,9 +11,9 @@ import uuid
 from contextlib import asynccontextmanager
 
 from infosec_harness.agents import models
-from infosec_harness.inference.auth import AUTH_HEADER, sign_request
-from infosec_harness.inference.http_service import JsonChannel
-from infosec_harness.inference.protocol import (
+from infosec_harness.inference.wire.auth import AUTH_HEADER, sign_request
+from infosec_harness.inference.wire.http_service import JsonChannel
+from infosec_harness.inference.wire.protocol import (
     INVOCATIONS_PATH,
     RUN_CLOSE_PATH,
     BrokerError,

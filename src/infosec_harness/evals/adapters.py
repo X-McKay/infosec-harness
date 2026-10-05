@@ -28,7 +28,12 @@ from infosec_harness.agents.deps import AgentDeps
 from infosec_harness.domain.models import EnvironmentSpec, VerdictFacts
 from infosec_harness.evals.messages import MAX_NAME_CHARS
 from infosec_harness.repo.detect import detect_stack
-from infosec_harness.sandbox.docker import CANARY_PREFIX, ORACLE_PREFIX, PRECONDITION_PREFIX
+from infosec_harness.sandbox.markers import (
+    FILE_ORACLE_NAME_PREFIX,
+    FILE_ORACLE_PREFIX,
+    ORACLE_PREFIX,
+    PRECONDITION_PREFIX,
+)
 from infosec_harness.settings import REPO_ROOT
 
 
@@ -234,8 +239,8 @@ def _probe_conformance(case: dict) -> Callable[[Any], str]:
         content = probe.content or ""
         if PRECONDITION_PREFIX not in content:
             return "no_precondition_marker"
-        if ORACLE_PREFIX not in content and CANARY_PREFIX not in content \
-                and "harness_canary_" not in content:
+        if not any(m in content for m in (ORACLE_PREFIX, FILE_ORACLE_PREFIX,
+                                          FILE_ORACLE_NAME_PREFIX)):
             return "no_oracle_signal"
         if callable_name and callable_name not in content:
             return "target_not_called"

@@ -1,7 +1,7 @@
 """Controller-corroborated request observations, separated from behavior identity."""
 from __future__ import annotations
 
-from infosec_harness.inference.protocol import (
+from infosec_harness.inference.wire.protocol import (
     BrokerError,
     ImageDigest,
     LogicalName,

@@ -35,8 +35,8 @@ with workflow.unsafe.imports_passed_through():
     import infosec_harness.agents.models  # noqa: F401 - used by graph.pipeline
     import infosec_harness.agents.stubs  # noqa: F401 - resolved lazily by stub-mode model resolution
     import infosec_harness.agents.trajectory  # noqa: F401 - used by graph.pipeline
-    import infosec_harness.inference.protocol  # noqa: F401 - used for broker bindings
-    import infosec_harness.inference.provenance  # noqa: F401 - used by graph.pipeline
+    import infosec_harness.inference.wire.protocol  # noqa: F401 - used for broker bindings
+    import infosec_harness.inference.worker.provenance  # noqa: F401 - used by graph.pipeline
     from infosec_harness.agents.durable import AGENTS, CONFIGS
     from infosec_harness.graph.pipeline import run_recorded
     from infosec_harness.workflows import activities
@@ -44,6 +44,7 @@ with workflow.unsafe.imports_passed_through():
     from infosec_harness.workflows.activity_options import HEARTBEAT, RETRY, SHORT
     from infosec_harness.workflows.payloads import (
         BuildArgs,
+        CloseBrokerRunArgs,
         ProbeArgs,
         RecordRecipeArgs,
         ResolveLocationArgs,
@@ -84,26 +85,27 @@ class TemporalOps:
         identity = await self._accounting.reserve(config, configuration_digest=base_config.digest)
         if config.model.broker_contract is not None:
             self._broker_identity = (workflow.info().run_id, identity[0])
-            from infosec_harness.inference.protocol import ExecutorContract, ReservationBinding
+            from infosec_harness.inference.wire.protocol import InvocationRequest
             # Host-resolved contract and a side-effecting activity; replay only reads its result.
-            request = {
-                "mode": "temporal", "root_id": identity[0], "run_id": workflow.info().run_id,
-                "invocation_id": identity[1], "operation_id": identity[1], "agent": name,
-                "configuration_digest": base_config.digest,
-                "contract": config.model.broker_contract.model_dump(mode="json"),
-            }
+            request = InvocationRequest(
+                mode="temporal", root_id=identity[0], run_id=workflow.info().run_id,
+                invocation_id=identity[1], operation_id=identity[1], agent=name,
+                configuration_digest=base_config.digest,
+                contract=config.model.broker_contract,
+            )
             binding = await workflow.execute_activity(activities.issue_broker_invocation_activity,
                 request, start_to_close_timeout=timedelta(seconds=45), retry_policy=RETRY)
-            deps = deps.model_copy(update={
-                "broker_binding": ReservationBinding.model_validate(binding),
-                "broker_contract": ExecutorContract.model_validate(request["contract"]),
-            })
+            deps = deps.model_copy(update={"broker_binding": binding,
+                                           "broker_contract": request.contract})
+        recorded = [] if record is None else record
+        before = len(recorded)
         try:
             outcome = await run_recorded(self._agents[name], name, prompt, deps, config,
-                                         [] if record is None else record,
-                                         clock=_workflow_clock)
+                                         recorded, clock=_workflow_clock)
         except (Exception, asyncio.CancelledError) as exc:
-            await self._accounting.settle(identity, None, type(exc).__name__)
+            # run_recorded appends the failed call's partial outcome when it has one.
+            partial = recorded[before] if len(recorded) > before else None
+            await self._accounting.settle(identity, None, type(exc).__name__, partial=partial)
             raise
         await self._accounting.settle(identity, outcome)
         return outcome
@@ -113,7 +115,7 @@ class TemporalOps:
             return  # No owned reservation or lease exists merely because config names a broker.
         run_id, root_id = self._broker_identity
         await asyncio.shield(workflow.execute_activity(activities.close_broker_run_activity,
-            {"run_id": run_id, "root_id": root_id},
+            CloseBrokerRunArgs(run_id=run_id, root_id=root_id),
             start_to_close_timeout=timedelta(seconds=120), retry_policy=RETRY))
 
     async def new_nonce(self) -> str:

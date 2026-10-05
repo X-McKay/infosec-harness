@@ -6,15 +6,15 @@ import pytest
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
 
-from infosec_harness.inference.auth import AUTH_HEADER, sign_request, verify_request
-from infosec_harness.inference.codec import encode_payload, encode_response
-from infosec_harness.inference.executor import (
+from infosec_harness.inference.executor.rendering import required_input_reserve
+from infosec_harness.inference.executor.service import (
     Executor,
-    ExecutorSettings,
     NativeLedgerChannel,
     OpenAIInference,
 )
-from infosec_harness.inference.protocol import (
+from infosec_harness.inference.wire.auth import AUTH_HEADER, sign_request, verify_request
+from infosec_harness.inference.wire.codec import encode_payload, encode_response
+from infosec_harness.inference.wire.protocol import (
     BrokerError,
     DispatchPermit,
     ExecutorContract,
@@ -24,7 +24,7 @@ from infosec_harness.inference.protocol import (
     canonical_bytes,
     digest,
 )
-from infosec_harness.inference.rendering import required_input_reserve
+from infosec_harness.inference.wire.settings import ExecutorSettings
 
 
 def request_fixture():
@@ -125,7 +125,7 @@ def test_auth_valid_signature_and_unknown_paths_rejected():
 
 @pytest.mark.parametrize("headers", [{}, {"x-harness-admission": "a", "X-Harness-Admission": "b"}])
 def test_verify_headers_requires_exactly_one_admission_header(headers):
-    from infosec_harness.inference.auth import verify_headers
+    from infosec_harness.inference.wire.auth import verify_headers
 
     with pytest.raises(BrokerError, match="auth"):
         verify_headers(b"a" * 32, "/v1/infer", b"{}", headers, now=100)
@@ -136,7 +136,7 @@ def test_executor_checks_its_lease_file_before_reading_it(tmp_path, monkeypatch,
     """An unsafe lease file is refused before its content is parsed or trusted."""
     import sys
 
-    from infosec_harness.inference import executor as module
+    from infosec_harness.inference.executor import service as module
 
     target = tmp_path / "real.json"
     target.write_text("not json: must never be parsed")
@@ -316,7 +316,7 @@ async def test_provider_timeout_override_cannot_extend_wall_deadline(monkeypatch
 
     import httpx2
 
-    from infosec_harness.inference import executor as module
+    from infosec_harness.inference.executor import service as module
 
     request, _ = request_fixture()
     model_settings = {"max_tokens": 16, "timeout": 999.0}
@@ -347,7 +347,7 @@ async def test_provider_trickle_bytes_cannot_renew_wall_deadline(monkeypatch):
 
     import httpx2
 
-    from infosec_harness.inference import executor as module
+    from infosec_harness.inference.executor import service as module
 
     request, _ = request_fixture()
     request = request.model_copy(update={"binding": request.binding.model_copy(update={"expires_at": time.time() + 60})})
@@ -381,7 +381,7 @@ async def test_successful_response_past_old_ceiling_fits_new_bounded_wait(monkey
 
     import httpx2
 
-    from infosec_harness.inference import executor as module
+    from infosec_harness.inference.executor import service as module
 
     request, _ = request_fixture()
     request = request.model_copy(update={"binding": request.binding.model_copy(

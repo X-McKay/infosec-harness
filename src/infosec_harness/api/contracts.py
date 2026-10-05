@@ -148,8 +148,9 @@ class ExperimentSummary(BaseModel):
     pricing: str
     harness_version: str
     created_at: str
-    accuracy: float | None
-    cost_usd_per_case: float | None
+    # The run's own metric names: `task_success_rate` is displayed as "accuracy".
+    task_success_rate: float | None
+    average_cost_usd: float | None
     p50_latency_s: float | None
     p95_latency_s: float | None
     passed: float | None

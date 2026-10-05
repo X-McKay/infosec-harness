@@ -105,8 +105,8 @@ class LocalOps:
         agent, base_config = self._agent(name)
         config = base_config.for_source_files(deps.source_files)
         if config.model.broker_contract is not None:
-            from infosec_harness.inference.invocations import request_invocation
-            from infosec_harness.inference.protocol import InvocationRequest, digest
+            from infosec_harness.inference.wire.protocol import InvocationRequest, digest
+            from infosec_harness.inference.worker.invocations import request_invocation
             self._broker_used = True
             contract = config.model.broker_contract
             ordinal = self._broker_sequence
@@ -138,8 +138,8 @@ class LocalOps:
         if self._broker_closed:
             return
         if self._broker_used:
-            from infosec_harness.inference.invocations import close_run
-            from infosec_harness.inference.protocol import digest
+            from infosec_harness.inference.wire.protocol import digest
+            from infosec_harness.inference.worker.invocations import close_run
             await close_run(self._broker_run_id, digest({"local_run": self._broker_run_id}))
         self._broker_closed = True
 

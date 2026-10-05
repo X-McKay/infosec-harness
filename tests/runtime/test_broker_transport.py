@@ -19,18 +19,21 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from test_broker_profiles import backend
 
-from infosec_harness.inference.auth import AUTH_HEADER, sign_request
-from infosec_harness.inference.codec import encode_response
-from infosec_harness.inference.identity import BrokerRequestIdentity, current_request_identity
-from infosec_harness.inference.profiles import BrokerConfig
-from infosec_harness.inference.protocol import (
+from infosec_harness.inference.catalog.profiles import BrokerConfig
+from infosec_harness.inference.wire.auth import AUTH_HEADER, sign_request
+from infosec_harness.inference.wire.codec import encode_response
+from infosec_harness.inference.wire.protocol import (
     BrokerError,
     InferenceRequest,
     InferenceResult,
     ReservationBinding,
     canonical_bytes,
 )
-from infosec_harness.inference.transport import BrokerModel
+from infosec_harness.inference.worker.identity import (
+    BrokerRequestIdentity,
+    current_request_identity,
+)
+from infosec_harness.inference.worker.transport import BrokerModel
 
 _KEY = b"t" * 32
 
@@ -458,8 +461,8 @@ def test_controller_provenance_is_mandatory_and_must_match_the_contract(change) 
 @pytest.mark.parametrize("code", ["auth", "policy", "identity", "budget", "expired",
                                   "conflict", "invalid_response", "completion_unknown"])
 def test_terminal_dispositions_cannot_be_transient_retries(code):
-    from infosec_harness.inference.http_service import response_error
-    from infosec_harness.inference.protocol import TransientBrokerError
+    from infosec_harness.inference.wire.http_service import response_error
+    from infosec_harness.inference.wire.protocol import TransientBrokerError
     error = response_error(409, canonical_bytes({"error": code}))
     assert type(error) is BrokerError
     with pytest.raises(ValueError):
@@ -469,8 +472,8 @@ def test_terminal_dispositions_cannot_be_transient_retries(code):
 @pytest.mark.parametrize("code", ["unavailable", "pending"])
 def test_transient_activity_errors_have_distinct_retryable_type(code):
     from infosec_harness.agents.registry import ACTIVITY_RETRY
-    from infosec_harness.inference.http_service import response_error
-    from infosec_harness.inference.protocol import TransientBrokerError
+    from infosec_harness.inference.wire.http_service import response_error
+    from infosec_harness.inference.wire.protocol import TransientBrokerError
     error = response_error(409, canonical_bytes({"error": code}))
     assert type(error) is TransientBrokerError and error.code == code
     assert type(error).__name__ not in ACTIVITY_RETRY.non_retryable_error_types
@@ -478,7 +481,7 @@ def test_transient_activity_errors_have_distinct_retryable_type(code):
 
 
 async def test_transient_retry_reuses_the_exact_request_and_visibility_payload():
-    from infosec_harness.inference.protocol import TransientBrokerError
+    from infosec_harness.inference.wire.protocol import TransientBrokerError
     contract = _contract()
     binding = _binding(contract)
     requests = []
@@ -497,8 +500,8 @@ async def test_transient_retry_reuses_the_exact_request_and_visibility_payload()
 
 
 def test_remote_error_diagnostics_are_sanitized_and_transient_type_is_preserved(caplog):
-    from infosec_harness.inference.http_service import response_error as _response_error
-    from infosec_harness.inference.protocol import TransientBrokerError
+    from infosec_harness.inference.wire.http_service import response_error as _response_error
+    from infosec_harness.inference.wire.protocol import TransientBrokerError
 
     diagnostic = {"boundary": "provider_request", "category": "wall_timeout"}
     error = _response_error(409, canonical_bytes({"error": "completion_unknown", "diagnostic": diagnostic}))
@@ -527,7 +530,7 @@ def test_remote_error_diagnostics_are_sanitized_and_transient_type_is_preserved(
 ])
 async def test_json_channel_checks_status_before_parsing(status, body, code):
     """A gateway error page is infrastructure unavailability, never an identity failure."""
-    from infosec_harness.inference.http_service import JsonChannel
+    from infosec_harness.inference.wire.http_service import JsonChannel
 
     channel = JsonChannel(transport=httpx.MockTransport(lambda _r: httpx.Response(status, content=body)))
     with pytest.raises(BrokerError) as error:
@@ -538,7 +541,7 @@ async def test_json_channel_checks_status_before_parsing(status, body, code):
 @pytest.mark.parametrize("body", [b"<html>ok</html>", b'{"a": 1}', b"[]",
                                   canonical_bytes({"a": 1}) + b" "])
 async def test_json_channel_malformed_success_is_invalid_response(body):
-    from infosec_harness.inference.http_service import JsonChannel
+    from infosec_harness.inference.wire.http_service import JsonChannel
 
     channel = JsonChannel(transport=httpx.MockTransport(lambda _r: httpx.Response(200, content=body)))
     with pytest.raises(BrokerError) as error:
@@ -547,8 +550,8 @@ async def test_json_channel_malformed_success_is_invalid_response(body):
 
 
 async def test_json_channel_bounds_response_and_maps_transport_failure():
-    from infosec_harness.inference.http_service import JsonChannel
-    from infosec_harness.inference.protocol import MAX_BODY_BYTES
+    from infosec_harness.inference.wire.http_service import JsonChannel
+    from infosec_harness.inference.wire.protocol import MAX_BODY_BYTES
 
     big = JsonChannel(transport=httpx.MockTransport(
         lambda _r: httpx.Response(200, content=b"x" * (MAX_BODY_BYTES + 1))))
@@ -566,7 +569,7 @@ async def test_json_channel_bounds_response_and_maps_transport_failure():
 
 
 def test_request_parser_is_identity_and_response_parser_is_invalid_response():
-    from infosec_harness.inference.http_service import parse_request, parse_response
+    from infosec_harness.inference.wire.http_service import parse_request, parse_response
 
     for parse, code in ((parse_request, "identity"), (parse_response, "invalid_response")):
         for body in (b"", b"[]", b'{"a":1,"a":2}', b'{"a":NaN}', b'{"b":1, "a":2}'):
@@ -580,14 +583,14 @@ def test_request_parser_is_identity_and_response_parser_is_invalid_response():
                                    "https://h?q=1", "https://h#f", "https://h:0", "https://h:70000",
                                    "https://h:x"])
 def test_fixed_https_url_rejects_ambiguous_authority(value):
-    from infosec_harness.inference.protocol import fixed_https_url
+    from infosec_harness.inference.wire.protocol import fixed_https_url
 
     with pytest.raises(ValueError):
         fixed_https_url(value)
 
 
 def test_fixed_https_url_origin_and_path_requirements():
-    from infosec_harness.inference.protocol import fixed_https_url
+    from infosec_harness.inference.wire.protocol import fixed_https_url
 
     assert fixed_https_url("https://h:8443/") == "https://h:8443"
     assert fixed_https_url("https://h/v1/", require_path="/v1") == "https://h/v1"
@@ -600,6 +603,6 @@ def test_fixed_https_url_origin_and_path_requirements():
 def test_error_codes_are_the_closed_literal():
     from typing import get_args
 
-    from infosec_harness.inference.protocol import ERROR_CODES, ErrorCode
+    from infosec_harness.inference.wire.protocol import ERROR_CODES, ErrorCode
 
     assert frozenset(get_args(ErrorCode)) == ERROR_CODES and "unavailable" in ERROR_CODES

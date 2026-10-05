@@ -39,7 +39,7 @@ from infosec_harness.graph.ops import Ops
 from infosec_harness.graph.prepare import revise_environment, smoke_test
 from infosec_harness.graph.scoring import PreFilterResult, pre_filter, priority_band, priority_score
 from infosec_harness.repo.access import RepositoryAccessError, validate_code_ref
-from infosec_harness.sandbox.canary import parse_control_result
+from infosec_harness.sandbox.controls import parse_control_result
 from infosec_harness.settings import get_settings
 
 

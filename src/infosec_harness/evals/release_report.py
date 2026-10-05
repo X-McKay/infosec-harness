@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from infosec_harness.evals._json import write_json
+from infosec_harness._io import write_json
 from infosec_harness.evals.gates import ReleasePolicy
 from infosec_harness.evals.inert_gates import find_inert_checks, format_inert_notice
 

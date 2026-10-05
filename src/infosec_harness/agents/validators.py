@@ -38,6 +38,12 @@ from infosec_harness.domain.models import (
     VerdictLabel,
 )
 from infosec_harness.sandbox.install_sources import unapproved_install_sources
+from infosec_harness.sandbox.markers import (
+    FILE_ORACLE_NAME_PREFIX,
+    ORACLE_PREFIX,
+    PRECONDITION_PREFIX,
+    SINK_RETURNED_PREFIX,
+)
 
 # A deterministic output contract: returns the (possibly converted) output or raises ModelRetry.
 OutputValidator = Callable[[RunContext[AgentDeps], Any], Any]
@@ -214,23 +220,23 @@ def validate_probe(ctx: RunContext[AgentDeps], output: ProbeSource) -> ProbeSour
     missing = [
         name
         for name, marker in (
-            ("precondition", "HARNESS_PRECONDITION::"),
-            ("sink-returned", "HARNESS_SINK_RETURNED::"),
+            ("precondition", PRECONDITION_PREFIX),
+            ("sink-returned", SINK_RETURNED_PREFIX),
         )
         if marker not in output.content
     ]
     if missing:
         raise ModelRetry(
             f"The probe is missing the {' and '.join(missing)} marker(s). Print "
-            "HARNESS_PRECONDITION::<nonce> immediately before the sink call and "
-            "HARNESS_SINK_RETURNED::<nonce> immediately after it returns; without the second, a "
+            f"{PRECONDITION_PREFIX}<nonce> immediately before the sink call and "
+            f"{SINK_RETURNED_PREFIX}<nonce> immediately after it returns; without the second, a "
             "probe that throws on the way in is indistinguishable from one the code resisted. "
             "See the probe-oracle-protocol skill."
         )
-    if not any(m in output.content for m in ("HARNESS_ORACLE::", "harness_canary_")):
+    if not any(m in output.content for m in (ORACLE_PREFIX, FILE_ORACLE_NAME_PREFIX)):
         raise ModelRetry(
             "The probe must emit an oracle signal when the exploit condition holds: "
-            "print HARNESS_ORACLE::<nonce>, or create the canary file the plan's "
+            f"print {ORACLE_PREFIX}<nonce>, or create the canary file the plan's "
             "canary_file oracle names."
         )
     repo_path = _repo_path(ctx)

@@ -7,19 +7,22 @@ does not promote a component to tested support.
 
 from __future__ import annotations
 
-import contextlib
 import re
 import shlex
-from collections.abc import Iterable
 from pathlib import Path
 
 from infosec_harness.domain.models import EnvironmentSpec
-from infosec_harness.repo.detect import declared_java_release, js_test_runners, jvm_test_framework
+from infosec_harness.repo.detect import (
+    java_build_texts,
+    java_release,
+    js_test_runners,
+    jvm_test_framework,
+)
 
 # The sandbox builds the image with HOME under /opt and copies it to a /work tmpfs for the
 # probe: installs write under BUILD_HOME, anything resolved at probe time reads RUNTIME_HOME.
-from infosec_harness.sandbox.docker import HOME_STAGE as BUILD_HOME
-from infosec_harness.sandbox.docker import WORK_HOME as RUNTIME_HOME
+from infosec_harness.sandbox.image import HOME_STAGE as BUILD_HOME
+from infosec_harness.sandbox.image import WORK_HOME as RUNTIME_HOME
 
 # v2: runner detection reads the executable instead of searching the command text, and every
 # retry message cites a canonical command that passes every check here. Both change which specs
@@ -881,11 +884,6 @@ def offline_warmup_violations(spec: EnvironmentSpec, framework: str | None = Non
     return problems
 
 
-# Build files whose declared language level binds the choice of JDK, read from the repository
-# root and one level down.
-_JAVA_BUILD_FILES = ("pom.xml", "build.gradle", "build.gradle.kts")
-
-
 def js_runner_choice_violations(test_command: str, declared: list[str]) -> list[str]:
     """Reject a Node runner the repository does not have. Pure, so tests can check it.
 
@@ -927,46 +925,16 @@ def repo_js_runners(repo_path: str | None) -> list[str]:
         return []
 
 
-def java_release(build_texts: Iterable[str]) -> int | None:
-    """The oldest Java language level any of these build files declares, or None.
-
-    The oldest binds: a JDK must still accept every level the build compiles at. This is the
-    single rule for the JDK check; the stack fingerprint's ``java_release`` is meant to apply it
-    to the same candidate texts so the two cannot disagree on a multi-module repository.
-    """
-    declared = [level for text in build_texts
-                if (level := declared_java_release(text)) is not None]
-    return min(declared) if declared else None
-
-
 def repo_java_release(repo_path: str | None) -> int | None:
     """The repository's binding Java level; None (the JDK check stays silent) when unknown."""
     return java_release(_java_build_texts(repo_path))
 
 
 def _java_build_texts(repo_path: str | None) -> list[str]:
-    """The repository's own build files, root and one level down."""
-    if not repo_path:
+    """The repository's own build files (``repo.detect.java_build_texts``); none without a repo."""
+    if not repo_path or not Path(repo_path).is_dir():
         return []
-    root = Path(repo_path)
-    if not root.is_dir():
-        return []
-    candidates = [root / name for name in _JAVA_BUILD_FILES]
-    with contextlib.suppress(OSError):
-        candidates += [
-            child / name
-            for child in sorted(root.iterdir())[:40]
-            if child.is_dir()
-            for name in _JAVA_BUILD_FILES
-        ]
-    texts = []
-    for path in candidates:
-        try:
-            if path.is_file():
-                texts.append(path.read_text(errors="replace"))
-        except OSError:
-            continue
-    return texts
+    return java_build_texts(repo_path)
 
 
 def repo_jvm_test_framework(repo_path: str | None) -> str | None:

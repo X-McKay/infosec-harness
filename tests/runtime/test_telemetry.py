@@ -96,9 +96,9 @@ async def test_instrumentation_excludes_prompt_and_completion_content():
 
 
 def test_spec_instrumentation_cannot_reenable_content_export():
-    from infosec_harness.agents.registry import AGENT_BINDINGS, build_agent
+    from infosec_harness.agents.registry import BINDINGS, build_agent
 
-    for name in AGENT_BINDINGS:
+    for name in BINDINGS:
         settings = build_agent(name, durable=False).instrument
         assert settings.include_content is False, name
         assert settings.include_binary_content is False, name

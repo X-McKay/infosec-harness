@@ -81,7 +81,7 @@ async def test_experiment_routes_keep_unknown_usage_explicit(client):
     summary = next(item for item in listed["items"] if item["id"] == "api-exp")
     assert "metrics" not in summary
     assert summary["cases_completed"] == summary["cases_planned"] == 1
-    assert summary["accuracy"] is None and summary["cost_usd_per_case"] is None
+    assert summary["task_success_rate"] is None and summary["average_cost_usd"] is None
     detail = (await client.get("/api/experiments/api-exp")).json()
     assert detail["metrics"]["avg_tokens"] is None
     assert detail["cases"] == [{
@@ -185,8 +185,9 @@ async def test_experiments_are_paged_newest_first_with_headline_measurements(cli
             session.add(db.EvalExperiment(
                 id=f"paged-{i}", agent="paged", dataset="d", backend="stub",
                 created_at=now + timedelta(days=3650 + i),
-                metrics={"status": "complete", "accuracy": True if i == 0 else 0.5 + i / 10,
-                         "distributions": {"p95_latency_s": 2.0, "cost_usd_per_case": "1"},
+                metrics={"status": "complete",
+                         "task_success_rate": True if i == 0 else 0.5 + i / 10,
+                         "distributions": {"p95_latency_s": 2.0, "average_cost_usd": "1"},
                          "gate_evaluation": {"status": "passed"}, "per_case": ["x" * 1000]}))
         await session.commit()
     first = (await client.get("/api/experiments", params={"limit": 2,
@@ -197,11 +198,11 @@ async def test_experiments_are_paged_newest_first_with_headline_measurements(cli
                                                            "population": "demo"})).json()
     assert second["items"][0]["id"] == "paged-0"
     newest = first["items"][0]
-    assert newest["accuracy"] == 0.7 and newest["p95_latency_s"] == 2.0
+    assert newest["task_success_rate"] == 0.7 and newest["p95_latency_s"] == 2.0
     assert newest["gate_status"] == "passed" and newest["status"] == "complete"
     # A non-numeric or boolean measurement is unavailable, never coerced.
-    assert newest["cost_usd_per_case"] is None
-    assert second["items"][0]["accuracy"] is None
+    assert newest["average_cost_usd"] is None
+    assert second["items"][0]["task_success_rate"] is None
     assert (await client.get("/api/experiments", params={"limit": 101})).status_code == 422
 
 

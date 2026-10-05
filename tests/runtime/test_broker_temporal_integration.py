@@ -129,8 +129,8 @@ async def test_real_temporal_worker_restart_saved_activity_and_zero_io_replay(se
         attempts = [event.activity_task_started_event_attributes.attempt for event in history.events
                     if event.HasField("activity_task_started_event_attributes")]
         assert max(attempts) >= 2
-        from infosec_harness.inference import invocations
-        from infosec_harness.inference.transport import BrokerModel
+        from infosec_harness.inference.worker import invocations
+        from infosec_harness.inference.worker.transport import BrokerModel
         async def forbidden(*_args, **_kwargs):
             pytest.fail("Replay invoked runtime broker I/O")
         monkeypatch.setattr(invocations, "request_invocation", forbidden)
@@ -170,8 +170,8 @@ async def test_real_direct_stub_history_replays_under_broker_config_without_io(s
         markers = [event.marker_recorded_event_attributes for event in history.events
                    if event.HasField("marker_recorded_event_attributes")]
         assert not any("credential-broker-invocation-v1" in str(value) for value in markers)
-        from infosec_harness.inference import invocations
-        from infosec_harness.inference.transport import BrokerModel
+        from infosec_harness.inference.worker import invocations
+        from infosec_harness.inference.worker.transport import BrokerModel
         async def forbidden(*_args, **_kwargs):
             pytest.fail("Replay invoked runtime broker I/O")
         monkeypatch.setattr(invocations, "request_invocation", forbidden)
@@ -192,7 +192,7 @@ async def test_real_temporal_all_registered_agents_execute_and_replay_without_io
 
     from infosec_harness.agents.durable import CONFIGS
 
-    assert set(AGENTS) == set(registry.AGENT_BINDINGS) == set(CONFIGS)
+    assert set(AGENTS) == set(registry.BINDINGS) == set(CONFIGS)
     root_id = "brokerqualification-all-" + uuid.uuid4().hex
     await seed_root(root_id)
     before = len(services.events())
@@ -241,8 +241,8 @@ async def test_real_temporal_all_registered_agents_execute_and_replay_without_io
             assert {record.request["binding"]["agent"] for record in records} == set(AGENTS)
         history = await handle.fetch_history()
         await stop_worker(process)
-        from infosec_harness.inference import invocations
-        from infosec_harness.inference.transport import BrokerModel
+        from infosec_harness.inference.worker import invocations
+        from infosec_harness.inference.worker.transport import BrokerModel
 
         async def forbidden(*_args, **_kwargs):
             pytest.fail("All-agent history replay invoked runtime broker I/O")

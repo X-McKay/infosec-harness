@@ -527,10 +527,10 @@ export interface components {
             harness_version: string;
             /** Created At */
             created_at: string;
-            /** Accuracy */
-            accuracy: number | null;
-            /** Cost Usd Per Case */
-            cost_usd_per_case: number | null;
+            /** Task Success Rate */
+            task_success_rate: number | null;
+            /** Average Cost Usd */
+            average_cost_usd: number | null;
             /** P50 Latency S */
             p50_latency_s: number | null;
             /** P95 Latency S */

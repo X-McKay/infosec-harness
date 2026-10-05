@@ -17,6 +17,7 @@ from infosec_harness.resources import (
     skills_dir,
     source_checkout,
 )
+from infosec_harness.sandbox import REQUIRED_RUNTIME
 
 # The repository root when this runs from a checkout, and the package directory otherwise.
 # Kept for the tooling that reads reviewable *project* files -- risk assessments, the eval
@@ -88,7 +89,7 @@ class Settings(BaseSettings):
     qualification_observation_max_age_seconds: int = Field(default=3600, ge=30, le=86400)
 
     # Sandbox
-    sandbox_runtime: str = "runsc"  # gVisor; set to "runc" only for local development without gVisor
+    sandbox_runtime: str = REQUIRED_RUNTIME  # gVisor; set to "runc" only for local development without gVisor
     sandbox_probe_timeout_s: int = 300
     # Ceiling on one agent run outside Temporal. A hung provider request has no natural
     # end: the client's own retries never fire because nothing failed, so a run can sit
@@ -125,7 +126,7 @@ class Settings(BaseSettings):
         "deb.debian.org", "security.debian.org",         # apt (debian base images)
     ]
     # Base-image allowlist (registries an EnvironmentSpec.base_image may be pulled from).
-    allowed_base_registries: list[str] = ["docker.io/library", "docker.io", "public.ecr.aws"]
+    allowed_base_registries: list[str] = ["docker.io/library", "public.ecr.aws"]
 
     # Deployment safety ceilings; provisional until calibrated on representative batches.
     root_max_requests: int = Field(default=10000, gt=0)
@@ -223,9 +224,10 @@ class Settings(BaseSettings):
     def validate_sandbox_isolation(self) -> Settings:
         # A configured runtime name is not isolation evidence, but anything other than gVisor
         # is a weaker boundary that only the explicit development override may select.
-        if self.sandbox_runtime != "runsc" and not self.allow_insecure_runtime:
+        if self.sandbox_runtime != REQUIRED_RUNTIME and not self.allow_insecure_runtime:
             raise ValueError(
-                "sandbox_runtime other than 'runsc' requires HARNESS_ALLOW_INSECURE_RUNTIME=true"
+                f"sandbox_runtime other than {REQUIRED_RUNTIME!r} requires "
+                "HARNESS_ALLOW_INSECURE_RUNTIME=true"
             )
         return self
 

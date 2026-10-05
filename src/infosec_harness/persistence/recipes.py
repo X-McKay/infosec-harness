@@ -32,7 +32,7 @@ def stack_key(stack: StackFingerprint) -> str:
     """A stable identity for a kind of repository, not a particular one.
 
     Only shape goes in. File *counts* are excluded, since two Maven projects of different sizes
-    want the same recipe, and so are `test_dirs` and `registries`, which vary per project. What
+    want the same recipe, and so is `test_dirs`, which varies per project. What
     remains -- the dominant language, the build systems, the test frameworks, the declared Java
     level, and the manifest filenames -- is exactly what determines how a repo is built and
     tested.

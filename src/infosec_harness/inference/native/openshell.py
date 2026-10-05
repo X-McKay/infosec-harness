@@ -7,7 +7,6 @@ import base64
 import hashlib
 import json
 import logging
-import os
 import secrets
 import shutil
 import tempfile
@@ -21,12 +20,10 @@ from urllib.parse import urlsplit
 
 from pydantic import Field
 
-from infosec_harness.sandbox.process import MINIMAL_PATH, ProcessResult, run_bounded
-
-from .executor import ExecutorSettings, read_private, require_private
-from .http_service import https_origin
-from .policy import canonical_policy, policy_digest
-from .protocol import (
+from infosec_harness._io import atomic_write_bytes
+from infosec_harness.inference.catalog.policy import canonical_policy, policy_digest
+from infosec_harness.inference.wire.http_service import https_origin
+from infosec_harness.inference.wire.protocol import (
     INFER_PATH,
     LEDGER_CREDENTIAL_ENV,
     MAX_BODY_BYTES,
@@ -38,6 +35,8 @@ from .protocol import (
     canonical_bytes,
     digest,
 )
+from infosec_harness.inference.wire.settings import ExecutorSettings, read_private, require_private
+from infosec_harness.sandbox.process import MINIMAL_PATH, ProcessResult, run_bounded
 
 _LOG = logging.getLogger(__name__)
 # Acknowledgement wait leaves cleanup authority/time for exact-owned destruction.
@@ -54,25 +53,11 @@ def _identity_failure(boundary: str, category: str, **observations: bool) -> Bro
     return BrokerError("identity")
 
 
-def _atomic_write(directory: Path, path: Path, data: bytes) -> None:
+def _atomic_write(path: Path, data: bytes) -> None:
     """Owner-only write that is either absent or complete after a crash."""
     if path.is_symlink():
         raise BrokerError("identity")
-    fd, temporary = tempfile.mkstemp(dir=directory)
-    try:
-        with os.fdopen(fd, "wb") as output:
-            output.write(data)
-            output.flush()
-            os.fsync(output.fileno())
-        os.replace(temporary, path)
-        directory_fd = os.open(directory, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
+    atomic_write_bytes(path, data, sync_directory=True)
 
 
 def _private_directory(directory: Path) -> Path:
@@ -249,9 +234,7 @@ class LeaseStore:
 
     def save(self, lease: Lease) -> None:
         values = {**vars(lease), "contract": lease.contract.model_dump(mode="json")}
-        _atomic_write(
-            self.directory, self.directory / f"{lease.lease_id}.json", canonical_bytes(values)
-        )
+        _atomic_write(self.directory / f"{lease.lease_id}.json", canonical_bytes(values))
 
     def retire(self, lease: Lease) -> None:
         """Replace a deleted lease's secret record with a secret-free archive entry."""
@@ -268,7 +251,7 @@ class LeaseStore:
             "status": str(lease.status),
         }
         archive = self.archive
-        _atomic_write(archive, archive / f"{lease.lease_id}.json", canonical_bytes(record))
+        _atomic_write(archive / f"{lease.lease_id}.json", canonical_bytes(record))
         (self.directory / f"{lease.lease_id}.json").unlink(missing_ok=True)
 
     def is_retired(self, lease_id: str) -> bool:
@@ -293,7 +276,7 @@ class LeaseStore:
 
     def revoke_run(self, run_id: str) -> None:
         if not self.is_run_revoked(run_id):
-            _atomic_write(self.directory, self._run_tombstone(run_id), run_id.encode())
+            _atomic_write(self._run_tombstone(run_id), run_id.encode())
 
     def load(self) -> list[Lease]:
         leases = []

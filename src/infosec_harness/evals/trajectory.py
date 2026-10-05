@@ -1,7 +1,7 @@
 """Score an agent run's trajectory: did it evoke the tools and skills it should have?
 
 The runtime records tools_called / skills_loaded on every AgentOutcome with
-``agents.trajectory.inspect_messages``; here ``check_expectations`` scores them (the
+``agents.trajectory.trace_calls``; here ``check_expectations`` scores them (the
 "expected tools and skills are being read/evoked" question).
 
 Under stub models no tools are called, so these are empty; they light up under a live model
@@ -10,8 +10,6 @@ and are exercised deterministically in tests via a scripted tool-calling model.
 
 from __future__ import annotations
 
-import hashlib
-import json
 import re
 from collections import Counter
 from collections.abc import Iterable, Sequence
@@ -21,7 +19,7 @@ from functools import cache
 from pydantic_ai.messages import ModelMessage
 
 from infosec_harness.agents.capabilities import REPO_RO_TOOLS
-from infosec_harness.agents.trajectory import function_tool_calls
+from infosec_harness.agents.trajectory import trace_calls
 from infosec_harness.evals.messages import MAX_NAME_CHARS, MAX_RECORDED_CALLS
 from infosec_harness.settings import get_settings
 
@@ -124,32 +122,24 @@ def cwe_skill_prefix(cwe: str | None) -> str | None:
 
 def summarize_calls(messages: Sequence[ModelMessage], *,
                     limit: int = MAX_RECORDED_CALLS) -> dict[str, object]:
-    """Retain call order using encounter-local IDs, without recoverable argument hashes."""
-    counts: Counter[str] = Counter()
-    signatures: Counter[tuple[str, str]] = Counter()
+    """Retain call order using encounter-local IDs, without recoverable argument hashes.
+
+    Repetition is ``agents.trajectory.trace_calls``'s signature, so this summary and the
+    runtime's ``repeated_tool_calls`` agree on what counts as the same call.
+    """
+    trace = trace_calls(messages)
+    counts = Counter(name for name, _ in trace.sequence)
     sequence: list[dict[str, str]] = []
-    argument_ids: dict[tuple[str, str], str] = {}
-    for call in function_tool_calls(messages):
-        name = call.tool_name
-        try:
-            args = call.args_as_dict()
-        except Exception:
-            args = {"malformed": True}
-        digest = hashlib.sha256(
-            json.dumps(args, sort_keys=True, default=str).encode()
-        ).hexdigest()
-        counts[name] += 1
-        signature = (name, digest)
-        signatures[signature] += 1
-        if len(sequence) < limit:
-            argument_id = argument_ids.setdefault(signature, f"args-{len(argument_ids) + 1}")
-            sequence.append({"tool": name[:MAX_NAME_CHARS], "argument_id": argument_id})
-    total = sum(counts.values())
+    argument_ids: dict[str, str] = {}
+    for name, signature in trace.sequence[:limit]:
+        argument_id = argument_ids.setdefault(signature, f"args-{len(argument_ids) + 1}")
+        sequence.append({"tool": name[:MAX_NAME_CHARS], "argument_id": argument_id})
+    total = len(trace.sequence)
     return {
         "tool_call_count": total,
         "counts": dict(sorted(counts.items())[:limit]),
         "sequence": sequence,
         "sequence_truncated": total > limit,
-        "repeated_call_count": sum(count - 1 for count in signatures.values()),
+        "repeated_call_count": sum(count - 1 for count in trace.signatures.values()),
         "arguments_retained": False,
     }

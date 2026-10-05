@@ -3,8 +3,8 @@ import json
 import pytest
 from test_openshell_controller import native_fixture
 
-from infosec_harness.inference.http_service import broker_error_body
-from infosec_harness.inference.protocol import BrokerError
+from infosec_harness.inference.wire.http_service import broker_error_body
+from infosec_harness.inference.wire.protocol import BrokerError
 
 
 @pytest.mark.asyncio

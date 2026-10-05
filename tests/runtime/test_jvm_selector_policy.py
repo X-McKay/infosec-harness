@@ -8,7 +8,8 @@ from types import SimpleNamespace
 import pytest
 
 from infosec_harness.domain.models import EnvironmentSpec
-from infosec_harness.sandbox import canary, docker, policy
+from infosec_harness.sandbox import controls, docker, policy
+from infosec_harness.sandbox.image import render_dockerfile
 
 
 @pytest.fixture
@@ -33,8 +34,8 @@ def environment(command):
 async def test_render_and_probe_keep_one_named_class_without_substituting_path(candidate, monkeypatch, command):
     selected = 'OtherTest' if 'OtherTest' in command else 'HarnessProbeTest'
     assert candidate.jvm_class_selector(command) == selected
-    assert docker.render_dockerfile(environment(command)).startswith('FROM maven:')
-    path, content = canary.canary_for('java', command)
+    assert render_dockerfile(environment(command)).startswith('FROM maven:')
+    path, content = controls.control_test_for('java', command)
     assert path == f'src/test/java/{selected}.java'
     assert f'public class {selected}' in content
     observed = []
@@ -82,10 +83,10 @@ async def test_render_and_probe_keep_one_named_class_without_substituting_path(c
 ])
 def test_invalid_jvm_selectors_never_render(candidate, command):
     with pytest.raises(candidate.InvalidEnvironmentSpec):
-        docker.render_dockerfile(environment(command))
+        render_dockerfile(environment(command))
     # Nor is a control test written under a guessed class name.
     with pytest.raises(candidate.InvalidEnvironmentSpec):
-        canary.canary_for('java', command)
+        controls.control_test_for('java', command)
 
 
 @pytest.mark.parametrize('command', ['pytest -q {test_file}', 'prove -v {test_file}', 'npx jest --runTestsByPath {test_file}'])
@@ -94,7 +95,7 @@ def test_path_runners_keep_exact_one_placeholder(candidate, command):
     assert candidate.validate_environment_spec(environment(command)).test_command == command
     for changed in (command.replace('{test_file}', 'tests'), command + ' {test_file}'):
         with pytest.raises(candidate.InvalidEnvironmentSpec):
-            docker.render_dockerfile(environment(changed))
+            render_dockerfile(environment(changed))
 
 
 @pytest.mark.parametrize('updates', [
@@ -105,4 +106,4 @@ def test_path_runners_keep_exact_one_placeholder(candidate, command):
 def test_class_alternative_does_not_bypass_existing_structure_or_path_guards(candidate, updates):
     spec = environment('mvn -o test -Dtest=HarnessProbeTest').model_copy(update=updates)
     with pytest.raises((candidate.InvalidEnvironmentSpec, candidate.DisallowedBaseImage)):
-        docker.render_dockerfile(spec)
+        render_dockerfile(spec)

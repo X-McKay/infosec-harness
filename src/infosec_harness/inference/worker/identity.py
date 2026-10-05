@@ -3,7 +3,7 @@ from contextvars import ContextVar
 
 from pydantic_ai.capabilities import AbstractCapability
 
-from infosec_harness.inference.protocol import BrokerError
+from infosec_harness.inference.wire.protocol import BrokerError
 
 _IDENTITY: ContextVar[str | None] = ContextVar("broker_request_identity", default=None)
 

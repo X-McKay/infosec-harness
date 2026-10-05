@@ -7,9 +7,9 @@ import pytest
 from pydantic import ValidationError
 
 from infosec_harness.agents import models
-from infosec_harness.inference import issuance
-from infosec_harness.inference.profiles import ExecutorProfile
-from infosec_harness.inference.protocol import digest
+from infosec_harness.inference.catalog.profiles import ExecutorProfile
+from infosec_harness.inference.controller import issuance
+from infosec_harness.inference.wire.protocol import digest
 
 
 def test_omitted_request_cap_preserves_existing_profile_digest():
@@ -63,8 +63,9 @@ async def test_healthy_loop_can_hold_multiple_requests_above_one_request_cap():
     from pydantic_ai.messages import ModelRequest, UserPromptPart
     from pydantic_ai.models import ModelRequestParameters
 
-    from infosec_harness.inference import admission, codec, ledger
-    from infosec_harness.inference.protocol import (
+    from infosec_harness.inference.controller import admission, ledger
+    from infosec_harness.inference.wire import codec
+    from infosec_harness.inference.wire.protocol import (
         ExecutorContract,
         InferenceRequest,
         ReservationBinding,
@@ -111,7 +112,7 @@ async def test_healthy_loop_can_hold_multiple_requests_above_one_request_cap():
             held = root.state["operations"]["op"]["broker_allocated"]
         assert 100000 < held["tokens"] < 240150
         assert held["requests"] == 2
-        from infosec_harness.inference.protocol import BrokerError
+        from infosec_harness.inference.wire.protocol import BrokerError
         with pytest.raises(BrokerError) as rejected:
             await admission.authorize(request("x" * 90000, "model:2"), policy)
         assert rejected.value.code == "budget"

@@ -7,90 +7,41 @@ import asyncio
 import os
 import re
 import ssl
-import stat
 import time
 from pathlib import Path
 
 import httpx2
 from openai import AsyncOpenAI
-from pydantic import Field
 from pydantic_ai.providers.openai import OpenAIProvider
 
-from .auth import verify_headers
-from .codec import decode_payload, encode_response
-from .compat import model_for_contract
-from .diagnostics import record_failure
-from .http_service import JsonChannel, https_origin, parse_request, serve
-from .protocol import (
+from infosec_harness.inference.executor.compat import model_for_contract
+from infosec_harness.inference.executor.rendering import check_request_bounds
+from infosec_harness.inference.wire.auth import verify_headers
+from infosec_harness.inference.wire.codec import decode_payload, encode_response
+from infosec_harness.inference.wire.diagnostics import record_failure
+from infosec_harness.inference.wire.http_service import (
+    JsonChannel,
+    https_origin,
+    parse_request,
+    serve,
+)
+from infosec_harness.inference.wire.protocol import (
     ENV_NAME_PATTERN,
     INFER_PATH,
     LEDGER_CLAIM_PATH,
     LEDGER_COMPLETE_PATH,
-    LEDGER_CREDENTIAL_ENV,
     BrokerError,
     DispatchPermit,
-    EnvName,
     ExecutorContract,
-    HttpsOrigin,
     InferenceRequest,
     InferenceResult,
-    StrictModel,
     canonical_bytes,
     parse_model,
 )
-from .rendering import check_request_bounds
-from .timing import PROVIDER_TIMEOUT_S, remaining_timeout
+from infosec_harness.inference.wire.settings import ExecutorSettings, read_private
+from infosec_harness.inference.wire.timing import PROVIDER_TIMEOUT_S, remaining_timeout
 
 PLACEHOLDER = re.compile("^openshell:resolve:env:" + ENV_NAME_PATTERN.removeprefix("^"))
-
-
-def _check_private(status: os.stat_result, *, directory: bool, same_owner: bool,
-                   message: str | None) -> None:
-    kind = stat.S_ISDIR if directory else stat.S_ISREG
-    if (not kind(status.st_mode) or status.st_mode & 0o077
-            or (same_owner and status.st_uid != os.getuid())):
-        raise BrokerError("identity", message)
-
-
-def require_private(path: Path, *, directory: bool = False, same_owner: bool = True,
-                    message: str | None = None) -> None:
-    """An existing owner-only regular file (or directory), never a symlink.
-
-    ``same_owner`` additionally requires this process's user to own it.
-    """
-    try:
-        status = path.lstat()
-    except OSError:
-        raise BrokerError("identity", message) from None
-    _check_private(status, directory=directory, same_owner=same_owner, message=message)
-
-
-def read_private(path: Path, *, same_owner: bool = True, message: str | None = None) -> bytes:
-    """Read an owner-only regular file, checking the opened file itself (no symlink, no race)."""
-    try:
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-    except OSError:
-        raise BrokerError("identity", message) from None
-    try:
-        _check_private(os.fstat(descriptor), directory=False, same_owner=same_owner,
-                       message=message)
-    except BaseException:
-        os.close(descriptor)
-        raise
-    with os.fdopen(descriptor, "rb") as stream:
-        return stream.read()
-
-
-class ExecutorSettings(StrictModel):
-    run_id: str
-    lease_id: str
-    contract: ExecutorContract
-    controller_origin: HttpsOrigin
-    ingress_key_hex: str = Field(pattern=r"^[a-f0-9]{64}$", repr=False)
-    provider_env: EnvName
-    ledger_env: EnvName = LEDGER_CREDENTIAL_ENV
-    max_input_tokens: int = Field(gt=0)
-    max_output_tokens: int = Field(gt=0)
 
 
 def _placeholder(value: str, role: str) -> str:

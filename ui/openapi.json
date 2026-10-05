@@ -1600,7 +1600,7 @@
             "type": "string",
             "title": "Created At"
           },
-          "accuracy": {
+          "task_success_rate": {
             "anyOf": [
               {
                 "type": "number"
@@ -1609,9 +1609,9 @@
                 "type": "null"
               }
             ],
-            "title": "Accuracy"
+            "title": "Task Success Rate"
           },
-          "cost_usd_per_case": {
+          "average_cost_usd": {
             "anyOf": [
               {
                 "type": "number"
@@ -1620,7 +1620,7 @@
                 "type": "null"
               }
             ],
-            "title": "Cost Usd Per Case"
+            "title": "Average Cost Usd"
           },
           "p50_latency_s": {
             "anyOf": [
@@ -1717,8 +1717,8 @@
           "pricing",
           "harness_version",
           "created_at",
-          "accuracy",
-          "cost_usd_per_case",
+          "task_success_rate",
+          "average_cost_usd",
           "p50_latency_s",
           "p95_latency_s",
           "passed",

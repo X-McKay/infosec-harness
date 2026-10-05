@@ -8,6 +8,7 @@ escaping link named like a manifest is absent rather than a crash or a read outs
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -267,17 +268,59 @@ def declared_java_release(build_file_text: str) -> int | None:
     return min(found) if found else None
 
 
+def java_release(build_texts: Iterable[str]) -> int | None:
+    """The oldest Java language level any of these build files declares, or None.
+
+    The oldest binds: a JDK must still accept every level the build compiles at. This is the
+    one rule for both the stack fingerprint and the JDK check, applied to the same candidate
+    build files (:func:`java_build_texts`), so the two cannot disagree on a multi-module
+    repository.
+    """
+    declared = [level for text in build_texts
+                if (level := declared_java_release(text)) is not None]
+    return min(declared) if declared else None
+
+
+# How many child directories (sorted, non-source directories excluded) are read for module
+# build files. A bound, so a repository with thousands of top-level directories costs the same.
+_JAVA_MODULE_DIRS = 40
+
+
+def java_build_texts(root: str | Path) -> list[str]:
+    """The build files whose language level binds the JDK: ``root`` and its first child dirs.
+
+    Unreadable files and directories are skipped; an unreadable repository yields nothing,
+    and the JDK check then stays silent rather than guessing.
+    """
+    base = Path(root)
+    candidates = [base / name for name in _JAVA_BUILD_FILES]
+    with contextlib.suppress(OSError):
+        children = [child for child in sorted(base.iterdir())
+                    if child.name not in NON_SOURCE_DIRS and child.is_dir()]
+        candidates += [child / name for child in children[:_JAVA_MODULE_DIRS]
+                       for name in _JAVA_BUILD_FILES]
+    texts = []
+    for path in candidates:
+        with contextlib.suppress(OSError):
+            if path.is_file():
+                texts.append(path.read_text(errors="replace"))
+    return texts
+
+
 def _declared_release(index: _Index, root: str) -> int | None:
-    """The oldest Java level the root build file asks for. Binds the JDK, so it is fingerprinted.
+    """The oldest Java level the build files at ``root`` ask for. Binds the JDK, so it is
+    fingerprinted.
 
     Without it two Java repositories that differ only in language level share a recipe cache key,
     and the cached spec's base image is then wrong for one of them -- a JDK too new fails with
-    "Source option 7 is no longer supported", a JDK too old with "invalid target release".
+    "Source option 7 is no longer supported", a JDK too old with "invalid target release". The
+    candidates are :func:`java_build_texts`'s, read through the walk's index.
     """
-    levels = [declared_java_release(index.read(_join(root, name)))
-              for name in _JAVA_BUILD_FILES if index.has(_join(root, name))]
-    found = [level for level in levels if level is not None]
-    return min(found) if found else None
+    children = sorted({_relative(root, directory).split("/", 1)[0]
+                       for directory in index.subtree(root) if directory != root} - {"."})
+    directories = [root, *(_join(root, child) for child in children[:_JAVA_MODULE_DIRS])]
+    return java_release(index.read(_join(directory, name)) for directory in directories
+                        for name in _JAVA_BUILD_FILES)
 
 
 def _fingerprint(index: _Index, root: str) -> StackFingerprint:

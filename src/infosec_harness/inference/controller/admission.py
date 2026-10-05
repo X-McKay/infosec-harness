@@ -9,11 +9,16 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 
-from infosec_harness.inference.diagnostics import budget_guard
-from infosec_harness.inference.ledger import RETRY, cas_retry, cas_root
-from infosec_harness.inference.protocol import BrokerError, InferenceRequest, ReservationBinding
-from infosec_harness.inference.rendering import check_request_bounds
+from infosec_harness.inference.controller.ledger import broker_cas_retry
+from infosec_harness.inference.executor.rendering import check_request_bounds
+from infosec_harness.inference.wire.diagnostics import budget_guard
+from infosec_harness.inference.wire.protocol import (
+    BrokerError,
+    InferenceRequest,
+    ReservationBinding,
+)
 from infosec_harness.persistence import db
+from infosec_harness.persistence.budgets import RETRY, cas_root
 
 
 @dataclass(frozen=True)
@@ -115,4 +120,4 @@ async def bind_reservation(binding: ReservationBinding, *, configuration_digest:
         await session.commit()
         return None
 
-    await cas_retry(attempt, exhausted="Bounded reservation binding contention exhausted")
+    await broker_cas_retry(attempt, exhausted="Bounded reservation binding contention exhausted")

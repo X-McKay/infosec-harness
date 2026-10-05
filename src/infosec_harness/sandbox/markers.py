@@ -1,6 +1,6 @@
 """The stdout markers a probe (or the harness's own control test) prints, one definition.
 
-Probe templates, the control tests in ``canary``, the probe run script in ``docker`` and the
+Probe templates, the control tests in ``controls``, the probe run script in ``docker`` and the
 parsers in ``output`` all read these constants; none of them spells a marker literally.
 """
 
@@ -17,6 +17,6 @@ SINK_RETURNED_PREFIX = "HARNESS_SINK_RETURNED::"
 # Printed when the exploit condition was observed.
 ORACLE_PREFIX = "HARNESS_ORACLE::"
 # File oracle: a probe that cannot print may instead create /tmp/<FILE_ORACLE_NAME_PREFIX><nonce>;
-# the probe run script then echoes CANARY_PREFIX<nonce> on its behalf.
+# the probe run script then echoes FILE_ORACLE_PREFIX<nonce> on its behalf.
 FILE_ORACLE_NAME_PREFIX = "harness_canary_"
-CANARY_PREFIX = "HARNESS_CANARY_PRESENT::"
+FILE_ORACLE_PREFIX = "HARNESS_CANARY_PRESENT::"

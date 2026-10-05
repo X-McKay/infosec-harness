@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock
 import pytest
 
 from infosec_harness.agents.deps import AgentDeps
-from infosec_harness.inference.protocol import ExecutorContract, ReservationBinding
+from infosec_harness.inference.wire.protocol import ExecutorContract, ReservationBinding
 from infosec_harness.workflows import accounting, temporal_ops
-from infosec_harness.workflows.payloads import ReserveArgs
+from infosec_harness.workflows.payloads import CloseBrokerRunArgs, ReserveArgs
 
 
 def contract():
@@ -82,7 +82,7 @@ async def test_new_temporal_binding_is_an_activity_and_not_runtime_io_in_workflo
     ops._accounting.reserve = AsyncMock(return_value=("root", "operation"))
     ops._accounting.settle = AsyncMock()
     monkeypatch.setattr(temporal_ops.workflow, "info", workflow_info)
-    from infosec_harness.inference import invocations
+    from infosec_harness.inference.worker import invocations
     monkeypatch.setattr(invocations, "request_invocation", lambda *args: pytest.fail("Workflow runtime I/O"))
     scheduled = []
     binding = ReservationBinding(root_id="root", run_id="execution-1", invocation_id="operation",
@@ -91,7 +91,7 @@ async def test_new_temporal_binding_is_an_activity_and_not_runtime_io_in_workflo
 
     async def activity(fn, args, **kwargs):
         scheduled.append((fn, args))
-        return binding.model_dump(mode="json")
+        return binding  # the data converter returns the activity's declared type
     monkeypatch.setattr(temporal_ops.workflow, "execute_activity", activity)
 
     async def run(agent, name, prompt, deps, config, record, **kwargs):
@@ -103,8 +103,8 @@ async def test_new_temporal_binding_is_an_activity_and_not_runtime_io_in_workflo
     assert await ops.run_agent("context", ["prompt"], original) == "outcome"
     assert original.broker_binding is None
     assert len(scheduled) == 1
-    assert scheduled[0][1]["run_id"] == "execution-1"
-    assert scheduled[0][1]["invocation_id"] == "operation"
+    assert scheduled[0][1].run_id == "execution-1"
+    assert scheduled[0][1].invocation_id == "operation"
 
 
 async def test_direct_temporal_branch_does_not_schedule_broker_activity(monkeypatch):
@@ -137,7 +137,7 @@ async def test_close_uses_the_established_run_root_ownership(monkeypatch):
     monkeypatch.setattr(temporal_ops.workflow, "execute_activity", execute)
     await ops.close()
     assert calls == [(temporal_ops.activities.close_broker_run_activity,
-                      {"run_id": "execution-1", "root_id": "root"})]
+                      CloseBrokerRunArgs(run_id="execution-1", root_id="root"))]
 
 
 @pytest.mark.parametrize("code,retryable", [("unavailable", True), ("pending", True),
@@ -145,8 +145,8 @@ async def test_close_uses_the_established_run_root_ownership(monkeypatch):
 async def test_issuance_activity_retries_only_safe_dispositions(monkeypatch, code, retryable):
     from temporalio.exceptions import ApplicationError
 
-    from infosec_harness.inference import invocations
-    from infosec_harness.inference.protocol import BrokerError, InvocationRequest
+    from infosec_harness.inference.wire.protocol import BrokerError, InvocationRequest
+    from infosec_harness.inference.worker import invocations
     async def unavailable(*args):
         raise BrokerError(code)
     monkeypatch.setattr(invocations, "request_invocation", unavailable)
@@ -154,5 +154,28 @@ async def test_issuance_activity_retries_only_safe_dispositions(monkeypatch, cod
         invocation_id="operation", operation_id="operation", agent="context",
         configuration_digest="config", contract=contract())
     with pytest.raises(ApplicationError) as failure:
-        await temporal_ops.activities.issue_broker_invocation_activity(request.model_dump(mode="json"))
+        await temporal_ops.activities.issue_broker_invocation_activity(request)
     assert failure.value.non_retryable is (not retryable)
+
+
+async def test_a_failed_call_settles_with_its_partial_usage_not_unavailable(monkeypatch):
+    """A failed agent call that completed requests keeps them in the settlement record, as a
+    lower bound: never an observation that would release the reservation."""
+    from infosec_harness.domain.models import AgentOutcome
+    from infosec_harness.workflows.payloads import SettleArgs
+
+    calls = []
+
+    async def execute(activity, args, **kwargs):
+        calls.append(args)
+    monkeypatch.setattr(accounting.workflow, "execute_activity", execute)
+    instance = accounting.RootAccounting(root_id="batch:root", fingerprint="fingerprint")
+    partial = AgentOutcome(output=None, agent="context", requests=2, input_tokens=40,
+                           failure="ModelHTTPError")
+    await instance.settle(("batch:root", "op"), None, "ModelHTTPError", partial=partial)
+    await instance.settle(("batch:root", "op2"), None, "TimeoutError")
+    settled = [args for args in calls if isinstance(args, SettleArgs)]
+    assert settled[0].observed is None
+    assert settled[0].record["usage"] == "partial_lower_bound"
+    assert (settled[0].record["requests"], settled[0].record["input_tokens"]) == (2, 40)
+    assert settled[1].record == {"failure": "TimeoutError", "usage": "unavailable"}

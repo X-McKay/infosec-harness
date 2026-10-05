@@ -33,9 +33,8 @@ from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
 
 from infosec_harness.agents import models as model_factory
 from infosec_harness.agents import registry
-from infosec_harness.agents.intake_contracts import render_intake_prompt
 from infosec_harness.agents.planning_window import planning_window_diagnostic
-from infosec_harness.agents.render import render_prompt
+from infosec_harness.agents.render import render_intake_prompt, render_prompt
 from infosec_harness.domain.models import ExperimentStatus
 from infosec_harness.evals.adapters import (
     ADAPTERS,
@@ -57,13 +56,13 @@ from infosec_harness.evals.probe_execution import evaluate_probe_execution
 from infosec_harness.evals.provenance import CodeVersion, code_version
 from infosec_harness.evals.release_report import report_provenance, write_release_report
 from infosec_harness.evals.trajectory import summarize_calls
-from infosec_harness.inference.invocations import eval_invocation
-from infosec_harness.inference.protocol import BrokerError
-from infosec_harness.inference.provenance import runtime_evidence
+from infosec_harness.inference.wire.protocol import BrokerError
+from infosec_harness.inference.worker.invocations import eval_invocation
+from infosec_harness.inference.worker.provenance import runtime_evidence
 from infosec_harness.persistence import db
 from infosec_harness.settings import get_settings
 
-EVALUATOR_VERSION = "deterministic-agent-output-v12"
+EVALUATOR_VERSION = "deterministic-agent-output-v13"
 # Model/provider settings mirror the durable worker, while orchestration and activity retries
 # do not run under Temporal in this evaluator. Latency and failure behavior are only
 # comparable between runs carrying this same execution contract.
@@ -461,7 +460,8 @@ def _prepare(agent: str, *, overlay: Path | Mapping[str, object] | None, repeat:
     spec = registry.load_spec(agent, fragment)
     cfg_hash = registry.config_hash(agent, spec, durable=True)
     model_tier = spec.model or "sonnet"
-    model_name = model_factory.resolved_model_name(agent, model_tier)
+    base_config = registry.resolve_agent_config(agent, spec, durable=True)
+    model_name = base_config.model.resolved_model
     pricing = pricing_status(model_name).value
     code = code_version()
     overlay_label = str(overlay) if isinstance(overlay, Path) else "inline" if overlay else ""
@@ -482,7 +482,7 @@ def _prepare(agent: str, *, overlay: Path | Mapping[str, object] | None, repeat:
     }
     experiment = _Experiment(
         agent=agent, experiment_id=experiment_id, built=built, spec=spec,
-        base_config=registry.resolve_agent_config(agent, spec, durable=True),
+        base_config=base_config,
         model_tier=model_tier, model_name=model_name, pricing=pricing, cfg_hash=cfg_hash,
         overlay_label=overlay_label, data=data,
         plan=RunPlan(
@@ -576,8 +576,8 @@ async def run_experiment(
 
     metrics = await _persist(experiment, ExperimentStatus.complete, pending)
     code = experiment.code
-    cost_label = (f"${metrics['cost_usd_per_case']:.4f}"
-                  if metrics["cost_usd_per_case"] is not None else "unknown")
+    cost_label = (f"${metrics['average_cost_usd']:.4f}"
+                  if metrics["average_cost_usd"] is not None else "unknown")
     cache_label = (f"{metrics['cache_hit_ratio']:.2%}"
                    if metrics["cache_hit_ratio"] is not None else "unknown")
     print(f"experiment {exp_id}: task_success_rate={metrics['task_success_rate']:.2%} "

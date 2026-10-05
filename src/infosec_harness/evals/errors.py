@@ -9,7 +9,7 @@ import httpx
 import openai
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 
-from infosec_harness.inference.protocol import ERROR_CODES, BrokerError
+from infosec_harness.inference.wire.protocol import ERROR_CODES, BrokerError
 
 
 class FailureDiagnostic(TypedDict):

@@ -17,9 +17,9 @@ from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.models import ModelRequestParameters
 
 from infosec_harness.agents import models
-from infosec_harness.inference import codec
-from infosec_harness.inference import issuance as issuer
-from infosec_harness.inference.protocol import (
+from infosec_harness.inference.controller import issuance as issuer
+from infosec_harness.inference.wire import codec
+from infosec_harness.inference.wire.protocol import (
     BrokerError,
     ExecutorContract,
     InvocationRequest,
@@ -27,7 +27,7 @@ from infosec_harness.inference.protocol import (
     canonical_bytes,
     digest,
 )
-from infosec_harness.inference.transport import BrokerModel
+from infosec_harness.inference.worker.transport import BrokerModel
 from infosec_harness.persistence import budgets, db
 
 
@@ -209,8 +209,8 @@ async def test_saved_result_can_be_retrieved_after_binding_deadline(issuance, mo
     binding = ReservationBinding(root_id=request.root_id, run_id=request.run_id,
         invocation_id=request.invocation_id, operation_id=request.operation_id, agent=request.agent,
         contract_digest=request.contract.digest, expires_at=time.time() - 1)
-    from infosec_harness.inference.codec import encode_response
-    from infosec_harness.inference.protocol import InferenceRequest, InferenceResult
+    from infosec_harness.inference.wire.codec import encode_response
+    from infosec_harness.inference.wire.protocol import InferenceRequest, InferenceResult
 
     def saved_result(incoming):
         nonlocal calls
@@ -240,7 +240,7 @@ async def test_saved_result_can_be_retrieved_after_binding_deadline(issuance, mo
     m.BinaryContent(data=b"image", media_type="image/png"),
 ])
 def test_tool_return_wire_media_rejected_before_provider_mapping(content):
-    from infosec_harness.inference.protocol import InferencePayload
+    from infosec_harness.inference.wire.protocol import InferencePayload
     messages = [m.ModelRequest(parts=[m.ToolReturnPart(tool_name="read", tool_call_id="call1", content=content)])]
     payload = InferencePayload(messages=m.ModelMessagesTypeAdapter.dump_python(messages, mode="json"),
         parameters={}, model_settings={"max_tokens": 100})
@@ -251,7 +251,7 @@ def test_tool_return_wire_media_rejected_before_provider_mapping(content):
 
 @pytest.mark.parametrize("extra", ["unknown", "headers", "base_url"])
 def test_nested_typed_fields_cannot_be_silently_dropped(extra):
-    from infosec_harness.inference.protocol import InferencePayload
+    from infosec_harness.inference.wire.protocol import InferencePayload
     payload = InferencePayload(messages=[{"kind":"request", "parts": [{"part_kind":"user-prompt",
         "content":"text", extra:"untrusted"}]}], parameters={}, model_settings={"max_tokens":100})
     with pytest.raises(BrokerError):

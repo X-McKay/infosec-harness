@@ -19,6 +19,8 @@ from infosec_harness.domain.models import EnvironmentSpec, RepoRef, SourceMode
 from infosec_harness.repo.checkout import checkout
 from infosec_harness.sandbox import REQUIRED_RUNTIME, docker
 from infosec_harness.sandbox.errors import SandboxUnavailable
+from infosec_harness.sandbox.image import image_tag_for
+from infosec_harness.sandbox.output import tail
 from infosec_harness.sandbox.process import ProcessResult
 from infosec_harness.settings import REPO_ROOT, get_settings
 
@@ -131,7 +133,7 @@ async def prepare_fixture_image(
         snapshot = await checkout(RepoRef(
             repo_url=str(source), revision="HEAD", source_mode=SourceMode.working_snapshot,
         ))
-        image_tag = docker.image_tag_for(snapshot.content_hash, spec)
+        image_tag = image_tag_for(snapshot.content_hash, spec)
         build = (None if await docker.image_exists(image_tag)
                  else await docker.build_image(snapshot.path, spec, image_tag))
     except (FileNotFoundError, SandboxUnavailable) as exc:
@@ -182,7 +184,7 @@ async def _secure_engine(
             source_hash=image.source_hash, image_tag=image.image_tag,
             build_status="failed", build_exit_code=build.exit_code,
             build_duration_s=build.duration_s, timed_out=build.timed_out,
-            output_excerpt=docker.tail(image.build_output, 2000),
+            output_excerpt=tail(image.build_output, 2000),
         )
     nonce = hashlib.sha256(
         f"{image.source_hash}:{image.image_tag}:{check_name}".encode()
@@ -215,7 +217,7 @@ async def _secure_engine(
         check_exit_code=checked.exit_code,
         check_duration_s=checked.duration_s,
         timed_out=checked.timed_out,
-        output_excerpt=docker.tail(output, 2000),
+        output_excerpt=tail(output, 2000),
     )
 
 

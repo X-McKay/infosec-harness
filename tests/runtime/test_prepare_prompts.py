@@ -32,9 +32,12 @@ from infosec_harness.domain.models import (
 from infosec_harness.graph.prepare import run_prepare
 from infosec_harness.graph.triage import RepairEnvironment, TriageDeps, TriageState
 
-PREPARE_COMPONENT_DIGEST = "da4286bca3e8b168bfd6944f1cd691ace61059c3a28616dc6a1e819d68ae73b6"
-PREPARE_ROOT_DIGEST = "b57f3161a9b6a118e16a0d591c1c9820f1620c14bfa4c276383a7990ab2ae80a"
-REPAIR_ENVIRONMENT_DIGEST = "ee56ff2adcdcb994745fb3a5c6bfbbbf68c52478091e7f81628e776af3b00fc9"
+# Re-recorded when StackFingerprint dropped its never-populated `registries` field: the only
+# difference from the previous digests is `"registries":[]` leaving the rendered fingerprint
+# (verified by re-inserting it and reproducing the earlier values).
+PREPARE_COMPONENT_DIGEST = "003bfb9c4fda34a6a5eacd6140ca5d52b709e3d334b76b08846c7835745c69a9"
+PREPARE_ROOT_DIGEST = "7dc0061ce80b171b610aea10c527bcdc2d370a11699103effb5bc396295b0ef5"
+REPAIR_ENVIRONMENT_DIGEST = "467b7e4c9ff9cf17b77d42b4a10295e4b4c0ec20de1c8b7350b01fde4ed46a57"
 
 
 def _spec(name: str) -> EnvironmentSpec:

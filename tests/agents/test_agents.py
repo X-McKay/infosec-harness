@@ -9,6 +9,18 @@ def test_all_specs_valid():
     assert registry.validate_all() == []
 
 
+def test_an_uncatalogued_tier_fails_validation_even_in_stub_mode(monkeypatch):
+    """Stub resolution accepts any tier name; validation must not, or the spec fails only live."""
+    original = registry.load_spec
+
+    def renamed(name, *args, **kwargs):
+        spec = original(name, *args, **kwargs)
+        return spec.model_copy(update={"model": "no-such-tier"}) if name == "recon" else spec
+    monkeypatch.setattr(registry, "load_spec", renamed)
+    assert any(problem.startswith("recon: model tier 'no-such-tier'")
+               for problem in registry.validate_all())
+
+
 def test_bindings_match_specs_on_disk():
     assert set(registry.BINDINGS) == {p.parent.name for p in agents_dir().glob("*/agent.yaml")}
 
@@ -99,7 +111,7 @@ def test_the_token_floor_is_inert_where_thinking_has_its_own_budget(monkeypatch)
 
 
 def test_merge_leading_system_messages_collapses_the_prefix():
-    from infosec_harness.inference.compat import merge_leading_system_messages
+    from infosec_harness.inference.executor.compat import merge_leading_system_messages
 
     merged = merge_leading_system_messages([
         {"role": "system", "content": "instructions"},
@@ -113,7 +125,7 @@ def test_merge_leading_system_messages_collapses_the_prefix():
 
 
 def test_merge_leading_system_messages_leaves_conforming_requests_alone():
-    from infosec_harness.inference.compat import merge_leading_system_messages
+    from infosec_harness.inference.executor.compat import merge_leading_system_messages
 
     for messages in ([{"role": "system", "content": "s"}, {"role": "user", "content": "u"}],
                      [{"role": "user", "content": "u"}]):
@@ -122,7 +134,7 @@ def test_merge_leading_system_messages_leaves_conforming_requests_alone():
 
 def test_merge_does_not_touch_a_later_system_message():
     """Only the leading run is collapsed; a mid-conversation system turn stays put."""
-    from infosec_harness.inference.compat import merge_leading_system_messages
+    from infosec_harness.inference.executor.compat import merge_leading_system_messages
 
     messages = [{"role": "system", "content": "a"}, {"role": "system", "content": "b"},
                 {"role": "user", "content": "u"}, {"role": "system", "content": "late"}]

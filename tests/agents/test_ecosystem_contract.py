@@ -20,6 +20,8 @@ import pytest
 from infosec_harness.agents import ecosystem_contract as contract
 from infosec_harness.agents.stubs import _env_plan
 from infosec_harness.domain.models import EnvironmentSpec, StackFingerprint
+from infosec_harness.repo.detect import detect_stack, java_release
+from infosec_harness.sandbox.image import HOME_STAGE, WORK_HOME
 
 C = contract
 MAVEN_IMAGE = "maven:3.9-eclipse-temurin-17"
@@ -396,16 +398,15 @@ def test_the_python_and_perl_stub_plans_are_the_contracts_exemplars():
 
 def test_the_home_paths_are_the_sandboxs_own():
     """The contract and the stubs read the image layout from the module that builds it."""
-    from infosec_harness.sandbox import docker
 
-    assert (C.BUILD_HOME, C.RUNTIME_HOME) == (docker.HOME_STAGE, docker.WORK_HOME)
+    assert (C.BUILD_HOME, C.RUNTIME_HOME) == (HOME_STAGE, WORK_HOME)
 
 
 def test_the_binding_java_release_is_the_oldest_any_candidate_declares():
     pom = "<maven.compiler.source>{}</maven.compiler.source>"
-    assert C.java_release([]) is None
-    assert C.java_release(["<project/>"]) is None
-    assert C.java_release([pom.format("11"), pom.format("1.7"), "<project/>"]) == 7
+    assert java_release([]) is None
+    assert java_release(["<project/>"]) is None
+    assert java_release([pom.format("11"), pom.format("1.7"), "<project/>"]) == 7
 
 
 def test_the_repo_release_reads_the_root_and_its_modules(tmp_path):
@@ -417,5 +418,7 @@ def test_the_repo_release_reads_the_root_and_its_modules(tmp_path):
     (tmp_path / "web").mkdir()
     (tmp_path / "web" / "build.gradle").write_text("sourceCompatibility = '1.8'")
     assert C.repo_java_release(str(tmp_path)) == 6
+    # The fingerprint binds the same level, so the recipe key and the JDK check agree.
+    assert detect_stack(str(tmp_path)).java_release == 6
     assert C.repo_java_release(str(tmp_path / "missing")) is None
     assert C.repo_java_release(None) is None

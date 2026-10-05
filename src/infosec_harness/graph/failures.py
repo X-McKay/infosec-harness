@@ -12,7 +12,7 @@ import httpx
 from pydantic_ai.exceptions import ModelAPIError, UsageLimitExceeded
 
 from infosec_harness.domain.models import InconclusiveReason
-from infosec_harness.inference.protocol import BrokerError
+from infosec_harness.inference.wire.protocol import BrokerError
 
 
 def _failure_chain(e: BaseException) -> Iterator[BaseException]:

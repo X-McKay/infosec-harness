@@ -12,24 +12,24 @@ from pathlib import Path
 import yaml
 
 from infosec_harness.agents import models
-from infosec_harness.inference.admission import ReservationPolicy
-from infosec_harness.inference.controller import Controller
-from infosec_harness.inference.http_service import JsonChannel
-from infosec_harness.inference.issuance import (
+from infosec_harness.inference.catalog.policy import canonical_policy
+from infosec_harness.inference.controller.admission import ReservationPolicy
+from infosec_harness.inference.controller.issuance import (
     build_reservation_policy,
     issue_invocation,
     trusted_config,
 )
-from infosec_harness.inference.openshell import NativeDeploymentConfig
-from infosec_harness.inference.policy import canonical_policy
-from infosec_harness.inference.protocol import BrokerError, InvocationRequest
+from infosec_harness.inference.controller.service import Controller
+from infosec_harness.inference.native.openshell import NativeDeploymentConfig
+from infosec_harness.inference.wire.http_service import JsonChannel
+from infosec_harness.inference.wire.protocol import BrokerError, InvocationRequest
 
 
 def contracts() -> dict:
     """Every registered agent's durable effective configuration, as the controller admits it."""
-    from infosec_harness.agents.registry import AGENT_BINDINGS
+    from infosec_harness.agents.registry import BINDINGS
 
-    return {name: trusted_config(name, durable=True) for name in AGENT_BINDINGS}
+    return {name: trusted_config(name, durable=True) for name in BINDINGS}
 
 
 def controller_factory() -> Controller:

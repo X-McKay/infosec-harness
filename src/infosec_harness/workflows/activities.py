@@ -22,6 +22,12 @@ from infosec_harness.domain.models import (
     StackFingerprint,
 )
 from infosec_harness.graph import workloads
+from infosec_harness.inference.wire.protocol import (
+    RETRYABLE_CODES,
+    BrokerError,
+    InvocationRequest,
+    ReservationBinding,
+)
 from infosec_harness.intake.adapters import resolve_location
 from infosec_harness.persistence import recipes
 from infosec_harness.repo.checkout import checkout
@@ -29,6 +35,7 @@ from infosec_harness.repo.detect import detect_stack
 from infosec_harness.workflows.heartbeat import with_heartbeat
 from infosec_harness.workflows.payloads import (
     BuildArgs,
+    CloseBrokerRunArgs,
     ProbeArgs,
     RecordRecipeArgs,
     ResolveLocationArgs,
@@ -111,32 +118,30 @@ ALL_ACTIVITIES += PERSISTENCE_ACTIVITIES
 
 
 @activity.defn
-async def issue_broker_invocation_activity(args: dict) -> dict:
+async def issue_broker_invocation_activity(request: InvocationRequest) -> ReservationBinding:
     from temporalio.exceptions import ApplicationError
 
-    from infosec_harness.inference.invocations import request_invocation
-    from infosec_harness.inference.protocol import BrokerError, InvocationRequest
+    from infosec_harness.inference.worker.invocations import request_invocation
     try:
-        return (await request_invocation(InvocationRequest.model_validate(args))).model_dump(mode="json")
+        return await request_invocation(request)
     except BrokerError as exc:
         raise ApplicationError(str(exc), type="BrokerError",
-            non_retryable=exc.code not in {"unavailable", "pending"}) from None
+                               non_retryable=exc.code not in RETRYABLE_CODES) from None
 
 
 ALL_ACTIVITIES.append(issue_broker_invocation_activity)
 
 
 @activity.defn
-async def close_broker_run_activity(args: dict) -> None:
+async def close_broker_run_activity(args: CloseBrokerRunArgs) -> None:
     from temporalio.exceptions import ApplicationError
 
-    from infosec_harness.inference.invocations import close_run
-    from infosec_harness.inference.protocol import BrokerError
+    from infosec_harness.inference.worker.invocations import close_run
     try:
-        await close_run(args["run_id"], args["root_id"])
+        await close_run(args.run_id, args.root_id)
     except BrokerError as exc:
         raise ApplicationError(str(exc), type="BrokerError",
-            non_retryable=exc.code not in {"unavailable", "pending"}) from None
+                               non_retryable=exc.code not in RETRYABLE_CODES) from None
 
 
 ALL_ACTIVITIES.append(close_broker_run_activity)

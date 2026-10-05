@@ -13,7 +13,7 @@ from typing import Annotated, Literal, TypedDict
 import httpx
 from pydantic import ConfigDict
 
-from infosec_harness.agents.registry import AGENT_BINDINGS
+from infosec_harness.agents.registry import BINDINGS
 from infosec_harness.api.contracts import BrokerStatus
 from infosec_harness.api.evidence_io import (
     STRICT,
@@ -41,7 +41,8 @@ CONTROLLER_SHARED_MODULES = (
     "src/infosec_harness/domain/canonical.py",
     "src/infosec_harness/sandbox/process.py",
 )
-_ADAPTERS = ("controller.py", "openshell.py", "transport.py")
+# The controller-loaded adapters whose source the owner proof pins, relative to `inference/`.
+_ADAPTERS = ("controller/service.py", "native/openshell.py", "worker/transport.py")
 
 # The three proofs are hash-pinned operator artifacts. Strict about every field the service
 # relies on; fields it never reads are ignored rather than refused, since they cannot promote
@@ -155,7 +156,7 @@ def broker_measurement() -> tuple[BrokerMeasurement, bool]:
         raise ValueError("source identity mismatch")
     if health["new_owner_sha256"] != owner_digest or ready["owner_sha256"] != owner_digest:
         raise ValueError("owner identity mismatch")
-    if (ready["registered_contracts"] != len(AGENT_BINDINGS)
+    if (ready["registered_contracts"] != len(BINDINGS)
             or ready["loaded_module_sha256_start_end_equal"]
             != owner["loaded_controller_adapter_source_sha256"]):
         raise ValueError("incomplete native readiness measurement")
@@ -165,22 +166,22 @@ def broker_measurement() -> tuple[BrokerMeasurement, bool]:
         raise ValueError("source inventory unavailable")
     required_modules = {
         str(p.relative_to(root))
-        for p in (Path(root) / "src/infosec_harness/inference").glob("*.py")
+        for p in (Path(root) / "src/infosec_harness/inference").rglob("*.py")
         if p.name != "__init__.py"
     } | set(CONTROLLER_SHARED_MODULES)
     if set(modules) != required_modules:
         raise ValueError("incomplete source inventory")
     if health["new_controller_id"] != owner["owned_container_ids"].get("ih-live-controller"):
         raise ValueError("controller identity mismatch")
-    from infosec_harness.inference.profiles import load_broker_config
+    from infosec_harness.inference.catalog.profiles import load_broker_config
 
-    config = load_broker_config(catalog)
+    config = load_broker_config(catalog, agents=tuple(BINDINGS))
     observations = ready["native_observations"]
     leases = ready["issued_owned_readiness_leases"]
-    if set(observations) != set(AGENT_BINDINGS) or len(leases) != len(AGENT_BINDINGS):
+    if set(observations) != set(BINDINGS) or len(leases) != len(BINDINGS):
         raise ValueError("incomplete contract readiness")
     by_agent = {row["agent"]: row for row in leases.values()}
-    if set(by_agent) != set(AGENT_BINDINGS):
+    if set(by_agent) != set(BINDINGS):
         raise ValueError("incomplete lease readiness")
     for agent, observation in observations.items():
         name, profile = config.profile_for_agent(agent)
@@ -225,9 +226,9 @@ async def admission_reachable() -> bool:
     settings = get_settings()
     if settings.broker_config is None:
         return False
-    from infosec_harness.inference.profiles import load_broker_config
+    from infosec_harness.inference.catalog.profiles import load_broker_config
 
-    catalog = load_broker_config(settings.broker_config)
+    catalog = load_broker_config(settings.broker_config, agents=tuple(BINDINGS))
     channel = catalog.controller
     if channel.url is None:
         return False

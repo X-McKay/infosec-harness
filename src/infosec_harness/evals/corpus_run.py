@@ -5,8 +5,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+from infosec_harness._io import write_json
 from infosec_harness.domain.models import Finding, InconclusiveReason
-from infosec_harness.evals._json import write_json
 from infosec_harness.evals.corpus import approve_corpus_root, corpus_path, load_corpus
 from infosec_harness.evals.corpus import languages as corpus_languages
 from infosec_harness.evals.provenance import code_version
@@ -226,7 +226,7 @@ async def _score_corpus_once(*, language: str, sandbox: bool | None,
     # Trajectory scoring: did the tool-using agents evoke the expected tools/skills?
     traj_totals: dict[str, dict[str, int]] = {}
     # Request counts and repeated identical tool calls, so a `request_limit` breach can be told
-    # from honest work without re-running live. inspect_messages de-duplicates by tool name and
+    # from honest work without re-running live. Evocation de-duplicates by tool name and
     # drops arguments, so without this a run that read one file eight times is byte-identical in
     # the record to one that read it once.
     budget_totals: dict[str, dict[str, int]] = {}

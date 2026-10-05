@@ -33,7 +33,7 @@ async def test_missing_database_never_created(tmp_path, filename):
 
 
 @pytest.mark.parametrize(
-    "revision, expected", [("0005", "passed"), ("0004", "failed"), (None, "failed")]
+    "revision, expected", [("0006", "passed"), ("0005", "failed"), (None, "failed")]
 )
 async def test_database_revision_and_contents_unchanged(tmp_path, revision, expected):
     config = settings(tmp_path)

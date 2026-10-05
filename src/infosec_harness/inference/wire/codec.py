@@ -12,7 +12,7 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from infosec_harness.inference.protocol import (
+from infosec_harness.inference.wire.protocol import (
     BrokerError,
     InferencePayload,
     canonical_bytes,

@@ -9,10 +9,10 @@ from pydantic_ai.models import ModelRequestParameters, OutputObjectDefinition
 from pydantic_ai.tools import ToolDefinition
 from test_broker_executor import request_fixture
 
-from infosec_harness.inference.codec import ascii_normalized_size, encode_payload
-from infosec_harness.inference.executor import OpenAIInference
-from infosec_harness.inference.protocol import BrokerError, canonical_bytes
-from infosec_harness.inference.rendering import input_wire, required_input_reserve
+from infosec_harness.inference.executor.rendering import input_wire, required_input_reserve
+from infosec_harness.inference.executor.service import OpenAIInference
+from infosec_harness.inference.wire.codec import ascii_normalized_size, encode_payload
+from infosec_harness.inference.wire.protocol import BrokerError, canonical_bytes
 
 
 def payload(text="hi", params=None):
@@ -75,7 +75,7 @@ async def test_admission_wire_matches_independently_captured_sdk_request(atomic,
 
 
 async def test_exponential_schema_refs_fail_before_sdk_expansion(monkeypatch):
-    from infosec_harness.inference.compat import CompatOpenAIChatModel
+    from infosec_harness.inference.executor.compat import CompatOpenAIChatModel
 
     definitions = {"D0": {"type": "string"}}
     for index in range(1, 25):
@@ -152,7 +152,7 @@ async def test_sdk_wraps_malformed_original_arguments_before_admission(arguments
 
 
 async def test_cached_schema_expansion_height_cannot_bypass_depth_limit(monkeypatch):
-    from infosec_harness.inference.compat import CompatOpenAIChatModel
+    from infosec_harness.inference.executor.compat import CompatOpenAIChatModel
 
     definition = {"type": "string"}
     for _ in range(40):

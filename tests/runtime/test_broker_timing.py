@@ -6,10 +6,10 @@ import asyncio
 import httpx
 import pytest
 
-from infosec_harness.inference import timing
-from infosec_harness.inference.diagnostics import record_failure
-from infosec_harness.inference.http_service import JsonChannel
-from infosec_harness.inference.protocol import BrokerError
+from infosec_harness.inference.wire import timing
+from infosec_harness.inference.wire.diagnostics import record_failure
+from infosec_harness.inference.wire.http_service import JsonChannel
+from infosec_harness.inference.wire.protocol import BrokerError
 
 
 def test_nested_budgets_include_setup_claim_completion_and_response_margin():

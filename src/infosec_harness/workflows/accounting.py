@@ -104,9 +104,17 @@ class RootAccounting:
         return (self.root_id, operation)
 
     async def settle(self, identity: Identity, outcome: AgentOutcome | None,
-                     failure: str = "") -> None:
-        record = (outcome.model_dump(mode="json") if outcome
-                  else {"failure": failure, "usage": "unavailable"})
+                     failure: str = "", *, partial: AgentOutcome | None = None) -> None:
+        """Settle one operation. ``partial`` is a failed call's own record of the requests it
+        completed: kept as the record (a lower bound, never an observation that releases the
+        reservation) instead of discarding the usage it did report."""
+        if outcome is not None:
+            record = outcome.model_dump(mode="json")
+        elif partial is not None:
+            record = {**partial.model_dump(mode="json"), "failure": failure,
+                      "usage": "partial_lower_bound"}
+        else:
+            record = {"failure": failure, "usage": "unavailable"}
         if identity[1] in self.zero_cost_operations:
             record["pricing_status"] = "known_zero"
         # PydanticAI exposes the completed attempt, not billed usage for lost transport

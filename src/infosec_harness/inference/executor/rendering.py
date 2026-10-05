@@ -8,10 +8,14 @@ import httpx2
 from openai import AsyncOpenAI
 from pydantic_ai.providers.openai import OpenAIProvider
 
-from .codec import ascii_normalized_size, check_schemas, decode_payload
-from .compat import model_for_contract
-from .diagnostics import budget_guard
-from .protocol import (
+from infosec_harness.inference.executor.compat import model_for_contract
+from infosec_harness.inference.wire.codec import (
+    ascii_normalized_size,
+    check_schemas,
+    decode_payload,
+)
+from infosec_harness.inference.wire.diagnostics import budget_guard
+from infosec_harness.inference.wire.protocol import (
     MAX_BODY_BYTES,
     BrokerError,
     ExecutorContract,

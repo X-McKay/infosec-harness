@@ -9,7 +9,7 @@ import httpx
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from infosec_harness.agents.registry import AGENT_BINDINGS
+from infosec_harness.agents.registry import BINDINGS
 from infosec_harness.api import broker_observation, evidence_io, status
 from infosec_harness.api.evidence_io import read_bytes
 from infosec_harness.persistence import db
@@ -221,8 +221,9 @@ def verified_measurement(tmp_path, monkeypatch):
     inference = root / "src/infosec_harness/inference"
     inference.mkdir(parents=True)
     modules = {}
-    for name in ("controller.py", "openshell.py", "transport.py"):
+    for name in ("controller/service.py", "native/openshell.py", "worker/transport.py"):
         path = inference / name
+        path.parent.mkdir(exist_ok=True)
         path.write_text(f"# synthetic {name}\n")
         modules[str(path.relative_to(root))] = hashlib.sha256(path.read_bytes()).hexdigest()
     for relative in broker_observation.CONTROLLER_SHARED_MODULES:
@@ -240,7 +241,7 @@ def verified_measurement(tmp_path, monkeypatch):
         "owned_container_ids": {"ih-live-controller": "c" * 64},
         "loaded_controller_adapter_source_sha256": {
             name: modules[f"src/infosec_harness/inference/{name}"]
-            for name in ("controller.py", "openshell.py", "transport.py")
+            for name in ("controller/service.py", "native/openshell.py", "worker/transport.py")
         },
         "candidate_config_files_sha256": {str(catalog): catalog_hash},
     }
@@ -265,7 +266,7 @@ def verified_measurement(tmp_path, monkeypatch):
             owner["loaded_controller_adapter_source_sha256"]
         ),
     }
-    from infosec_harness.inference import profiles
+    from infosec_harness.inference.catalog import profiles
 
     profile = SimpleNamespace(
         executor_image="sha256:" + "e" * 64,
@@ -275,7 +276,7 @@ def verified_measurement(tmp_path, monkeypatch):
     monkeypatch.setattr(
         profiles,
         "load_broker_config",
-        lambda _: SimpleNamespace(profile_for_agent=lambda agent: (agent, profile)),
+        lambda _, **__: SimpleNamespace(profile_for_agent=lambda agent: (agent, profile)),
     )
     ready["native_observations"] = {
         agent: {
@@ -286,7 +287,7 @@ def verified_measurement(tmp_path, monkeypatch):
             "supervisor_image": profile.supervisor_image,
             "policy_digest": profile.policy_digest,
         }
-        for agent in AGENT_BINDINGS
+        for agent in BINDINGS
     }
     ready["issued_owned_readiness_leases"] = {
         f"lease-{agent}": {"agent": agent, "contract_digest": row["contract_digest"]}
@@ -389,7 +390,7 @@ async def test_probe_is_unsigned_bounded_and_does_not_load_client_keys(
 ):
     import asyncio
 
-    from infosec_harness.inference import profiles
+    from infosec_harness.inference.catalog import profiles
 
     catalog, ca = tmp_path / "catalog", tmp_path / "ca"
     catalog.write_bytes(b"catalog")
@@ -401,7 +402,7 @@ async def test_probe_is_unsigned_bounded_and_does_not_load_client_keys(
         client_key="/secret/key.pem",
     )
     monkeypatch.setattr(
-        profiles, "load_broker_config", lambda _: SimpleNamespace(controller=channel)
+        profiles, "load_broker_config", lambda _, **__: SimpleNamespace(controller=channel)
     )
     monkeypatch.setattr(broker_observation, "get_settings", lambda: SimpleNamespace(broker_config=catalog))
     monkeypatch.setattr(broker_observation, "_probe_cache", None)
@@ -468,7 +469,7 @@ def test_current_measurement_rejects_exact_runtime_and_contract_drift(
     if change == "cid":
         proof["new_controller_id"] = "9" * 64
     elif change == "missing_module":
-        proof["loaded_module_attestation"].pop("src/infosec_harness/inference/transport.py")
+        proof["loaded_module_attestation"].pop("src/infosec_harness/inference/worker/transport.py")
     elif change == "native_agent":
         proof["native_observations"].pop("intake")
     elif change == "native_image":
@@ -484,7 +485,7 @@ def test_current_measurement_rejects_exact_runtime_and_contract_drift(
 def test_adapter_digest_map_mismatch_is_rejected(verified_measurement, tmp_path):
     value, install = verified_measurement
     proof = json.loads(read_bytes(value["evidence"]["readiness"]["file"]))
-    proof["loaded_module_sha256_start_end_equal"]["transport.py"] = "0" * 64
+    proof["loaded_module_sha256_start_end_equal"]["worker/transport.py"] = "0" * 64
     value["evidence"]["readiness"] = ref(tmp_path, "drifted-adapter-map.json", proof)
     install(value)
     with pytest.raises(ValueError):

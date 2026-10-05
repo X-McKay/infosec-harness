@@ -16,14 +16,12 @@ from pydantic_ai import ModelRetry, RunContext
 
 from infosec_harness.agents.deps import AgentDeps
 from infosec_harness.repo.access import (
-    BUILD_OUTPUT_DIRS,
-    DEPENDENCY_DIRS,
+    NON_SOURCE_DIRS,
     RepositoryAccessError,
     resolve_confined,
     walk_files,
 )
 
-SKIP_DIRS = DEPENDENCY_DIRS | BUILD_OUTPUT_DIRS
 MAX_READ_LINES = 400
 MAX_LIST = 300
 MAX_MATCHES = 60
@@ -77,7 +75,7 @@ def _snapshot_files(root: Path, start: Path) -> Iterator[tuple[str, Path]]:
     """
     yielded: set[str] = set()
     try:
-        for _, path in walk_files(start, skip_dirs=SKIP_DIRS):
+        for _, path in walk_files(start, skip_dirs=NON_SOURCE_DIRS):
             rel = path.relative_to(root).as_posix()
             yielded.add(rel)
             yield rel, path
@@ -86,7 +84,7 @@ def _snapshot_files(root: Path, start: Path) -> Iterator[tuple[str, Path]]:
         if start == root:
             raise
     prefix = start.relative_to(root).as_posix() + "/"
-    for rel, path in walk_files(root, skip_dirs=SKIP_DIRS):
+    for rel, path in walk_files(root, skip_dirs=NON_SOURCE_DIRS):
         if rel.startswith(prefix) and rel not in yielded:
             yield rel, path
 
@@ -577,7 +575,7 @@ def search_code(ctx: RunContext[AgentDeps], regex: str, file_glob: str = "*") ->
         raise ModelRetry(f"Invalid regex: {e}") from e
     root = Path(ctx.deps.repo_path).resolve()
     try:
-        files = [(rel, str(path)) for rel, path in walk_files(root, skip_dirs=SKIP_DIRS)
+        files = [(rel, str(path)) for rel, path in walk_files(root, skip_dirs=NON_SOURCE_DIRS)
                  if fnmatch.fnmatch(path.name, file_glob)]
     except RepositoryAccessError as exc:
         raise ModelRetry(_traversal_rejected(exc)) from exc

@@ -16,12 +16,12 @@ from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedMode
 from pydantic_ai.messages import ModelResponse, TextPart
 from test_broker_executor import request_fixture, signed
 
-from infosec_harness.inference import diagnostics
-from infosec_harness.inference import executor as module
-from infosec_harness.inference.codec import encode_response
-from infosec_harness.inference.executor import Executor, OpenAIInference
-from infosec_harness.inference.http_service import JsonChannel, broker_error_body
-from infosec_harness.inference.protocol import (
+from infosec_harness.inference.executor import service as module
+from infosec_harness.inference.executor.service import Executor, OpenAIInference
+from infosec_harness.inference.wire import diagnostics
+from infosec_harness.inference.wire.codec import encode_response
+from infosec_harness.inference.wire.http_service import JsonChannel, broker_error_body
+from infosec_harness.inference.wire.protocol import (
     BrokerError,
     DispatchPermit,
     InferenceResult,

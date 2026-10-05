@@ -14,11 +14,11 @@ from test_broker_executor import request_fixture
 from test_broker_profiles import _config, backend
 
 from infosec_harness.agents import models
-from infosec_harness.inference.codec import encode_payload
-from infosec_harness.inference.executor import OpenAIInference
-from infosec_harness.inference.profiles import BrokerConfig, ExecutorProfile
-from infosec_harness.inference.protocol import BrokerError, digest
-from infosec_harness.inference.rendering import input_wire
+from infosec_harness.inference.catalog.profiles import BrokerConfig, ExecutorProfile
+from infosec_harness.inference.executor.rendering import input_wire
+from infosec_harness.inference.executor.service import OpenAIInference
+from infosec_harness.inference.wire.codec import encode_payload
+from infosec_harness.inference.wire.protocol import BrokerError, digest
 
 
 def test_omitted_thinking_preserves_existing_identities_and_explicit_values_change_them():
@@ -139,7 +139,7 @@ def test_typed_thinking_rejects_authored_overrides_without_mutating_settings(set
 
     from pydantic_ai.providers.openai import OpenAIProvider
 
-    from infosec_harness.inference.compat import CompatOpenAIChatModel
+    from infosec_harness.inference.executor.compat import CompatOpenAIChatModel
 
     model = CompatOpenAIChatModel('offline',
         provider=OpenAIProvider(api_key='offline', base_url='https://provider.invalid/v1'), enable_thinking=False)

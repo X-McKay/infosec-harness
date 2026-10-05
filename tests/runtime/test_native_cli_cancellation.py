@@ -5,8 +5,8 @@ import sys
 
 import pytest
 
-from infosec_harness.inference import openshell as m
-from infosec_harness.inference.protocol import BrokerError
+from infosec_harness.inference.native import openshell as m
+from infosec_harness.inference.wire.protocol import BrokerError
 from infosec_harness.sandbox.process import run_bounded
 
 
@@ -21,6 +21,8 @@ def cli(tmp_path):
 mode=os.environ.get("IH_MODE","success")
 if mode=="failure":
  print("secret-provider-body",file=sys.stderr);sys.exit(3)
+if mode=="env":
+ print(" ".join(sorted(os.environ)));sys.exit(0)
 if mode=="sleep":
  pathlib.Path(os.environ["IH_READY"]).write_text(str(os.getpid()))
  time.sleep(.3)
@@ -54,6 +56,19 @@ def sleep_env(tmp_path):
         "IH_READY": str(tmp_path / "ready"),
         "IH_MUTATION": str(tmp_path / "mutation"),
     }
+
+
+@pytest.mark.asyncio
+async def test_native_cli_child_inherits_no_ambient_credentials(cli, monkeypatch):
+    """The broker's native child gets a fixed environment: no AWS_* or HARNESS_BROKER_* (or
+    any other ambient) variable reaches it, only what the adapter names."""
+    for name in ("AWS_SECRET_ACCESS_KEY", "AWS_PROFILE", "HARNESS_BROKER_WORKER_KEY",
+                 "HARNESS_BROKER_CONFIG", "OPENAI_API_KEY"):
+        monkeypatch.setenv(name, "must-not-reach-native-child")
+    names = (await cli.run(["fixture"], extra_env={"IH_MODE": "env"})).split()
+    assert not any(name.startswith(("AWS_", "HARNESS_BROKER_", "OPENAI_")) for name in names)
+    assert set(names) <= {"PATH", "XDG_CONFIG_HOME", "OPENSHELL_LOCAL_TLS_DIR",
+                          "OPENSHELL_COLOR", "IH_MODE", "LC_CTYPE", "__CF_USER_TEXT_ENCODING"}
 
 
 @pytest.mark.asyncio

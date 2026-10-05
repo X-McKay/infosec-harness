@@ -8,8 +8,19 @@ import pytest
 
 from infosec_harness.domain.models import EnvironmentSpec
 from infosec_harness.sandbox import docker, engine
+from infosec_harness.sandbox.boundary import ensure_build_egress_boundary, ensure_builder
 from infosec_harness.sandbox.docker import ensure_runtime_available
-from infosec_harness.sandbox.image import builder_proxy_environment
+from infosec_harness.sandbox.image import (
+    IMAGE_LABEL,
+    PROVENANCE_LABEL,
+    REPO_STAGE,
+    SANDBOX_USER,
+    build_argv,
+    builder_proxy_environment,
+    image_tag_for,
+    render_dockerfile,
+)
+from infosec_harness.sandbox.markers import PRECONDITION_PREFIX
 from infosec_harness.sandbox.policy import (
     DisallowedBaseImage,
     InvalidEnvironmentSpec,
@@ -177,10 +188,10 @@ def _spec(**kw):
 
 
 def test_dockerfile_stages_repo_readonly():
-    df = docker.render_dockerfile(_spec())
-    assert f"COPY --chown={docker.SANDBOX_USER} . {docker.REPO_STAGE}" in df
-    assert f"LABEL {docker.IMAGE_LABEL}" in df
-    assert f"WORKDIR {docker.REPO_STAGE}" in df
+    df = render_dockerfile(_spec())
+    assert f"COPY --chown={SANDBOX_USER} . {REPO_STAGE}" in df
+    assert f"LABEL {IMAGE_LABEL}" in df
+    assert f"WORKDIR {REPO_STAGE}" in df
 
 
 @pytest.mark.parametrize(
@@ -194,7 +205,7 @@ def test_dockerfile_stages_repo_readonly():
 )
 def test_generated_fields_cannot_inject_dockerfile_structure(spec):
     with pytest.raises(InvalidEnvironmentSpec):
-        docker.render_dockerfile(spec)
+        render_dockerfile(spec)
 
 
 def test_build_argv_uses_buildx_and_proxy(monkeypatch):
@@ -202,10 +213,10 @@ def test_build_argv_uses_buildx_and_proxy(monkeypatch):
     monkeypatch.setattr(s, "use_buildx", True, raising=False)
     monkeypatch.setattr(s, "build_egress_proxy", "http://172.30.0.2:3128", raising=False)
     monkeypatch.setattr(s, "build_egress_network", "harness-egress", raising=False)
-    argv = docker.build_argv("/tmp/Dockerfile", "tag:1", "/ctx")
+    argv = build_argv("/tmp/Dockerfile", "tag:1", "/ctx")
     assert "buildx" in argv and "--builder" in argv and s.buildx_builder in argv
     assert argv[-2:] == ["--", "/ctx"]
-    assert f"{docker.PROVENANCE_LABEL}=tag:1" in argv
+    assert f"{PROVENANCE_LABEL}=tag:1" in argv
     joined = " ".join(argv)
     assert "HTTP_PROXY=http://172.30.0.2:3128" in joined
     assert "NO_PROXY=localhost,127.0.0.1" in joined
@@ -225,7 +236,7 @@ async def test_build_egress_fails_closed_without_internal_network(monkeypatch):
 
     monkeypatch.setattr(engine, "run_docker", fake_run)
     with pytest.raises(SandboxUnavailable, match="not internal"):
-        await docker.ensure_build_egress_boundary()
+        await ensure_build_egress_boundary()
 
 
 async def test_builder_is_created_on_internal_network_and_verified(monkeypatch):
@@ -261,7 +272,7 @@ async def test_builder_is_created_on_internal_network_and_verified(monkeypatch):
         raise AssertionError(argv)
 
     monkeypatch.setattr(engine, "run_docker", fake_run)
-    await docker.ensure_builder()
+    await ensure_builder()
 
     create = next(call for call in calls if call[:3] == ["docker", "buildx", "create"])
     start = create.index("--driver-opt")
@@ -298,7 +309,7 @@ async def test_existing_builder_with_extra_network_fails_closed(monkeypatch):
 
     monkeypatch.setattr(engine, "run_docker", fake_run)
     with pytest.raises(SandboxUnavailable, match="do not match"):
-        await docker.ensure_builder()
+        await ensure_builder()
 
 
 @pytest.mark.parametrize("host_ip,proxy", [
@@ -313,7 +324,7 @@ async def test_secure_builder_rejects_non_numeric_or_mismatched_proxy(monkeypatc
     monkeypatch.setattr(s, "build_egress_host_ip", host_ip, raising=False)
     monkeypatch.setattr(s, "build_egress_proxy", proxy, raising=False)
     with pytest.raises(SandboxUnavailable, match="IPv4|exactly matches"):
-        await docker.ensure_builder()
+        await ensure_builder()
 
 
 async def test_existing_builder_with_stale_proxy_fails_closed(monkeypatch):
@@ -343,7 +354,7 @@ async def test_existing_builder_with_stale_proxy_fails_closed(monkeypatch):
 
     monkeypatch.setattr(engine, "run_docker", fake_run)
     with pytest.raises(SandboxUnavailable, match="proxy configuration is stale") as exc_info:
-        await docker.ensure_builder()
+        await ensure_builder()
     message = str(exc_info.value)
     assert "HTTP_PROXY" in message and "ALL_PROXY" in message
     assert "stale-secret" not in message and "other-secret" not in message
@@ -356,7 +367,7 @@ async def test_run_probe_readonly_argv_shape(monkeypatch):
     async def fake_run(argv, *, stdin=None, timeout):
         captured["argv"] = argv
         captured["stdin"] = stdin
-        return ProcessResult(exit_code=0, stdout=f"{docker.PRECONDITION_PREFIX}n",
+        return ProcessResult(exit_code=0, stdout=f"{PRECONDITION_PREFIX}n",
                                  stderr="", timed_out=False, duration_s=0.1)
 
     monkeypatch.setattr(engine, "run_docker", fake_run)
@@ -390,10 +401,10 @@ async def test_run_shell_is_read_only_no_network_and_staged(monkeypatch):
 
 
 @pytest.mark.parametrize("labels,expected", [
-    ({"harness.image": "target", docker.PROVENANCE_LABEL: "harness-target:a-b"}, True),
+    ({"harness.image": "target", PROVENANCE_LABEL: "harness-target:a-b"}, True),
     ({"harness.image": "target"}, False),
-    ({"harness.image": "target", docker.PROVENANCE_LABEL: "harness-target:other"}, False),
-    ({docker.PROVENANCE_LABEL: "harness-target:a-b"}, False),
+    ({"harness.image": "target", PROVENANCE_LABEL: "harness-target:other"}, False),
+    ({PROVENANCE_LABEL: "harness-target:a-b"}, False),
     (None, False),
 ])
 async def test_cached_image_requires_harness_provenance(monkeypatch, labels, expected):
@@ -410,12 +421,12 @@ def test_image_tag_identity_includes_build_boundary_mode(monkeypatch):
     spec = _spec()
     monkeypatch.setattr(s, "build_egress_proxy", "", raising=False)
     monkeypatch.setattr(s, "allow_insecure_runtime", False, raising=False)
-    secure = docker.image_tag_for("repohash", spec)
+    secure = image_tag_for("repohash", spec)
     monkeypatch.setattr(s, "allow_insecure_runtime", True, raising=False)
-    assert docker.image_tag_for("repohash", spec) != secure
+    assert image_tag_for("repohash", spec) != secure
     monkeypatch.setattr(s, "allow_insecure_runtime", False, raising=False)
     monkeypatch.setattr(s, "build_egress_network", "another-network", raising=False)
-    assert docker.image_tag_for("repohash", spec) != secure
+    assert image_tag_for("repohash", spec) != secure
 
 
 async def test_cancelled_named_workload_is_removed(monkeypatch):
@@ -458,7 +469,7 @@ async def test_build_and_probe_activities_with_faked_sandbox(tmp_path, monkeypat
         return ProcessResult(exit_code=0, stdout="built", stderr="", timed_out=False, duration_s=0.1)
 
     async def _probe(image, tfp, content, cmd, nonce, module_path=""):
-        return ProcessResult(exit_code=0, stdout=f"{docker.PRECONDITION_PREFIX}{nonce}",
+        return ProcessResult(exit_code=0, stdout=f"{PRECONDITION_PREFIX}{nonce}",
                                  stderr="", timed_out=False, duration_s=0.1)
 
     monkeypatch.setattr(docker, "runtime_available", _rt)

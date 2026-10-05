@@ -16,8 +16,8 @@ type Headline = Partial<
   Pick<
     ExperimentSummary,
     | "status"
-    | "accuracy"
-    | "cost_usd_per_case"
+    | "task_success_rate"
+    | "average_cost_usd"
     | "passed"
     | "cases_completed"
     | "cases_planned"
@@ -44,8 +44,8 @@ const experiment = (
   harness_version: "",
   created_at: "",
   status: null,
-  accuracy: null,
-  cost_usd_per_case: null,
+  task_success_rate: null,
+  average_cost_usd: null,
   p50_latency_s: null,
   p95_latency_s: null,
   passed: null,
@@ -94,7 +94,7 @@ test("absent gate measurements remain unknown and never establish promotion", ()
     },
   ]);
   assert.equal(qualityFraction(experiment()), undefined);
-  const quality = gateObservations(experiment({ accuracy: 0.8 }))[0];
+  const quality = gateObservations(experiment({ task_success_rate: 0.8 }))[0];
   assert.equal(quality.status, "unknown");
   assert.equal(quality.detail, "80.0% accuracy; case numerator unavailable.");
 });
@@ -111,7 +111,7 @@ test("a case fraction without recorded accuracy never reports zero accuracy", ()
 
 test("recorded gates retain measured fractions, budget findings, and completion counts", () => {
   const headline: Headline = {
-    accuracy: 0.75,
+    task_success_rate: 0.75,
     passed: 3,
     cases_completed: 4,
     cases_planned: 5,
@@ -159,8 +159,8 @@ test("recorded gates retain measured fractions, budget findings, and completion 
 test("descriptive points use matching complete reports with measured accuracy and cost", () => {
   const measured: Headline = {
     status: "complete",
-    accuracy: 0.8,
-    cost_usd_per_case: 0,
+    task_success_rate: 0.8,
+    average_cost_usd: 0,
   };
   const selected = experiment(measured);
   const reports = [
@@ -169,13 +169,16 @@ test("descriptive points use matching complete reports with measured accuracy an
     experiment(measured, { id: "other-dataset", dataset: "other" }),
     experiment(measured, { id: "other-version", dataset_version: "v2" }),
     experiment({ ...measured, status: "running" }, { id: "incomplete" }),
-    experiment({ status: "complete", accuracy: 0.8 }, { id: "no-cost" }),
     experiment(
-      { status: "complete", cost_usd_per_case: 0 },
+      { status: "complete", task_success_rate: 0.8 },
+      { id: "no-cost" },
+    ),
+    experiment(
+      { status: "complete", average_cost_usd: 0 },
       { id: "no-accuracy" },
     ),
     experiment(
-      { status: "complete", accuracy: 0.9, cost_usd_per_case: 0.2 },
+      { status: "complete", task_success_rate: 0.9, average_cost_usd: 0.2 },
       { id: "measured" },
     ),
   ];

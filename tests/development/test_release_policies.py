@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from infosec_harness.agents.registry import AGENT_BINDINGS
+from infosec_harness.agents.registry import BINDINGS
 from infosec_harness.evals.adapters import defines_unevidenced_safety, is_unevidenced_safe
 from infosec_harness.evals.dataset import load_dataset
 from infosec_harness.evals.gates import ReleasePolicy, agents_gated_on, load_policy, parse_policy
@@ -22,7 +22,7 @@ from infosec_harness.evals.provenance import CodeVersion
 from infosec_harness.evals.release_report import report_provenance
 from infosec_harness.resources import agents_dir
 
-POLICIES = {name: agents_dir() / name / "evals" / "release-policy.yaml" for name in AGENT_BINDINGS}
+POLICIES = {name: agents_dir() / name / "evals" / "release-policy.yaml" for name in BINDINGS}
 # Owner-approved task-success floor for iterative development; hard gates stay independent of
 # it. See docs/evaluation/RELEASE_EVIDENCE.md for the explicit policy and its limits.
 SUCCESS_FLOOR = 0.75
@@ -65,12 +65,12 @@ def _report_provenance_keys() -> set[str]:
     return set(keys) | {"recorded_at"}
 
 
-@pytest.mark.parametrize("name", sorted(AGENT_BINDINGS))
+@pytest.mark.parametrize("name", sorted(BINDINGS))
 def test_every_agent_has_a_release_policy(name):
     assert POLICIES[name].exists(), f"{name} declares evaluation_policy but the file is absent"
 
 
-@pytest.mark.parametrize("name", sorted(AGENT_BINDINGS))
+@pytest.mark.parametrize("name", sorted(BINDINGS))
 def test_every_check_the_policy_names_is_measurable_and_can_fail(name):
     """A gate on a metric the run never publishes, or on execution evidence the dataset never
     produces, silently never applies."""
@@ -88,7 +88,7 @@ def test_the_policy_check_names_gates_that_cannot_be_measured_or_cannot_fail():
     assert any("execution_failed_count gates execution evidence" in p for p in problems)
 
 
-@pytest.mark.parametrize("name", sorted(AGENT_BINDINGS))
+@pytest.mark.parametrize("name", sorted(BINDINGS))
 def test_hard_gates_are_absolute(name):
     """A hard gate is binary; a weighted average must not be able to hide it (§7)."""
     gates = _policy(name)["hard_gates"]
@@ -96,7 +96,7 @@ def test_hard_gates_are_absolute(name):
     assert gates["budget_exhausted_count"] == 0
 
 
-@pytest.mark.parametrize("name", sorted(AGENT_BINDINGS))
+@pytest.mark.parametrize("name", sorted(BINDINGS))
 def test_uncovered_material_risk_blocks_release_everywhere(name):
     """agent-playbook 07: "Missing required coverage ... blocks release. Passing average quality
     cannot compensate for an uncovered material risk." Zero is the only passing value."""
@@ -105,7 +105,7 @@ def test_uncovered_material_risk_blocks_release_everywhere(name):
 
 def test_the_agents_on_the_false_negative_path_carry_the_safety_gate():
     """Every agent with an unevidenced-safety predicate is gated on it, and only those."""
-    defined = {name for name in AGENT_BINDINGS if defines_unevidenced_safety(name)}
+    defined = {name for name in BINDINGS if defines_unevidenced_safety(name)}
     assert defined
     assert set(agents_gated_on("unevidenced_safe_verdicts")) == defined
 
@@ -119,18 +119,18 @@ def test_unattested_probe_observations_are_not_release_gates():
     assert _policy("build-repair")["hard_gates"]["execution_failed_count"] == 0
 
 
-@pytest.mark.parametrize("name", sorted(AGENT_BINDINGS))
+@pytest.mark.parametrize("name", sorted(BINDINGS))
 def test_every_agent_uses_the_owner_approved_success_floor(name):
     """The 75% quality policy applies to every tier; a policy may never go below it."""
     assert _policy(name)["thresholds"]["task_success_rate"]["min"] >= SUCCESS_FLOOR, name
 
 
-@pytest.mark.parametrize("name", sorted(AGENT_BINDINGS))
+@pytest.mark.parametrize("name", sorted(BINDINGS))
 def test_every_policy_requires_the_provenance_that_makes_a_number_attributable(name):
     assert set(_policy(name)["required_provenance"]) >= REQUIRED_PROVENANCE, name
 
 
-@pytest.mark.parametrize("name", sorted(AGENT_BINDINGS))
+@pytest.mark.parametrize("name", sorted(BINDINGS))
 def test_required_provenance_names_keys_a_report_records(name):
     """Required provenance is enforced, so a key no report records would leave every
     evaluation of the policy not_checked forever."""

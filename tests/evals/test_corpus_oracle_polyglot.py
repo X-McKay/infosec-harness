@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from infosec_harness.sandbox.docker import oracle_signals, sink_returned
+from infosec_harness.sandbox.output import oracle_signals, sink_returned
 from infosec_harness.settings import REPO_ROOT
 
 CORPUS = REPO_ROOT / "eval-corpus"

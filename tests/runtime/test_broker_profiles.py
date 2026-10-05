@@ -6,8 +6,8 @@ import pytest
 import yaml
 
 from infosec_harness.agents.models import BackendConfig
-from infosec_harness.agents.registry import AGENT_BINDINGS
-from infosec_harness.inference.profiles import (
+from infosec_harness.agents.registry import BINDINGS
+from infosec_harness.inference.catalog.profiles import (
     BrokerConfig,
     ExecutorProfile,
     InvocationBounds,
@@ -15,7 +15,7 @@ from infosec_harness.inference.profiles import (
 )
 from infosec_harness.resources import package_root
 
-AGENTS = tuple(AGENT_BINDINGS)
+AGENTS = tuple(BINDINGS)
 
 
 def backend(endpoint: str = "https://provider.example/v1", **adaptations) -> BackendConfig:

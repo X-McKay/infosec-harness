@@ -18,7 +18,11 @@ from openai import APIConnectionError, APIResponseValidationError, APIStatusErro
 from pydantic import ValidationError
 from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
 
-from .protocol import BrokerError, DiagnosticBoundary, sanitize_diagnostic
+from infosec_harness.inference.wire.protocol import (
+    BrokerError,
+    DiagnosticBoundary,
+    sanitize_diagnostic,
+)
 
 __all__ = ["budget_guard", "exception_chain", "failure_category", "record_failure",
            "report_remote_diagnostic", "sanitize_diagnostic"]

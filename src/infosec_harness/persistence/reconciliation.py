@@ -9,146 +9,25 @@ from __future__ import annotations
 import math
 from copy import deepcopy
 from datetime import UTC, datetime
-from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 from sqlalchemy import select, update
 
-from infosec_harness.domain.canonical import SHA256_PATTERN, canonical_bytes, is_sha256, sha256_hex
 from infosec_harness.persistence import budgets, db
-
-_MARKER_KEYS = {"version", "authorization", "charged", "accounting_basis", "closed_operation_sha256"}
-
-
-def _canonical(value):
-    if isinstance(value, datetime):
-        if value.tzinfo is None:
-            value = value.replace(tzinfo=UTC)
-        return value.astimezone(UTC).isoformat()
-    if isinstance(value, dict):
-        return {key: _canonical(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_canonical(item) for item in value]
-    return value
-
-
-def reconciliation_digest(value) -> str:
-    """FROZEN encoding of persisted closure markers and operator-supplied snapshot hashes.
-
-    ASCII-escaped canonical JSON of UTC-normalized values. Stored ``closed_operation_sha256``
-    markers and operator dry-run inputs depend on these exact bytes; never change it to the
-    default canonical encoding.
-    """
-    return sha256_hex(canonical_bytes(_canonical(value), ascii_only=True))
+from infosec_harness.persistence.budgets import (
+    ClosureRequest,
+    _check_bounds,
+    _dimensions,
+    _marker_is_valid,
+    _operation_hash,
+    reconciliation_digest,
+    validate_closed_accounting,
+)
 
 
 def row_sha256(row: db.BudgetLedger | db.InferenceRequestRecord) -> str:
     """Hash every mapped column, matching private UTC-normalized snapshot encoding."""
     return reconciliation_digest(
         {column.name: getattr(row, column.name) for column in row.__table__.columns})
-
-
-class ClosureRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-    root_id: str = Field(min_length=1, max_length=512)
-    operation_id: str = Field(min_length=1, max_length=512)
-    expected_root_sha256: str = Field(pattern=SHA256_PATTERN)
-    expected_root_revision: StrictInt = Field(ge=0)
-    expected_request_sha256: dict[str, str]
-    unknown_request_ids: list[str]
-    source_commit: str = Field(pattern=r"^[0-9a-f]{40}$")
-    evidence_sha256: dict[str, str]
-    reason: Literal["loss_accepted"]
-
-    @model_validator(mode="after")
-    def closed_allowlist(self):
-        for mapping in (self.expected_request_sha256, self.evidence_sha256):
-            if not mapping or any(not key or len(key) > 512 or not is_sha256(value)
-                                  for key, value in mapping.items()):
-                raise ValueError("Exact nonempty hash mappings required")
-        if (not self.unknown_request_ids or self.unknown_request_ids != sorted(set(self.unknown_request_ids))
-                or not set(self.unknown_request_ids) <= set(self.expected_request_sha256)):
-            raise ValueError("Exact sorted unknown request allowlist required")
-        return self
-
-
-def _dimensions(values, keys):
-    if not isinstance(values, dict) or set(values) != keys:
-        raise ValueError("Missing or extra accounting dimension")
-    if any(type(value) not in (int, float) or not math.isfinite(value) or value < 0
-           for value in values.values()):
-        raise ValueError("Accounting must be finite non-negative numbers, never booleans")
-
-
-def _check_bounds(state) -> set[str]:
-    """The root's accounting dimensions: complete, finite, and with usage within limits."""
-    keys = set(state["limits"])
-    allowed = set(budgets.FIELDS) | set(budgets.EXTENDED_FIELDS)
-    if not set(budgets.FIELDS) <= keys or not keys <= allowed:
-        raise ValueError("Invalid root accounting bounds")
-    if keys & set(budgets.EXTENDED_FIELDS) and not set(budgets.EXTENDED_FIELDS) <= keys:
-        raise ValueError("Incomplete extended root accounting bounds")
-    _dimensions(state["limits"], keys)
-    _dimensions(state.get("used"), keys)
-    if any(state["used"][key] > state["limits"][key] for key in keys):
-        raise ValueError("Root usage exceeds accounting bounds")
-    return keys
-
-
-def _operation_hash(operation):
-    clean = deepcopy(operation)
-    clean.pop("unknown_reconciliation", None)
-    return reconciliation_digest(clean)
-
-
-def _marker_is_valid(operation) -> bool:
-    """The exact version-1 closure marker of a ``closed_unknown`` operation, unchanged since."""
-    marker = operation.get("unknown_reconciliation")
-    return (isinstance(marker, dict) and set(marker) == _MARKER_KEYS
-            and type(marker["version"]) is int and marker["version"] == 1
-            and marker["accounting_basis"] == "full_reserved_envelope_estimate"
-            and operation.get("status") == "closed_unknown"
-            and marker["charged"] == operation.get("reserved")
-            and marker["closed_operation_sha256"] == _operation_hash(operation))
-
-
-def _charged_floor(state):
-    keys = set(state["limits"])
-    totals = {key: [] for key in keys}
-    for identity, operation in state["operations"].items():
-        if operation.get("status") == "closed_unknown":
-            marker = operation["unknown_reconciliation"]
-            audit = ClosureRequest.model_validate(marker["authorization"])
-            if (not _marker_is_valid(operation) or audit.operation_id != identity
-                    or operation.get("broker_overrun")):
-                raise ValueError("Invalid existing closure audit")
-            _dimensions(operation["reserved"], keys)
-            binding = operation["broker_binding"]
-            if (operation.get("broker_owned") is not True or operation.get("broker_revoked") is not True
-                    or binding.get("root_id") != audit.root_id or binding.get("operation_id") != identity
-                    or operation.get("run_id") != binding.get("run_id")
-                    or operation.get("run_id") not in state.get("broker_revoked_runs", [])):
-                raise ValueError("Invalid existing closure ownership")
-            values = marker["charged"]
-        elif operation.get("status") == "settled":
-            values = operation["observed"]
-        else:
-            continue
-        _dimensions(values, keys)
-        for key in keys:
-            totals[key].append(values[key])
-    if any(state["used"][key] < math.fsum(totals[key]) for key in keys):
-        raise ValueError("Root usage no longer covers conservative charges")
-
-
-
-def validate_closed_accounting(state: dict) -> None:
-    """Verify closed envelopes before excluding them from held capacity; no I/O."""
-    _check_bounds(state)
-    try:
-        _charged_floor(state)
-    except (KeyError, TypeError, AttributeError, OverflowError) as error:
-        raise ValueError("Malformed closed accounting audit") from error
 
 
 def _prepare(root, rows, request: ClosureRequest):

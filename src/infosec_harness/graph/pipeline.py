@@ -22,9 +22,9 @@ from pydantic_ai.messages import ModelResponse, UserContent
 from pydantic_ai.usage import RunUsage
 
 from infosec_harness.agents.deps import AgentDeps
-from infosec_harness.agents.intake_contracts import render_intake_prompt
 from infosec_harness.agents.models import estimate_cost
-from infosec_harness.agents.trajectory import count_repeated_calls, inspect_messages
+from infosec_harness.agents.render import render_intake_prompt
+from infosec_harness.agents.trajectory import trace_calls
 from infosec_harness.domain.models import (
     AgentOutcome,
     ComponentProfile,
@@ -45,7 +45,7 @@ from infosec_harness.graph.ops import Ops
 from infosec_harness.graph.prepare import PrepareFailed, prepare_resolved_component
 from infosec_harness.graph.scoring import priority
 from infosec_harness.graph.triage import TRIAGE_GRAPH, PreFilter, TriageDeps, TriageState
-from infosec_harness.inference.provenance import runtime_evidence
+from infosec_harness.inference.worker.provenance import runtime_evidence
 from infosec_harness.intake import adapters
 from infosec_harness.repo.components import component_stack, owning_component, preparation_key
 
@@ -177,7 +177,7 @@ def agent_outcome(name: str, result: Any, config: Any, latency_s: float) -> Agen
     model_name = config.model.resolved_model
     cost, estimated = estimate_cost(model_name, usage)
     messages = result.all_messages()
-    tools_called, skills_loaded = inspect_messages(messages)
+    trace = trace_calls(messages)
     recorded_config = config.model_dump(mode="json")
     if config.model.broker_contract is not None:
         recorded_config["inference_runtime"] = runtime_evidence(messages)
@@ -194,11 +194,11 @@ def agent_outcome(name: str, result: Any, config: Any, latency_s: float) -> Agen
         cost_usd=cost,
         cost_estimated=estimated,
         latency_s=latency_s,
-        tools_called=tools_called,
-        skills_loaded=skills_loaded,
+        tools_called=trace.tools,
+        skills_loaded=trace.skills,
         requests=usage.requests or 0,
         tool_calls=usage.tool_calls,
-        repeated_tool_calls=count_repeated_calls(messages),
+        repeated_tool_calls=trace.repeated,
     )
 
 
@@ -218,15 +218,15 @@ def partial_outcome(name: str, messages: Sequence[Any], config: Any, latency_s: 
         usage.cache_write_tokens += response.usage.cache_write_tokens or 0
     model_name = config.model.resolved_model
     cost, _ = estimate_cost(model_name, usage)
-    tools_called, skills_loaded = inspect_messages(messages)
+    trace = trace_calls(messages)
     return AgentOutcome(
         output=None, agent=name, model_name=model_name, config_hash=config.digest,
         effective_config=config.model_dump(mode="json"),
         input_tokens=usage.input_tokens, output_tokens=usage.output_tokens,
         cache_read_tokens=usage.cache_read_tokens, cache_write_tokens=usage.cache_write_tokens,
-        cost_usd=cost, cost_estimated=True, latency_s=latency_s, tools_called=tools_called,
-        skills_loaded=skills_loaded, requests=usage.requests,
-        repeated_tool_calls=count_repeated_calls(list(messages)),
+        cost_usd=cost, cost_estimated=True, latency_s=latency_s, tools_called=trace.tools,
+        skills_loaded=trace.skills, requests=usage.requests,
+        repeated_tool_calls=trace.repeated,
         failure=type(error).__name__)
 
 

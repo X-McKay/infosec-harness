@@ -24,10 +24,10 @@ from pydantic import (
     model_validator,
 )
 
-from infosec_harness.inference.codec import validate_settings
-from infosec_harness.inference.policy import canonical_policy
-from infosec_harness.inference.policy import policy_digest as effective_policy_digest
-from infosec_harness.inference.protocol import (
+from infosec_harness.inference.catalog.policy import canonical_policy
+from infosec_harness.inference.catalog.policy import policy_digest as effective_policy_digest
+from infosec_harness.inference.wire.codec import validate_settings
+from infosec_harness.inference.wire.protocol import (
     LOGICAL_NAME_PATTERN,
     EnvName,
     ExecutorContract,
@@ -323,7 +323,7 @@ class BrokerConfig(_StrictModel):
 def load_broker_config(path: Path | None = None, *, agents: Iterable[str]) -> BrokerConfig:
     """Load and validate packaged/operator YAML, including full coverage of ``agents``.
 
-    Callers pass the registered agent names (``agents.registry.AGENT_BINDINGS``).
+    Callers pass the registered agent names (``agents.registry.BINDINGS``).
     """
     source = path or (package_root() / "config" / "credential-broker.yaml")
     try:

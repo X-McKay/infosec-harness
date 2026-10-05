@@ -11,7 +11,7 @@ export type Gate = { label: string; status: string; detail: string };
 export function gateObservations(experiment: ExperimentSummary): Gate[] {
   const total = experiment.cases_completed;
   const passed = experiment.passed;
-  const accuracy = experiment.accuracy;
+  const accuracy = experiment.task_success_rate;
   const planned = experiment.cases_planned;
   const status = experiment.status ?? "";
   const exhausted = experiment.budget_exhausted_count;
@@ -84,8 +84,8 @@ export function comparisonPoints(
   return cohort
     .map((experiment) => ({
       experiment,
-      accuracy: experiment.accuracy,
-      cost: experiment.cost_usd_per_case,
+      accuracy: experiment.task_success_rate,
+      cost: experiment.average_cost_usd,
     }))
     .filter(
       (item): item is ComparisonPoint =>

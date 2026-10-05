@@ -12,11 +12,11 @@ import httpx
 from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestParameters
 
-from infosec_harness.inference.auth import AUTH_HEADER, sign_request
-from infosec_harness.inference.codec import decode_response, encode_payload
-from infosec_harness.inference.compat import contract_profile
-from infosec_harness.inference.http_service import JsonChannel
-from infosec_harness.inference.protocol import (
+from infosec_harness.inference.executor.compat import contract_profile
+from infosec_harness.inference.wire.auth import AUTH_HEADER, sign_request
+from infosec_harness.inference.wire.codec import decode_response, encode_payload
+from infosec_harness.inference.wire.http_service import JsonChannel
+from infosec_harness.inference.wire.protocol import (
     ENV_NAME_PATTERN,
     INFER_PATH,
     RESULTS_PATH,
@@ -30,8 +30,8 @@ from infosec_harness.inference.protocol import (
     fixed_https_url,
     logical_request_id,
 )
-from infosec_harness.inference.provenance import TrustedBrokerProvenance
-from infosec_harness.inference.timing import WORKER_TIMEOUT_S, remaining_timeout
+from infosec_harness.inference.wire.timing import WORKER_TIMEOUT_S, remaining_timeout
+from infosec_harness.inference.worker.provenance import TrustedBrokerProvenance
 
 
 def _durable_request_identity(callback: Callable[[], str] | None) -> str:

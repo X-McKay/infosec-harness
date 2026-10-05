@@ -9,6 +9,7 @@ import pytest
 from infosec_harness.agents.capabilities import run_in_sandbox
 from infosec_harness.evals.adapters import build_repair_adapter, partial_build_adapter
 from infosec_harness.sandbox import docker
+from infosec_harness.sandbox.process import ProcessResult
 
 
 def _case(image: str = "perl:5.40") -> dict:
@@ -33,7 +34,7 @@ async def test_build_adapter_sandbox_tool_receives_failed_specs_image(adapter, m
 
     async def fake_run_shell(image, command, **kwargs):
         seen.append((image, command, kwargs))
-        return docker.ProcResult(0, "available", "", False, 0.01)
+        return ProcessResult(0, "available", "", False, 0.01)
 
     monkeypatch.setattr(docker, "run_shell", fake_run_shell)
     deps = adapter(_case()).deps

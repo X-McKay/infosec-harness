@@ -1,8 +1,8 @@
 """Static replay/profile facade; it has no channel or provider execution capability."""
 from pydantic_ai.models import Model
 
-from infosec_harness.inference.compat import contract_profile
-from infosec_harness.inference.protocol import BrokerError
+from infosec_harness.inference.executor.compat import contract_profile
+from infosec_harness.inference.wire.protocol import BrokerError
 
 
 class UnboundBrokerModel(Model):

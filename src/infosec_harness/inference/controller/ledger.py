@@ -19,9 +19,9 @@ from pydantic_ai.messages import ModelResponse
 from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 
-from infosec_harness.inference.codec import validate_result_usage
-from infosec_harness.inference.diagnostics import budget_guard
-from infosec_harness.inference.protocol import (
+from infosec_harness.inference.wire.codec import validate_result_usage
+from infosec_harness.inference.wire.diagnostics import budget_guard
+from infosec_harness.inference.wire.protocol import (
     MAX_BODY_BYTES,
     BrokerError,
     DispatchPermit,
@@ -31,38 +31,15 @@ from infosec_harness.inference.protocol import (
     canonical_bytes,
 )
 from infosec_harness.persistence import db
+from infosec_harness.persistence.budgets import RETRY, cas_retry, cas_root
 
-CAS_ATTEMPTS = 20
 _DIMENSIONS = ("requests", "tokens", "cost_usd")
 
 
-class _Retry:
-    """Sentinel: the compare-and-set lost its race and the session was rolled back."""
-
-
-RETRY = _Retry()
-
-
-async def cas_retry[T](body: Callable[[Any], Awaitable[T | _Retry]], *,
-                       exhausted: str = "Bounded ledger contention exhausted") -> T:
-    """Run ``body`` in a fresh session until it stops returning :data:`RETRY`, boundedly."""
-    for _ in range(CAS_ATTEMPTS):
-        async with db.session() as session:
-            outcome = await body(session)
-            if not isinstance(outcome, _Retry):
-                return outcome
-    raise BrokerError("unavailable", exhausted)
-
-
-async def cas_root(session, root: db.BudgetLedger, state: dict) -> bool:
-    """Compare-and-set one root state at its read revision; on a lost race roll back."""
-    won = await session.execute(update(db.BudgetLedger).where(
-        db.BudgetLedger.root_id == root.root_id, db.BudgetLedger.revision == root.revision
-    ).values(state=state, revision=root.revision + 1))
-    if won.rowcount != 1:
-        await session.rollback()
-        return False
-    return True
+def broker_cas_retry[T](body: Callable[[Any], Awaitable[T | Any]], *,
+                        exhausted: str = "Bounded ledger contention exhausted") -> Awaitable[T]:
+    """:func:`budgets.cas_retry` whose exhaustion is the broker's retryable ``unavailable``."""
+    return cas_retry(body, exhausted=lambda: BrokerError("unavailable", exhausted))
 
 
 async def _set_state(session, row: db.InferenceRequestRecord, expected: RequestState,
@@ -246,7 +223,7 @@ class DurableLedger:
                 await session.rollback()
                 return RETRY
 
-        return await cas_retry(attempt)
+        return await broker_cas_retry(attempt)
 
     async def claim(self, request_id: str, *, lease_id: str) -> DispatchPermit:
         async def attempt(session):
@@ -275,7 +252,7 @@ class DurableLedger:
             await session.commit()
             return permit
 
-        return await cas_retry(attempt)
+        return await broker_cas_retry(attempt)
 
     async def complete(self, result: InferenceResult, *, permit: DispatchPermit) -> StoredDisposition:
         response = _validate_result(result)
@@ -316,7 +293,7 @@ class DurableLedger:
             await session.commit()
             return disposition
 
-        return await cas_retry(attempt)
+        return await broker_cas_retry(attempt)
 
     async def _terminal(self, request_id: str, *, lease_id: str,
                         expected: RequestState, target: RequestState) -> StoredDisposition:
@@ -334,7 +311,7 @@ class DurableLedger:
             await session.commit()
             return disposition
 
-        return await cas_retry(attempt)
+        return await broker_cas_retry(attempt)
 
     async def fail_before_dispatch(self, request_id: str, *, lease_id: str) -> StoredDisposition:
         return await self._terminal(request_id, lease_id=lease_id, expected=RequestState.ACCEPTED,
@@ -384,7 +361,7 @@ class DurableLedger:
             await session.commit()
             return None
 
-        await cas_retry(attempt, exhausted="Bounded run revocation contention exhausted")
+        await broker_cas_retry(attempt, exhausted="Bounded run revocation contention exhausted")
 
     async def validate_run_owner(self, run_id: str, root_id: str) -> None:
         """Trusted authenticated controller precondition for explicit run cleanup.

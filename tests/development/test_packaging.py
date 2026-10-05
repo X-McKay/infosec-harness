@@ -139,9 +139,9 @@ def test_every_agent_builds_from_the_installed_wheel(installed, tmp_path):
     assumption anywhere in spec loading, skill loading or model resolution fails here."""
     names = json.loads(_run(installed, """
 import json
-from infosec_harness.agents.registry import AGENT_BINDINGS, build_agent
+from infosec_harness.agents.registry import BINDINGS, build_agent
 built = []
-for name in sorted(AGENT_BINDINGS):
+for name in sorted(BINDINGS):
     build_agent(name)
     built.append(name)
 print(json.dumps(built))

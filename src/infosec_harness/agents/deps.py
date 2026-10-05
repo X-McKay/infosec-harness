@@ -9,7 +9,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from infosec_harness.domain.models import VerdictFacts
-from infosec_harness.inference.protocol import ExecutorContract, ReservationBinding
+from infosec_harness.inference.wire.protocol import ExecutorContract, ReservationBinding
 
 
 class AgentDeps(BaseModel):

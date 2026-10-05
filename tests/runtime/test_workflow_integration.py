@@ -45,9 +45,9 @@ def fixture_repo(tmp_path):
 
 
 async def _fake_build(snapshot_path, spec, tag):
-    from infosec_harness.sandbox.docker import ProcResult
+    from infosec_harness.sandbox.process import ProcessResult
 
-    return ProcResult(exit_code=0, stdout="built", stderr="", timed_out=False, duration_s=0.1)
+    return ProcessResult(exit_code=0, stdout="built", stderr="", timed_out=False, duration_s=0.1)
 
 
 async def _fake_probe(image, test_file_path, content, test_command, nonce, module_path=""):
@@ -61,24 +61,24 @@ async def _fake_probe(image, test_file_path, content, test_command, nonce, modul
     double echoes all three markers. Answering the canary with a clean negative would say "this
     environment cannot carry a marker", which is not what this fixture is modelling.
     """
-    from infosec_harness.sandbox.canary import CANARY_NONCE
-    from infosec_harness.sandbox.docker import (
+    from infosec_harness.sandbox.controls import POSITIVE_CONTROL_NONCE
+    from infosec_harness.sandbox.markers import (
         ORACLE_PREFIX,
         PRECONDITION_PREFIX,
         SINK_RETURNED_PREFIX,
-        ProcResult,
     )
+    from infosec_harness.sandbox.process import ProcessResult
 
     stdout = f"{PRECONDITION_PREFIX}{nonce}\n{SINK_RETURNED_PREFIX}{nonce}\n"
-    if nonce == CANARY_NONCE:
+    if nonce == POSITIVE_CONTROL_NONCE:
         stdout += f"{ORACLE_PREFIX}{nonce}\n"
-    return ProcResult(exit_code=0, stdout=stdout, stderr="", timed_out=False, duration_s=0.1)
+    return ProcessResult(exit_code=0, stdout=stdout, stderr="", timed_out=False, duration_s=0.1)
 
 
 async def _fake_shell(image, command, *, timeout=None, idempotency_key=None):
-    from infosec_harness.sandbox.docker import ProcResult
+    from infosec_harness.sandbox.process import ProcessResult
 
-    return ProcResult(exit_code=0, stdout="harness-smoke-ok", stderr="", timed_out=False, duration_s=0.0)
+    return ProcessResult(exit_code=0, stdout="harness-smoke-ok", stderr="", timed_out=False, duration_s=0.0)
 
 
 async def test_batch_workflow_end_to_end(temporal_cli, fixture_repo, monkeypatch):

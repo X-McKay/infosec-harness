@@ -25,7 +25,7 @@ controls:
     owner: appsec
     evidence:
     - tests/runtime/test_sandbox_policy.py
-    - src/infosec_harness/sandbox/policy.py
+    - src/infosec_harness/sandbox/docker.py
     effectiveness: implemented
   CTRL-SBX-002:
     type: preventive
@@ -76,7 +76,7 @@ controls:
     owner: appsec
     evidence:
     - tests/runtime/test_sandbox.py
-    - src/infosec_harness/sandbox/docker.py
+    - src/infosec_harness/sandbox/output.py
     effectiveness: verified
   CTRL-FN-002:
     type: preventive
@@ -151,12 +151,12 @@ controls:
     effectiveness: verified
   CTRL-PRIV-001:
     type: preventive
-    description: The model backend and endpoint are declarative config in config/models.yaml with
+    description: The model backend and endpoint are declarative config in src/infosec_harness/config/models.yaml with
       no secrets, reviewed like code; a self-hosted OpenAI-spec endpoint is supported so source
       need not leave the deployment's trust boundary.
     owner: appsec
     evidence:
-    - config/models.yaml
+    - src/infosec_harness/config/models.yaml
     - tests/agents/test_agents.py
     effectiveness: implemented
 scenarios:

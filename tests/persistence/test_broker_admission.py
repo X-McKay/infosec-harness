@@ -5,8 +5,9 @@ import pytest
 from pydantic_ai.exceptions import UsageLimitExceeded
 from test_inference_ledger import DEMAND, LEDGER, broker_request_fixture  # noqa: F401
 
-from infosec_harness.inference import admission, rendering
-from infosec_harness.inference.protocol import BrokerError
+from infosec_harness.inference.controller import admission
+from infosec_harness.inference.executor import rendering
+from infosec_harness.inference.wire.protocol import BrokerError
 from infosec_harness.persistence import budgets, db
 
 

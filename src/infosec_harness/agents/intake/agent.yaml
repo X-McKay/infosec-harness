@@ -73,7 +73,7 @@ metadata:
   - cwe-918-ssrf
   enabled_toolsets: []
   intake_output:
-    execution: intake-v6
+    execution: intake-v7
     protocol: intake-atomic-claims/v2
     acceptance_policy: intake-evidence/v1
     source_index_policy: python-splitlines-keepends-codepoints-v1

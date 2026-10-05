@@ -36,7 +36,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from infosec_harness.evals._json import write_json
+from infosec_harness._io import write_json
 from infosec_harness.evals.provenance import code_version
 from infosec_harness.resources import source_checkout
 

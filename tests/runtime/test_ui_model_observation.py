@@ -24,7 +24,8 @@ def receipt(tmp_path, monkeypatch):
         git_commit_sha="a" * 40,
     )
     monkeypatch.setattr(status, "get_settings", lambda: settings)
-    monkeypatch.setattr(models, "resolved_model_name", lambda *args: "gateway:Qwen")
+    monkeypatch.setattr(models, "resolve_config",
+                        lambda *args, **kwargs: SimpleNamespace(resolved_model="gateway:Qwen"))
     monkeypatch.setattr(registry, "load_spec", lambda name: SimpleNamespace(model="sonnet"))
     value = {
         "version": 1,

@@ -267,9 +267,6 @@ class StackFingerprint(_Model):
     manifests: list[str] = Field(default_factory=list)
     build_systems: list[str] = Field(default_factory=list)
     test_frameworks: list[str] = Field(default_factory=list)
-    registries: list[str] = Field(
-        default_factory=list, description="Package registry hosts declared by the repo (D14)"
-    )
     test_dirs: list[str] = Field(default_factory=list)
     java_release: int | None = Field(
         default=None,
@@ -554,7 +551,7 @@ class ProbeExecution(_Model):
     # this a probe that threw mid-call looks exactly like one the code resisted.
     sink_returned: bool = False
     # Set when the test runner's own output says it executed zero tests (see
-    # sandbox.docker.no_tests_executed). A zero-test run is a probe defect, never a negative
+    # sandbox.output.no_tests_executed). A zero-test run is a probe defect, never a negative
     # result: nothing exercised the sink. Naming it deterministically keeps the diagnosis agent
     # from having to infer "did not run" from a bare exit code, which it gets wrong.
     runner_reported_no_tests: str | None = None

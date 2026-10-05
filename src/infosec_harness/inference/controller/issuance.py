@@ -1,6 +1,6 @@
 """Controller-only invocation issuance against trusted catalogs and existing root reservations.
 
-The worker never imports this module; its client is :mod:`infosec_harness.inference.invocations`.
+The worker never imports this module; its client is :mod:`infosec_harness.inference.worker.invocations`.
 """
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ from typing import Any
 from sqlalchemy.exc import IntegrityError
 
 from infosec_harness.agents import models
-from infosec_harness.inference.admission import ReservationPolicy, bind_reservation
-from infosec_harness.inference.protocol import (
+from infosec_harness.inference.controller.admission import ReservationPolicy, bind_reservation
+from infosec_harness.inference.wire.protocol import (
     BrokerError,
     InvocationRequest,
     ReservationBinding,
@@ -64,7 +64,7 @@ def build_reservation_policy(request) -> ReservationPolicy:
 
 async def _open_local_root(request: InvocationRequest, policy: ReservationPolicy) -> None:
     """A local or eval run's bounded root, created once and owned by exactly that run."""
-    from infosec_harness.agents.registry import AGENT_BINDINGS
+    from infosec_harness.agents.registry import BINDINGS
 
     if request.root_id != digest({"local_run": request.run_id}):
         raise BrokerError("identity", "Local root identity is not tied to its run")
@@ -76,7 +76,7 @@ async def _open_local_root(request: InvocationRequest, policy: ReservationPolicy
          "cost_usd": limits.max_cost_usd}, elapsed_seconds=limits.max_duration_seconds)
     state.update(broker_run_id=request.run_id,
         agent_config_digests={name: trusted_config(name, durable=request.mode == "eval").digest
-                              for name in AGENT_BINDINGS})
+                              for name in BINDINGS})
     async with db.session() as session:
         existing = await session.get(db.BudgetLedger, request.root_id)
         if existing is None:

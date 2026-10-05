@@ -108,3 +108,15 @@ def test_the_library_refuses_dangling_references():
             "controls": ["CTRL-MISSING"]}}, "agents": {}})
     with pytest.raises(ValueError, match="do not exist"):
         parse({"controls": {}, "scenarios": {}, "agents": {"intake": ["RISK-MISSING"]}})
+
+
+def test_every_cited_evidence_file_exists():
+    """A control's evidence is a path a reviewer can open; a moved module must not leave the
+    library citing a file that no longer exists (regression: CTRL-SBX-001 cited sandbox/policy.py
+    after ensure_runtime_available moved to sandbox/docker.py)."""
+    from pathlib import Path
+
+    root = Path(__file__).parents[2]
+    missing = [(name, path) for name, control in LIB.controls.items()
+               for path in control.evidence if not (root / path).exists()]
+    assert missing == []

@@ -167,8 +167,8 @@ async def test_multiple_closed_operations_keep_first_audit_valid(closure):
 async def test_competing_closures_charge_once_and_keep_dispatch_fenced(closure):
     import asyncio
 
-    from infosec_harness.inference import ledger
-    from infosec_harness.inference.protocol import BrokerError
+    from infosec_harness.inference.controller import ledger
+    from infosec_harness.inference.wire.protocol import BrokerError
 
     results = await asyncio.gather(rec.close_unknown(closure), rec.close_unknown(closure), return_exceptions=True)
     assert sum(isinstance(r, dict) and r["status"] == "applied" for r in results) == 1
@@ -253,7 +253,8 @@ async def test_scheduler_rejects_tampered_real_closure_accounting(closure, monke
     await mutate(closure, change)
     monkeypatch.setattr(budgets, "_remaining_time", lambda _: None)
     with pytest.raises(ValueError):
-        await budgets.reserve(closure.root_id, "next", {"requests": 1, "tokens": 1, "cost_usd": 0}, "other")
+        await budgets.reserve(closure.root_id, "next", {"requests": 1, "tokens": 1, "cost_usd": 0},
+                              "other", "config-other")
 
 
 async def test_recomputed_operation_hash_cannot_rebind_unknown_to_foreign_run(closure):

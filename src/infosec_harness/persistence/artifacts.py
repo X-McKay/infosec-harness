@@ -6,12 +6,11 @@ Callers store bytes and get back a ``sha256:...`` ref; the DB keeps refs, not by
 from __future__ import annotations
 
 import hashlib
-import os
 import re
-import tempfile
 from functools import lru_cache
 from pathlib import Path
 
+from infosec_harness._io import atomic_write_bytes
 from infosec_harness.persistence.paths import workspace_dir
 from infosec_harness.settings import get_settings
 
@@ -85,13 +84,7 @@ class FilesystemStore(ArtifactStore):
         p.parent.mkdir(parents=True, exist_ok=True)
         # Publish atomically. Concurrent writers produce the same bytes for this key, and a put
         # repairs an object whose contents were damaged out of band.
-        descriptor, temporary = tempfile.mkstemp(prefix=f".{digest}.", dir=p.parent)
-        try:
-            with os.fdopen(descriptor, "wb") as stream:
-                stream.write(data)
-            os.replace(temporary, p)
-        finally:
-            Path(temporary).unlink(missing_ok=True)
+        atomic_write_bytes(p, data)
         return f"sha256:{digest}"
 
     def get_bytes(self, ref: str) -> bytes:

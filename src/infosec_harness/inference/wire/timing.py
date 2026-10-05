@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import time
 
-from .protocol import BrokerError
+from infosec_harness.inference.wire.protocol import BrokerError
 
 LEDGER_TIMEOUT_S = 30.0
 # Successful direct model activities reached 104.23 s. Double that observed

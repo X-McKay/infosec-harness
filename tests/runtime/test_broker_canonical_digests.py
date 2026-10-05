@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from infosec_harness.domain.canonical import canonical_bytes, digest, is_sha256
-from infosec_harness.inference import protocol
+from infosec_harness.inference.wire import protocol
 from infosec_harness.persistence import reconciliation
 
 VALUE = {"b": [1, 2.5, None, True], "a": "é <x>", "z": {"y": "ü"}}
@@ -61,29 +61,46 @@ def test_canonical_module_stays_inside_the_executor_closure():
     assert imported <= {"__future__", "hashlib", "json", "re", "typing"}
 
 
-def test_executor_image_context_contains_every_imported_harness_module():
-    """deploy/openshell/build_context.py copies a fixed module list into the executor image."""
+def test_executor_image_context_contains_every_imported_harness_module(tmp_path):
+    """deploy/openshell/build_context.py copies the executor's packages into its image context.
+
+    Walks the imports from the executor's entry point and requires every harness module it
+    reaches to be present in a generated context, so a new import cannot fail only at runtime.
+    """
+    import importlib.util
+
     root = Path(__file__).parents[2]
-    context = (root / "deploy/openshell/build_context.py").read_text()
-    pending = ["infosec_harness.inference.executor"]
+    spec = importlib.util.spec_from_file_location(
+        "build_context", root / "deploy/openshell/build_context.py")
+    build_context = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(build_context)
+    output = tmp_path / "context"
+    build_context.build_context(root, output)
+    pending = ["infosec_harness.inference.executor.__main__"]
     seen: set[str] = set()
     while pending:
         module = pending.pop()
         if module in seen:
             continue
         seen.add(module)
-        path = root / "src" / (module.replace(".", "/") + ".py")
+        relative = module.replace(".", "/")
+        path = root / "src" / (relative + ".py")
+        if not path.exists():
+            path = root / "src" / relative / "__init__.py"
         for node in ast.walk(ast.parse(path.read_text())):
-            if isinstance(node, ast.ImportFrom) and node.level:
-                base = module.rsplit(".", node.level)[0]
-                pending.append(f"{base}.{node.module}" if node.module else base)
-            elif isinstance(node, ast.ImportFrom) and (node.module or "").startswith("infosec_harness."):
+            if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("infosec_harness."):
                 pending.append(node.module)
+                pending.extend(f"{node.module}.{alias.name}" for alias in node.names
+                               if (root / "src" / node.module.replace(".", "/") / f"{alias.name}.py").exists())
     for module in sorted(seen):
-        relative = module.removeprefix("infosec_harness.").replace(".", "/") + ".py"
-        name = relative.rsplit("/", 1)[-1].removesuffix(".py")
-        assert f'"{name}"' in context or relative in context, (
+        relative = module.replace(".", "/")
+        assert ((output / (relative + ".py")).is_file()
+                or (output / relative / "__init__.py").is_file()), (
             f"{module} is imported by the executor but not copied into its image context")
+    # Only the executor's side of the broker: no worker, controller, catalogue or adapter.
+    copied = {p.relative_to(output).as_posix() for p in output.rglob("*.py")}
+    assert not any(part in path for path in copied
+                   for part in ("/worker/", "/controller/", "/catalog/", "/native/"))
 
 
 # Computed with the pre-consolidation sources (git HEAD 53a7663) before the shared field types,
@@ -104,7 +121,7 @@ PROFILE_DIGESTS = {
 
 
 def test_contract_and_profile_identities_are_unchanged_by_the_shared_field_vocabulary():
-    from infosec_harness.inference.profiles import ExecutorProfile
+    from infosec_harness.inference.catalog.profiles import ExecutorProfile
 
     base = dict(backend="mock", model="m", profile="inference-only", profile_digest="a" * 64,
                 endpoint="https://provider.test/v1/", provider_binding="p",

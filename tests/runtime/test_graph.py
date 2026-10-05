@@ -16,6 +16,7 @@ from infosec_harness.graph.ops import LocalOps
 from infosec_harness.graph.prepare import run_prepare
 from infosec_harness.graph.triage import TRIAGE_GRAPH, PreFilter, TriageDeps, TriageState
 from infosec_harness.repo.detect import detect_stack
+from infosec_harness.sandbox.output import no_tests_executed
 
 
 def _recorded(record, outcome):
@@ -30,13 +31,16 @@ def repo():
     d = tempfile.mkdtemp()
     Path(d, "requirements.txt").write_text("")
     Path(d, "app.py").write_text("def lookup(db, n):\n    return db.execute('SELECT '+n)\n")
+    # Detection reads the walked file index, so a test directory is evidence only when it
+    # holds files; a checkout never carries an empty one.
     Path(d, "tests").mkdir()
+    Path(d, "tests", "test_app.py").write_text("def test_lookup():\n    pass\n")
     return d
 
 
 def test_detect_stack(repo):
     stack = detect_stack(repo)
-    assert stack.languages.get("python") == 1
+    assert stack.languages.get("python") == 2
     assert "requirements.txt" in stack.manifests
     assert "pytest" in stack.test_frameworks
 
@@ -402,7 +406,7 @@ def test_the_guard_only_touches_negatives():
 
 def test_a_fired_oracle_implies_the_sink_returned():
     """The exploit condition cannot be observed without the call producing something."""
-    from infosec_harness.sandbox.docker import sink_returned
+    from infosec_harness.sandbox.output import sink_returned
 
     assert sink_returned("HARNESS_ORACLE::n1", "n1") is True
     assert sink_returned("HARNESS_CANARY_PRESENT::n1", "n1") is True
@@ -420,9 +424,8 @@ def test_a_zero_test_run_gets_the_runners_own_reason_not_the_models_guess():
     """
     from infosec_harness.domain.models import DiagnosisKind, ProbeDiagnosis, ProbeExecution
     from infosec_harness.graph.triage import _ground_zero_test_diagnosis
-    from infosec_harness.sandbox import docker
 
-    reason = docker.no_tests_executed("t/x.t .. skipped: (no reason given)\nResult: FAIL\n")
+    reason = no_tests_executed("t/x.t .. skipped: (no reason given)\nResult: FAIL\n")
     execution = ProbeExecution(attempt=1, exit_code=1, oracle_fired=False,
                                precondition_reached=False, sink_returned=False,
                                runner_reported_no_tests=reason)
@@ -848,7 +851,7 @@ async def test_a_negative_without_a_readable_control_record_is_not_accepted(repo
 
 async def test_a_negative_with_passing_controls_stands(repo):
     from infosec_harness.domain.models import SmokeResult
-    from infosec_harness.sandbox.canary import ControlResult, encode_control_result
+    from infosec_harness.sandbox.controls import ControlResult, encode_control_result
 
     ops, prepared = await _prepared(repo)
     _negative_ops(ops)

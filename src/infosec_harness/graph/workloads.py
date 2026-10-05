@@ -19,11 +19,19 @@ from infosec_harness.domain.models import (
     SmokeResult,
 )
 from infosec_harness.persistence.artifacts import get_store
-from infosec_harness.sandbox import canary, docker, evidence
+from infosec_harness.sandbox import controls, docker, evidence
 from infosec_harness.sandbox.errors import (
     DisallowedBaseImage,
     InvalidEnvironmentSpec,
     SandboxUnavailable,
+)
+from infosec_harness.sandbox.image import image_tag_for
+from infosec_harness.sandbox.output import (
+    no_tests_executed,
+    oracle_signals,
+    runner_check_command,
+    sink_returned,
+    tail,
 )
 
 
@@ -34,7 +42,7 @@ async def build_environment(snapshot: RepoSnapshot, spec: EnvironmentSpec) -> Bu
     that exists is not evidence that this host can still run it under isolation. The build
     validates the base image against the allowlist; build egress is the operator's proxy
     allowlist (not anything derived from the repository) on an internal network (D2/D14)."""
-    tag = docker.image_tag_for(snapshot.content_hash, spec)
+    tag = image_tag_for(snapshot.content_hash, spec)
     store = get_store()
     try:
         await docker.ensure_runtime_available("build the target environment")
@@ -51,7 +59,7 @@ async def build_environment(snapshot: RepoSnapshot, spec: EnvironmentSpec) -> Bu
     ok = res.exit_code == 0 and not res.timed_out
     return BuildResult(
         ok=ok, image_tag=tag if ok else None, spec=spec, log_artifact=log_ref,
-        error_excerpt="" if ok else docker.tail(res.stderr or res.stdout, 3000),
+        error_excerpt="" if ok else tail(res.stderr or res.stdout, 3000),
         duration_s=time.monotonic() - start,
     )
 
@@ -68,10 +76,10 @@ async def smoke_test(image_tag: str, test_command: str = "", *, language: str = 
 
     res = await docker.run_shell(image_tag, "echo harness-smoke-ok", timeout=60)
     if res.exit_code != 0 or "harness-smoke-ok" not in res.stdout:
-        return SmokeResult(ok=False, output_excerpt=docker.tail(res.stdout + res.stderr, 500))
+        return SmokeResult(ok=False, output_excerpt=tail(res.stdout + res.stderr, 500))
 
-    check = docker.runner_check_command(test_command)
-    runner_excerpt = docker.tail(res.stdout, 500)
+    check = runner_check_command(test_command)
+    runner_excerpt = tail(res.stdout, 500)
     if check is not None:
         runner = await docker.run_shell(image_tag, check, timeout=120)
         if runner.exit_code != 0:
@@ -79,9 +87,9 @@ async def smoke_test(image_tag: str, test_command: str = "", *, language: str = 
                 ok=False,
                 output_excerpt=f"the test runner is not installed: `{check}` exited "
                                f"{runner.exit_code}\n"
-                               + docker.tail(runner.stdout + runner.stderr, 400),
+                               + tail(runner.stdout + runner.stderr, 400),
             )
-        runner_excerpt = docker.tail(runner.stdout or res.stdout, 500)
+        runner_excerpt = tail(runner.stdout or res.stdout, 500)
     return await _canary_result(image_tag, test_command, language, module_path,
                                 runner_excerpt)
 
@@ -99,40 +107,40 @@ async def _canary_result(image_tag: str, test_command: str, language: str, modul
     Checked by execution rather than by a table, so a framework nobody encoded fails here
     instead of silently at probe time.
     """
-    written = canary.canary_for(language, test_command)
+    written = controls.control_test_for(language, test_command)
     if written is None:
         # Not checked is not the same as passed. A language this module has not learned must
         # not fail preparation, and preparation must not claim it was verified.
-        control = canary.ControlResult(positive=False, negative=False, status="not_checked")
+        control = controls.ControlResult(positive=False, negative=False, status="not_checked")
         return SmokeResult(ok=True, output_excerpt=runner_excerpt
                            + f"\n(canary not run: no template for language {language!r})\n"
-                           + canary.encode_control_result(control))
+                           + controls.encode_control_result(control))
     path, content = written
-    res = await docker.run_probe(image_tag, path, content, test_command, canary.CANARY_NONCE,
-                                 module_path=module_path)
+    res = await docker.run_probe(image_tag, path, content, test_command,
+                                 controls.POSITIVE_CONTROL_NONCE, module_path=module_path)
     combined = res.stdout + "\n" + res.stderr
-    missing = canary.missing_markers(combined)
+    missing = controls.missing_markers(combined)
     if missing or res.exit_code != 0 or res.timed_out:
         return SmokeResult(ok=False,
-                           output_excerpt=canary.explain(language, test_command, missing, combined))
+                           output_excerpt=controls.explain(language, test_command, missing, combined))
 
-    negative = canary.canary_for(
-        language, test_command, nonce=canary.NEGATIVE_CANARY_NONCE, oracle=False)
+    negative = controls.control_test_for(
+        language, test_command, nonce=controls.NEGATIVE_CONTROL_NONCE, oracle=False)
     assert negative is not None  # the positive template for this same language existed
     negative_path, negative_content = negative
     negative_run = await docker.run_probe(
         image_tag, negative_path, negative_content, test_command,
-        canary.NEGATIVE_CANARY_NONCE, module_path=module_path,
+        controls.NEGATIVE_CONTROL_NONCE, module_path=module_path,
     )
     negative_output = negative_run.stdout + "\n" + negative_run.stderr
-    negative_missing = canary.missing_markers(
-        negative_output, nonce=canary.NEGATIVE_CANARY_NONCE)
+    negative_missing = controls.missing_markers(
+        negative_output, nonce=controls.NEGATIVE_CONTROL_NONCE)
     # The negative control deliberately omits the oracle, so exactly that marker must be
     # absent. This catches an adapter that reuses stale output or manufactures a positive.
     negative_ok = (negative_run.exit_code == 0 and not negative_run.timed_out
                    and negative_missing == ["oracle"])
-    control = canary.ControlResult(positive=True, negative=negative_ok)
-    record = canary.encode_control_result(control)
+    control = controls.ControlResult(positive=True, negative=negative_ok)
+    record = controls.encode_control_result(control)
     if not negative_ok:
         return SmokeResult(
             ok=False,
@@ -140,7 +148,7 @@ async def _canary_result(image_tag: str, test_command: str, language: str, modul
                 "The environment failed the harness negative control. A discovered test emitted "
                 "the precondition and sink-returned markers but deliberately no oracle; the "
                 "adapter did not preserve that result. Captured output:\n"
-                + docker.tail(negative_output, 1500) + "\n" + record
+                + tail(negative_output, 1500) + "\n" + record
             ),
         )
     return SmokeResult(
@@ -162,12 +170,12 @@ async def execute_probe(image_tag: str, probe: ProbeSource, spec: EnvironmentSpe
     res = await docker.run_probe(image_tag, probe.test_file_path, probe.content,
                                  spec.test_command, nonce, module_path=spec.module_path or "")
     combined = res.stdout + "\n" + res.stderr
-    oracle_fired, precondition = docker.oracle_signals(combined, nonce)
-    returned = docker.sink_returned(combined, nonce)
+    oracle_fired, precondition = oracle_signals(combined, nonce)
+    returned = sink_returned(combined, nonce)
     # Only meaningful when the markers are absent: if the sink returned, tests plainly ran, and
     # a runner phrase like "Tests run: 0" would be from an unrelated module in a multi-module
     # build rather than evidence that this probe never executed.
-    no_tests = None if returned else docker.no_tests_executed(combined)
+    no_tests = None if returned else no_tests_executed(combined)
     record = evidence.execution_record(
         image_tag=image_tag,
         test_file_path=probe.test_file_path,
@@ -192,8 +200,8 @@ async def execute_probe(image_tag: str, probe: ProbeSource, spec: EnvironmentSpe
         precondition_reached=precondition,
         sink_returned=returned,
         runner_reported_no_tests=no_tests,
-        stdout_tail=docker.tail(res.stdout, 4000),
-        stderr_tail=docker.tail(res.stderr, 4000),
+        stdout_tail=tail(res.stdout, 4000),
+        stderr_tail=tail(res.stderr, 4000),
         duration_s=res.duration_s,
         log_artifact=store.put_text(artifact_body),
         source_artifact=store.put_text(probe.content, media_type="text/plain"),

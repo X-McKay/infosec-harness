@@ -13,6 +13,9 @@ from pathlib import Path
 
 from packaging.markers import Marker, default_environment
 
+EXECUTOR_PACKAGES = ("inference/wire", "inference/executor")
+EXECUTOR_MODULES = ("agents/intake_schema.py", "domain/canonical.py")
+
 
 def build_context(root: Path, output: Path, *, machine: str = "aarch64") -> None:
     if output.is_symlink() or output.exists():
@@ -59,19 +62,19 @@ def build_context(root: Path, output: Path, *, machine: str = "aarch64") -> None
         )
     (output / "requirements.txt").write_text("\n".join(requirements) + "\n")
     package_dir = output / "infosec_harness"
-    (package_dir / "inference").mkdir(parents=True)
-    (package_dir / "agents").mkdir()
-    (package_dir / "domain").mkdir()
-    for path in (package_dir, package_dir / "inference", package_dir / "agents",
-                 package_dir / "domain"):
-        (path / "__init__.py").write_text("")
-    for name in ("auth", "codec", "compat", "diagnostics", "executor", "http_service", "protocol",
-                 "rendering", "timing"):
-        shutil.copyfile(
-            root / f"src/infosec_harness/inference/{name}.py", package_dir / f"inference/{name}.py"
-        )
-    for relative in ("agents/intake_schema.py", "domain/canonical.py"):
-        shutil.copyfile(root / "src/infosec_harness" / relative, package_dir / relative)
+    source = root / "src/infosec_harness"
+    # The executor runs `python -m infosec_harness.inference.executor`: its own package and the
+    # wire package, whole, plus the two modules they import from outside `inference/`. No
+    # worker, controller, catalogue or database source enters the image.
+    for package in EXECUTOR_PACKAGES:
+        (package_dir / package).mkdir(parents=True)
+        for path in sorted((source / package).glob("*.py")):
+            shutil.copyfile(path, package_dir / package / path.name)
+    for relative in EXECUTOR_MODULES:
+        (package_dir / relative).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source / relative, package_dir / relative)
+    for directory in [package_dir, *(d for d in package_dir.rglob("*") if d.is_dir())]:
+        (directory / "__init__.py").touch()
     shutil.copyfile(root / "deploy/openshell/Dockerfile.executor", output / "Dockerfile")
 
 

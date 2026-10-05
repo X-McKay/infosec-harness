@@ -293,10 +293,10 @@ def test_pairwise_descriptive_output_handles_unknown_aggregate_usage(capsys):
     from infosec_harness.evals.reporting import _print_pairwise
 
     baseline = SimpleNamespace(id="baseline", config_hash="a", metrics={
-        "status": "complete", "task_success_rate": 1.0, "cost_usd_per_case": None,
+        "status": "complete", "task_success_rate": 1.0, "average_cost_usd": None,
         "avg_tokens": None, "cache_hit_ratio": None})
     candidate = SimpleNamespace(id="candidate", config_hash="b", metrics={
-        "status": "complete", "task_success_rate": 1.0, "cost_usd_per_case": 0.0,
+        "status": "complete", "task_success_rate": 1.0, "average_cost_usd": 0.0,
         "avg_tokens": 0.0, "cache_hit_ratio": 0.0})
     _print_pairwise(baseline, candidate)
     assert capsys.readouterr().out.count("(unknown)") == 3

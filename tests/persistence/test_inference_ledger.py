@@ -9,8 +9,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from infosec_harness.inference import admission, ledger
-from infosec_harness.inference.protocol import (
+from infosec_harness.inference.controller import admission, ledger
+from infosec_harness.inference.wire.protocol import (
     BrokerError,
     ExecutorContract,
     InferencePayload,
@@ -283,8 +283,8 @@ async def test_abrupt_process_death_preserves_transaction_recovery(broker_reques
     permit = await LEDGER.claim(broker_request.request_id, lease_id="lease") if phase == "complete_before_commit" else None
     script = r"""
 import asyncio, os, sys
-from infosec_harness.inference import ledger
-from infosec_harness.inference.protocol import DispatchPermit, InferenceRequest, InferenceResult
+from infosec_harness.inference.controller import ledger
+from infosec_harness.inference.wire.protocol import DispatchPermit, InferenceRequest, InferenceResult
 phase, serialized_request, serialized_permit = sys.argv[1:]
 request = InferenceRequest.model_validate_json(serialized_request)
 async def checkpoint(current):

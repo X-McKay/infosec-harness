@@ -26,6 +26,7 @@ from infosec_harness.agents.repo_tools import (
 )
 from infosec_harness.agents.symbol_inspection import describe_callables
 from infosec_harness.agents.target_context import inspect_target
+from infosec_harness.sandbox.output import tail
 from infosec_harness.tools.policies import load_policies
 
 # The toolset's tools, in the order they are declared to the model. The order is part of the
@@ -154,7 +155,7 @@ async def run_in_sandbox(ctx: RunContext[AgentDeps], command: str) -> str:
         return f"[sandbox unavailable: {e}]\nNo command was executed."
     return _within(
         f"[exit code: {res.exit_code}{' (timed out)' if res.timed_out else ''}]\n"
-        f"[stdout]\n{docker.tail(res.stdout, 3000)}\n[stderr]\n{docker.tail(res.stderr, 3000)}",
+        f"[stdout]\n{tail(res.stdout, 3000)}\n[stderr]\n{tail(res.stderr, 3000)}",
         policy.max_output_bytes,
     )
 

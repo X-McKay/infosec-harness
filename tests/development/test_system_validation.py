@@ -18,7 +18,7 @@ from pydantic_ai.models.test import TestModel
 
 from infosec_harness.agents import repo_tools
 from infosec_harness.agents.deps import AgentDeps
-from infosec_harness.agents.registry import AGENT_BINDINGS, build_agent, load_spec
+from infosec_harness.agents.registry import BINDINGS, build_agent, load_spec
 from infosec_harness.agents.render import render_prompt
 from infosec_harness.agents.validators import validate_probe, verdict_violations
 from infosec_harness.domain.models import (
@@ -82,7 +82,7 @@ def _configured_skills(spec) -> list[str]:
     return []
 
 
-@pytest.mark.parametrize("name", list(AGENT_BINDINGS))
+@pytest.mark.parametrize("name", list(BINDINGS))
 async def test_agent_tool_wiring(name):
     assert await _model_facing_tools(name) == EXPECTED_TOOLS[name]
 
@@ -101,14 +101,14 @@ async def test_partial_build_batches_manifest_reads_and_retains_scoped_discovery
     assert {"run_in_sandbox", "read_file", "describe_callables"} <= build_tools
 
 
-@pytest.mark.parametrize("name", list(AGENT_BINDINGS))
+@pytest.mark.parametrize("name", list(BINDINGS))
 def test_configured_skills_exist(name):
     root = get_settings().agents_dir.parent / "skills"
     for skill in _configured_skills(name and load_spec(name)):
         assert (root / skill / "SKILL.md").exists(), f"{name} references missing skill {skill}"
 
 
-@pytest.mark.parametrize("name", list(AGENT_BINDINGS))
+@pytest.mark.parametrize("name", list(BINDINGS))
 def test_model_and_thinking_pinned(name):
     spec = load_spec(name)
     assert spec.model, f"{name} must pin a model tier for cache stability"
@@ -141,7 +141,7 @@ def test_skills_load_with_real_content():
     assert {"cwe-89-sql-injection", "probe-oracle-protocol"} <= discovered
 
 
-@pytest.mark.parametrize("name", list(AGENT_BINDINGS))
+@pytest.mark.parametrize("name", list(BINDINGS))
 async def test_agent_emits_typed_contract(name):
     stack = StackFingerprint(
         languages={"python": 3}, test_frameworks=["pytest"], manifests=["requirements.txt"]
@@ -172,7 +172,7 @@ async def test_agent_emits_typed_contract(name):
             report_text=payload.get("report"),
         ),
     )
-    assert isinstance(result.output, AGENT_BINDINGS[name])
+    assert isinstance(result.output, BINDINGS[name].domain_type)
 
 
 CONFORMANT_PROBE = (

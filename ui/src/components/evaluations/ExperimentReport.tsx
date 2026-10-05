@@ -184,9 +184,9 @@ function ExperimentRow({
       <td>
         <Badge variant="outline">{experiment.status ?? "unknown"}</Badge>
       </td>
-      <td className="text-right">{percent(experiment.accuracy)}</td>
+      <td className="text-right">{percent(experiment.task_success_rate)}</td>
       <td className="text-right font-mono text-xs">
-        {money(experiment.cost_usd_per_case)}
+        {money(experiment.average_cost_usd)}
       </td>
       <td className="text-right font-mono text-xs">
         {seconds(experiment.p95_latency_s)}
@@ -210,12 +210,12 @@ function SelectedMetrics({
         <CardContent className="grid grid-cols-2 gap-4">
           <Metric
             label="Accuracy"
-            value={percent(experiment.accuracy)}
+            value={percent(experiment.task_success_rate)}
             detail={qualityFraction(experiment)}
           />
           <Metric
             label="Cost / case"
-            value={money(experiment.cost_usd_per_case)}
+            value={money(experiment.average_cost_usd)}
           />
           <Metric
             label="p50 latency"

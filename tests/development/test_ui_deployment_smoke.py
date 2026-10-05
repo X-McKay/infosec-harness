@@ -21,7 +21,7 @@ def deployment():
     experiment_page = {"items": [], "total": 0, "offset": 0, "limit": 50}
     config = {"model_mode": runtime["model_mode"], "agents": [
         {"name": agent, "model_tier": "sonnet", "config_hash": "0" * 16,
-         "resolved_model": "local:configured-model"} for agent in smoke.AGENT_BINDINGS]}
+         "resolved_model": "local:configured-model"} for agent in smoke.BINDINGS]}
     requests = []
     overrides = {}
 
@@ -168,7 +168,7 @@ def test_experiments_are_read_as_a_page_and_counted_by_total(deployment):
              "repetitions": 1, "config_hash": "a" * 64, "git_dirty": False,
              "model_name": "controlled", "backend": "live", "pricing": "",
              "harness_version": "test", "created_at": "2026-10-04T00:00:00Z",
-             "accuracy": 0.5, "cost_usd_per_case": None, "p50_latency_s": None,
+             "task_success_rate": 0.5, "average_cost_usd": None, "p50_latency_s": None,
              "p95_latency_s": None, "passed": 1, "cases_completed": 2, "cases_planned": 2,
              "budget_exhausted_count": 0, "gate_status": None} for index in range(50)]
     page = {"items": rows, "total": 82, "offset": 0, "limit": 50}

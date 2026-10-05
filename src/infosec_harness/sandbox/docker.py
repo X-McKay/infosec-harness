@@ -9,8 +9,8 @@ touching the daemon, and route all egress through the operator's allowlisting pr
 internal network (D14). Untrusted install steps run on a buildx builder so they are
 gVisor-contained like probes. This is the only execution runner.
 
-This module is also the sandbox's public surface: the names re-exported below live in
-``image`` (Dockerfile, build identity, build argv), ``boundary`` (egress network and builder
+Everything else lives where it is defined, and callers import it from there: ``image``
+(Dockerfile, build identity, build argv), ``boundary`` (egress network and builder
 verification), ``output`` (marker and runner-output parsing), ``markers``, ``engine`` (the
 Docker CLI) and ``process`` (the result type).
 """
@@ -29,11 +29,9 @@ from infosec_harness.domain.canonical import sha256_hex
 from infosec_harness.domain.models import EnvironmentSpec
 from infosec_harness.sandbox import REQUIRED_RUNTIME, engine
 from infosec_harness.sandbox.boundary import ensure_build_egress_boundary, ensure_builder
-from infosec_harness.sandbox.engine import MAX_CAPTURE
 from infosec_harness.sandbox.errors import SandboxUnavailable
 from infosec_harness.sandbox.image import (
     HOME_STAGE,
-    IMAGE_FORMAT_VERSION,
     IMAGE_LABEL,
     PROVENANCE_LABEL,
     REPO_STAGE,
@@ -41,40 +39,11 @@ from infosec_harness.sandbox.image import (
     WORK,
     WORK_HOME,
     build_argv,
-    image_tag_for,
-    module_suffix,
     render_dockerfile,
 )
-from infosec_harness.sandbox.markers import (
-    CANARY_PREFIX,
-    FILE_ORACLE_NAME_PREFIX,
-    ORACLE_PREFIX,
-    PRECONDITION_PREFIX,
-    SINK_RETURNED_PREFIX,
-)
-from infosec_harness.sandbox.output import (
-    no_tests_executed,
-    oracle_signals,
-    runner_check_command,
-    sink_returned,
-    tail,
-)
+from infosec_harness.sandbox.markers import FILE_ORACLE_NAME_PREFIX, FILE_ORACLE_PREFIX
 from infosec_harness.sandbox.process import ProcessResult
 from infosec_harness.settings import get_settings
-
-# The sequential rename pass replaces this name with ``ProcessResult`` at its call sites.
-ProcResult = ProcessResult
-
-__all__ = [
-    "CANARY_PREFIX", "HOME_STAGE", "IMAGE_FORMAT_VERSION", "IMAGE_LABEL", "MAX_CAPTURE",
-    "ORACLE_PREFIX", "PRECONDITION_PREFIX", "PROVENANCE_LABEL", "REPO_STAGE", "SANDBOX_USER",
-    "SINK_RETURNED_PREFIX", "WORK", "WORK_HOME", "ProcResult", "ProcessResult", "build_argv",
-    "build_image", "container_name", "docker_available", "ensure_build_egress_boundary",
-    "ensure_builder", "ensure_runtime_available", "image_exists", "image_tag_for",
-    "module_suffix", "no_tests_executed", "oracle_signals", "render_dockerfile",
-    "run_probe", "run_shell", "runner_check_command", "runtime_available", "sink_returned",
-    "tail",
-]
 
 
 async def docker_available() -> bool:
@@ -290,7 +259,7 @@ async def run_probe(image: str, test_file_path: str, content: str, test_command:
         # project, and for a Maven one whose output was not redirected there is no such file.
         "for f in target/surefire-reports/*-output.txt */target/surefire-reports/*-output.txt; "
         "do [ -f \"$f\" ] && cat \"$f\"; done; "
-        f"if [ -e {file_oracle} ]; then echo '{CANARY_PREFIX}{nonce}'; fi; exit $rc"
+        f"if [ -e {file_oracle} ]; then echo '{FILE_ORACLE_PREFIX}{nonce}'; fi; exit $rc"
     )
     name = "harness-probe-" + sha256_hex(f"{image}:{test_file_path}:{nonce}")[:16]
     argv = ["docker", "run", "-i", *_hardening_args(), "--name", name, image, "sh", "-c", script]

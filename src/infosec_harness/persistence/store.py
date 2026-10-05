@@ -333,7 +333,7 @@ async def list_batches(limit: int = 100, population: Population | None = None) -
 # Eval experiments
 # ---------------------------------------------------------------------------
 
-HeadlineMetric = Literal["accuracy", "accuracy_mean", "cost_usd_per_case", "p50_latency_s",
+HeadlineMetric = Literal["task_success_rate", "average_cost_usd", "p50_latency_s",
                          "p95_latency_s", "passed", "n", "cases_completed", "n_planned",
                          "budget_exhausted_count"]
 
@@ -362,8 +362,8 @@ def _experiment_summary(e: db.EvalExperiment) -> dict:
             "git_dirty": e.git_dirty, "model_name": e.model_name, "backend": e.backend,
             "pricing": e.pricing, "harness_version": e.harness_version,
             "created_at": e.created_at.isoformat(),
-            "accuracy": _metric(metrics, "accuracy", "accuracy_mean"),
-            "cost_usd_per_case": _metric(metrics, "cost_usd_per_case"),
+            "task_success_rate": _metric(metrics, "task_success_rate"),
+            "average_cost_usd": _metric(metrics, "average_cost_usd"),
             "p50_latency_s": _metric(metrics, "p50_latency_s"),
             "p95_latency_s": _metric(metrics, "p95_latency_s"),
             "passed": _metric(metrics, "passed"),

@@ -6,7 +6,6 @@ observes what a runner already owns.
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import shlex
 import subprocess
@@ -15,6 +14,8 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any
+
+from infosec_harness._io import write_json
 
 # Ambient provider, broker and object-store authority never reaches a qualification child.
 _STRIPPED_PREFIXES = ("AWS_", "HARNESS_BROKER_")
@@ -29,13 +30,7 @@ def private_write(path: Path, value: Any, *, exclusive: bool = False) -> None:
     replaced atomically.
     """
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    target = path if exclusive else path.with_suffix(path.suffix + ".tmp")
-    flags = os.O_WRONLY | os.O_CREAT | (os.O_EXCL if exclusive else os.O_TRUNC)
-    with os.fdopen(os.open(target, flags, 0o600), "w") as stream:
-        json.dump(value, stream, sort_keys=True, indent=2)
-        stream.write("\n")
-    if not exclusive:
-        target.replace(path)
+    write_json(path, value, sort_keys=True, exclusive=exclusive)
 
 
 def read_private_environment(path: str | Path) -> dict[str, str]:
@@ -163,8 +158,8 @@ def forbid_io(*, synchronous: bool = False) -> Iterator[None]:
     import httpx
     import httpx2
 
-    from infosec_harness.inference import invocations
-    from infosec_harness.inference.transport import BrokerModel
+    from infosec_harness.inference.worker import invocations
+    from infosec_harness.inference.worker.transport import BrokerModel
     from infosec_harness.persistence import db
 
     message = "History replay attempted external I/O"

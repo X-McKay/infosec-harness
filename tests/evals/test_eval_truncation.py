@@ -348,7 +348,7 @@ async def test_broker_budget_is_a_failed_gate_and_next_cases_run_without_sdk_ret
     from pydantic_ai.models.function import FunctionModel
 
     from infosec_harness.agents import registry
-    from infosec_harness.inference.protocol import BrokerError
+    from infosec_harness.inference.wire.protocol import BrokerError
 
     real_build = registry.build_agent
     invocations, sdk_calls = [], []
@@ -390,7 +390,7 @@ async def test_broker_budget_is_a_failed_gate_and_next_cases_run_without_sdk_ret
     type('SpoofedCode', (str,), {})('budget')])
 async def test_other_broker_failures_remain_truncated_with_redacted_diagnostics(monkeypatch, tmp_path, code):
     from infosec_harness.agents import registry
-    from infosec_harness.inference.protocol import BrokerError
+    from infosec_harness.inference.wire.protocol import BrokerError
 
     calls = []
     class FailedBroker:

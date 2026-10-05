@@ -36,9 +36,13 @@ with workflow.unsafe.imports_passed_through():
     from temporalio.workflow import ActivityConfig
 
     from infosec_harness.agents.registry import ACTIVITY_RETRY
-    from infosec_harness.inference.protocol import ExecutorContract, ReservationBinding, StrictModel
-    from infosec_harness.inference.transport import BrokerModel
-    from infosec_harness.inference.unbound import UnboundBrokerModel
+    from infosec_harness.inference.wire.protocol import (
+        ExecutorContract,
+        ReservationBinding,
+        StrictModel,
+    )
+    from infosec_harness.inference.worker.transport import BrokerModel
+    from infosec_harness.inference.worker.unbound import UnboundBrokerModel
     from infosec_harness.qualification.broker import native
     from infosec_harness.qualification.broker.support import (
         forbid_io,

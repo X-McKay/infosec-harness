@@ -46,7 +46,7 @@ def profile_identity() -> dict:
     if config != models.load_models_config():
         raise ValueError("cached profile differs")
     tier = load_spec("verdict").model
-    backend_name = config.backend_for("verdict")
+    backend_name = config.selected_backend()
     label = f"{backend_name}:{config.model_id(tier, backend_name)}"
     if not re.fullmatch(r"[a-zA-Z0-9._:/-]{1,200}", label):
         raise ValueError("model identity unavailable")

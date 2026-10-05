@@ -99,7 +99,7 @@ def jvm_class_selector(command: str) -> str | None:
     """The one test class a JVM command selects, None for a non-JVM command.
 
     The only parser of the selector: the Dockerfile validation and the control-test writer in
-    ``canary`` both use it, so the class a control test is written as is by construction the
+    ``controls`` both use it, so the class a control test is written as is by construction the
     class the command runs. A JVM command that does not select exactly one literal simple class
     with its own runner's selector is rejected, never an arbitrary shell command.
     """

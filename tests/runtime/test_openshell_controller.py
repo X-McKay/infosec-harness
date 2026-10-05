@@ -10,20 +10,20 @@ import pytest
 from pydantic_ai.messages import ModelResponse, TextPart
 from test_broker_executor import request_fixture
 
-from infosec_harness.inference.admission import ReservationPolicy
-from infosec_harness.inference.auth import AUTH_HEADER, sign_request
-from infosec_harness.inference.codec import encode_response
-from infosec_harness.inference.controller import Controller
-from infosec_harness.inference.ledger import StoredDisposition
-from infosec_harness.inference.openshell import (
+from infosec_harness.inference.catalog.policy import policy_digest
+from infosec_harness.inference.controller.admission import ReservationPolicy
+from infosec_harness.inference.controller.ledger import StoredDisposition
+from infosec_harness.inference.controller.service import Controller
+from infosec_harness.inference.native.openshell import (
     Lease,
     LeaseStore,
     NativeSpec,
     OpenShellAdapter,
     OwnedLeases,
 )
-from infosec_harness.inference.policy import policy_digest
-from infosec_harness.inference.protocol import (
+from infosec_harness.inference.wire.auth import AUTH_HEADER, sign_request
+from infosec_harness.inference.wire.codec import encode_response
+from infosec_harness.inference.wire.protocol import (
     BrokerError,
     DispatchPermit,
     InferenceResult,
@@ -760,7 +760,7 @@ async def test_close_during_preflight_cannot_publish_or_create_an_executor(tmp_p
 
 
 async def test_controller_wall_timeout_fences_claimed_request_without_redispatch(tmp_path, monkeypatch):
-    from infosec_harness.inference import controller as module
+    from infosec_harness.inference.controller import service as module
 
     core, request, lease, events, rows = controller_fixture(tmp_path)
     async def interrupted(_):
@@ -798,7 +798,7 @@ async def test_controller_cancellation_retains_unknown_and_revokes_owner(tmp_pat
 
 @pytest.mark.parametrize("cancel", [False, True])
 async def test_interrupted_accepted_request_fences_delayed_claim_before_cleanup(tmp_path, monkeypatch, cancel):
-    from infosec_harness.inference import controller as module
+    from infosec_harness.inference.controller import service as module
 
     core, request, lease, events, rows = controller_fixture(tmp_path)
     admitted, cleanup_started, release_cleanup = asyncio.Event(), asyncio.Event(), asyncio.Event()
@@ -828,7 +828,7 @@ async def test_interrupted_accepted_request_fences_delayed_claim_before_cleanup(
 
 
 async def test_preclaim_fence_racing_claim_retains_unknown_before_cleanup(tmp_path, monkeypatch):
-    from infosec_harness.inference import controller as module
+    from infosec_harness.inference.controller import service as module
 
     core, request, lease, events, rows = controller_fixture(tmp_path)
     original = core.ledger.fail_before_dispatch
@@ -854,7 +854,7 @@ async def test_preclaim_fence_racing_claim_retains_unknown_before_cleanup(tmp_pa
 async def test_reconciliation_cutoff_does_not_join_slow_cancel_cleanup_or_accumulate_duplicates(tmp_path, monkeypatch):
     import time
 
-    from infosec_harness.inference import controller as module
+    from infosec_harness.inference.controller import service as module
 
     core, request, lease, events, rows = controller_fixture(tmp_path)
     cleanup_release, cleanup_cancelled = asyncio.Event(), asyncio.Event()
@@ -896,7 +896,7 @@ async def test_reconciliation_cutoff_does_not_join_slow_cancel_cleanup_or_accumu
 
 
 async def test_preclaim_fence_racing_saved_completion_returns_exact_result(tmp_path, monkeypatch):
-    from infosec_harness.inference import controller as module
+    from infosec_harness.inference.controller import service as module
 
     core, request, lease, events, rows = controller_fixture(tmp_path)
     result = InferenceResult(request_id=request.request_id,
@@ -946,7 +946,7 @@ async def test_uncommitted_native_success_ack_fences_delayed_claim(tmp_path):
 
 
 async def test_outer_wall_during_mapped_channel_cleanup_does_not_leak_child_cancellation(tmp_path, monkeypatch):
-    from infosec_harness.inference import controller as module
+    from infosec_harness.inference.controller import service as module
 
     core, request, lease, events, rows = controller_fixture(tmp_path)
     cleanup_started = asyncio.Event()
@@ -1033,7 +1033,7 @@ async def test_foreign_native_ownership_never_detaches_or_deletes(tmp_path, faul
 
 
 async def test_detach_timeout_delete_ack_with_remaining_container_cannot_ack_deleted(tmp_path, monkeypatch):
-    from infosec_harness.inference import openshell as module
+    from infosec_harness.inference.native import openshell as module
 
     adapter, lease, state, actions = owned_cleanup_fixture(tmp_path, "detach")
     async def containers(identity):
@@ -1226,7 +1226,7 @@ async def test_non_ascii_bearer_is_an_auth_failure_not_a_server_fault(tmp_path, 
 @pytest.mark.asyncio
 async def test_new_request_renders_and_authorizes_once(tmp_path, monkeypatch):
     """Admission is rendered once per request and its allocation is the one admitted."""
-    from infosec_harness.inference import controller as module
+    from infosec_harness.inference.controller import service as module
 
     core, request, lease, events, rows = controller_fixture(tmp_path)
     calls = []
@@ -1271,7 +1271,7 @@ def test_production_controller_factory_imports_and_fails_closed_without_operator
     """The controller CLI resolves its factory by import path; it never starts unconfigured."""
     import importlib
 
-    module, attribute = "infosec_harness.inference.deployment", "controller_factory"
+    module, attribute = "infosec_harness.inference.controller.deployment", "controller_factory"
     factory = getattr(importlib.import_module(module), attribute)
     for value in (None, "relative.yaml", str(tmp_path / "absent.yaml")):
         if value is None:
@@ -1285,13 +1285,13 @@ def test_production_controller_factory_imports_and_fails_closed_without_operator
 def test_contract_inventory_covers_every_registered_agent(monkeypatch, capsys):
     import sys
 
-    from infosec_harness.agents.registry import AGENT_BINDINGS
-    from infosec_harness.inference import deployment
+    from infosec_harness.agents.registry import BINDINGS
+    from infosec_harness.inference.controller import deployment
 
     monkeypatch.setattr(sys, "argv", ["deployment", "--print-contracts"])
     deployment.main()
     printed = json.loads(capsys.readouterr().out)
-    assert set(printed) == set(AGENT_BINDINGS)
+    assert set(printed) == set(BINDINGS)
     assert all(row["transport"] in {"direct", "brokered"} for row in printed.values())
     monkeypatch.setattr(sys, "argv", ["deployment"])
     with pytest.raises(SystemExit):
