@@ -65,10 +65,13 @@ sandbox deletion. Absence of those logs does not establish an upstream cause.
 Both owned sandboxes were closed, the run fence persisted, explicit reconciliation
 passed, and the owned worker stopped. Managed Temporal and the original history remain.
 
-To resolve the blocker, inspect inference-server and reverse-proxy logs for
-**2026-10-05 17:04:37–17:04:40 UTC**, for
-`POST llm.almckay.io/v1/chat/completions`. Identify and correct the disconnect before
-running a fresh bounded candidate cohort; do not replay the unknown attempt.
+Read-only Kubani log investigation and the user-requested Opus review are now
+complete; see [the diagnosis](KUBANI_INFERENCE_DIAGNOSIS.md). The gateway ended the
+third request after 3,022 ms without a recorded response status. A likely matching
+vLLM 200 followed about one second later, but correlation and client delivery are
+unproven. No responsible timeout or close path has been established. Retain native
+supervisor L7 logs during a separate bounded diagnostic experiment before attempting
+a fresh cohort; do not replay the unknown attempt.
 
 Private evidence directory: `.harness/openshell/private/live-eval-v10-a4da837294d0/`.
 
