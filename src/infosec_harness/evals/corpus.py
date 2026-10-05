@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from infosec_harness.domain.models import FindingInput
-from infosec_harness.settings import REPO_ROOT
+from infosec_harness.settings import REPO_ROOT, get_settings
 
 
 @dataclass
@@ -42,7 +42,7 @@ class CorpusCase:
     @property
     def is_vendored(self) -> bool:
         """True when the case's code is checked in here rather than cloned from a remote."""
-        return not self.finding.repo_url.startswith(("http://", "https://", "git@"))
+        return not _is_remote(self.finding.repo_url)
 
     @property
     def repo_path(self) -> Path:
@@ -63,6 +63,21 @@ def _is_remote(repo_url: str) -> bool:
     return repo_url.startswith(("http://", "https://", "git@"))
 
 
+def approve_corpus_root(manifest_path: Path | None = None) -> Path:
+    """Admit the directory a manifest lives in as a local repository root for this process.
+
+    Local sources are refused unless an operator-approved root contains them. Running a corpus
+    is that approval for the corpus the operator named, and only for it: the root is the
+    manifest's own directory, and `load_corpus` refuses a vendored case that resolves outside
+    it.
+    """
+    root = (manifest_path or corpus_path()).resolve().parent
+    roots = get_settings().local_repo_roots
+    if not any(root.is_relative_to(Path(r).resolve()) for r in roots):
+        roots.append(root)
+    return root
+
+
 def load_corpus(language: str | None = None, *, manifest_path: Path | None = None,
                 dataset: str = "seed") -> list[CorpusCase]:
     """Load corpus cases. ``language=None`` returns all; otherwise filters by language.
@@ -72,7 +87,8 @@ def load_corpus(language: str | None = None, *, manifest_path: Path | None = Non
     ``quarantined`` entries, which exist precisely because they are NOT safe to run, and
     reading them by accident is the failure this argument is shaped to prevent.
     """
-    manifest = json.loads((manifest_path or corpus_path()).read_text())
+    manifest_file = (manifest_path or corpus_path()).resolve()
+    manifest = json.loads(manifest_file.read_text())
     cases = []
     for c in manifest["cases"]:
         if language is not None and c.get("language") != language:
@@ -82,8 +98,12 @@ def load_corpus(language: str | None = None, *, manifest_path: Path | None = Non
         # root; a harvested one names a remote git URL, which checkout() clones as-is. Resolving
         # a URL against the root would produce `<repo>/https:/github.com/...`.
         if not _is_remote(finding.repo_url):
-            finding = finding.model_copy(
-                update={"repo_url": str((REPO_ROOT / finding.repo_url).resolve())})
+            local = (REPO_ROOT / finding.repo_url).resolve()
+            if not local.is_relative_to(manifest_file.parent):
+                raise ValueError(
+                    f"corpus case {c['name']!r} names {finding.repo_url!r}, outside the "
+                    f"manifest's directory {manifest_file.parent}")
+            finding = finding.model_copy(update={"repo_url": str(local)})
         t = c["truth"]
         cases.append(CorpusCase(
             name=c["name"], language=c.get("language", "python"), finding=finding,

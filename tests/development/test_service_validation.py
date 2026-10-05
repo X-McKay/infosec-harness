@@ -18,8 +18,9 @@ def validation():
 
 @pytest.fixture
 def deployment(validation, monkeypatch):
-    runtime = load_script("runtime_readiness")
-    model = load_script("model_connectivity")
+    from infosec_harness.operations import model_connectivity as model
+    from infosec_harness.operations import readiness as runtime
+
     profile = {
         "source_commit": "a" * 40,
         "mode": "live",
@@ -233,14 +234,14 @@ def test_managed_exec_preserves_running_environment_and_rejects_contradictory_su
 
     monkeypatch.setattr(validation.subprocess, "run", execute)
     with pytest.raises(ValueError):
-        validation.managed_check("model_connectivity.py", ["--model"], 90)
+        validation.managed_check("model-connectivity", ["--model"], 90)
     command = commands[0]
     assert command[command.index("exec") :] == [
         "exec",
         "-T",
         "worker",
-        "python",
-        "/app/scripts/model_connectivity.py",
+        "harness",
+        "model-connectivity",
         "--model",
     ]
     assert not any(item in command for item in ("up", "restart", "--env", "-e"))

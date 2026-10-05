@@ -136,13 +136,8 @@ async def _secure_engine(
     nonce: str,
 ) -> ProbeExecutionResult:
     from infosec_harness.repo.checkout import checkout
-    from infosec_harness.repo.detect import detect_stack
     from infosec_harness.sandbox import docker
-    from infosec_harness.sandbox.policy import (
-        SandboxUnavailable,
-        build_egress_allowlist,
-        ensure_runtime_available,
-    )
+    from infosec_harness.sandbox.policy import SandboxUnavailable, ensure_runtime_available
 
     settings = get_settings()
     check = f"target-call:{declaration.target_file}:{declaration.target_callable}"
@@ -188,12 +183,7 @@ async def _secure_engine(
         )
         image_tag = docker.image_tag_for(snapshot.content_hash, declaration.environment)
         if not await docker.image_exists(image_tag):
-            built = await docker.build_image(
-                snapshot.path,
-                declaration.environment,
-                image_tag,
-                egress_hosts=build_egress_allowlist(detect_stack(snapshot.path)),
-            )
+            built = await docker.build_image(snapshot.path, declaration.environment, image_tag)
             if built.exit_code != 0 or built.timed_out:
                 return ProbeExecutionResult(
                     status="failed",

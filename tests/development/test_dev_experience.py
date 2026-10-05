@@ -112,18 +112,23 @@ def test_temporal_cli_is_pinned_with_a_hash_for_every_supported_host():
 def test_images_derive_from_the_mise_pins_and_are_digest_pinned():
     tools = _mise_tools()
     dockerfile = (ROOT / "Dockerfile").read_text()
-    sources = re.findall(r"^FROM (\S+)", dockerfile, re.MULTILINE)
+    sources = re.findall(r"^FROM (\S+)", dockerfile + (ROOT / "ui/Dockerfile").read_text(),
+                         re.MULTILINE)
     images = sources + re.findall(
         r"^\s+image: (\S+)", (ROOT / "docker-compose.yml").read_text()
         + (ROOT / "docker-compose.dev.yml").read_text(), re.MULTILINE)
     for image in images:
         assert re.fullmatch(r"[\w./-]+:[\w.-]+@sha256:[0-9a-f]{64}", image), image
         assert ":latest@" not in image, image
-    tags = {image.split("@")[0].rsplit(":", 1)[0]: image.split("@")[0].rsplit(":", 1)[1]
-            for image in images}
-    assert tags["python"] == f"{tools['python']}-slim"
-    assert tags["ghcr.io/astral-sh/uv"] == tools["uv"]
-    assert tags["node"] == f"{tools['node']}-slim"
+    tags: dict[str, set[str]] = {}
+    for image in images:
+        name, tag = image.split("@")[0].rsplit(":", 1)
+        tags.setdefault(name, set()).add(tag)
+    assert tags["python"] == {f"{tools['python']}-slim"}
+    assert tags["ghcr.io/astral-sh/uv"] == {tools["uv"]}
+    # The UI build image and the dev web service both run the mise-pinned Node.
+    assert tags["node"] == {f"{tools['node']}-slim"}
+    assert "nginx" in tags
     assert "pip install uv" not in dockerfile and "uv==" not in dockerfile
 
 
@@ -294,7 +299,9 @@ def _child_session(tmp_path, env_overrides):
         "    assert os.environ['HARNESS_MODEL_MODE'] == 'stub'\n"
         "    assert os.environ['HARNESS_DATABASE_URL'].startswith('sqlite+aiosqlite:///')\n")
     env = {key: value for key, value in os.environ.items() if not key.startswith("HARNESS_")}
-    env.update(PYTHONPATH=str(ROOT / "tests"), PYTHONDONTWRITEBYTECODE="1", **env_overrides)
+    # This checkout's package, not whichever copy the interpreter has installed.
+    env.update(PYTHONPATH=os.pathsep.join((str(ROOT / "tests"), str(ROOT / "src"))),
+               PYTHONDONTWRITEBYTECODE="1", **env_overrides)
     return subprocess.run(
         [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-p", "conftest",
          "-c", str(ROOT / "pyproject.toml"), "--rootdir", str(ROOT), str(tmp_path)],

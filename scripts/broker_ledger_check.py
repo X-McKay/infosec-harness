@@ -64,6 +64,8 @@ async def qualify(env_file: Path, host: str) -> int:
         environment = dict(os.environ)
         environment["HARNESS_DATABASE_URL"] = (
             f"postgresql+asyncpg://harness:{quote(password, safe='')}@{host}:{port}/{database}")
+        # The test session refuses an ambient database URL; this is its explicit opt-in.
+        environment["HARNESS_TEST_DATABASE_URL"] = environment["HARNESS_DATABASE_URL"]
         environment["HARNESS_MODEL_MODE"] = "stub"
         process = await asyncio.create_subprocess_exec(
             sys.executable, "-m", "pytest", "tests/persistence/test_inference_ledger.py",

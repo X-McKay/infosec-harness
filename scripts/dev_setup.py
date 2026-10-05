@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import platform
 import re
@@ -152,6 +153,9 @@ def ensure_env() -> Path:
     )
     values["HARNESS_WEB_TARGET_PORT"] = "5173"
     values["HARNESS_WORKSPACE_DIR"] = str((STATE / "workspace").resolve())
+    # Host-side commands (`harness eval corpus`, local runs) may read the seeded corpus; the
+    # worker container approves its own mount paths in docker-compose.dev.yml.
+    values["HARNESS_LOCAL_REPO_ROOTS"] = json.dumps([str((ROOT / "eval-corpus").resolve())])
     values["HARNESS_POSTGRES_PASSWORD"] = current.get(
         "HARNESS_POSTGRES_PASSWORD", secrets.token_urlsafe(24)
     )

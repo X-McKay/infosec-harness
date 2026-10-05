@@ -18,7 +18,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import csv
-import hashlib
 import io
 import ipaddress
 import json
@@ -31,7 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from infosec_harness.domain.canonical import digest
+from infosec_harness.domain.canonical import digest, sha256_hex
 from infosec_harness.domain.models import EnvironmentSpec
 from infosec_harness.sandbox.process import run_bounded
 from infosec_harness.settings import get_settings
@@ -502,8 +501,7 @@ async def run_shell(image: str, command: str, *, timeout: float | None = None,
 
 def container_name(idempotency_key: str) -> str:
     """A stable, Docker-legal container name for one logical sandbox operation."""
-    digest = hashlib.sha256(idempotency_key.encode()).hexdigest()[:16]
-    return f"harness-shell-{digest}"
+    return f"harness-shell-{sha256_hex(idempotency_key)[:16]}"
 
 
 async def _remove_container(name: str) -> None:
@@ -561,8 +559,7 @@ async def run_probe(image: str, test_file_path: str, content: str, test_command:
         "do [ -f \"$f\" ] && cat \"$f\"; done; "
         f"if [ -e {canary} ]; then echo '{CANARY_PREFIX}{nonce}'; fi; exit $rc"
     )
-    name = "harness-probe-" + hashlib.sha256(
-        f"{image}:{test_file_path}:{nonce}".encode()).hexdigest()[:16]
+    name = "harness-probe-" + sha256_hex(f"{image}:{test_file_path}:{nonce}")[:16]
     argv = ["docker", "run", "-i", *_hardening_args(), "--name", name, image, "sh", "-c", script]
     return await _run_container(argv, name=name, stdin=content.encode(),
                                 timeout=s.sandbox_probe_timeout_s)
@@ -723,29 +720,3 @@ async def runtime_available(runtime: str | None = None) -> bool:
     # satisfying the startup check; probes additionally pass --runtime on every invocation.
     return (res.exit_code == 0 and f'"{runtime}"' in res.stdout
             and res.stdout.rstrip().endswith(runtime))
-
-
-def default_workspace() -> Path:
-    path = get_settings().workspace_dir.resolve()
-    path.mkdir(parents=True, exist_ok=True)
-    return path
-
-
-__all__ = [
-    "ORACLE_PREFIX",
-    "PRECONDITION_PREFIX",
-    "SINK_RETURNED_PREFIX",
-    "ProcResult",
-    "build_image",
-    "default_workspace",
-    "docker_available",
-    "image_exists",
-    "image_tag_for",
-    "no_tests_executed",
-    "oracle_signals",
-    "render_dockerfile",
-    "run_probe",
-    "run_shell",
-    "runtime_available",
-    "tail",
-]

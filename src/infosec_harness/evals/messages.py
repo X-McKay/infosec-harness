@@ -4,8 +4,8 @@ Captured messages carry model- and provider-controlled content, so a diagnostic 
 them must be bounded in how much it scans and must never echo what it reads. The limits live
 here, once; each diagnostic decides what to count, not how far to look.
 
-A :class:`Walk` records whether a bound cut the scan short. Runtime trajectory records use an
-unbounded walk (``Walk.unbounded()``) because they describe the whole run, not a sample of it.
+A :class:`Walk` records whether a bound cut the scan short. Runtime trajectory records
+(``agents.trajectory``) scan the whole run instead, because they describe it, not a sample.
 """
 
 from __future__ import annotations
@@ -25,6 +25,8 @@ from pydantic_ai.messages import (
     ToolCallPart,
 )
 
+from infosec_harness.agents.trajectory import OUTPUT_TOOL, is_function_tool
+
 MAX_MESSAGES = 128
 MAX_PARTS = 512
 MAX_PROPOSALS = 32
@@ -33,16 +35,7 @@ MAX_NODES = 2048
 MAX_DEPTH = 8
 MAX_INT_BITS = 4096
 
-# PydanticAI's default structured-output tool. Output tools are how an agent answers, not tool
-# use, and `_`-prefixed tools are the framework's own.
-OUTPUT_TOOL = "final_result"
-
 ArgumentProblem = Literal["bounded_out", "unsupported_shape", "malformed_json"]
-
-
-def is_function_tool(name: str) -> bool:
-    """True for a tool the agent *used*, false for output and framework-internal tools."""
-    return not (name.startswith(OUTPUT_TOOL) or name.startswith("_"))
 
 
 @dataclass

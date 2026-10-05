@@ -140,7 +140,7 @@ def test_fixed_variant_keeps_every_public_callable_the_vulnerable_one_exposes():
     What it may not do is drop, rename, or re-sign anything public. Reuses the extractors
     behind the `describe_callables` tool, so this asserts what an agent is actually told.
     """
-    from infosec_harness.agents.capabilities import _EXTRACTORS
+    from infosec_harness.agents.symbol_inspection import _EXTRACTORS
 
     def public(sigs):
         return {(n, params) for n, params in sigs if not n.split(".")[-1].startswith("_")}
@@ -242,6 +242,7 @@ def _case_and_output(*, reachability="reachable", sink_line=None, verdict="poten
     """One corpus case plus a synthetic run output, for scoring a single stage in isolation."""
     from infosec_harness.domain.models import (
         CodeRef,
+        Finding,
         FindingContext,
         PriorityBand,
         ProbeExecution,
@@ -251,10 +252,9 @@ def _case_and_output(*, reachability="reachable", sink_line=None, verdict="poten
         Verdict,
         VerdictLabel,
     )
-    from infosec_harness.intake.adapters import to_finding
 
     case = next(c for c in CASES if c.name == "sqli-vulnerable")
-    finding = to_finding(case.finding)
+    finding = Finding.from_input(case.finding)
     ctx = FindingContext(
         summary="s", reachability=Reachability(reachability), reachability_rationale="r",
         sink=CodeRef(file_path=case.sink_file, start_line=sink_line or case.sink_line,
@@ -329,7 +329,7 @@ async def test_the_funnel_blames_the_first_broken_stage_not_the_last():
 def test_a_provider_outage_is_not_filed_as_an_unbuildable_environment():
     """The 502 that voided a live validation run, classified.
 
-    `llm.almckay.io` returned `upstream_unreachable` mid-run. Every case was bucketed as
+    The self-hosted gateway returned `upstream_unreachable` mid-run. Every case was bucketed as
     `environment_unbuildable` and the stage funnel duly reported "environment built 1/4" --
     blaming the one stage that had actually worked. An outage says nothing about the repository.
     """

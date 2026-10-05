@@ -73,13 +73,17 @@ class Settings(BaseSettings):
     agents_dir: Path = Field(default_factory=agents_dir)
     skills_dir: Path = Field(default_factory=skills_dir)
     models_config: Path = Field(default_factory=models_config)
+    # Endpoint for an OpenAI-compatible backend whose catalogue entry names no `base_url`.
+    # The packaged catalogue names none, so selecting such a backend fails closed until an
+    # operator configures one: the OpenAI client would otherwise default to api.openai.com.
+    model_base_url: str | None = None
     # ``live`` resolves model tiers through config/models.yaml; ``stub`` uses
     # deterministic in-process models (tests, offline demos, CI).
     model_mode: Literal["live", "stub"] = "live"
     # Opt-in operator-owned catalog. Direct mode never loads or contacts it.
     broker_config: Path | None = None
-    # Operator-owned pinned evidence; absent deployments report not_checked.
-    qualification_bundle: Path | None = None
+    # Operator-recorded evidence files; absent deployments report not_checked.
+    broker_observation: Path | None = None
     model_connection_observation: Path | None = None
     qualification_observation_max_age_seconds: int = Field(default=3600, ge=30, le=86400)
 
@@ -122,9 +126,6 @@ class Settings(BaseSettings):
     ]
     # Base-image allowlist (registries an EnvironmentSpec.base_image may be pulled from).
     allowed_base_registries: list[str] = ["docker.io/library", "docker.io", "public.ecr.aws"]
-    # Manual, quiesced-maintenance target. Automatic eviction is unsafe until prepared images
-    # have durable leases spanning build, smoke, and every finding probe.
-    image_cache_max: int = 50
 
     # Deployment safety ceilings; provisional until calibrated on representative batches.
     root_max_requests: int = Field(default=10000, gt=0)

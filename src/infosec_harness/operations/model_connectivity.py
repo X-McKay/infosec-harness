@@ -1,12 +1,9 @@
-#!/usr/bin/env python3
 """Explicit, single-request model connectivity; never agent qualification or broker admission."""
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 import hashlib
-import json
 import math
 import re
 import time
@@ -20,9 +17,8 @@ from pydantic_ai.usage import UsageLimits
 
 from infosec_harness.agents import models
 from infosec_harness.agents.registry import load_spec
-from infosec_harness.api.evidence_io import COMMIT
+from infosec_harness.api.evidence_io import COMMIT, read_bytes
 from infosec_harness.api.model_observation import ModelConnectionReceipt
-from infosec_harness.qualification.ledger import read_bytes
 from infosec_harness.settings import get_settings
 
 
@@ -160,19 +156,7 @@ async def check_model(*, timeout: float = 90) -> dict:
     return finish("passed", "One actual structured-output request passed for this exact profile.")
 
 
-def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--model", action="store_true", help="Explicitly authorize one configured model request"
-    )
-    parser.add_argument("--timeout", type=float, default=90)
-    args = parser.parse_args(argv)
-    if not args.model:
-        parser.error("--model is required to authorize inference")
-    result = asyncio.run(check_model(timeout=args.timeout))
-    print(json.dumps(result, sort_keys=True))
-    return int(result["status"] == "failed")
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+def report(timeout: float = 90) -> tuple[dict, int]:
+    """`harness model-connectivity --model`: the result, and exit status 1 only on failure."""
+    result = asyncio.run(check_model(timeout=timeout))
+    return result, int(result["status"] == "failed")

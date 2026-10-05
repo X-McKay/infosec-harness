@@ -2,7 +2,7 @@
 
 The agent playbook (§9) requires every production agent to carry per-request and per-run
 limits, in the order "prevent runaway execution" first. That ordering is the point: the
-repair storm measured in docs/validation/LIVE_VALIDATION.md grew one agent's context from 8.8k to 24k
+repair storm measured in docs/evidence/2026-09-25-live-model-validation/LIVE_VALIDATION.md grew one agent's context from 8.8k to 24k
 tokens over three turns before anyone noticed by eye. A budget turns that into a bounded,
 named failure.
 
@@ -12,14 +12,14 @@ declarative contract and move with an overlay during experiments.
 
 from __future__ import annotations
 
-import hashlib
-import json
 import math
 from decimal import Decimal
 from typing import Any
 
 from pydantic import BaseModel, Field
 from pydantic_ai.usage import UsageLimits
+
+from infosec_harness.domain.canonical import canonical_bytes, sha256_hex
 
 
 class RunBudget(BaseModel):
@@ -38,7 +38,7 @@ class RunBudget(BaseModel):
     So:
 
     * `max_input_tokens_per_request` is the brake — it catches an oversized context, which
-      is the failure the 8.8k -> 24k repair storm in docs/validation/LIVE_VALIDATION.md actually was;
+      is the failure the 8.8k -> 24k repair storm in docs/evidence/2026-09-25-live-model-validation/LIVE_VALIDATION.md actually was;
     * `max_input_tokens` is the run's arithmetic worst case derived from it
       (`max_requests x max_input_tokens_per_request`), exactly as `max_output_tokens` is
       derived from `max_requests x` the per-call output cap. It is a backstop, not the
@@ -129,8 +129,8 @@ class BudgetResolution(BaseModel):
 
     @property
     def digest(self) -> str:
-        payload = json.dumps(self.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
-        return hashlib.sha256(payload.encode()).hexdigest()[:16]
+        # Persisted identity: the ASCII-escaped encoding it has always been hashed under.
+        return sha256_hex(canonical_bytes(self.model_dump(mode="json"), ascii_only=True))[:16]
 
     def to_usage_limits(self) -> UsageLimits:
         return self.effective.to_usage_limits()

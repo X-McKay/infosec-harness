@@ -1096,23 +1096,3 @@ def repo_jvm_test_framework(repo_path: str | None) -> str | None:
         if framework:
             return framework
     return None
-
-
-# Two Surefire settings a repository can put in its *plugin-level* `<configuration>` that the
-# corresponding `-D` flag cannot undo, because an explicit plugin configuration beats a
-# parameter's default-value user property. Both were executed under Surefire 3.2.5, and neither
-# is a violation here, because neither has a fix an EnvironmentSpec could name:
-#
-#   <redirectTestOutputToFile>true</redirectTestOutputToFile>
-#       the probe runs and passes, `-Dmaven.test.redirectTestOutputToFile=false` is ignored, and
-#       every marker goes to target/surefire-reports/<class>-output.txt. Exit 0, no markers.
-#       Handled in run_probe, which now reads those files back onto stdout.
-#   <skipTests>true</skipTests>
-#       the probe is never run, `-DskipTests=false` is ignored, and no reports are written.
-#       Exit 0, no markers. `no_tests_executed` names Surefire's "Tests are skipped." so the
-#       diagnosis says what happened instead of sending repair after a correct probe.
-#
-# The same settings inside an `<executions><execution>` block do *not* apply to a direct CLI goal
-# invocation (measured), and as a pom `<properties>` entry they *are* overridable from the command
-# line (measured: `-DskipTests=false` restored the markers), so only the plugin-level and
-# pluginManagement-level forms behave this way.

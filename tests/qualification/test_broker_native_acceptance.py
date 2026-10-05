@@ -61,8 +61,7 @@ def test_mock_provider_requires_operator_tls_files(tmp_path):
 
 
 def mock_contract(**changes) -> dict:
-    from infosec_harness.inference.profiles import BrokerConfig
-    from infosec_harness.qualification.broker.validators import CASES as REGISTERED_AGENTS
+    from infosec_harness.inference.profiles import BrokerConfig, registered_agents
 
     profile = {"backend_name": native.MOCK_BACKEND, "endpoint": MOCK_ENDPOINT, "provider_binding": "mock-canary",
                "provider_env": "MOCK_PROVIDER", "ledger_origin": "https://controller.test",
@@ -71,8 +70,8 @@ def mock_contract(**changes) -> dict:
     catalog = BrokerConfig.model_validate({
         "version": 1, "enabled": True,
         "controller": {"url": "https://controller.test", "hmac_env": "MOCK_WORKER_KEY", "ca_file": "/ca.pem"},
-        "profiles": {"mock": profile}, "agent_profiles": dict.fromkeys(REGISTERED_AGENTS, "mock"),
-        "root_limits": BOUNDS, "agent_limits": dict.fromkeys(REGISTERED_AGENTS, BOUNDS)})
+        "profiles": {"mock": profile}, "agent_profiles": dict.fromkeys(registered_agents(), "mock"),
+        "root_limits": BOUNDS, "agent_limits": dict.fromkeys(registered_agents(), BOUNDS)})
     contract = catalog.resolve_contract(native.AGENT, native.MOCK_BACKEND, native.MOCK_MODEL, {"max_tokens": 32},
                                         backend_endpoint=MOCK_ENDPOINT).model_dump(mode="json")
     contract.update(changes)

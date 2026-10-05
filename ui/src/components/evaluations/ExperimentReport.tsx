@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { QueryState } from "@/components/QueryState";
 import type { ExperimentDetail, ExperimentSummary } from "@/api/client";
 import { money, percent, seconds, timestamp } from "@/lib/format";
-import { asRecord, text, type JsonRecord } from "@/lib/json";
+import { asRecord, type JsonRecord } from "@/lib/json";
 import { CaseTable, ResourceDistribution, Scatter } from "./ExperimentCharts";
 
 import {
@@ -186,9 +186,7 @@ function ExperimentRow({
           : "Unavailable"}
       </td>
       <td>
-        <Badge variant="outline">
-          {text(experiment.metrics.status) || "unknown"}
-        </Badge>
+        <Badge variant="outline">{experiment.status ?? "unknown"}</Badge>
       </td>
       <td className="text-right">{percent(accuracyOf(experiment.metrics))}</td>
       <td className="text-right font-mono text-xs">

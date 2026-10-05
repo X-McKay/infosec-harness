@@ -1,9 +1,8 @@
 """Temporal workflow and worker for the broker service qualification (layer D).
 
 The test host and the fixture worker both import this module so they register the same
-workflow. Under an explicit service qualification manifest, only the model activity timeout is
-shortened so a killed worker's retry is observed promptly; retry policy and the real registered
-model/tool construction are unchanged.
+workflow. Both first call ``service.use_service_activity_timeout()``, because importing this
+module builds the durable agents.
 """
 from __future__ import annotations
 
@@ -13,20 +12,11 @@ from pathlib import Path
 from temporalio import workflow
 
 with workflow.unsafe.imports_passed_through():
-    from datetime import timedelta
-
     from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
     from temporalio.client import Client
     from temporalio.worker import Worker
-    from temporalio.workflow import ActivityConfig
 
-    from infosec_harness.agents import registry
     from infosec_harness.agents.deps import AgentDeps
-
-    # Must precede the durable agent import, which captures the activity configuration.
-    if os.environ.get("HARNESS_BROKER_SERVICE_MANIFEST"):
-        registry.MODEL_ACTIVITY = ActivityConfig(start_to_close_timeout=timedelta(seconds=20),
-                                                 retry_policy=registry.ACTIVITY_RETRY)
     from infosec_harness.agents.durable import AGENT_LIST
     from infosec_harness.qualification.broker.service import AGENTS
     from infosec_harness.workflows.activities import ALL_ACTIVITIES

@@ -24,10 +24,9 @@ export function gateObservations(experiment: ExperimentSummary): Gate[] {
   const passed = metricNumber(metrics, "passed");
   const accuracy = accuracyOf(metrics);
   const planned = metricNumber(metrics, "n_planned");
-  const status = text(metrics.status);
-  const violations = metricNumber(metrics, "budget_enforcement_violations");
-  const unexpectedStops = metricNumber(metrics, "unexpected_budget_stops");
-  const expectedStops = metricNumber(metrics, "expected_budget_stops");
+  const status = experiment.status ?? "";
+  const exhausted = metricNumber(metrics, "budget_exhausted_count");
+  const gates = text(asRecord(metrics.gate_evaluation).status);
   return [
     {
       label: "Quality evidence",
@@ -42,15 +41,18 @@ export function gateObservations(experiment: ExperimentSummary): Gate[] {
     {
       label: "Budget evidence",
       status:
-        violations == null && unexpectedStops == null
-          ? "unknown"
-          : violations === 0 && unexpectedStops === 0
-            ? "clear"
-            : "findings",
+        exhausted == null ? "unknown" : exhausted === 0 ? "clear" : "findings",
       detail:
-        violations == null && unexpectedStops == null
-          ? "No budget enforcement counters were recorded."
-          : `${violations ?? 0} enforcement violations · ${unexpectedStops ?? 0} unexpected stops · ${expectedStops ?? 0} expected stops`,
+        exhausted == null
+          ? "No budget exhaustion count was recorded."
+          : `${exhausted} case runs exhausted their budget`,
+    },
+    {
+      label: "Release gates",
+      status: gates || "unknown",
+      detail: gates
+        ? `The agent's release policy evaluated this run as ${gates}.`
+        : "No release-gate evaluation was recorded (only complete runs are evaluated).",
     },
     {
       label: "Completion evidence",
@@ -88,7 +90,7 @@ export function comparisonPoints(
           item.agent === selected.agent &&
           item.dataset === selected.dataset &&
           item.dataset_version === selected.dataset_version &&
-          text(item.metrics.status) === "complete",
+          item.status === "complete",
       )
     : [];
   return cohort

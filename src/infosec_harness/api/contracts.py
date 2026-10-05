@@ -5,14 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
-from infosec_harness.domain.models import BatchStatus, RunStatus
-from infosec_harness.persistence.metrics import (  # noqa: F401 - response models of /api/metrics
-    Bin,
-    Distribution,
-    MetricsResponse,
-    StageMetric,
-    TrendPoint,
-)
+from infosec_harness.domain.models import BatchStatus, ExperimentStatus, RunStatus
 
 JsonObject = dict[str, JsonValue]
 
@@ -140,6 +133,8 @@ class RunDetail(RunSummary):
 class ExperimentSummary(BaseModel):
     id: str
     agent: str
+    # None when the stored metrics carry no recognised lifecycle value.
+    status: ExperimentStatus | None
     dataset: str
     dataset_version: str
     git_sha: str

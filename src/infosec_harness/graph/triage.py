@@ -174,7 +174,7 @@ def _finalize(state: TriageState, verdict: Verdict, reachability: Reachability) 
 class PreFilter(BaseNode[TriageState, TriageDeps, TriageResult]):
     async def run(self, ctx: GraphRunContext[TriageState, TriageDeps]) -> GatherContext | End[TriageResult]:
         result: PreFilterResult = pre_filter(ctx.state.finding, ctx.state.prepared.snapshot)
-        if not result.continue_triage:
+        if result.verdict is not None:
             ctx.state.early_exit = result.note
             return End(_finalize(ctx.state, result.verdict, Reachability.unknown))
         return GatherContext()

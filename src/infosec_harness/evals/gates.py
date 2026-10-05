@@ -55,10 +55,6 @@ class GateEvaluation:
     def passed(self) -> bool:
         return self.status == "passed"
 
-    def failures(self) -> list[str]:
-        return [f"{c.kind} {c.metric} {c.bound} {c.limit:g}: {c.status} (value {c.value!r})"
-                for c in self.checks if c.status != "passed"]
-
     def as_report(self) -> dict[str, Any]:
         return {"status": self.status, "checks": [asdict(check) for check in self.checks]}
 

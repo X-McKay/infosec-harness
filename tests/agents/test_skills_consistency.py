@@ -19,8 +19,8 @@ import re
 
 import pytest
 import yaml
+from skill_support.documents import procedure_text
 
-from infosec_harness.evals.skill_documents import procedure_text
 from infosec_harness.resources import skills_dir
 
 SKILLS = skills_dir()
@@ -96,7 +96,7 @@ def test_every_description_says_when_the_skill_applies(skill):
     """The description is what a model reads before deciding to load anything.
 
     Making that choice explicit rather than implied is what moved context's skill evocation
-    from 19% to 100% (docs/validation/LIVE_VALIDATION.md), so this is a behavioural requirement and not
+    from 19% to 100% (docs/evidence/2026-09-25-live-model-validation/LIVE_VALIDATION.md), so this is a behavioural requirement and not
     only a conformance one.
     """
     frontmatter, _ = _frontmatter_and_body(skill)

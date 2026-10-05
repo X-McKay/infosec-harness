@@ -95,7 +95,7 @@ controls:
     owner: appsec
     evidence:
     - tests/runtime/test_graph.py
-    - docs/validation/LIVE_VALIDATION.md
+    - docs/evidence/2026-09-25-live-model-validation/LIVE_VALIDATION.md
     effectiveness: verified
   CTRL-FN-004:
     type: detective

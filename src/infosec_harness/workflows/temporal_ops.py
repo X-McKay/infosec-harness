@@ -22,7 +22,6 @@ from infosec_harness.domain.models import (
     BuildResult,
     EnvironmentSpec,
     Finding,
-    FindingInput,
     ProbeExecution,
     ProbeSource,
     RepoSnapshot,
@@ -37,7 +36,7 @@ with workflow.unsafe.imports_passed_through():
 
     import infosec_harness.agents.models  # noqa: F401 - used by graph.pipeline
     import infosec_harness.agents.stubs  # noqa: F401 - resolved lazily by stub-mode model resolution
-    import infosec_harness.evals.trajectory  # noqa: F401 - used by graph.pipeline
+    import infosec_harness.agents.trajectory  # noqa: F401 - used by graph.pipeline
     import infosec_harness.inference.protocol  # noqa: F401 - used for broker bindings
     import infosec_harness.inference.provenance  # noqa: F401 - used by graph.pipeline
     from infosec_harness.agents.durable import AGENTS, CONFIGS
@@ -72,10 +71,6 @@ class TemporalOps:
         # immutable config retains its declared budget and applies repository-size scaling.
         self._agents = AGENTS
         self._configs = CONFIGS
-
-    async def normalize_finding(self, inp: FindingInput) -> Finding:
-        return await workflow.execute_activity(activities.normalize_finding_activity, inp,
-                                               **_SHORT)
 
     async def resolve_location(self, finding: Finding, repo_path: str) -> Finding | None:
         return await workflow.execute_activity(activities.resolve_location_activity,

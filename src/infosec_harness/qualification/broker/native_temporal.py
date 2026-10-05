@@ -2,7 +2,11 @@
 
 The operator file contains only immutable scope, public contract and credential paths.
 Only worker startup reads the owner-only HMAC file. Workflow input contains a prompt.
-Native lifecycle and controller ACK barrier remain owned by the native lane.
+Native lifecycle and controller ACK barrier remain owned by the native lane: the barrier
+markers are `native.COMMIT_MARKER` / `native.RELEASE_MARKER` in the native fixture's
+configuration directory, the same files the native controller writes and waits on.
+
+    python -m infosec_harness.qualification.broker.native_temporal qualify --config <file>
 """
 from __future__ import annotations
 
@@ -26,6 +30,7 @@ with workflow.unsafe.imports_passed_through():
 
     from pydantic_ai import Agent
     from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, TemporalDurability
+    from pydantic_ai.messages import ModelResponse
     from temporalio.client import Client, WorkflowExecutionStatus
     from temporalio.worker import Replayer, Worker
     from temporalio.workflow import ActivityConfig
@@ -34,6 +39,7 @@ with workflow.unsafe.imports_passed_through():
     from infosec_harness.inference.protocol import ExecutorContract, ReservationBinding, StrictModel
     from infosec_harness.inference.transport import BrokerModel
     from infosec_harness.inference.unbound import UnboundBrokerModel
+    from infosec_harness.qualification.broker import native
 
 
 class NativeOperatorConfig(StrictModel):
@@ -47,8 +53,6 @@ class NativeOperatorConfig(StrictModel):
     binding: ReservationBinding
     temporal_address: str = "127.0.0.1:7365"
     expected_output: str
-    commit_marker: str
-    release_marker: str
     provider_count_file: str
     report_file: str
     prompt: str = "Return the local qualification response."
@@ -76,9 +80,32 @@ with workflow.unsafe.imports_passed_through():
     NATIVE_AGENT = make_agent(_CONFIG)
 
 
+@workflow.defn(name="NativeBrokerTemporalRecoveryQualification")
+class NativeBrokerTemporalWorkflow:
+    __pydantic_ai_agents__ = [NATIVE_AGENT]
+
+    @workflow.run
+    async def run(self, prompt: str) -> dict:
+        result = await NATIVE_AGENT.run(prompt)
+        responses = [message for message in result.all_messages()
+                     if isinstance(message, ModelResponse)]
+        usage = result.usage
+        return {"output": result.output, "requests": usage.requests,
+                "input_tokens": usage.input_tokens, "output_tokens": usage.output_tokens,
+                "broker": (responses[-1].metadata.get("harness_broker")
+                           if responses[-1].metadata else None)}
+
+
 def workflow_class():
-    from test_broker_native_temporal import NativeBrokerTemporalWorkflow
     return NativeBrokerTemporalWorkflow
+
+
+def ack_barrier_markers() -> tuple[Path, Path]:
+    """The native controller's commit marker and the release file it waits for."""
+    if not os.environ.get("IH_NATIVE_FIXTURE_CONFIG"):
+        raise RuntimeError("IH_NATIVE_FIXTURE_CONFIG must name the native fixture configuration")
+    directory = native.evidence_directory()
+    return directory / native.COMMIT_MARKER, directory / native.RELEASE_MARKER
 
 
 def worker_credentials(config: NativeOperatorConfig) -> None:
@@ -111,11 +138,10 @@ def count_provider(config: NativeOperatorConfig) -> int:
 def start_worker(config_path: Path, queue: str, log: Path):
     values = dict(os.environ)
     values["HARNESS_NATIVE_TEMPORAL_CONFIG"] = str(config_path)
-    values["PYTHONPATH"] = os.pathsep.join((str(Path(__file__).parent),
-        str(Path(__file__).resolve().parents[2] / "src"), values.get("PYTHONPATH", "")))
+    values["PYTHONPATH"] = os.pathsep.join((str(Path(__file__).resolve().parents[3]),
+                                            values.get("PYTHONPATH", "")))
     with log.open("ab") as output:
-        return subprocess.Popen([sys.executable, "-c",
-            "from broker_native_temporal_fixture import main; raise SystemExit(main())", "worker", "--config",
+        return subprocess.Popen([sys.executable, "-m", "infosec_harness.qualification.broker.native_temporal", "worker", "--config",
             str(config_path), "--queue", queue], env=values, stdout=output, stderr=output,
             start_new_session=True)
 
@@ -150,7 +176,7 @@ async def qualify(config_path: Path, *, replay_forbidden=True) -> dict:
     first, second, handle = None, None, None
     client = None
     try:
-        marker, release = Path(config.commit_marker), Path(config.release_marker)
+        marker, release = ack_barrier_markers()
         if marker.exists() or release.exists():
             raise RuntimeError("Native owner must prepare fresh ACK barrier markers")
         report["phase"] = "first_worker"
@@ -256,5 +282,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     # Import the named module so Temporal sandbox/replay never resolves __main__.
-    from broker_native_temporal_fixture import main as module_main
+    from infosec_harness.qualification.broker.native_temporal import main as module_main
     raise SystemExit(module_main())

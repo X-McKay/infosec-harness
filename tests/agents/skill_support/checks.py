@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from .skill_documents import Relation, SkillDoc, text_tokens
+from .documents import Relation, SkillDoc, text_tokens
 
 # --- Activation, non-activation, stopping --------------------------------------------------
 
@@ -153,7 +153,7 @@ COMPETING_PAIRS = (
         "the protocol forbids mocking the sink while cwe-89's structure oracle needs to see the "
         "statement the driver received; the more specific skill won and a wrapped cursor the "
         "target never used reported a clean negative on an exploitable finding "
-        "(docs/validation/LIVE_VALIDATION.md)",
+        "(docs/evidence/2026-09-25-live-model-validation/LIVE_VALIDATION.md)",
     ),
     CompetingPair(
         "cwe-918-ssrf",
@@ -303,7 +303,7 @@ def ambiguity_problems(skills: tuple[SkillDoc, ...]) -> list[str]:
                 f"{pair.a} and {pair.b} disagree about which of them wins: "
                 + "; ".join(f"{r.skill} says {r.winner}" for r in relations)
                 + ". Two skills contradicting each other is the failure this repository has "
-                "already paid for once (docs/validation/LIVE_VALIDATION.md)"
+                "already paid for once (docs/evidence/2026-09-25-live-model-validation/LIVE_VALIDATION.md)"
             )
 
     for key in sorted(mutual_redirects(skills)):

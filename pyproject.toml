@@ -49,7 +49,9 @@ packages = ["src/infosec_harness"]
 # without a force-include list that could silently fall out of date; artifacts are excluded so
 # a stale local run does not end up in a release.
 artifacts = []
-exclude = ["**/__pycache__", "**/*.pyc"]
+# The broker qualification package is operator tooling (fake native adapter, mock provider,
+# test-only patches) run from a checkout; it never ships in a deployable artifact.
+exclude = ["**/__pycache__", "**/*.pyc", "src/infosec_harness/qualification/broker/**"]
 
 [tool.ruff]
 line-length = 100

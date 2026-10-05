@@ -80,7 +80,6 @@ def prepare_case(agent: str, manifest: RealProviderManifest):
     import yaml
 
     from infosec_harness.agents.intake_contracts import render_intake_prompt
-    from infosec_harness.agents.registry import load_spec
     from infosec_harness.agents.render import render_prompt
     from infosec_harness.evals.adapters import ADAPTERS
     from infosec_harness.inference.protocol import digest
@@ -103,8 +102,7 @@ def prepare_case(agent: str, manifest: RealProviderManifest):
     if manifest.case_digests and case_digest != manifest.case_digests[agent]:
         raise ValueError("Frozen case content changed")
     task, payload, deps, predict, expected = ADAPTERS[agent](case)
-    protocol = ((load_spec(agent).metadata or {}).get("intake_output") or {}).get("protocol")
-    prompt = render_intake_prompt(task, payload, protocol=protocol) if agent == "intake" else render_prompt(task, payload)
+    prompt = render_intake_prompt(task, payload) if agent == "intake" else render_prompt(task, payload)
     # Expected labels and scorer callbacks remain host-only, never in the workflow input.
     return {"agent": agent, "prompt": prompt, "deps": deps}, predict, expected, case_digest
 

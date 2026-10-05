@@ -113,9 +113,10 @@ eval-baseline experiment:
 ui-build:
     cd ui && npm ci && npm run build
 
-# Handwritten frontend formatting and type/production checks; generated API stays untouched.
+# Handwritten frontend formatting, generated-client drift, and type/production checks.
 ui-check:
     cd ui && npm run format:check
+    cd ui && npm run check:api
     cd ui && npm run build
 
 # --- Services ---

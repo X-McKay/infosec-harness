@@ -6,14 +6,12 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from conftest import load_script
 from google.protobuf.timestamp_pb2 import Timestamp
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from infosec_harness.operations import readiness
 from infosec_harness.settings import Settings
-
-readiness = load_script("runtime_readiness")
 
 
 def settings(tmp_path, **kwargs):

@@ -1,7 +1,7 @@
 """Every agent declares a run budget, and it is enforced rather than merely documented.
 
 The playbook (§9) puts "prevent runaway execution" first in its control order. The repair
-storm in docs/validation/LIVE_VALIDATION.md is why: one agent's context grew from 8.8k to 24k tokens
+storm in docs/evidence/2026-09-25-live-model-validation/LIVE_VALIDATION.md is why: one agent's context grew from 8.8k to 24k tokens
 across three turns with 6-7k-token outputs, and nothing stopped it — it was noticed by
 reading a trace. A budget turns that into a bounded, named failure.
 """
@@ -89,7 +89,7 @@ def test_limits_are_precomputed_for_every_agent_the_workflow_can_run():
 def test_a_budget_leaves_room_for_the_measured_worst_case():
     """A ceiling below observed normal operation would fail healthy runs.
 
-    The maxima are from the live-model corpus runs recorded in docs/validation/LIVE_VALIDATION.md, and
+    The maxima are from the live-model corpus runs recorded in docs/evidence/2026-09-25-live-model-validation/LIVE_VALIDATION.md, and
     they are *single-call* observations — so the field they belong against is the per-request
     ceiling. Comparing them with the cumulative ceiling is what made a 16-request agent look
     like it had 12x headroom when it had less than half a request's worth per call.

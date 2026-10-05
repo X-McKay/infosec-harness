@@ -141,6 +141,7 @@ def test_effective_model_and_budget_provenance_records_backend_adjustments(monke
 
     monkeypatch.setenv("HARNESS_MODEL_MODE", "live")
     monkeypatch.setenv("HARNESS_MODEL_BACKEND", "gateway")
+    monkeypatch.setenv("HARNESS_MODEL_BASE_URL", "https://gateway.invalid/v1")
     get_settings.cache_clear()
     models.load_models_config.cache_clear()
     try:
@@ -163,6 +164,7 @@ def test_floor_equivalent_candidates_share_effective_not_audit_identity(monkeypa
 
     monkeypatch.setenv("HARNESS_MODEL_MODE", "live")
     monkeypatch.setenv("HARNESS_MODEL_BACKEND", "gateway")
+    monkeypatch.setenv("HARNESS_MODEL_BASE_URL", "https://gateway.invalid/v1")
     get_settings.cache_clear()
     models.load_models_config.cache_clear()
     try:
@@ -279,6 +281,7 @@ async def test_live_custom_pricing_cost_cap_is_rejected_before_any_call(monkeypa
     spec = CalibrationSpec.model_validate(raw)
     monkeypatch.setenv("HARNESS_MODEL_MODE", "live")
     monkeypatch.setenv("HARNESS_MODEL_BACKEND", "gateway")
+    monkeypatch.setenv("HARNESS_MODEL_BASE_URL", "https://gateway.invalid/v1")
     get_settings.cache_clear()
     models.load_models_config.cache_clear()
     try:
@@ -361,6 +364,7 @@ async def test_calibration_skips_provider_floor_equivalent_candidate(
 
     monkeypatch.setenv("HARNESS_MODEL_MODE", "live")
     monkeypatch.setenv("HARNESS_MODEL_BACKEND", "gateway")
+    monkeypatch.setenv("HARNESS_MODEL_BASE_URL", "https://gateway.invalid/v1")
     monkeypatch.setattr(calibration, "run_experiment", fake_run)
     monkeypatch.setattr(calibration, "_experiment_row", fake_row)
     get_settings.cache_clear()

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from conftest import load_script
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo
 
@@ -38,13 +39,13 @@ from infosec_harness.domain.models import (
     RepoProfile,
     StackFingerprint,
 )
-from infosec_harness.evals.exploration import (
-    MEASUREMENT_LIMITS,
-    common_prefix_len,
-    prefix_report,
-    recording_model,
-    serialise_history,
-)
+
+exploration = load_script("exploration")
+MEASUREMENT_LIMITS = exploration.MEASUREMENT_LIMITS
+common_prefix_len = exploration.common_prefix_len
+prefix_report = exploration.prefix_report
+recording_model = exploration.recording_model
+serialise_history = exploration.serialise_history
 
 _STACK = StackFingerprint(languages={"java": 500}, manifests=["pom.xml"],
                           test_frameworks=["junit5"])

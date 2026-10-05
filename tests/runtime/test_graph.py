@@ -5,11 +5,16 @@ from pathlib import Path
 
 import pytest
 
-from infosec_harness.domain.models import FindingInput, ProbeExecution, RepoSnapshot, VerdictLabel
+from infosec_harness.domain.models import (
+    Finding,
+    FindingInput,
+    ProbeExecution,
+    RepoSnapshot,
+    VerdictLabel,
+)
 from infosec_harness.graph.ops import LocalOps
 from infosec_harness.graph.prepare import run_prepare
 from infosec_harness.graph.triage import TRIAGE_GRAPH, PreFilter, TriageDeps, TriageState
-from infosec_harness.intake.adapters import to_finding
 from infosec_harness.repo.detect import detect_stack
 
 
@@ -52,7 +57,7 @@ async def test_triage_full_path(repo):
                                           f"HARNESS_SINK_RETURNED::{nonce}")
 
     ops.execute_probe = fake_exec
-    finding = to_finding(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
+    finding = Finding.from_input(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
                                       start_line=2, cwe="CWE-89", severity="high"))
     state = TriageState(finding=finding, prepared=prepared)
     result = await TRIAGE_GRAPH.run(state=state, deps=TriageDeps(ops=ops), inputs=PreFilter())
@@ -63,7 +68,7 @@ async def test_triage_full_path(repo):
 
 async def test_triage_prefilter_missing_file(repo):
     ops, prepared = await _prepared(repo)
-    finding = to_finding(FindingInput(title="x", repo_url=repo, file_path="ghost.py", cwe="CWE-89"))
+    finding = Finding.from_input(FindingInput(title="x", repo_url=repo, file_path="ghost.py", cwe="CWE-89"))
     state = TriageState(finding=finding, prepared=prepared)
     result = await TRIAGE_GRAPH.run(state=state, deps=TriageDeps(ops=ops), inputs=PreFilter())
     assert result.verdict.label == VerdictLabel.inconclusive
@@ -74,7 +79,7 @@ async def test_triage_prefilter_missing_file(repo):
 async def test_triage_prefilter_test_dir(repo):
     ops, prepared = await _prepared(repo)
     Path(repo, "tests", "t_probe.py").write_text("x=1\n")
-    finding = to_finding(FindingInput(title="x", repo_url=repo, file_path="tests/t_probe.py", cwe="CWE-89"))
+    finding = Finding.from_input(FindingInput(title="x", repo_url=repo, file_path="tests/t_probe.py", cwe="CWE-89"))
     state = TriageState(finding=finding, prepared=prepared)
     result = await TRIAGE_GRAPH.run(state=state, deps=TriageDeps(ops=ops), inputs=PreFilter())
     assert result.early_exit != "test_or_vendored"
@@ -159,7 +164,7 @@ async def test_a_judge_that_cannot_satisfy_the_contract_yields_inconclusive(repo
         return await real_run_agent(name, prompt, deps)
 
     ops.run_agent = flaky_run_agent
-    finding = to_finding(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
+    finding = Finding.from_input(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
                                       start_line=2, cwe="CWE-89", severity="high"))
     state = TriageState(finding=finding, prepared=prepared)
     result = await TRIAGE_GRAPH.run(state=state, deps=TriageDeps(ops=ops), inputs=PreFilter())
@@ -547,7 +552,7 @@ async def test_an_environment_issue_found_at_probe_time_rebuilds_and_retries(rep
                               precondition_reached=True, sink_returned=True)
 
     ops.execute_probe = fake_exec
-    finding = to_finding(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
+    finding = Finding.from_input(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
                                       start_line=2, cwe="CWE-89", severity="high"))
     state = TriageState(finding=finding, prepared=prepared)
     await TRIAGE_GRAPH.run(state=state, deps=TriageDeps(ops=ops), inputs=PreFilter())
@@ -571,7 +576,7 @@ async def test_the_environment_repair_is_spent_at_most_once(repo):
                               stderr_tail="No suitable driver found")
 
     ops.execute_probe = fake_exec
-    finding = to_finding(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
+    finding = Finding.from_input(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
                                       start_line=2, cwe="CWE-89", severity="high"))
     state = TriageState(finding=finding, prepared=prepared)
     result = await TRIAGE_GRAPH.run(state=state, deps=TriageDeps(ops=ops), inputs=PreFilter())
@@ -602,7 +607,7 @@ async def test_a_failed_environment_rebuild_ends_the_finding_honestly(repo):
                               stderr_tail="No suitable driver found")
 
     ops.execute_probe = fake_exec
-    finding = to_finding(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
+    finding = Finding.from_input(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
                                       start_line=2, cwe="CWE-89", severity="high"))
     state = TriageState(finding=finding, prepared=prepared)
     result = await TRIAGE_GRAPH.run(state=state, deps=TriageDeps(ops=ops), inputs=PreFilter())
@@ -622,7 +627,7 @@ async def test_a_probe_defect_does_not_trigger_an_environment_rebuild(repo):
                               precondition_reached=False, sink_returned=False)
 
     ops.execute_probe = fake_exec
-    finding = to_finding(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
+    finding = Finding.from_input(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
                                       start_line=2, cwe="CWE-89", severity="high"))
     state = TriageState(finding=finding, prepared=prepared)
     await TRIAGE_GRAPH.run(state=state, deps=TriageDeps(ops=ops), inputs=PreFilter())
@@ -687,7 +692,7 @@ async def test_context_only_reachability_claims_are_probed(repo):
                                   precondition_reached=True, sink_returned=True)
 
         ops.execute_probe = fake_exec
-        finding = to_finding(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
+        finding = Finding.from_input(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
                                           start_line=2, cwe="CWE-89", severity="high"))
         state = TriageState(finding=finding, prepared=prepared)
         result = await TRIAGE_GRAPH.run(state=state, deps=TriageDeps(ops=ops), inputs=PreFilter())
@@ -728,7 +733,7 @@ def test_infrastructure_uncertainty_does_not_demote_critical_security_priority()
         priority_score,
     )
 
-    finding = to_finding(FindingInput(title="critical", repo_url="repo", severity="critical"))
+    finding = Finding.from_input(FindingInput(title="critical", repo_url="repo", severity="critical"))
     verdict = Verdict(label=VerdictLabel.inconclusive, confidence=0.0,
                       rationale="provider unavailable",
                       inconclusive_reason=InconclusiveReason.infrastructure_error)
@@ -743,7 +748,7 @@ async def test_context_citations_are_validated_against_snapshot_bytes(repo):
     from infosec_harness.graph.triage import _validate_context_citations
 
     _, prepared = await _prepared(repo)
-    finding = to_finding(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
+    finding = Finding.from_input(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
                                       start_line=2, cwe="CWE-89"))
     state = TriageState(finding=finding, prepared=prepared)
     context = FindingContext(
@@ -776,7 +781,7 @@ async def test_an_environment_repair_does_not_consume_the_probe_repair_budget(re
                               stderr_tail="still broken")
 
     ops.execute_probe = fake_exec
-    finding = to_finding(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
+    finding = Finding.from_input(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
                                       start_line=2, cwe="CWE-89", severity="high"))
     state = TriageState(finding=finding, prepared=prepared)
     result = await TRIAGE_GRAPH.run(
@@ -824,7 +829,7 @@ async def test_a_negative_without_a_readable_control_record_is_not_accepted(repo
     _negative_ops(ops)
     excerpt = "runner ok" if record is None else "runner ok\n" + record
     prepared = prepared.model_copy(update={"smoke": SmokeResult(ok=True, output_excerpt=excerpt)})
-    finding = to_finding(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
+    finding = Finding.from_input(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
                                       start_line=2, cwe="CWE-89", severity="high"))
     state = TriageState(finding=finding, prepared=prepared)
     result = await TRIAGE_GRAPH.run(state=state, deps=TriageDeps(ops=ops), inputs=PreFilter())
@@ -842,7 +847,7 @@ async def test_a_negative_with_passing_controls_stands(repo):
     _negative_ops(ops)
     record = encode_control_result(ControlResult(positive=True, negative=True))
     prepared = prepared.model_copy(update={"smoke": SmokeResult(ok=True, output_excerpt=record)})
-    finding = to_finding(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
+    finding = Finding.from_input(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
                                       start_line=2, cwe="CWE-89", severity="high"))
     state = TriageState(finding=finding, prepared=prepared)
     result = await TRIAGE_GRAPH.run(state=state, deps=TriageDeps(ops=ops), inputs=PreFilter())
@@ -873,7 +878,7 @@ async def test_a_failed_verdict_call_is_recorded_with_its_usage(repo, attached):
         return await negative_run_agent(name, prompt, deps)
 
     ops.run_agent = failing
-    finding = to_finding(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
+    finding = Finding.from_input(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
                                       start_line=2, cwe="CWE-89", severity="high"))
     state = TriageState(finding=finding, prepared=prepared)
     result = await TRIAGE_GRAPH.run(state=state, deps=TriageDeps(ops=ops), inputs=PreFilter())

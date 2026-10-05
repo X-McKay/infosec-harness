@@ -10,16 +10,16 @@ from typing import Any
 import yaml
 from pydantic_ai import ModelRetry
 
-from infosec_harness.agents.validators import (
+from infosec_harness.agents.ecosystem_contract import (
     PYTEST_TEST_COMMAND,
     environment_spec_violations,
     install_path_violations,
     offline_warmup_violations,
-    validate_probe,
 )
+from infosec_harness.agents.validators import validate_probe
 from infosec_harness.domain.models import EnvironmentSpec, ProbeSource
 
-from .skill_documents import SkillDoc
+from .documents import SkillDoc
 
 # --- Extracting the recipes a skill shows --------------------------------------------------
 

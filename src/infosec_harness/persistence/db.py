@@ -217,13 +217,13 @@ def database_connect_args(url: str, settings=None) -> dict:
     """Use the same verified PostgreSQL TLS policy for runtime and migrations."""
     settings = settings or get_settings()
     driver = make_url(url).drivername
-    if driver.startswith("sqlite") or not getattr(settings, "database_tls", False):
+    if driver.startswith("sqlite") or not settings.database_tls:
         return {}
     if driver != "postgresql+asyncpg":
         raise ValueError("Database TLS requires the postgresql+asyncpg driver")
-    ca = getattr(settings, "database_tls_ca_file", None)
-    cert = getattr(settings, "database_tls_client_cert", None)
-    key = getattr(settings, "database_tls_client_key", None)
+    ca = settings.database_tls_ca_file
+    cert = settings.database_tls_client_cert
+    key = settings.database_tls_client_key
     if bool(cert) != bool(key):
         raise ValueError("Database TLS client certificate and key must be configured together")
     context = ssl.create_default_context(cafile=str(ca) if ca else None)

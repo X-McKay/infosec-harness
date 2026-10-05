@@ -6,11 +6,10 @@ from types import SimpleNamespace
 
 import pytest
 import yaml
-from conftest import load_script
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
-check = load_script("model_connectivity")
+from infosec_harness.operations import model_connectivity as check
 
 
 @pytest.fixture
@@ -34,7 +33,8 @@ def profile(tmp_path, monkeypatch):
     }
     path.write_text(yaml.safe_dump(config))
     settings = SimpleNamespace(
-        model_mode="live", git_commit_sha="a" * 40, models_config=path, broker_config=None
+        model_mode="live", git_commit_sha="a" * 40, models_config=path, broker_config=None,
+        model_base_url=None,
     )
     monkeypatch.setattr(check, "get_settings", lambda: settings)
     monkeypatch.setattr(check.models, "get_settings", lambda: settings)
@@ -187,9 +187,12 @@ def test_invalid_timeout_never_calls_model(profile, timeout):
 
 def test_cli_requires_explicit_inference_authorization(monkeypatch):
     monkeypatch.setattr(check, "check_model", lambda **kw: pytest.fail("inference must not run"))
-    with pytest.raises(SystemExit) as exc:
-        check.main([])
-    assert exc.value.code == 2
+    from typer.testing import CliRunner
+
+    from infosec_harness.cli import app
+
+    result = CliRunner().invoke(app, ["model-connectivity"])
+    assert result.exit_code == 2
 
 
 def test_configuration_bytes_drift_after_request_fails(profile, monkeypatch):

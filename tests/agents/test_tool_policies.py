@@ -69,14 +69,14 @@ def test_the_declared_output_bound_covers_every_tools_own_cap():
     `describe_callables`. A tool whose own cap exceeded it would make the declaration false
     without anything failing.
     """
-    from infosec_harness.agents import capabilities as cap
+    from infosec_harness.agents import repo_tools, symbol_inspection, target_context
 
     declared = load_policies()["repo-read-only"].max_output_bytes
-    for name, limit in (("describe_callables", cap.MAX_DESCRIBE_BYTES),
-                        ("read_files", cap.MAX_BATCH_BYTES),
-                        ("list_tree", cap.MAX_TREE_BYTES),
-                        ("repo_digest", cap.MAX_DIGEST_BYTES),
-                        ("inspect_target", cap.MAX_TARGET_CONTEXT_BYTES)):
+    for name, limit in (("describe_callables", symbol_inspection.MAX_DESCRIBE_BYTES),
+                        ("read_files", repo_tools.MAX_BATCH_BYTES),
+                        ("list_tree", repo_tools.MAX_TREE_BYTES),
+                        ("repo_digest", repo_tools.MAX_DIGEST_BYTES),
+                        ("inspect_target", target_context.MAX_TARGET_CONTEXT_BYTES)):
         assert limit <= declared, f"{name} can return {limit} bytes, over the declared {declared}"
 
 

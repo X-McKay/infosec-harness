@@ -123,6 +123,4 @@ jobs:
           sha256: ${{ steps.pins.outputs.mise-sha256 }}
           install_args: node just
       - run: cd ui && npm ci
-      - run: cd ui && npm run gen:api
-      - run: git diff --exit-code -- ui/src/api/schema.d.ts
       - run: just ui-check

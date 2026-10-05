@@ -2,17 +2,15 @@
 from __future__ import annotations
 
 import asyncio
-import shutil
 import uuid
 
 import pytest
 
-TEMPORAL = shutil.which("temporal")
-pytestmark = pytest.mark.skipif(TEMPORAL is None, reason="temporal CLI not available")
+pytestmark = pytest.mark.requires_temporal
 
 
 @pytest.mark.parametrize("started", [False, True])
-async def test_cancellation_survives_pending_and_running_workflows(started, tmp_path, monkeypatch):
+async def test_cancellation_survives_pending_and_running_workflows(temporal_cli, started, tmp_path, monkeypatch):
     from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
     from temporalio.client import Client, WorkflowFailureError
     from temporalio.testing import WorkflowEnvironment
@@ -36,7 +34,7 @@ async def test_cancellation_survives_pending_and_running_workflows(started, tmp_
         await asyncio.Event().wait()
 
     monkeypatch.setattr(activities, "checkout", blocked_checkout)
-    env = await WorkflowEnvironment.start_local(dev_server_existing_path=TEMPORAL)
+    env = await WorkflowEnvironment.start_local(dev_server_existing_path=temporal_cli)
     try:
         client = await Client.connect(env.client.service_client.config.target_host,
                                       plugins=[PydanticAIPlugin()])
@@ -66,7 +64,7 @@ async def test_cancellation_survives_pending_and_running_workflows(started, tmp_
         await env.shutdown()
 
 
-async def test_root_budget_stop_keeps_a_structured_reason(tmp_path, monkeypatch):
+async def test_root_budget_stop_keeps_a_structured_reason(temporal_cli, tmp_path, monkeypatch):
     from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
     from temporalio.client import Client
     from temporalio.testing import WorkflowEnvironment
@@ -86,7 +84,7 @@ async def test_root_budget_stop_keeps_a_structured_reason(tmp_path, monkeypatch)
     batch_id = f"budget-stop-{uuid.uuid4().hex[:12]}"
     payload = {"batch_id": batch_id, "findings": [finding.model_dump(mode="json")]}
     await lifecycle.accept_batch(batch_id, [finding], "Budget fixture", payload)
-    env = await WorkflowEnvironment.start_local(dev_server_existing_path=TEMPORAL)
+    env = await WorkflowEnvironment.start_local(dev_server_existing_path=temporal_cli)
     try:
         client = await Client.connect(env.client.service_client.config.target_host,
                                       plugins=[PydanticAIPlugin()])
@@ -103,7 +101,7 @@ async def test_root_budget_stop_keeps_a_structured_reason(tmp_path, monkeypatch)
         await env.shutdown()
 
 
-async def test_worker_replacement_resumes_accepted_batch(tmp_path, monkeypatch):
+async def test_worker_replacement_resumes_accepted_batch(temporal_cli, tmp_path, monkeypatch):
     from datetime import timedelta
 
     from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
@@ -144,7 +142,7 @@ async def test_worker_replacement_resumes_accepted_batch(tmp_path, monkeypatch):
     monkeypatch.setattr(activities, "checkout", interrupted_checkout)
     monkeypatch.setattr(docker, "image_exists", unavailable)
     monkeypatch.setattr(docker, "runtime_available", unavailable)
-    env = await WorkflowEnvironment.start_local(dev_server_existing_path=TEMPORAL)
+    env = await WorkflowEnvironment.start_local(dev_server_existing_path=temporal_cli)
     try:
         client = await Client.connect(env.client.service_client.config.target_host,
                                       plugins=[PydanticAIPlugin()])
@@ -170,7 +168,7 @@ async def test_worker_replacement_resumes_accepted_batch(tmp_path, monkeypatch):
         await env.shutdown()
 
 
-async def test_terminal_persistence_retries_past_transient_database_outage(monkeypatch):
+async def test_terminal_persistence_retries_past_transient_database_outage(temporal_cli, monkeypatch):
     """A closed Temporal workflow must not leave its accepted batch permanently running."""
     from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
     from temporalio.client import Client
@@ -196,7 +194,7 @@ async def test_terminal_persistence_retries_past_transient_database_outage(monke
         return await original(*args, **kwargs)
 
     monkeypatch.setattr(lifecycle, "finish_pending", transient_failure)
-    env = await WorkflowEnvironment.start_local(dev_server_existing_path=TEMPORAL)
+    env = await WorkflowEnvironment.start_local(dev_server_existing_path=temporal_cli)
     try:
         client = await Client.connect(env.client.service_client.config.target_host,
                                       plugins=[PydanticAIPlugin()])
@@ -211,7 +209,7 @@ async def test_terminal_persistence_retries_past_transient_database_outage(monke
         await env.shutdown()
 
 
-async def test_root_elapsed_deadline_cancels_inflight_work_and_persists_failure(tmp_path, monkeypatch):
+async def test_root_elapsed_deadline_cancels_inflight_work_and_persists_failure(temporal_cli, tmp_path, monkeypatch):
     from datetime import timedelta
 
     from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
@@ -235,7 +233,7 @@ async def test_root_elapsed_deadline_cancels_inflight_work_and_persists_failure(
         finally:
             cancelled.set()
     monkeypatch.setattr(activities, 'checkout', blocked_checkout)
-    env = await WorkflowEnvironment.start_local(dev_server_existing_path=TEMPORAL)
+    env = await WorkflowEnvironment.start_local(dev_server_existing_path=temporal_cli)
     try:
         client = await Client.connect(env.client.service_client.config.target_host,
                                       plugins=[PydanticAIPlugin()])

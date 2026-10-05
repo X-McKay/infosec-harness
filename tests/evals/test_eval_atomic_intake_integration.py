@@ -12,7 +12,6 @@ from sqlalchemy import select
 from infosec_harness.agents import registry
 from infosec_harness.evals import run
 from infosec_harness.persistence import db
-from infosec_harness.settings import get_settings
 
 REPORT = "Caller input is interpolated into a shell command."
 
@@ -21,17 +20,11 @@ REPORT = "Caller input is interpolated into a shell command."
 async def test_canonical_eval_persists_atomic_guard_correction_and_failure(
     tmp_path, monkeypatch, provider_failure,
 ):
-    path = tmp_path / "intake/evals/dataset.yaml"
-    path.parent.mkdir(parents=True)
+    path = tmp_path / "dataset.yaml"
     path.write_text(yaml.safe_dump({"version": "synthetic-atomic-integration", "cases": [{
         "name": "synthetic", "category": "smoke", "payload": {"report": REPORT},
         "expected": "CWE-78",
     }]}))
-    from infosec_harness.evals import dataset
-
-    # Only the dataset lookup is redirected; the agent spec still comes from the package.
-    redirected = get_settings().model_copy(update={"agents_dir": tmp_path})
-    monkeypatch.setattr(dataset, "get_settings", lambda: redirected)
     calls = []
 
     def respond(messages, info):
@@ -51,7 +44,7 @@ async def test_canonical_eval_persists_atomic_guard_correction_and_failure(
     agent = registry.build_agent("intake", durable=False, production_transport=True)
     monkeypatch.setattr(registry, "build_agent", lambda *_args, **_kwargs: agent)
     with agent.override(model=FunctionModel(respond)):
-        experiment_id = await run.run_experiment("intake")
+        experiment_id = await run.run_experiment("intake", dataset=path)
     async with db.session() as session:
         experiment = await session.get(db.EvalExperiment, experiment_id)
         row = (await session.execute(select(db.EvalCaseResult).where(

@@ -128,7 +128,7 @@ def test_a_hardcoded_test_path_is_rejected():
     exited 4 with "file or directory not found", no test executed, and the finding was scored
     inconclusive. Nothing downstream can diagnose this — the probe itself is fine.
     """
-    from infosec_harness.agents.validators import environment_spec_violations
+    from infosec_harness.agents.ecosystem_contract import environment_spec_violations
     from infosec_harness.domain.models import EnvironmentSpec
 
     spec = EnvironmentSpec(base_image="python:3.12-slim",
@@ -144,7 +144,7 @@ def test_a_pytest_command_that_captures_output_is_rejected():
     probe_diagnosis correctly calls a defect and probe_repair cannot fix, because the fault
     is in the test command.
     """
-    from infosec_harness.agents.validators import environment_spec_violations
+    from infosec_harness.agents.ecosystem_contract import environment_spec_violations
     from infosec_harness.domain.models import EnvironmentSpec
 
     captured = EnvironmentSpec(base_image="python:3.12-slim",
@@ -167,7 +167,7 @@ def test_non_pytest_runners_are_not_held_to_pytests_flag():
     console when the *project's* config says `silent: true`, and the run then exits 0 having
     printed none of the three markers — so the two halves are asserted separately now.
     """
-    from infosec_harness.agents.validators import environment_spec_violations
+    from infosec_harness.agents.ecosystem_contract import environment_spec_violations
     from infosec_harness.domain.models import EnvironmentSpec
 
     for command in ("npx mocha {test_file}", "node --test {test_file}",
@@ -184,7 +184,7 @@ def test_a_jest_or_vitest_command_a_project_config_can_mute_is_rejected():
     holds for `vitest.config.js`. `--silent=false` restored all three, and is a no-op when the
     project silences nothing, so the rejection names it as the correction.
     """
-    from infosec_harness.agents.validators import (
+    from infosec_harness.agents.ecosystem_contract import (
         JEST_TEST_COMMAND,
         VITEST_TEST_COMMAND,
         environment_spec_violations,
@@ -207,7 +207,10 @@ def test_vitest_given_jests_selector_is_rejected_with_the_command_that_works():
     Measured: it exits 1 with a CAC stack trace, before loading a single test file, so there is
     no test output at all to diagnose from — a run that looks like a probe defect and is not one.
     """
-    from infosec_harness.agents.validators import VITEST_TEST_COMMAND, environment_spec_violations
+    from infosec_harness.agents.ecosystem_contract import (
+        VITEST_TEST_COMMAND,
+        environment_spec_violations,
+    )
     from infosec_harness.domain.models import EnvironmentSpec
 
     spec = EnvironmentSpec(base_image="node:22-slim",
@@ -227,7 +230,10 @@ def test_a_runner_the_repository_does_not_declare_is_rejected(tmp_path):
     exits 1 with `npx canceled due to missing packages` and no test output whatsoever, which
     reads as a probe defect and routes repair to the one stage that cannot install a runner.
     """
-    from infosec_harness.agents.validators import js_runner_choice_violations, repo_js_runners
+    from infosec_harness.agents.ecosystem_contract import (
+        js_runner_choice_violations,
+        repo_js_runners,
+    )
 
     (tmp_path / "package.json").write_text(
         '{"name":"v","scripts":{"test":"vitest run"},"devDependencies":{"vitest":"^2"}}')
@@ -249,7 +255,10 @@ def test_a_migration_that_carries_both_runners_names_the_one_its_test_script_inv
     the ordering is load-bearing: alphabetical order would answer "jest" for a project that has
     already migrated to vitest.
     """
-    from infosec_harness.agents.validators import js_runner_choice_violations, repo_js_runners
+    from infosec_harness.agents.ecosystem_contract import (
+        js_runner_choice_violations,
+        repo_js_runners,
+    )
 
     (tmp_path / "package.json").write_text(
         '{"name":"m","scripts":{"test":"vitest run"},'
@@ -332,8 +341,10 @@ def test_partial_build_accepts_root_or_named_module(module_path):
 
 def test_the_retry_message_names_the_fix_rather_than_the_violation():
     """A retry the model cannot act on just burns the budget (cf. verdict's inconclusive_reason)."""
-    from infosec_harness.agents.ecosystem_contract import PYTEST_TEST_COMMAND
-    from infosec_harness.agents.validators import environment_spec_violations
+    from infosec_harness.agents.ecosystem_contract import (
+        PYTEST_TEST_COMMAND,
+        environment_spec_violations,
+    )
     from infosec_harness.domain.models import EnvironmentSpec
 
     spec = EnvironmentSpec(base_image="python:3.12-slim", test_command="python -m pytest tests/t.py")
@@ -350,7 +361,7 @@ def test_jvm_runners_select_by_class_and_are_not_required_to_carry_the_placehold
     stub model produces, which would have broken the Java corpus runs outright. The coupling
     for these runners is that the probe's class name matches the selector.
     """
-    from infosec_harness.agents.validators import (
+    from infosec_harness.agents.ecosystem_contract import (
         GRADLE_TEST_COMMAND,
         MAVEN_TEST_COMMAND,
         environment_spec_violations,
@@ -365,7 +376,7 @@ def test_jvm_runners_select_by_class_and_are_not_required_to_carry_the_placehold
 
 def test_an_empty_class_selector_is_still_rejected():
     """`-Dtest=` with nothing after it selects no test at all."""
-    from infosec_harness.agents.validators import environment_spec_violations
+    from infosec_harness.agents.ecosystem_contract import environment_spec_violations
     from infosec_harness.domain.models import EnvironmentSpec
 
     spec = EnvironmentSpec(base_image="maven:3.9", test_command="mvn -q -B test -Dtest=")
@@ -378,7 +389,7 @@ def test_a_non_verbose_prove_command_is_rejected():
     Exactly the pytest `-s` failure in another ecosystem — the probe runs, exits 0, and the
     harness records `precondition_reached=false`, which probe repair cannot fix.
     """
-    from infosec_harness.agents.validators import environment_spec_violations
+    from infosec_harness.agents.ecosystem_contract import environment_spec_violations
     from infosec_harness.domain.models import EnvironmentSpec
 
     quiet = EnvironmentSpec(base_image="perl:5.40", test_command="prove {test_file}")
@@ -395,7 +406,7 @@ def test_an_install_command_that_swallows_its_failure_is_rejected():
     appears at probe time as `Can't locate DBI.pm in @INC` — past build repair, the only stage
     that could install it, and unfixable by probe repair, whose probe is correct.
     """
-    from infosec_harness.agents.validators import environment_spec_violations
+    from infosec_harness.agents.ecosystem_contract import environment_spec_violations
     from infosec_harness.domain.models import EnvironmentSpec
 
     # The house pattern: each message names the corrected command, not the violation.
@@ -416,7 +427,7 @@ def test_an_install_command_that_swallows_its_failure_is_rejected():
 
 def test_a_local_lib_install_must_be_on_perls_search_path():
     """Installing the deps is only half of it: prove still runs with the stock @INC."""
-    from infosec_harness.agents.validators import environment_spec_violations
+    from infosec_harness.agents.ecosystem_contract import environment_spec_violations
     from infosec_harness.domain.models import EnvironmentSpec
 
     unreachable = EnvironmentSpec(
@@ -437,7 +448,10 @@ def test_a_maven_command_that_cannot_discover_a_junit5_probe_is_rejected():
     bound to a phase cannot be overridden from the command line, so the spec must compile with
     `test-compile` and then invoke a pinned surefire goal directly.
     """
-    from infosec_harness.agents.validators import MAVEN_TEST_COMMAND, environment_spec_violations
+    from infosec_harness.agents.ecosystem_contract import (
+        MAVEN_TEST_COMMAND,
+        environment_spec_violations,
+    )
     from infosec_harness.domain.models import EnvironmentSpec
 
     def problems(command):
@@ -465,7 +479,10 @@ def test_a_maven_command_that_cannot_discover_a_junit5_probe_is_rejected():
 
 def test_a_quiet_maven_command_is_rejected_for_the_same_reason_pytest_needs_s():
     """-q raises Maven's log threshold above the INFO relay that carries test stdout."""
-    from infosec_harness.agents.validators import MAVEN_TEST_COMMAND, environment_spec_violations
+    from infosec_harness.agents.ecosystem_contract import (
+        MAVEN_TEST_COMMAND,
+        environment_spec_violations,
+    )
     from infosec_harness.domain.models import EnvironmentSpec
 
     quiet = MAVEN_TEST_COMMAND.replace("mvn -B", "mvn -q -B")
@@ -476,7 +493,10 @@ def test_a_quiet_maven_command_is_rejected_for_the_same_reason_pytest_needs_s():
 
 def test_a_maven_command_must_keep_surefire_output_on_stdout():
     """A pom that redirects test output writes the markers to a file the harness never reads."""
-    from infosec_harness.agents.validators import MAVEN_TEST_COMMAND, environment_spec_violations
+    from infosec_harness.agents.ecosystem_contract import (
+        MAVEN_TEST_COMMAND,
+        environment_spec_violations,
+    )
     from infosec_harness.domain.models import EnvironmentSpec
 
     without = MAVEN_TEST_COMMAND.replace(" -Dmaven.test.redirectTestOutputToFile=false", "")
@@ -487,7 +507,10 @@ def test_a_maven_command_must_keep_surefire_output_on_stdout():
 
 def test_a_gradle_command_below_the_info_log_level_is_rejected():
     """Gradle's Test task forwards a test's standard streams only from INFO up."""
-    from infosec_harness.agents.validators import GRADLE_TEST_COMMAND, environment_spec_violations
+    from infosec_harness.agents.ecosystem_contract import (
+        GRADLE_TEST_COMMAND,
+        environment_spec_violations,
+    )
     from infosec_harness.domain.models import EnvironmentSpec
 
     default = "./gradlew --no-daemon --offline test --tests '*HarnessProbeTest'"
@@ -500,7 +523,7 @@ def test_a_gradle_command_below_the_info_log_level_is_rejected():
 
 def test_a_d_property_is_not_mistaken_for_a_short_flag():
     """`-Dmaven.test.redirectTestOutputToFile=false` contains an 'i' and a 'q'; neither counts."""
-    from infosec_harness.agents.validators import _short_flag
+    from infosec_harness.agents.ecosystem_contract import _short_flag
 
     prop = "-Dmaven.test.redirectTestOutputToFile=false -Dtest=HarnessRequestTest"
     assert not _short_flag(prop, "i")
@@ -653,7 +676,7 @@ def test_a_jvm_command_with_no_selector_is_told_to_name_a_class_not_a_path():
     `mvn test` carries no `-Dtest=`, so it used to fall through to the path-runner branch and be
     told to add `{test_file}` — which Maven does not accept. It needs a class name.
     """
-    from infosec_harness.agents.validators import environment_spec_violations
+    from infosec_harness.agents.ecosystem_contract import environment_spec_violations
     from infosec_harness.domain.models import EnvironmentSpec
 
     for command in ("mvn -B test", "./gradlew --no-daemon -i test"):
@@ -665,12 +688,12 @@ def test_a_jvm_command_with_no_selector_is_told_to_name_a_class_not_a_path():
 
 def test_the_stub_models_own_specs_satisfy_the_contract():
     """The stub is the offline stand-in; if the contract rejects it, every offline test lies."""
-    from infosec_harness.agents.stubs import _env_plan
-    from infosec_harness.agents.validators import (
+    from infosec_harness.agents.ecosystem_contract import (
         environment_spec_violations,
         install_path_violations,
         offline_warmup_violations,
     )
+    from infosec_harness.agents.stubs import _env_plan
     from infosec_harness.domain.models import EnvironmentSpec, StackFingerprint
 
     for languages, manifests in (({"python": 1}, ["requirements.txt"]),
@@ -722,7 +745,7 @@ def test_the_stub_models_own_probes_satisfy_the_contract():
 
 def test_an_install_that_writes_under_work_is_rejected():
     """/work is the probe tmpfs; it does not exist while the image is being built."""
-    from infosec_harness.agents.validators import install_path_violations
+    from infosec_harness.agents.ecosystem_contract import install_path_violations
     from infosec_harness.domain.models import EnvironmentSpec
 
     spec = EnvironmentSpec(
@@ -741,7 +764,7 @@ def test_cpanm_without_local_lib_is_rejected():
     repair (the only stage that could install it) and unfixable by probe repair (the probe is
     correct). Both Perl SQLi corpus cases were lost this way, twice.
     """
-    from infosec_harness.agents.validators import install_path_violations
+    from infosec_harness.agents.ecosystem_contract import install_path_violations
     from infosec_harness.domain.models import EnvironmentSpec
 
     spec = EnvironmentSpec(base_image="perl:5.38-slim", test_command="prove -v {test_file}",
@@ -752,7 +775,7 @@ def test_cpanm_without_local_lib_is_rejected():
 
 
 def test_legacy_work_perl5lib_remains_admissible_for_durable_replay():
-    from infosec_harness.agents.validators import install_path_violations
+    from infosec_harness.agents.ecosystem_contract import install_path_violations
     from infosec_harness.domain.models import EnvironmentSpec
 
     spec = EnvironmentSpec(
@@ -764,7 +787,7 @@ def test_legacy_work_perl5lib_remains_admissible_for_durable_replay():
 
 def test_the_recipe_verified_against_the_corpus_passes():
     """The /opt PERL5LIB shape loaded DBI/SQLite and queried it under managed runsc."""
-    from infosec_harness.agents.validators import (
+    from infosec_harness.agents.ecosystem_contract import (
         environment_spec_violations,
         install_path_violations,
     )
@@ -799,7 +822,7 @@ def test_a_maven_warmup_that_runs_no_test_is_rejected():
     not been downloaded from it before`. Build repair never sees that failure and probe repair
     cannot fix it, because the probe is correct — so nothing downstream can recover.
     """
-    from infosec_harness.agents.validators import (
+    from infosec_harness.agents.ecosystem_contract import (
         MAVEN_WARMUP_COMMAND,
         offline_warmup_violations,
     )
@@ -826,7 +849,7 @@ def test_failifnotests_disqualifies_a_warmup_even_with_a_selector():
     and would then go green while leaving the provider unfetched, which is precisely the silent
     shape this check exists to stop coming back.
     """
-    from infosec_harness.agents.validators import offline_warmup_violations
+    from infosec_harness.agents.ecosystem_contract import offline_warmup_violations
     from infosec_harness.domain.models import EnvironmentSpec
 
     spec = EnvironmentSpec(
@@ -842,7 +865,7 @@ def test_failifnotests_disqualifies_a_warmup_even_with_a_selector():
 
 def test_a_2_12_4_warmup_does_not_count_as_warming_the_provider():
     """Surefire 2.12.4 has no JUnit Platform provider, so running a test under it warms nothing."""
-    from infosec_harness.agents.validators import offline_warmup_violations
+    from infosec_harness.agents.ecosystem_contract import offline_warmup_violations
     from infosec_harness.domain.models import EnvironmentSpec
 
     spec = EnvironmentSpec(
@@ -857,7 +880,7 @@ def test_a_2_12_4_warmup_does_not_count_as_warming_the_provider():
 
 def test_a_non_maven_spec_is_not_asked_to_warm_surefire():
     """The check must stay silent for every other stack, or it fails good specs."""
-    from infosec_harness.agents.validators import (
+    from infosec_harness.agents.ecosystem_contract import (
         GRADLE_TEST_COMMAND,
         offline_warmup_violations,
     )
@@ -876,7 +899,7 @@ def test_the_maven_recipe_verified_against_the_corpus_passes():
     The image came from the harness's own ``render_dockerfile``; the probe ran under gVisor with
     ``--network=none`` and ``--read-only``, exited 0, and its HARNESS_ markers reached stdout.
     """
-    from infosec_harness.agents.validators import (
+    from infosec_harness.agents.ecosystem_contract import (
         MAVEN_WARMUP_COMMAND,
         environment_spec_violations,
         install_path_violations,
@@ -897,7 +920,7 @@ def test_a_jvm_selector_given_a_file_path_is_rejected_with_the_class_name():
     """Measured on java-sqli-fixed: `-Dtest={test_file}` substituted to a path, Surefire matched
     nothing, and the case burned its repair budget to `inconclusive`. The existing check only
     required the selector to be non-empty, which a path satisfies."""
-    from infosec_harness.agents.validators import (
+    from infosec_harness.agents.ecosystem_contract import (
         MAVEN_WARMUP_COMMAND,
         environment_spec_violations,
     )
@@ -920,7 +943,7 @@ def test_a_jvm_selector_given_a_file_path_is_rejected_with_the_class_name():
 def test_a_jvm_selector_holding_the_test_file_placeholder_is_rejected():
     """`{test_file}` is the shape that produced the failure, and it is recognisable before the
     substitution ever happens."""
-    from infosec_harness.agents.validators import (
+    from infosec_harness.agents.ecosystem_contract import (
         MAVEN_WARMUP_COMMAND,
         environment_spec_violations,
     )
@@ -938,7 +961,7 @@ def test_a_jvm_selector_holding_the_test_file_placeholder_is_rejected():
 
 
 def test_a_gradle_selector_given_a_path_names_the_glob_form():
-    from infosec_harness.agents.validators import _pathish_selector_violation
+    from infosec_harness.agents.ecosystem_contract import _pathish_selector_violation
 
     msg = _pathish_selector_violation(
         "./gradlew --no-daemon --offline -i test --tests 'src/test/java/FooTest.java'")
@@ -947,7 +970,7 @@ def test_a_gradle_selector_given_a_path_names_the_glob_form():
 
 def test_a_proper_class_selector_is_accepted():
     """Guards against over-firing: the canonical commands must stay clean."""
-    from infosec_harness.agents.validators import (
+    from infosec_harness.agents.ecosystem_contract import (
         GRADLE_TEST_COMMAND,
         MAVEN_TEST_COMMAND,
         _pathish_selector_violation,
@@ -979,7 +1002,7 @@ def test_every_canonical_command_satisfies_every_validator():
     burned its output retries into `environment_unbuildable`. An exemplar that fails the checker
     it exemplifies does not teach, it traps.
     """
-    from infosec_harness.agents.validators import (
+    from infosec_harness.agents.ecosystem_contract import (
         GRADLE_TEST_COMMAND,
         MAVEN_TEST_COMMAND,
         MAVEN_WARMUP_COMMAND,
@@ -1073,7 +1096,7 @@ def test_a_static_claim_alone_does_not_support_a_safe_verdict():
 def test_the_jdk_a_base_image_provides_is_read_past_the_build_tool_version():
     """`maven:3.9-...` and `gradle:8-...` lead with the build tool's version, so a naive
     first-number read validates against JDK 3 or JDK 8 and silently passes anything."""
-    from infosec_harness.agents.validators import image_jdk_major
+    from infosec_harness.agents.ecosystem_contract import image_jdk_major
 
     assert image_jdk_major("maven:3.9-eclipse-temurin-17") == 17
     assert image_jdk_major("gradle:8-jdk21") == 21
@@ -1085,7 +1108,7 @@ def test_the_jdk_a_base_image_provides_is_read_past_the_build_tool_version():
 def test_the_oldest_declared_language_level_is_the_binding_one():
     """A pom with source 7 and target 8 needs a JDK that still accepts 7, so the lower number
     is the constraint."""
-    from infosec_harness.agents.validators import declared_java_release
+    from infosec_harness.agents.ecosystem_contract import declared_java_release
 
     pom = ("<properties><maven.compiler.source>1.7</maven.compiler.source>"
            "<maven.compiler.target>1.8</maven.compiler.target></properties>")
@@ -1100,7 +1123,7 @@ def test_a_modern_jdk_is_rejected_for_a_project_that_declares_an_old_source_leve
     pinned image cannot build the corpus. JDK 20 removed -source 7 outright, and the failure is
     a fixed javac message that build repair cannot reason its way out of.
     """
-    from infosec_harness.agents.validators import jdk_compatibility_violations
+    from infosec_harness.agents.ecosystem_contract import jdk_compatibility_violations
 
     problems = jdk_compatibility_violations("maven:3.9-eclipse-temurin-21", 7)
     assert problems and "no longer supported" in problems[0]
@@ -1121,7 +1144,7 @@ def test_the_javac_source_floors_are_the_ones_that_were_measured():
     `<source>1.5</source>` -- so their specs were accepted here naming temurin-11 and then died in
     the image build on the very message this check exists to predict.
     """
-    from infosec_harness.agents.validators import (
+    from infosec_harness.agents.ecosystem_contract import (
         jdk_compatibility_violations,
         maven_image_for_release,
     )
@@ -1140,7 +1163,7 @@ def test_the_javac_source_floors_are_the_ones_that_were_measured():
 
 
 def test_a_jdk_older_than_the_project_is_rejected_too():
-    from infosec_harness.agents.validators import jdk_compatibility_violations
+    from infosec_harness.agents.ecosystem_contract import jdk_compatibility_violations
 
     problems = jdk_compatibility_violations("openjdk:8", 11)
     assert problems and "invalid target release: 11" in problems[0]
@@ -1149,7 +1172,7 @@ def test_a_jdk_older_than_the_project_is_rejected_too():
 def test_a_compatible_pairing_and_an_unreadable_one_are_both_left_alone():
     """Silence when it cannot tell: an unknown image or an undeclared level must not be
     guessed at, because a wrong floor would reject a spec that builds."""
-    from infosec_harness.agents.validators import jdk_compatibility_violations
+    from infosec_harness.agents.ecosystem_contract import jdk_compatibility_violations
 
     assert jdk_compatibility_violations("maven:3.9-eclipse-temurin-17", 11) == []
     assert jdk_compatibility_violations("python:3.12-slim", 7) == []
@@ -1159,7 +1182,7 @@ def test_a_compatible_pairing_and_an_unreadable_one_are_both_left_alone():
 def test_the_declared_level_is_read_from_a_real_repository(tmp_path):
     """Multi-module projects keep the compiler properties in the root pom, so the root and one
     level down is where to look."""
-    from infosec_harness.agents.validators import repo_java_release
+    from infosec_harness.agents.ecosystem_contract import repo_java_release
 
     (tmp_path / "pom.xml").write_text("<project><properties>"
                                       "<maven.compiler.source>1.7</maven.compiler.source>"
@@ -1186,7 +1209,7 @@ def test_a_pytest_command_that_inherits_the_projects_addopts_is_rejected():
     nothing downstream distinguishes it from a probe that ran and observed nothing. That is the
     costliest failure shape this system has.
     """
-    from infosec_harness.agents.validators import environment_spec_violations
+    from infosec_harness.agents.ecosystem_contract import environment_spec_violations
     from infosec_harness.domain.models import EnvironmentSpec
 
     inheriting = EnvironmentSpec(base_image="python:3.12-slim",
@@ -1203,7 +1226,7 @@ def test_a_pytest_command_that_inherits_the_projects_addopts_is_rejected():
 
 def test_only_pytest_is_asked_to_neutralise_addopts():
     """Invent a requirement only where it is real: no other runner has this behaviour."""
-    from infosec_harness.agents.validators import environment_spec_violations
+    from infosec_harness.agents.ecosystem_contract import environment_spec_violations
     from infosec_harness.domain.models import EnvironmentSpec
 
     for command in ("npx jest --runTestsByPath {test_file}", "prove -v {test_file}"):
@@ -1259,7 +1282,7 @@ def test_a_junit5_warmup_in_a_junit4_project_is_rejected(tmp_path):
     commons-fileupload at their harvested revisions: all three fail, and all three then pass with
     all three markers once the warm-up is JUnit 4.
     """
-    from infosec_harness.agents.validators import (
+    from infosec_harness.agents.ecosystem_contract import (
         MAVEN_WARMUP_COMMANDS,
         offline_warmup_violations,
         repo_jvm_test_framework,
@@ -1293,7 +1316,7 @@ def test_an_unwarmed_junit4_build_names_the_provider_it_will_actually_need():
     offline probe on `org.apache.maven.surefire:surefire-junit4:jar:3.2.5 (absent)`. A message
     naming the JUnit 5 artifact sends build repair looking for the wrong absence.
     """
-    from infosec_harness.agents.validators import offline_warmup_violations
+    from infosec_harness.agents.ecosystem_contract import offline_warmup_violations
     from infosec_harness.domain.models import EnvironmentSpec
 
     spec = EnvironmentSpec(
@@ -1309,7 +1332,7 @@ def test_every_shipped_maven_warmup_satisfies_the_checks_that_judge_it():
     """Each warm-up the harness hands out must itself pass, or an agent that copies one verbatim
     is rejected for following the instruction -- the oscillation that exhausted java-sqli's
     output retries once already."""
-    from infosec_harness.agents.validators import (
+    from infosec_harness.agents.ecosystem_contract import (
         MAVEN_WARMUP_COMMANDS,
         install_path_violations,
         offline_warmup_violations,
@@ -1425,12 +1448,12 @@ def test_the_stub_java_plan_is_read_from_the_fingerprint_and_survives_its_own_va
     """The stub is the offline stand-in for env-planner, so a stub plan the validators reject
     makes every offline Java test a lie -- and a stub that hardcodes JUnit 5 and temurin-21 makes
     the offline tests agree with the two defects this change fixes."""
-    from infosec_harness.agents.stubs import _env_plan
-    from infosec_harness.agents.validators import (
+    from infosec_harness.agents.ecosystem_contract import (
         environment_spec_violations,
         install_path_violations,
         offline_warmup_violations,
     )
+    from infosec_harness.agents.stubs import _env_plan
     from infosec_harness.domain.models import EnvironmentSpec
 
     for framework, release, image in (("junit4", 7, "maven:3.9-eclipse-temurin-17"),
@@ -1455,7 +1478,7 @@ def test_a_gradle_test_command_that_can_report_up_to_date_is_rejected():
     more printed none and exited 0 both times. Same family as an un-`-s`ed pytest: a correct probe
     recorded as having reached nothing, with nothing downstream able to attribute it.
     """
-    from infosec_harness.agents.validators import (
+    from infosec_harness.agents.ecosystem_contract import (
         GRADLE_TEST_COMMAND,
         environment_spec_violations,
     )
@@ -1481,7 +1504,7 @@ def test_the_gradle_exemplar_satisfies_every_check_that_judges_it():
     """The same rule as the Maven exemplar: a retry message naming a command the validator would
     itself reject is what made java-sqli oscillate between two violations until its output retries
     ran out."""
-    from infosec_harness.agents.validators import (
+    from infosec_harness.agents.ecosystem_contract import (
         GRADLE_TEST_COMMAND,
         MAVEN_TEST_COMMAND,
         environment_spec_violations,

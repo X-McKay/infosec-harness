@@ -10,19 +10,19 @@ from __future__ import annotations
 
 import textwrap
 
-from infosec_harness.evals.skill_checks import (
+from .checks import (
     COMPETING_PAIRS,
     CompetingPair,
     competing_pairs_for,
 )
-from infosec_harness.evals.skill_documents import (
+from .documents import (
     CASE_TYPES,
     CaseTypeCoverage,
     SkillDoc,
     Status,
     load_skills,
 )
-from infosec_harness.evals.skill_recipes import (
+from .recipes import (
     extract_commands,
     extract_probe_exemplars,
     load_skill_cases,

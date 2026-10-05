@@ -118,9 +118,9 @@ class S3Store(ArtifactStore):
         self._client = boto3.client(
             "s3", endpoint_url=s.s3_endpoint or None, region_name=s.s3_region,
             aws_access_key_id=s.s3_access_key or None, aws_secret_access_key=s.s3_secret_key or None,
-            aws_session_token=getattr(s, "s3_session_token", "") or None,
-            verify=str(s.s3_ca_file) if getattr(s, "s3_ca_file", None) else True,
-            config=Config(s3={"addressing_style": getattr(s, "s3_addressing_style", "auto")}),
+            aws_session_token=s.s3_session_token or None,
+            verify=str(s.s3_ca_file) if s.s3_ca_file else True,
+            config=Config(s3={"addressing_style": s.s3_addressing_style}),
         )
         try:
             self._client.head_bucket(Bucket=self.bucket)
@@ -130,7 +130,7 @@ class S3Store(ArtifactStore):
             status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
             missing = code in {"404", "NoSuchBucket"} or status == 404
             if ((status is not None and status != 404) or code in {"403", "AccessDenied"}
-                    or not missing or not getattr(s, "s3_create_bucket", True)):
+                    or not missing or not s.s3_create_bucket):
                 raise
             request = {"Bucket": self.bucket}
             if s.s3_region != "us-east-1":
@@ -172,7 +172,7 @@ class S3Store(ArtifactStore):
 @lru_cache
 def get_store() -> ArtifactStore:
     settings = get_settings()
-    backend = getattr(settings, "artifact_backend", "auto")
+    backend = settings.artifact_backend
     if backend == "s3" or (backend == "auto" and settings.s3_endpoint):
         return S3Store()
     return FilesystemStore()

@@ -34,21 +34,28 @@ def submit(
 ):
     """Submit findings for triage and print the batch id."""
     from infosec_harness.persistence import db
-    from infosec_harness.settings import get_settings
-    from infosec_harness.workflows import runner
+    from infosec_harness.workflows.local_run import (
+        LocalModeUnavailable,
+        require_local_mode,
+        run_local,
+    )
+    from infosec_harness.workflows.submission import submit_via_temporal
 
-    if local and get_settings().model_mode != "stub":
-        raise typer.BadParameter("Real assessments require Temporal; --local requires HARNESS_MODEL_MODE=stub.")
+    if local:
+        try:
+            require_local_mode()
+        except LocalModeUnavailable as e:
+            raise typer.BadParameter(str(e)) from e
     items = _load_findings(findings)
 
     async def _go():
         await db.create_all()
         if local:
-            batch_id, outputs = await runner.run_local(items, label=label)
+            batch_id, outputs = await run_local(items, label=label)
             for o in outputs:
                 typer.echo(f"  {o.finding.fingerprint}  {o.result.verdict.label.value:26} {o.result.priority.value}")
         else:
-            batch_id = await runner.submit_via_temporal(items, label=label)
+            batch_id = await submit_via_temporal(items, label=label)
         typer.echo(f"BATCH_ID={batch_id}")
 
     asyncio.run(_go())
@@ -74,6 +81,36 @@ def report(run_id: str):
     if detail is None:
         raise typer.Exit(code=1)
     typer.echo(json.dumps(detail, indent=2))
+
+
+@app.command()
+def readiness(
+    timeout: float = typer.Option(15, help="Seconds allowed per check (1-300)"),
+    worker_hostname: str = typer.Option(
+        None, help="Exact worker hostname, or `current` inside its container"),
+):
+    """Read-only database/schema and recent Temporal poller checks; no workflow dispatch."""
+    from infosec_harness.operations import readiness as checks
+
+    result, code = checks.report(timeout, worker_hostname)
+    typer.echo(json.dumps(result, sort_keys=True))
+    raise typer.Exit(code)
+
+
+@app.command("model-connectivity")
+def model_connectivity(
+    model: bool = typer.Option(
+        False, "--model", help="Explicitly authorize one configured model request"),
+    timeout: float = typer.Option(90, help="Seconds allowed for the request (1-300)"),
+):
+    """One explicit structured-output request; never agent qualification or broker admission."""
+    if not model:
+        raise typer.BadParameter("--model is required to authorize inference")
+    from infosec_harness.operations import model_connectivity as check
+
+    result, code = check.report(timeout)
+    typer.echo(json.dumps(result, sort_keys=True))
+    raise typer.Exit(code)
 
 
 @app.command()

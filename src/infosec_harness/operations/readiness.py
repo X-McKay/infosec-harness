@@ -1,12 +1,9 @@
-#!/usr/bin/env python3
 """Read-only database/schema and recent Temporal poller checks; no workflow dispatch."""
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 import hashlib
-import json
 import math
 import re
 import socket
@@ -22,8 +19,8 @@ from temporalio.api.taskqueue.v1 import TaskQueue
 from temporalio.api.workflowservice.v1 import DescribeTaskQueueRequest
 from temporalio.client import Client
 
+from infosec_harness.api.evidence_io import read_bytes
 from infosec_harness.persistence.db import database_connect_args
-from infosec_harness.qualification.ledger import read_bytes
 from infosec_harness.resources import package_root
 from infosec_harness.services import temporal_connection_options
 from infosec_harness.settings import get_settings
@@ -198,30 +195,15 @@ async def check_runtime(timeout: float = 15, worker_hostname: str | None = None)
     }
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--timeout", type=float, default=15)
-    parser.add_argument(
-        "--worker-hostname", help="Exact worker hostname, or current inside its container"
-    )
-    args = parser.parse_args()
+def report(timeout: float = 15, worker_hostname: str | None = None) -> tuple[dict, int]:
+    """`harness readiness`: the checks as JSON, and exit status 1 unless every check passed."""
     try:
-        result = asyncio.run(check_runtime(args.timeout, args.worker_hostname))
+        result = asyncio.run(check_runtime(timeout, worker_hostname))
     except Exception:
-        print(
-            json.dumps(
-                {
-                    "checks": {
-                        label: gate("failed", "Runtime check configuration failed")
-                        for label in ("database", "workflow_pollers", "activity_pollers")
-                    }
-                }
-            )
-        )
-        return 1
-    print(json.dumps(result, sort_keys=True))
-    return int(any(check["status"] != "passed" for check in result["checks"].values()))
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+        return {
+            "checks": {
+                label: gate("failed", "Runtime check configuration failed")
+                for label in ("database", "workflow_pollers", "activity_pollers")
+            }
+        }, 1
+    return result, int(any(check["status"] != "passed" for check in result["checks"].values()))

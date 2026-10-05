@@ -9,6 +9,7 @@ build/probe run for real when Docker is available, else pass sandbox=False.
 from __future__ import annotations
 
 from infosec_harness.domain.models import (
+    Finding,
     FindingInput,
     PreparedEnvironment,
     RepoRef,
@@ -26,7 +27,6 @@ from infosec_harness.graph.pipeline import (
     warm_then_fan_out,
 )
 from infosec_harness.graph.prepare import PrepareFailed, run_prepare
-from infosec_harness.intake import adapters
 from infosec_harness.repo.checkout import checkout
 from infosec_harness.repo.detect import detect_stack
 from infosec_harness.settings import get_settings
@@ -94,7 +94,7 @@ async def triage_batch_local(findings: list[FindingInput], *, sandbox: bool = Tr
                 # failure of all on a harvested manifest.
                 for f in group:
                     results[order[id(f)]] = inconclusive_output(
-                        adapters.to_finding(f), classify_pipeline_failure(e),
+                        Finding.from_input(f), classify_pipeline_failure(e),
                         f"Discovering {repo_url} failed: {describe_failure(e)}", "failed",
                         manifest=(source_manifest(snapshot, stack) if snapshot is not None
                                   else {}))
@@ -117,7 +117,7 @@ async def triage_batch_local(findings: list[FindingInput], *, sandbox: bool = Tr
                     ran = ", ".join(i.agent for i in partial) or "none"
                     for f in component.findings:
                         results[order[id(f)]] = inconclusive_output(
-                            adapters.to_finding(f), classify_pipeline_failure(cause),
+                            Finding.from_input(f), classify_pipeline_failure(cause),
                             f"Preparing component {component.root!r} of {repo_url} failed after "
                             f"{len(partial)} agent call(s) ({ran}): {describe_failure(cause)}",
                             "failed", manifest=source_manifest(snapshot, component.stack))
@@ -143,7 +143,7 @@ async def _triage_group(ops: LocalOps, group: list[FindingInput], prepared: Prep
             # triage_finding already contains failures after normalization; this is the
             # in-process equivalent of a failed child workflow.
             return inconclusive_output(
-                adapters.to_finding(f), classify_pipeline_failure(e),
+                Finding.from_input(f), classify_pipeline_failure(e),
                 f"Triage failed for this finding: {describe_failure(e)}",
                 prepared.status, manifest=execution_manifest(prepared))
 

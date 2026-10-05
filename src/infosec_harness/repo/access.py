@@ -12,6 +12,12 @@ from infosec_harness.domain.models import CodeRef
 
 MAX_TRAVERSAL_ENTRIES = 200_000
 
+# Repository metadata and installed dependency/cache trees: never source, never captured.
+DEPENDENCY_DIRS = frozenset({".git", "node_modules", ".venv", "venv", "__pycache__"})
+# Generated build output and tool state. A snapshot keeps them (a directory name cannot prove
+# they are irrelevant, and size limits bound them); detection and agent reads skip them.
+BUILD_OUTPUT_DIRS = frozenset({"target", "build", "dist", ".idea", ".tox"})
+
 
 class RepositoryAccessError(ValueError):
     """A requested path or repository entry violates the source boundary."""

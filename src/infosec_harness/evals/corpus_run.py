@@ -82,8 +82,10 @@ async def score_corpus(*, language: str = "python", sandbox: bool | None = None,
     ``report`` writes the metrics, with the code and corpus they were measured on, as JSON.
     """
     code = code_version()
+    from infosec_harness.evals.corpus import approve_corpus_root, load_corpus
     from infosec_harness.evals.corpus import languages as corpus_languages
-    from infosec_harness.evals.corpus import load_corpus
+
+    approve_corpus_root(manifest_path)
 
     if language == "all" and manifest_path is not None:
         # `languages()` reads the seeded manifest, so sweeping a harvested one has to come

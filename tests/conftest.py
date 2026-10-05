@@ -85,7 +85,7 @@ def load_script(name: str):
     """Import scripts/<name>.py as the top-level module `name`.
 
     One mechanism, so a script and the scripts it imports (service_validation imports
-    ui_deployment_smoke, runtime_readiness and model_connectivity by name) are the same module
+    ui_deployment_smoke by name) are the same module
     objects the tests patch. scripts/ is appended, never prepended, so it cannot shadow an
     installed package; a name that resolves elsewhere is an error, not a silent substitution.
     """
@@ -125,6 +125,22 @@ def _require_temporal() -> str:
     if os.environ.get("HARNESS_TEST_REQUIRE_TEMPORAL") == "1":
         pytest.fail(f"HARNESS_TEST_REQUIRE_TEMPORAL=1 but {_TEMPORAL_REASON}", pytrace=False)
     pytest.skip(_TEMPORAL_REASON)
+
+
+@pytest.fixture(autouse=True)
+def _approved_local_repo_roots(tmp_path_factory, monkeypatch):
+    """Admit the suite's own local sources: temporary trees and the seeded corpus.
+
+    Tests build repositories under pytest's base temp or the system temp directory. Production
+    admits no local path unless the operator lists its root; tests that check that gate set
+    `local_repo_roots` themselves and override this.
+    """
+    from infosec_harness.settings import get_settings
+
+    monkeypatch.setattr(
+        get_settings(), "local_repo_roots",
+        [tmp_path_factory.getbasetemp(), Path(tempfile.gettempdir()), ROOT / "eval-corpus"],
+    )
 
 
 @pytest.fixture

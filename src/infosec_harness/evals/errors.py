@@ -9,7 +9,7 @@ import httpx
 import openai
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 
-from infosec_harness.inference.protocol import BrokerError
+from infosec_harness.inference.protocol import ERROR_CODES, BrokerError
 
 
 class FailureDiagnostic(TypedDict):
@@ -44,8 +44,6 @@ def failure_diagnostic(exc: BaseException) -> FailureDiagnostic:
         code = exc.code
         # Neither arbitrary exception text nor forged/unrecognized disposition names
         # become evidence. Historical non-broker diagnostics retain their exact shape.
-        result["broker_error_code"] = code if type(code) is str and code in {
-            "auth", "policy", "identity", "budget", "expired", "conflict", "pending",
-            "completion_unknown", "unavailable", "invalid_response",
-        } else "unknown"
+        result["broker_error_code"] = (
+            code if type(code) is str and code in ERROR_CODES else "unknown")
     return result

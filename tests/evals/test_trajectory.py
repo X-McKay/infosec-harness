@@ -17,14 +17,13 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from infosec_harness.agents.deps import AgentDeps
 from infosec_harness.agents.registry import build_agent
 from infosec_harness.agents.render import render_prompt
+from infosec_harness.agents.trajectory import count_repeated_calls, inspect_messages
 from infosec_harness.domain.models import StackFingerprint
 from infosec_harness.evals.trajectory import (
     AGENT_EXPECTATIONS,
     TrajectoryExpectation,
     check_expectations,
-    count_repeated_calls,
     cwe_skill_prefix,
-    inspect_messages,
 )
 
 

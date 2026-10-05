@@ -6,9 +6,9 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import func, or_, select
 
-from infosec_harness.api.contracts import ExperimentDetail, MetricsResponse, RunPage
+from infosec_harness.api.contracts import ExperimentDetail, RunPage
 from infosec_harness.persistence import db, store
-from infosec_harness.persistence.metrics import aggregate_metrics
+from infosec_harness.persistence.metrics import MetricsResponse, aggregate_metrics
 from infosec_harness.persistence.population import (
     Population,
     experiment_population,

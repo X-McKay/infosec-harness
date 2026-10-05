@@ -3,37 +3,15 @@ import os
 from pathlib import Path
 
 import pytest
-from temporalio import workflow
 
-with workflow.unsafe.imports_passed_through():
-    from broker_native_temporal_fixture import NATIVE_AGENT
-    from pydantic_ai.messages import ModelResponse
-
-pytestmark = pytest.mark.requires_service("HARNESS_NATIVE_TEMPORAL_CONFIG")
-
-
-@workflow.defn(name="NativeBrokerTemporalRecoveryQualification")
-class NativeBrokerTemporalWorkflow:
-    __pydantic_ai_agents__ = [NATIVE_AGENT]
-
-    @workflow.run
-    async def run(self, prompt: str) -> dict:
-        result = await NATIVE_AGENT.run(prompt)
-        responses = [message for message in result.all_messages() if isinstance(message, ModelResponse)]
-        usage = result.usage
-        return {"output": result.output, "requests": usage.requests,
-                "input_tokens": usage.input_tokens, "output_tokens": usage.output_tokens,
-                "broker": responses[-1].metadata.get("harness_broker") if responses[-1].metadata else None}
-
-
+pytestmark = pytest.mark.requires_service(
+    "HARNESS_NATIVE_TEMPORAL_CONFIG", "IH_NATIVE_FIXTURE_CONFIG")
 
 
 async def test_actual_native_agent_string_temporal_saved_retry_and_replay():
-    config_path = os.environ.get("HARNESS_NATIVE_TEMPORAL_CONFIG")
-    if not config_path:
-        pytest.skip("native lane operator handoff required")
-    from broker_native_temporal_fixture import qualify
-    report = await qualify(Path(config_path))
+    from infosec_harness.qualification.broker.native_temporal import qualify
+
+    report = await qualify(Path(os.environ["HARNESS_NATIVE_TEMPORAL_CONFIG"]))
     assert report["status"] == "passed", report.get("failure_class")
     assert report["provider_dispatches"] == 1
     assert report["maximum_activity_attempt"] == 2

@@ -35,7 +35,6 @@ def workflow_info(attempt=1):
 
 async def test_new_broker_operation_identity_survives_attempts_but_distinguishes_invocations(monkeypatch):
     calls = []
-    monkeypatch.setattr(accounting.workflow, "patched", lambda name: True)
 
     async def execute(activity, args, **kwargs):
         calls.append(args)
@@ -44,19 +43,21 @@ async def test_new_broker_operation_identity_survives_attempts_but_distinguishes
     identities = []
     for attempt in (1, 2):
         monkeypatch.setattr(accounting.workflow, "info", lambda attempt=attempt: workflow_info(attempt))
-        identities.append(await accounting.RootAccounting().reserve(config(), configuration_digest="accepted-config"))
+        identities.append(await accounting.RootAccounting(
+            root_id="batch:root", fingerprint="fingerprint").reserve(config(), configuration_digest="accepted-config"))
     assert identities[0] == identities[1]
     assert identities[0][1] == "triage:fingerprint:batch:root:execution-1:0:context"
     reserved = [args for args in calls if "requested" in args]
     assert all(args["run_id"] == "execution-1" and args["invocation_id"] == identities[0][1] for args in reserved)
-    instance = accounting.RootAccounting()
+    instance = accounting.RootAccounting(root_id="batch:root", fingerprint="fingerprint")
     first = await instance.reserve(config(), configuration_digest="accepted-config")
     second = await instance.reserve(config(), configuration_digest="accepted-config")
     assert first != second
 
 
-async def test_historical_direct_accounting_keeps_original_identity_and_command_shape(monkeypatch):
-    monkeypatch.setattr(accounting.workflow, "patched", lambda name: name != "credential-broker-invocation-v1")
+async def test_direct_accounting_identity_is_workflow_scoped_and_carries_no_broker_fields(
+    monkeypatch,
+):
     monkeypatch.setattr(accounting.workflow, "info", workflow_info)
     calls = []
 
@@ -64,35 +65,21 @@ async def test_historical_direct_accounting_keeps_original_identity_and_command_
         calls.append(args)
         return {"status": "reserved"}
     monkeypatch.setattr(accounting.workflow, "execute_activity", execute)
-    identity = await accounting.RootAccounting().reserve(config(broker=False), configuration_digest="accepted-config")
+    identity = await accounting.RootAccounting(
+        root_id="batch:root", fingerprint="fingerprint",
+    ).reserve(config(broker=False), configuration_digest="accepted-config")
     assert identity[1] == "triage:fingerprint:batch:root:0:context"
     assert "run_id" not in calls[0] and "invocation_id" not in calls[0]
-
-
-async def test_completed_direct_history_replays_under_brokered_deployment_without_switching(monkeypatch):
-    monkeypatch.setattr(accounting.workflow, "patched", lambda name: name != "credential-broker-invocation-v1")
-    monkeypatch.setattr(accounting.workflow, "info", workflow_info)
-    monkeypatch.setattr(accounting.workflow.unsafe, "is_replaying", lambda: True)
-    calls = []
-
-    async def execute(activity, args, **kwargs):
-        calls.append((activity, args))
-        return {"status": "reserved"}
-    monkeypatch.setattr(accounting.workflow, "execute_activity", execute)
-    identity = await accounting.RootAccounting().reserve(config(), configuration_digest="accepted-config")
-    assert identity[1] == "triage:fingerprint:batch:root:0:context"
-    assert all("run_id" not in args and "invocation_id" not in args for _, args in calls)
 
 
 async def test_new_temporal_binding_is_an_activity_and_not_runtime_io_in_workflow(monkeypatch):
     selected = config()
     ops = temporal_ops.TemporalOps()
-    monkeypatch.setattr(ops, "_agent_for", lambda name: object())
-    monkeypatch.setattr(ops, "_config_for", lambda name: selected)
+    ops._agents = {"context": object()}
+    ops._configs = {"context": selected}
     ops._accounting.reserve = AsyncMock(return_value=("root", "operation"))
     ops._accounting.settle = AsyncMock()
     monkeypatch.setattr(temporal_ops.workflow, "info", workflow_info)
-    monkeypatch.setattr(temporal_ops.workflow, "patched", lambda name: True)
     from infosec_harness.inference import invocations
     monkeypatch.setattr(invocations, "request_invocation", lambda *args: pytest.fail("Workflow runtime I/O"))
     scheduled = []
@@ -121,8 +108,8 @@ async def test_new_temporal_binding_is_an_activity_and_not_runtime_io_in_workflo
 async def test_direct_temporal_branch_does_not_schedule_broker_activity(monkeypatch):
     selected = config(broker=False)
     ops = temporal_ops.TemporalOps()
-    monkeypatch.setattr(ops, "_agent_for", lambda name: object())
-    monkeypatch.setattr(ops, "_config_for", lambda name: selected)
+    ops._agents = {"context": object()}
+    ops._configs = {"context": selected}
     ops._accounting.reserve = AsyncMock(return_value=("root", "operation"))
     ops._accounting.settle = AsyncMock()
     monkeypatch.setattr(temporal_ops.workflow, "execute_activity", AsyncMock(side_effect=AssertionError("Unexpected broker activity")))

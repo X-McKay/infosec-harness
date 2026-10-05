@@ -43,10 +43,6 @@ class PreFilterResult:
     verdict: Verdict | None
     note: str | None = None
 
-    @property
-    def continue_triage(self) -> bool:
-        return self.verdict is None
-
 
 def pre_filter(finding: Finding, snapshot: RepoSnapshot) -> PreFilterResult:
     """Reject a missing location without turning absence or a path name into safety."""
@@ -81,10 +77,10 @@ def priority_score(finding: Finding, verdict: Verdict, reachability: Reachabilit
     if verdict.label is VerdictLabel.inconclusive:
         # Assessment confidence is unknown, not evidence that the underlying security severity
         # fell. Keep operational failures and missing evidence from demoting a critical report.
-        return round(SEVERITY_WEIGHT.get(finding.severity, 0.4) * 0.6, 4)
+        return round(SEVERITY_WEIGHT[finding.severity] * 0.6, 4)
     return round(
         VERDICT_WEIGHT[verdict.label]
-        * SEVERITY_WEIGHT.get(finding.severity, 0.4)
+        * SEVERITY_WEIGHT[finding.severity]
         * REACHABILITY_WEIGHT[reachability]
         * (0.3 + 0.7 * verdict.confidence),
         4,
@@ -103,5 +99,5 @@ def priority_band(score: float) -> PriorityBand:
 
 def priority_for_inconclusive(finding: Finding) -> tuple[float, PriorityBand]:
     """Priority for a run with no supported security judgment, preserving intake severity."""
-    score = round(SEVERITY_WEIGHT.get(finding.severity, 0.4) * 0.6, 4)
+    score = round(SEVERITY_WEIGHT[finding.severity] * 0.6, 4)
     return score, priority_band(score)

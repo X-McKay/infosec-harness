@@ -19,15 +19,23 @@ from infosec_harness.api.contracts import BrokerStatus
 from infosec_harness.api.evidence_io import (
     COMMIT,
     EvidenceReference,
-    load_bundle,
+    read_bytes,
+    read_evidence,
     read_reference,
     reject_duplicate_fields,
 )
+from infosec_harness.domain.canonical import is_sha256
 from infosec_harness.persistence import db
 from infosec_harness.persistence.reconciliation import is_conservatively_closed
-from infosec_harness.qualification.ledger import is_hash, read_bytes
 from infosec_harness.resources import source_checkout
 from infosec_harness.settings import get_settings
+
+# Modules outside `inference/` that the controller loads: the canonical digest encoding and the
+# bounded subprocess runner. A loaded-module attestation that omits them is incomplete.
+CONTROLLER_SHARED_MODULES = (
+    "src/infosec_harness/domain/canonical.py",
+    "src/infosec_harness/sandbox/process.py",
+)
 
 
 class BrokerMeasurement(TypedDict):
@@ -40,8 +48,16 @@ class BrokerMeasurement(TypedDict):
     evidence: dict[str, EvidenceReference]
 
 
+def _observation() -> object:
+    """The operator-recorded measurement named by HARNESS_BROKER_OBSERVATION."""
+    path = get_settings().broker_observation
+    if path is None:
+        raise ValueError("evidence unavailable")
+    return read_evidence(path)
+
+
 def broker_measurement() -> tuple[BrokerMeasurement, bool]:
-    value = read_reference(load_bundle()["broker_observation"])
+    value = _observation()
     fields = {
         "version",
         "checked_at",
@@ -69,7 +85,7 @@ def broker_measurement() -> tuple[BrokerMeasurement, bool]:
     catalog = get_settings().broker_config
     if (
         catalog is None
-        or not is_hash(value["catalog_sha256"])
+        or not is_sha256(value["catalog_sha256"])
         or hashlib.sha256(read_bytes(catalog)).hexdigest() != value["catalog_sha256"]
     ):
         raise ValueError("configuration drift")
@@ -120,15 +136,15 @@ def broker_measurement() -> tuple[BrokerMeasurement, bool]:
         str(p.relative_to(root))
         for p in (Path(root) / "src/infosec_harness/inference").glob("*.py")
         if p.name != "__init__.py"
-    }
+    } | set(CONTROLLER_SHARED_MODULES)
     if set(modules) != required_modules:
         raise ValueError("incomplete source inventory")
     if (
         health.get("new_controller_id")
         != owner.get("owned_container_ids", {}).get("ih-live-controller")
         or not isinstance(health.get("new_controller_id"), str)
-        or not is_hash(health.get("new_controller_id"))
-        or not is_hash(health.get("controller_configuration_sha256"))
+        or not is_sha256(health.get("new_controller_id"))
+        or not is_sha256(health.get("controller_configuration_sha256"))
     ):
         raise ValueError("controller identity mismatch")
     from infosec_harness.inference.profiles import load_broker_config
@@ -150,7 +166,7 @@ def broker_measurement() -> tuple[BrokerMeasurement, bool]:
         name, profile = config.profile_for_agent(agent)
         if (
             observation.get("state") != "ready"
-            or not is_hash(observation.get("contract_digest"))
+            or not is_sha256(observation.get("contract_digest"))
             or observation.get("contract_digest") != by_agent[agent].get("contract_digest")
             or any(
                 observation.get(k) != expected
@@ -167,9 +183,9 @@ def broker_measurement() -> tuple[BrokerMeasurement, bool]:
     for name, digest in modules.items():
         if (
             not isinstance(name, str)
-            or not name.startswith("src/infosec_harness/inference/")
+            or name not in required_modules
             or ".." in Path(name).parts
-            or not is_hash(digest)
+            or not is_sha256(digest)
         ):
             raise ValueError("invalid module identity")
         expected_dependencies[str(Path(root) / name)] = digest
@@ -179,7 +195,7 @@ def broker_measurement() -> tuple[BrokerMeasurement, bool]:
     for name in ("controller.py", "openshell.py", "transport.py"):
         if adapters.get(name) != modules.get(
             "src/infosec_harness/inference/" + name
-        ) or not is_hash(adapters.get(name)):
+        ) or not is_sha256(adapters.get(name)):
             raise ValueError("adapter identity mismatch")
     config_files = owner.get("candidate_config_files_sha256", {})
     if (
@@ -188,7 +204,7 @@ def broker_measurement() -> tuple[BrokerMeasurement, bool]:
     ):
         raise ValueError("catalog measurement mismatch")
     for path, digest in {**expected_dependencies, **config_files}.items():
-        if not is_hash(digest) or hashlib.sha256(read_bytes(path)).hexdigest() != digest:
+        if not is_sha256(digest) or hashlib.sha256(read_bytes(path)).hexdigest() != digest:
             raise ValueError("runtime dependency drift")
     return value, stale
 

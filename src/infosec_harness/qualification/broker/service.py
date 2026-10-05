@@ -30,6 +30,29 @@ AGENTS = ("intake", "recon", "env-planner", "build-repair", "partial-build", "co
           "probe-planner", "probe-author", "probe-diagnosis", "probe-repair", "verdict")
 
 
+SERVICE_MODEL_ACTIVITY_TIMEOUT_S = 20
+
+
+def use_service_activity_timeout() -> None:
+    """Shorten the durable model activity timeout so a killed worker's retry shows promptly.
+
+    Retry policy and the registered model/tool construction are unchanged. Durable agents
+    capture the activity configuration when `agents.durable` is first imported, so this must
+    run before that; called later it would silently not apply, and it refuses instead.
+    """
+    from datetime import timedelta
+
+    from temporalio.workflow import ActivityConfig
+
+    from infosec_harness.agents import registry
+
+    if "infosec_harness.agents.durable" in sys.modules:
+        raise RuntimeError("durable agents were built before the qualification timeout was set")
+    registry.MODEL_ACTIVITY = ActivityConfig(
+        start_to_close_timeout=timedelta(seconds=SERVICE_MODEL_ACTIVITY_TIMEOUT_S),
+        retry_policy=registry.ACTIVITY_RETRY)
+
+
 def private_json(path: Path, value) -> None:
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as output:
@@ -109,7 +132,9 @@ def environment(manifest: dict) -> dict[str, str]:
         HARNESS_MODEL_BACKEND="qualification", BROKER_QUALIFICATION_WORKER_KEY=manifest["worker_key"],
         HARNESS_BROKER_SERVICE_MANIFEST=manifest["manifest"], SSL_CERT_FILE=manifest["pki"]["ca"],
         PYTHONPATH=str(ROOT / "src"),
-        PYDANTIC_AI_NO_BANNER="1", HARNESS_AGENT_RUN_TIMEOUT_S="90")
+        PYDANTIC_AI_NO_BANNER="1", HARNESS_AGENT_RUN_TIMEOUT_S="90",
+        # Pytest children refuse an ambient live mode or database without these opt-ins.
+        HARNESS_TEST_ALLOW_LIVE="1", HARNESS_TEST_DATABASE_URL=manifest["database_url"])
     return values
 
 
@@ -408,6 +433,7 @@ def main():
     elif args.role == "executor":
         run_executor(manifest, json.loads(args.config.read_text()))
     else:
+        use_service_activity_timeout()
         from infosec_harness.qualification.broker.service_workflow import serve_worker
         asyncio.run(serve_worker(manifest))
 

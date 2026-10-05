@@ -143,7 +143,6 @@ async def test_reconcile_only_submission_candidates_never_resumes_unknown_holds(
     monkeypatch.setattr(runner, "start_accepted_batch", capture_start)
     monkeypatch.setattr(runner, "cancel_durable_batch", capture_cancel)
     monkeypatch.setattr(worker, "connect", forbidden)
-    monkeypatch.setattr(controller.Controller, "recover", forbidden, raising=False)
     monkeypatch.setattr(controller.Controller, "infer", forbidden, raising=False)
     monkeypatch.setattr(controller.Controller, "revoke_run", forbidden, raising=False)
     monkeypatch.setattr(ledger, "recover", forbidden)

@@ -216,7 +216,8 @@ async def test_signed_request_with_changed_cap_is_rejected_before_ledger_or_prov
 
 def test_resolved_model_provenance_routes_budget_after_total_floor(monkeypatch):
     config = models.ModelsConfig(backends={'bounded': models.BackendConfig(
-        kind='openai_compatible', thinking_token_budget=8, min_max_tokens=16)},
+        kind='openai_compatible', base_url='https://provider.invalid/v1',
+        thinking_token_budget=8, min_max_tokens=16)},
         default_backend='bounded', model_catalog={})
     monkeypatch.setattr(models, 'get_settings', lambda: SimpleNamespace(model_mode='live'))
     monkeypatch.setattr(models, 'load_models_config', lambda: config)

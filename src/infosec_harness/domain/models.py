@@ -6,12 +6,13 @@ part of the output schema the model sees, so keep them precise.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from enum import StrEnum
 from typing import Any, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from infosec_harness.domain.canonical import digest
 
 
 def _nested_model_fields(cls: type[BaseModel]) -> set[str]:
@@ -54,16 +55,6 @@ class _Model(BaseModel):
                 decoded = decoded if decoded is not None else dict(data)
                 decoded[name] = parsed
         return decoded if decoded is not None else data
-
-
-def canonical_json(model: BaseModel | dict | list) -> str:
-    """Byte-stable JSON (sorted keys, no whitespace variance) for hashing and prompts."""
-    data = model.model_dump(mode="json") if isinstance(model, BaseModel) else model
-    return json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-
-
-def sha256_text(text: str) -> str:
-    return hashlib.sha256(text.encode()).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -207,8 +198,7 @@ class Finding(_Model):
         # a Git revision with the same spelling need not contain the same bytes.
         if inp.source_mode is not None:
             identity["source_mode"] = inp.source_mode
-        key = canonical_json(identity)
-        return sha256_text(key)[:24]
+        return digest(identity)[:24]
 
 
 # ---------------------------------------------------------------------------
@@ -404,6 +394,14 @@ TERMINAL_BATCH_STATUSES = frozenset({BatchStatus.complete, BatchStatus.failed,
                                      BatchStatus.cancelled})
 
 
+class ExperimentStatus(StrEnum):
+    """Persisted lifecycle of one eval experiment (`evals.run.run_experiment`)."""
+
+    running = "running"
+    complete = "complete"
+    truncated = "truncated"
+
+
 class CodeRef(_Model):
     file_path: str
     start_line: int
@@ -476,7 +474,7 @@ class ProbePlan(_Model):
     # tool's JSON schema, and they are the only length guidance it gets there: with none, a
     # reasoning model has nothing telling it the answer is short, and deliberating over an
     # open-ended one is how probe-planner spent a whole 16000-token cap on thinking and
-    # emitted nothing (docs/validation/LIVE_VALIDATION.md). The agent's instructions say the same thing;
+    # emitted nothing (docs/evidence/2026-09-25-live-model-validation/LIVE_VALIDATION.md). The agent's instructions say the same thing;
     # saying it in both places means it survives a prompt the model skims.
     hypothesis: str = Field(description="One sentence: the exploit condition the test attempts")
     payload: str = Field(

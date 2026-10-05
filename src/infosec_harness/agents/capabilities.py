@@ -10,17 +10,6 @@ from pydantic_ai.capabilities import AbstractCapability
 
 from infosec_harness.agents.deps import AgentDeps
 from infosec_harness.agents.repo_tools import (
-    MAX_BATCH_BYTES,
-    MAX_BATCH_FILES,
-    MAX_DIGEST_BYTES,
-    MAX_DIGEST_MANIFESTS,
-    MAX_LIST,
-    MAX_MANIFEST_LINES,
-    MAX_MATCHES,
-    MAX_READ_LINES,
-    MAX_TREE_BYTES,
-    MAX_TREE_DIRS,
-    MAX_TREE_NAMED_FILES,
     list_files,
     list_tree,
     read_file,
@@ -28,50 +17,8 @@ from infosec_harness.agents.repo_tools import (
     repo_digest,
     search_code,
 )
-from infosec_harness.agents.symbol_inspection import (
-    _EXTRACTORS,
-    MAX_DESCRIBE_BYTES,
-    MAX_SYMBOL_FIELD,
-    MAX_SYMBOL_SOURCE_LINES,
-    MAX_SYMBOLS,
-    describe_callables,
-)
-from infosec_harness.agents.target_context import MAX_TARGET_CONTEXT_BYTES, inspect_target
-
-__all__ = [
-    "CUSTOM_CAPABILITIES",
-    "DEFAULT_REPO_RO_TOOLS",
-    "MAX_BATCH_BYTES",
-    "MAX_BATCH_FILES",
-    "MAX_DESCRIBE_BYTES",
-    "MAX_DIGEST_BYTES",
-    "MAX_DIGEST_MANIFESTS",
-    "MAX_LIST",
-    "MAX_MANIFEST_LINES",
-    "MAX_MATCHES",
-    "MAX_READ_LINES",
-    "MAX_SYMBOL_FIELD",
-    "MAX_SYMBOL_SOURCE_LINES",
-    "MAX_SYMBOLS",
-    "MAX_TREE_BYTES",
-    "MAX_TREE_DIRS",
-    "MAX_TREE_NAMED_FILES",
-    "MAX_TARGET_CONTEXT_BYTES",
-    "REPO_RO_TOOLS",
-    "RepoReadOnly",
-    "SandboxShell",
-    "_EXTRACTORS",
-    "describe_callables",
-    "inspect_target",
-    "list_files",
-    "list_tree",
-    "read_file",
-    "read_files",
-    "repo_digest",
-    "repo_ro_toolset",
-    "run_in_sandbox",
-    "search_code",
-]
+from infosec_harness.agents.symbol_inspection import describe_callables
+from infosec_harness.agents.target_context import inspect_target
 
 # The toolset's tools, in the order they are declared to the model. The order is part of the
 # cacheable prompt prefix, so it is fixed here rather than derived from a set.
@@ -123,7 +70,7 @@ class RepoReadOnly(AbstractCapability[AgentDeps]):
 
     `tools` narrows the surface to a named subset; omitted, the agent gets all of it. A
     narrower surface is both least privilege and a smaller cacheable prefix, and it is what
-    lets the offline measurement in `evals/exploration.py` attribute a change in round trips
+    lets the offline measurement in `scripts/exploration.py` attribute a change in round trips
     to one tool rather than to the whole toolset.
     """
 
@@ -159,7 +106,7 @@ async def run_in_sandbox(ctx: RunContext[AgentDeps], command: str) -> str:
     # Diagnostic commands get no external egress. A repository/model-authored command cannot
     # widen the build allowlist or bypass its proxy; dependency installation belongs to the
     # controlled build phase.
-    res = await docker.run_shell(ctx.deps.sandbox_image, command, network=False, timeout=180,
+    res = await docker.run_shell(ctx.deps.sandbox_image, command, timeout=180,
                                  idempotency_key=key)
     return (
         f"[exit code: {res.exit_code}{' (timed out)' if res.timed_out else ''}]\n"

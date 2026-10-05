@@ -5,7 +5,7 @@ Scope, and why it is not 24 x 9
 The playbook asks for nine case types per skill. Most of the 216 cells that implies could not
 fail, and a suite padded to fill them would report "every skill fully evaluated" while testing
 four things — the decorative-coverage failure `evals/inert_gates.py` exists to name. The
-triage lives in `evals/skill_coverage.py` and is *reported* by `test_the_coverage_summary_names_its_own_gaps`
+triage lives in `tests/agents/skill_support/coverage.py` and is *reported* by `test_the_coverage_summary_names_its_own_gaps`
 below, so the gaps are part of the output rather than an absence a reader has to notice.
 
 What this file does not establish
@@ -24,8 +24,7 @@ from __future__ import annotations
 import re
 
 import pytest
-
-from infosec_harness.evals.skill_checks import (
+from skill_support.checks import (
     COMPETING_PAIRS,
     COMPOSING_PAIRS,
     activation_problems,
@@ -37,12 +36,12 @@ from infosec_harness.evals.skill_checks import (
     mutual_redirects,
     non_activation_problems,
 )
-from infosec_harness.evals.skill_coverage import (
+from skill_support.coverage import (
     AMBIGUITY_RESIDUE,
     coverage_summary,
     format_coverage_notice,
 )
-from infosec_harness.evals.skill_documents import (
+from skill_support.documents import (
     CASE_TYPES,
     MAX_AGENT_SKILL_SHARE,
     MAX_BODY_TOKENS,
@@ -59,7 +58,7 @@ from infosec_harness.evals.skill_documents import (
     orphan_skills,
     skill_enablement,
 )
-from infosec_harness.evals.skill_recipes import (
+from skill_support.recipes import (
     command_violations,
     extract_commands,
     extract_exemplar_specs,
@@ -114,7 +113,7 @@ def test_a_skill_says_when_it_applies(skill):
     """The positive criteria are the signal a model decides on; vagueness there is expensive.
 
     Making the choice explicit rather than implied is what moved context's skill evocation from
-    19% to 100% (docs/validation/LIVE_VALIDATION.md), so this is a behavioural requirement, not a
+    19% to 100% (docs/evidence/2026-09-25-live-model-validation/LIVE_VALIDATION.md), so this is a behavioural requirement, not a
     conformance one.
     """
     assert not activation_problems(skill), activation_problems(skill)
@@ -195,7 +194,7 @@ def test_the_one_sanctioned_exception_to_the_protocol_is_declared_from_both_ends
     """`cwe-918` must substitute the sink because the sandbox has no egress, and the protocol
     forbids substituting the sink. Both skills now name the exception, and they name it the same
     way round — the shape of disagreement that cost a corpus run when `cwe-89` and the protocol
-    silently differed (docs/validation/LIVE_VALIDATION.md)."""
+    silently differed (docs/evidence/2026-09-25-live-model-validation/LIVE_VALIDATION.md)."""
     ssrf = next(s for s in SKILLS if s.name == "cwe-918-ssrf")
     protocol = next(s for s in SKILLS if s.name == "probe-oracle-protocol")
     outward = {r.target: r for r in ssrf.relations}
@@ -451,7 +450,7 @@ def test_every_test_skill_tells_the_author_not_to_let_the_probe_skip_itself(name
 def test_the_build_and_test_skills_agree_about_the_maven_test_command():
     """Two skills describing the same command is how they drift apart. Both must show the flags
     that the other's prose calls load-bearing, and both must satisfy the validator."""
-    from infosec_harness.agents.validators import MAVEN_TEST_COMMAND
+    from infosec_harness.agents.ecosystem_contract import MAVEN_TEST_COMMAND
 
     required = ["-Dmaven.repo.local=/work/home/.m2/repository",
                 "-Dmaven.test.redirectTestOutputToFile=false",

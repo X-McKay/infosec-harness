@@ -12,7 +12,7 @@ import re
 from pathlib import Path
 
 from infosec_harness.domain.models import ComponentProfile, StackFingerprint, SupportStatus
-from infosec_harness.repo.access import walk_files
+from infosec_harness.repo.access import BUILD_OUTPUT_DIRS, DEPENDENCY_DIRS, walk_files
 
 EXT_LANG = {
     ".py": "python", ".java": "java", ".kt": "java", ".scala": "java",
@@ -40,7 +40,7 @@ BUILD_SYSTEM = {
     # build system at all while the plan still ran cpanm against it.
     "cpanfile": "cpanm", "Makefile.PL": "cpanm", "Build.PL": "cpanm",
 }
-SKIP = {".git", "node_modules", ".venv", "venv", "__pycache__", "target", "build", "dist", ".idea", ".tox"}
+SKIP = DEPENDENCY_DIRS | BUILD_OUTPUT_DIRS
 _JAVA_BUILD_FILES = ("pom.xml", "build.gradle", "build.gradle.kts")
 
 

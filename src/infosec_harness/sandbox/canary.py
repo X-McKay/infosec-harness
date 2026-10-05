@@ -31,6 +31,8 @@ import json
 import re
 from dataclasses import dataclass
 
+from infosec_harness.domain.canonical import canonical_bytes
+
 # Deliberately distinct from any finding's oracle nonce: this proves the transport, and must
 # never be mistaken for evidence about a vulnerability.
 CANARY_NONCE = "harness-canary-0000"
@@ -60,7 +62,7 @@ def encode_control_result(result: ControlResult) -> str:
         "status": result.status,
         "version": result.version,
     }
-    return CONTROL_RESULT_PREFIX + json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return CONTROL_RESULT_PREFIX + canonical_bytes(payload, ascii_only=True).decode()
 
 
 def parse_control_result(text: str) -> ControlResult | None:

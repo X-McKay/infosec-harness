@@ -11,8 +11,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from infosec_harness.agents.registry import AGENT_BINDINGS
 from infosec_harness.api import broker_observation, evidence_io, qualification_evidence, status
+from infosec_harness.api.evidence_io import read_bytes
 from infosec_harness.persistence import db
-from infosec_harness.qualification.ledger import digest, read_bytes
 
 
 def safe(value):
@@ -27,23 +27,11 @@ def ref(tmp_path, name, value):
     return {"file": str(path), "sha256": hashlib.sha256(data).hexdigest()}
 
 
-def test_missing_evidence_has_eleven_unchecked_components(monkeypatch):
-    monkeypatch.setattr(evidence_io, "get_settings", lambda: SimpleNamespace(qualification_bundle=None))
+def test_component_qualification_is_never_claimed_by_the_service():
     result = qualification_evidence.qualification_status().model_dump()
     assert result["status"] == "not_checked"
     assert len(result["components"]) == 11
     assert all(row["status"] == "not_checked" for row in result["components"])
-    safe(result)
-
-
-@pytest.mark.parametrize("kind", [ValueError, OSError, TypeError, KeyError])
-def test_errors_never_echo_private_messages(monkeypatch, kind):
-    def fail():
-        raise kind("PRIVATE_SENTINEL password=credential /secret/evidence")
-
-    monkeypatch.setattr(qualification_evidence, "load_bundle", fail)
-    result = qualification_evidence.qualification_status().model_dump()
-    assert result["status"] == "not_checked"
     safe(result)
 
 
@@ -57,44 +45,6 @@ def test_reader_rejects_ambiguous_or_changed_evidence(tmp_path, kind):
         path = link
     with pytest.raises(ValueError):
         evidence_io.read_evidence(path, "0" * 64 if kind == "drift" else None)
-
-
-def test_matching_commit_label_does_not_override_dependency_drift(tmp_path, monkeypatch):
-    path = tmp_path / "runtime.py"
-    path.write_text("changed runtime")
-    evidence = ref(tmp_path, "witness.json", {"n": 9, "passed": 9})
-    rows, components, selection = [], {}, {}
-    for agent in AGENT_BINDINGS:
-        row = {
-            "component": agent,
-            "scope": "agent_semantics",
-            "measured_status": "passed",
-            "measured_source_commit": "a" * 40,
-            "dependencies": {"runtime": {"source": "0" * 64}},
-            "evidence": {"completion_witness": evidence},
-        }
-        row["id"] = digest(row)
-        rows.append(row)
-        selection[agent] = row["id"]
-        components[agent] = {"runtime": {"source": {"file": str(path)}}}
-    bundle = {
-        "version": 1,
-        "ledger": ref(tmp_path, "ledger.json", {"version": 1, "records": rows}),
-        "current": ref(
-            tmp_path,
-            "current.json",
-            {"qualification_candidate_commit": "a" * 40, "components": components},
-        ),
-        "reviews": ref(tmp_path, "reviews.json", {}),
-        "selection": selection,
-        "broker_observation": None,
-    }
-    monkeypatch.setattr(qualification_evidence, "load_bundle", lambda: bundle)
-    monkeypatch.setattr(qualification_evidence, "get_settings", lambda: SimpleNamespace(git_commit_sha="a" * 40))
-    result = qualification_evidence.qualification_status()
-    assert result.status == "not_checked"
-    assert all(row.status == "not_checked" for row in result.components)
-    safe(result.model_dump())
 
 
 @pytest.mark.parametrize(
@@ -136,10 +86,8 @@ def test_invalid_measurement_metadata_rejected(tmp_path, monkeypatch, change):
             broker_config=catalog, qualification_observation_max_age_seconds=3600
         ),
     )
-    monkeypatch.setattr(broker_observation, "load_bundle", lambda: {"broker_observation": "measurement"})
-    monkeypatch.setattr(
-        broker_observation, "read_reference", lambda r: value if r == "measurement" else {"status": "passed"}
-    )
+    monkeypatch.setattr(broker_observation, "_observation", lambda: value)
+    monkeypatch.setattr(broker_observation, "read_reference", lambda r: {"status": "passed"})
     with pytest.raises((ValueError, TypeError, KeyError)):
         broker_observation.broker_measurement()
 
@@ -274,6 +222,11 @@ def verified_measurement(tmp_path, monkeypatch):
         path = inference / name
         path.write_text(f"# synthetic {name}\n")
         modules[str(path.relative_to(root))] = hashlib.sha256(path.read_bytes()).hexdigest()
+    for relative in broker_observation.CONTROLLER_SHARED_MODULES:
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"# synthetic {relative}\n")
+        modules[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
     catalog = tmp_path / "catalog.yaml"
     catalog.write_text("synthetic operator catalog")
     catalog_hash = hashlib.sha256(catalog.read_bytes()).hexdigest()
@@ -360,8 +313,9 @@ def verified_measurement(tmp_path, monkeypatch):
     )
 
     def install(observation):
-        measurement = ref(tmp_path, "observation.json", observation)
-        monkeypatch.setattr(broker_observation, "load_bundle", lambda: {"broker_observation": measurement})
+        measurement = ref(tmp_path, "observation.json", observation)["file"]
+        monkeypatch.setattr(broker_observation, "_observation",
+                            lambda: evidence_io.read_evidence(measurement))
 
     install(value)
     return copy.deepcopy(value), install
@@ -534,91 +488,12 @@ def test_adapter_digest_map_mismatch_is_rejected(verified_measurement, tmp_path)
         broker_observation.broker_measurement()
 
 
-@pytest.mark.parametrize("witness_key", ["completion_witness", "cardinality"])
-def test_verified_legacy_cardinality_projects_cohort_counts(tmp_path, monkeypatch, witness_key):
-    # Both existing evidence-key generations refer to the same measured n/passed shape.
-    dependency = tmp_path / "runtime.py"
-    dependency.write_bytes(b"unchanged source bytes")
-    measured_sha = hashlib.sha256(dependency.read_bytes()).hexdigest()
-    witness = ref(
-        tmp_path, "complete-cardinality.json", {"status": "complete", "n": 11, "passed": 11}
-    )
-    records, components, selection = [], {}, {}
-    for agent in AGENT_BINDINGS:
-        record = {
-            "component": agent,
-            "scope": "agent_semantics",
-            "measured_status": "passed",
-            "measured_source_commit": "a" * 40,
-            "dependencies": {"runtime": {"source": measured_sha}},
-            "evidence": {witness_key: witness},
-        }
-        record["id"] = digest(record)
-        records.append(record)
-        selection[agent] = record["id"]
-        components[agent] = {"runtime": {"source": {"file": str(dependency)}}}
-    bundle = {
-        "version": 1,
-        "ledger": ref(tmp_path, "ledger-positive.json", {"version": 1, "records": records}),
-        "current": ref(
-            tmp_path,
-            "current-positive.json",
-            {"qualification_candidate_commit": "a" * 40, "components": components},
-        ),
-        "reviews": ref(tmp_path, "reviews-positive.json", {}),
-        "selection": selection,
-        "broker_observation": None,
-    }
-    monkeypatch.setattr(qualification_evidence, "load_bundle", lambda: bundle)
-    monkeypatch.setattr(qualification_evidence, "get_settings", lambda: SimpleNamespace(git_commit_sha="a" * 40))
-    result = qualification_evidence.qualification_status()
-    assert result.status == "passed"
-    assert len(result.components) == 11
-    assert all(
-        row.status == "passed" and row.cases == 11 and row.passed_cases == 11
-        for row in result.components
-    )
-    safe(result.model_dump())
-
-
-@pytest.mark.parametrize("components", [None, []])
-def test_malformed_nested_inventory_stays_unchecked(monkeypatch, components):
-    bundle = {
-        "ledger": "ledger",
-        "current": "current",
-        "reviews": "reviews",
-        "selection": {agent: "unavailable" for agent in AGENT_BINDINGS},
-    }
-    values = {
-        "ledger": {"version": 1, "records": []},
-        "current": {"qualification_candidate_commit": "a" * 40, "components": components},
-        "reviews": {},
-    }
-    monkeypatch.setattr(qualification_evidence, "load_bundle", lambda: bundle)
-    monkeypatch.setattr(qualification_evidence, "read_reference", lambda key: values[key])
-    monkeypatch.setattr(qualification_evidence, "get_settings", lambda: SimpleNamespace(git_commit_sha="a" * 40))
-    result = qualification_evidence.qualification_status()
-    assert result.status == "not_checked"
-    assert len(result.components) == 11
-    safe(result.model_dump())
-
-
-@pytest.mark.parametrize("corruption", ["nested_duplicate", "reference_drift"])
+@pytest.mark.parametrize("corruption", ["nested_duplicate", "malformed"])
 async def test_extracted_projections_share_fail_closed_file_reader(tmp_path, monkeypatch, corruption):
-    """Actual referenced bytes must reject ambiguity/drift across both projections."""
+    """An ambiguous or malformed observation file is unchecked, never echoed."""
     proof = tmp_path / "PRIVATE_SENTINEL-proof.json"
     proof.write_text('{"status":"passed","status":"passed"}' if corruption == "nested_duplicate" else '{}')
-    reference = {"file": str(proof), "sha256": hashlib.sha256(proof.read_bytes()).hexdigest()}
-    bundle = tmp_path / "bundle.json"
-    bundle.write_text(json.dumps({
-        "version": 1, "ledger": reference, "current": reference, "reviews": reference,
-        "selection": {agent: "unavailable" for agent in AGENT_BINDINGS},
-        "broker_observation": reference,
-    }))
-    if corruption == "reference_drift":
-        proof.write_text('{"status":"passed"}')
-    settings = SimpleNamespace(qualification_bundle=bundle, broker_config=tmp_path / "catalog")
-    monkeypatch.setattr(evidence_io, "get_settings", lambda: settings)
+    settings = SimpleNamespace(broker_observation=proof, broker_config=tmp_path / "catalog")
     monkeypatch.setattr(broker_observation, "get_settings", lambda: settings)
 
     class Session:

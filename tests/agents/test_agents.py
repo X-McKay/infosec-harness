@@ -64,6 +64,8 @@ def test_the_token_floor_reaches_the_setting_pydantic_ai_reports(monkeypatch):
     )
 
     monkeypatch.setenv("HARNESS_MODEL_BACKEND", "gateway")
+
+    monkeypatch.setenv("HARNESS_MODEL_BASE_URL", "https://gateway.invalid/v1")
     floor = load_models_config().backends["gateway"].min_max_tokens
     assert floor, "this test needs a backend that declares a per-call floor"
     assert max_tokens_floor("probe-planner") == floor
@@ -95,7 +97,7 @@ def test_the_token_floor_is_inert_where_thinking_has_its_own_budget(monkeypatch)
 
 
 def test_merge_leading_system_messages_collapses_the_prefix():
-    from infosec_harness.agents.models import merge_leading_system_messages
+    from infosec_harness.inference.compat import merge_leading_system_messages
 
     merged = merge_leading_system_messages([
         {"role": "system", "content": "instructions"},
@@ -109,7 +111,7 @@ def test_merge_leading_system_messages_collapses_the_prefix():
 
 
 def test_merge_leading_system_messages_leaves_conforming_requests_alone():
-    from infosec_harness.agents.models import merge_leading_system_messages
+    from infosec_harness.inference.compat import merge_leading_system_messages
 
     for messages in ([{"role": "system", "content": "s"}, {"role": "user", "content": "u"}],
                      [{"role": "user", "content": "u"}]):
@@ -118,7 +120,7 @@ def test_merge_leading_system_messages_leaves_conforming_requests_alone():
 
 def test_merge_does_not_touch_a_later_system_message():
     """Only the leading run is collapsed; a mid-conversation system turn stays put."""
-    from infosec_harness.agents.models import merge_leading_system_messages
+    from infosec_harness.inference.compat import merge_leading_system_messages
 
     messages = [{"role": "system", "content": "a"}, {"role": "system", "content": "b"},
                 {"role": "user", "content": "u"}, {"role": "system", "content": "late"}]

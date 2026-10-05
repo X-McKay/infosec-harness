@@ -32,12 +32,10 @@ def run_id(batch_id: str, fingerprint: str) -> str:
     return hashlib.sha256(f"{batch_id}:{fingerprint}".encode()).hexdigest()[:24]
 
 
-async def create_batch(batch_id: str, *, source_kind: str, label: str, count: int,
-                       workflow_id: str | None = None,
-                       status: BatchStatus = BatchStatus.running) -> None:
+async def create_batch(batch_id: str, *, source_kind: str, label: str, count: int) -> None:
     async with db.session() as s:
-        s.add(db.Batch(id=batch_id, source_kind=source_kind, label=label, status=status,
-                       finding_count=count, workflow_id=workflow_id))
+        s.add(db.Batch(id=batch_id, source_kind=source_kind, label=label,
+                       status=BatchStatus.running, finding_count=count))
         await s.commit()
 
 

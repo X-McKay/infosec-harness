@@ -1,10 +1,8 @@
-"""Inspect an agent run's trajectory: which tools it called and which skills it loaded.
+"""Score an agent run's trajectory: did it evoke the tools and skills it should have?
 
-Used two ways:
-- at run time, ``inspect_messages`` records tools_called / skills_loaded on every
-  AgentOutcome (so real runs are auditable and persisted);
-- in evals, ``check_expectations`` scores whether an agent evoked the tools and skills it
-  should have (the "expected tools and skills are being read/evoked" question).
+The runtime records tools_called / skills_loaded on every AgentOutcome with
+``agents.trajectory.inspect_messages``; here ``check_expectations`` scores them (the
+"expected tools and skills are being read/evoked" question).
 
 Under stub models no tools are called, so these are empty; they light up under a live model
 and are exercised deterministically in tests via a scripted tool-calling model.
@@ -20,70 +18,8 @@ from functools import cache
 
 from pydantic_ai.messages import ModelMessage
 
+from infosec_harness.agents.capabilities import REPO_RO_TOOLS
 from infosec_harness.evals.messages import iter_tool_calls
-
-# The Skills capability exposes this tool; its argument carries the skill id being loaded.
-LOAD_SKILL_TOOL = "load_capability"
-_SKILL_ARG_KEYS = ("id", "capability_id", "name")
-
-
-def _skill_id(args) -> str | None:
-    if isinstance(args, dict):
-        for key in _SKILL_ARG_KEYS:
-            if key in args and isinstance(args[key], str):
-                return args[key]
-        for v in args.values():  # fall back to the first string arg
-            if isinstance(v, str):
-                return v
-    return None
-
-
-def inspect_messages(messages: Sequence[ModelMessage]) -> tuple[list[str], list[str]]:
-    """Return (tools_called, skills_loaded), each de-duplicated and order-preserving.
-
-    Output tools (``final_result`` and friends) are excluded — they are how the agent
-    returns its answer, not tool *use*.
-    """
-    tools: list[str] = []
-    skills: list[str] = []
-    for call in iter_tool_calls(messages):
-        name = call.tool_name
-        if name == LOAD_SKILL_TOOL:
-            sid = _skill_id(call.args_as_dict())
-            if sid and sid not in skills:
-                skills.append(sid)
-            continue
-        if name not in tools:
-            tools.append(name)
-    return tools, skills
-
-
-def count_repeated_calls(messages: Sequence[ModelMessage]) -> dict[str, int]:
-    """Count tool calls that were made with the *same arguments* more than once.
-
-    `inspect_messages` de-duplicates by tool name and discards arguments, which is right for
-    measuring evocation ("did the agent use its tools at all") but makes a run that read one
-    file eight times byte-identical to one that read it once. That is exactly the distinction
-    needed to tell a runaway loop from legitimate work when an agent exhausts its request
-    budget, so it is counted separately here rather than by loosening the contract above.
-
-    Keys are `tool(arg=value, ...)` with arguments sorted so the key is stable; only entries
-    with a count above one are returned, so a healthy run yields an empty dict and costs
-    nothing to record.
-    """
-    seen: Counter[str] = Counter()
-    for call in iter_tool_calls(messages):
-        name = call.tool_name
-        try:
-            args = call.args_as_dict()
-        except Exception:  # malformed args from the model must not break accounting
-            args = None
-        if isinstance(args, dict):
-            rendered = ", ".join(f"{k}={args[k]!r}" for k in sorted(args))
-        else:
-            rendered = repr(args)
-        seen[f"{name}({rendered})"] += 1
-    return {key: n for key, n in seen.items() if n > 1}
 
 
 @dataclass
@@ -129,7 +65,7 @@ def check_expectations(tools_called: Iterable[str], skills_loaded: Iterable[str]
 # relevant skill loaded. Agents with no tools are absent.
 # describe_callables belongs here: it is how an agent learns a symbol's name, signature and
 # import form. Omitting it would score an agent that used it well as having read nothing.
-READ_TOOLS = frozenset({"read_file", "search_code", "list_files", "describe_callables", "inspect_target", "read_files", "list_tree", "repo_digest"})
+READ_TOOLS = frozenset(REPO_RO_TOOLS)
 AGENT_EXPECTATIONS: dict[str, TrajectoryExpectation] = {
     "recon": TrajectoryExpectation(tool_groups=(READ_TOOLS,)),
     "env-planner": TrajectoryExpectation(tool_groups=(READ_TOOLS,)),

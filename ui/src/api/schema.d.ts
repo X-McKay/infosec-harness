@@ -291,8 +291,7 @@ export interface components {
         BatchDetail: {
             /** Id */
             id: string;
-            /** Status */
-            status: string;
+            status: components["schemas"]["BatchStatus"];
             /** Label */
             label: string;
             /** Source Kind */
@@ -324,12 +323,17 @@ export interface components {
                 [key: string]: number;
             };
         };
+        /**
+         * BatchStatus
+         * @description Persisted lifecycle of one submitted batch.
+         * @enum {string}
+         */
+        BatchStatus: "accepted" | "running" | "cancellation_requested" | "complete" | "failed" | "cancelled";
         /** BatchSummary */
         BatchSummary: {
             /** Id */
             id: string;
-            /** Status */
-            status: string;
+            status: components["schemas"]["BatchStatus"];
             /** Label */
             label: string;
             /** Source Kind */
@@ -387,8 +391,7 @@ export interface components {
         };
         /** CancelResponse */
         CancelResponse: {
-            /** Status */
-            status: string;
+            status: components["schemas"]["BatchStatus"];
         };
         /** ConfigResponse */
         ConfigResponse: {
@@ -446,12 +449,19 @@ export interface components {
             /** Cases */
             cases: components["schemas"]["ExperimentCase"][];
         };
+        /**
+         * ExperimentStatus
+         * @description Persisted lifecycle of one eval experiment (`evals.run.run_experiment`).
+         * @enum {string}
+         */
+        ExperimentStatus: "running" | "complete" | "truncated";
         /** ExperimentSummary */
         ExperimentSummary: {
             /** Id */
             id: string;
             /** Agent */
             agent: string;
+            status: components["schemas"]["ExperimentStatus"] | null;
             /** Dataset */
             dataset: string;
             /** Dataset Version */
@@ -717,8 +727,11 @@ export interface components {
              * @default
              */
             reviewer: string;
-            /** Decision */
-            decision: string;
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "confirm" | "override";
             override_label?: components["schemas"]["VerdictLabel"] | null;
             /**
              * Reason
@@ -749,8 +762,7 @@ export interface components {
             cwe: string | null;
             /** Severity */
             severity: string;
-            /** Status */
-            status: string;
+            status: components["schemas"]["RunStatus"];
             /** Verdict */
             verdict: string | null;
             /** Confidence */
@@ -822,6 +834,12 @@ export interface components {
             /** As Of */
             as_of: string;
         };
+        /**
+         * RunStatus
+         * @description Persisted lifecycle of one finding's triage run.
+         * @enum {string}
+         */
+        RunStatus: "pending" | "running" | "complete" | "needs_info" | "failed" | "cancelled";
         /** RunSummary */
         RunSummary: {
             /** Id */
@@ -840,8 +858,7 @@ export interface components {
             cwe: string | null;
             /** Severity */
             severity: string;
-            /** Status */
-            status: string;
+            status: components["schemas"]["RunStatus"];
             /** Verdict */
             verdict: string | null;
             /** Confidence */
@@ -972,10 +989,10 @@ export interface components {
             label: string;
             /**
              * Mode
-             * @default auto
+             * @default temporal
              * @enum {string}
              */
-            mode: "auto" | "local" | "temporal";
+            mode: "local" | "temporal";
         };
         /** TrendPoint */
         TrendPoint: {

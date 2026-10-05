@@ -16,6 +16,7 @@ import pytest
 from pydantic_ai import ModelRetry
 
 from infosec_harness.agents import capabilities as cap
+from infosec_harness.agents import repo_tools
 from infosec_harness.agents import repo_tools as rt
 from infosec_harness.agents.deps import AgentDeps
 from infosec_harness.tools.policies import load_policies
@@ -47,7 +48,7 @@ def ctx(repo: Path):
 
 
 def test_read_files_returns_every_file_in_one_result(repo):
-    out = cap.read_files(ctx(repo), ["pom.xml", "README.md",
+    out = repo_tools.read_files(ctx(repo), ["pom.xml", "README.md",
                                      "src/main/java/com/example/A00.java"])
     assert "<project/>" in out and "# app" in out and "class A00" in out
 
@@ -59,7 +60,7 @@ def test_one_bad_path_does_not_cost_the_whole_call(repo):
     run a retry per bad path — the opposite of what this tool is for. So a missing path is
     reported against that path and the rest come back.
     """
-    out = cap.read_files(ctx(repo), ["pom.xml", "nope.txt"])
+    out = repo_tools.read_files(ctx(repo), ["pom.xml", "nope.txt"])
     assert "<project/>" in out
     assert "nope.txt" in out and "does not exist" in out
 
@@ -68,13 +69,13 @@ def test_a_call_with_no_readable_path_at_all_is_a_retry_that_names_the_correctio
     """With nothing read, the model needs telling how to fix the call, not a body of notes
     it may mistake for content."""
     with pytest.raises(ModelRetry, match="list_files|list_tree"):
-        cap.read_files(ctx(repo), ["nope.txt", "also-nope.txt"])
+        repo_tools.read_files(ctx(repo), ["nope.txt", "also-nope.txt"])
 
 
 def test_read_files_cannot_escape_the_snapshot(repo):
     """Confinement is per path, not per call: one traversal attempt must not be let through
     just because the other paths were fine."""
-    out = cap.read_files(ctx(repo), ["pom.xml", "../../etc/passwd"])
+    out = repo_tools.read_files(ctx(repo), ["pom.xml", "../../etc/passwd"])
     assert "outside the repository" in out
     assert "root:" not in out
 
@@ -82,21 +83,21 @@ def test_read_files_cannot_escape_the_snapshot(repo):
 def test_read_files_refuses_more_paths_than_it_will_read(repo):
     """Silently reading the first 20 of 50 would look like a complete answer."""
     with pytest.raises(ModelRetry, match="at most"):
-        cap.read_files(ctx(repo), ["pom.xml"] * (cap.MAX_BATCH_FILES + 1))
+        repo_tools.read_files(ctx(repo), ["pom.xml"] * (repo_tools.MAX_BATCH_FILES + 1))
 
 
 def test_read_files_bounds_its_total_output(repo):
     big = repo / "src/main/java/com/example/Big.java"
     big.write_text("\n".join(f"// {'x' * 300}" for _ in range(400)) + "\n")
-    out = cap.read_files(ctx(repo), [big.relative_to(repo).as_posix()] * 1)
-    assert len(out.encode()) <= cap.MAX_BATCH_BYTES + 200
+    out = repo_tools.read_files(ctx(repo), [big.relative_to(repo).as_posix()] * 1)
+    assert len(out.encode()) <= repo_tools.MAX_BATCH_BYTES + 200
 
 
 # --- list_tree ---------------------------------------------------------------------------
 
 
 def test_list_tree_names_every_directory_and_states_the_totals(repo):
-    out = cap.list_tree(ctx(repo), ".")
+    out = repo_tools.list_tree(ctx(repo), ".")
     assert "src/main/java/com/example/" in out
     assert "src/test/java/com/example/" in out
     # The count it is summarising is stated, so a truncated answer is visibly truncated.
@@ -104,7 +105,7 @@ def test_list_tree_names_every_directory_and_states_the_totals(repo):
 
 
 def test_list_tree_skips_build_output_like_every_other_tool(repo):
-    assert "target/" not in cap.list_tree(ctx(repo), ".")
+    assert "target/" not in repo_tools.list_tree(ctx(repo), ".")
 
 
 def test_a_path_from_list_tree_is_the_directory_joined_to_the_name(repo):
@@ -114,9 +115,12 @@ def test_a_path_from_list_tree_is_the_directory_joined_to_the_name(repo):
     directory is never split across lines — so this reconstructs a path the way a reader would
     and checks the file is really there.
     """
-    from infosec_harness.evals.exploration import _paths_from_tree
+    from conftest import load_script
 
-    paths = _paths_from_tree(cap.list_tree(ctx(repo), "."))
+    exploration = load_script("exploration")
+    _paths_from_tree = exploration._paths_from_tree
+
+    paths = _paths_from_tree(repo_tools.list_tree(ctx(repo), "."))
     assert paths, "the listing named no files at all"
     for p in paths:
         assert (repo / p).is_file(), f"{p!r} was named by list_tree but does not exist"
@@ -136,8 +140,8 @@ def test_list_tree_gives_up_file_names_before_it_gives_up_directories(tmp_path):
         p.mkdir()
         for i in range(6):
             (p / f"File{i}.java").write_text("class X {}\n")
-    out = cap.list_tree(ctx(root), ".")
-    assert len(out.encode()) <= cap.MAX_TREE_BYTES + 200
+    out = repo_tools.list_tree(ctx(root), ".")
+    assert len(out.encode()) <= repo_tools.MAX_TREE_BYTES + 200
     named = {line.split("/", 1)[0] for line in out.splitlines() if line.startswith("pkg")}
     assert len(named) == dirs, f"only {len(named)} of {dirs} directories were named"
 
@@ -158,7 +162,7 @@ def test_a_tree_too_large_to_show_still_names_every_branch(tmp_path):
             p = root / branch / f"mod{d:04d}"
             p.mkdir(parents=True)
             (p / f"C{d:04d}.java").write_text("class C {}\n")
-    out = cap.list_tree(ctx(root), ".")
+    out = repo_tools.list_tree(ctx(root), ".")
     lines = [ln for ln in out.splitlines() if "files=" in ln]
     assert len(lines) < 1000, "the fixture must be too large to show in full"
     assert any("/main/" in ln for ln in lines)
@@ -169,12 +173,12 @@ def test_a_tree_too_large_to_show_still_names_every_branch(tmp_path):
 
 def test_list_tree_refuses_a_file_and_says_what_to_call_instead(repo):
     with pytest.raises(ModelRetry, match="read_file"):
-        cap.list_tree(ctx(repo), "pom.xml")
+        repo_tools.list_tree(ctx(repo), "pom.xml")
 
 
 def test_list_tree_cannot_escape_the_snapshot(repo):
     with pytest.raises(ModelRetry, match="outside the repository"):
-        cap.list_tree(ctx(repo), "../..")
+        repo_tools.list_tree(ctx(repo), "../..")
 
 
 # --- repo_digest -------------------------------------------------------------------------
@@ -182,7 +186,7 @@ def test_list_tree_cannot_escape_the_snapshot(repo):
 
 def test_the_digest_answers_the_tree_the_manifests_and_the_tests(repo):
     """The three things every profiling run needs before it can say anything."""
-    out = cap.repo_digest(ctx(repo))
+    out = repo_tools.repo_digest(ctx(repo))
     assert "src/main/java/com/example/" in out          # tree
     assert "<project/>" in out and "# app" in out       # manifests, with content
     assert "## Test layout" in out and "A00Test.java" in out
@@ -205,7 +209,7 @@ def test_the_digest_is_bounded_by_what_the_policy_declares(tmp_path):
         p.mkdir()
         for i in range(12):
             (p / f"File{i}.java").write_text("class X {}\n")
-    out = cap.repo_digest(ctx(root))
+    out = repo_tools.repo_digest(ctx(root))
     declared = load_policies()["repo-read-only"].max_output_bytes
     assert len(out.encode()) > declared / 2, (
         "the fixture must be big enough that the bound is doing something"
@@ -217,7 +221,7 @@ def test_a_repository_with_no_manifest_says_so_rather_than_saying_nothing(repo):
     """Silence reads as "not checked"; the absence of a build manifest is a finding."""
     (repo / "pom.xml").unlink()
     (repo / "README.md").unlink()
-    out = cap.repo_digest(ctx(repo))
+    out = repo_tools.repo_digest(ctx(repo))
     assert "0 found" in out or "none found" in out
 
 
@@ -228,7 +232,7 @@ def test_repo_digest_does_not_follow_an_external_manifest_symlink(tmp_path):
     repo.mkdir()
     (repo / "package.json").symlink_to(outside)
 
-    out = cap.repo_digest(ctx(repo))
+    out = repo_tools.repo_digest(ctx(repo))
 
     assert "must-not-leak" not in out
     assert "0 found" in out or "none found" in out
@@ -238,7 +242,7 @@ def test_the_digest_never_executes_or_imports_what_it_reads(repo):
     """The snapshot holds the unfixed vulnerability under triage, so this is load-bearing."""
     (repo / "conftest.py").write_text("raise SystemExit('this must never run')\n")
     (repo / "setup.py").write_text("import os; os.write(2, b'ran')\n")
-    out = cap.repo_digest(ctx(repo))  # would not return if either were executed
+    out = repo_tools.repo_digest(ctx(repo))  # would not return if either were executed
     assert "setup.py" in out
 
 
@@ -260,7 +264,7 @@ def test_test_directories_are_matched_by_whole_path_segment_not_by_prefix(tmp_pa
                 "src/main/App.java"):
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text("x\n")
-    assert _test_layout_dirs(cap.repo_digest(ctx(root))) == {
+    assert _test_layout_dirs(repo_tools.repo_digest(ctx(root))) == {
         "tests", "src/test", "t", "web/__tests__"}
     for rel in ("tools", "templates", "third_party", "testing_utils", "src/main", "src/testing"):
         assert not rt._is_test_dir(rel), rel
@@ -279,7 +283,7 @@ def test_a_catastrophically_backtracking_regex_is_stopped_at_the_deadline(tmp_pa
     (tmp_path / "big.txt").write_text("a" * 50_000 + "\n")
     monkeypatch.setattr(rt, "SEARCH_TIMEOUT_SECONDS", 1.5)
     began = time.monotonic()
-    out = cap.search_code(ctx(tmp_path), r"(\w|\d)+x")
+    out = repo_tools.search_code(ctx(tmp_path), r"(\w|\d)+x")
     assert time.monotonic() - began < 8, "the search was not stopped at its deadline"
     assert "timed out" in out and "partial" in out
     assert "a.txt:1: ax" in out
@@ -294,23 +298,23 @@ def test_the_search_deadline_fits_inside_the_toolsets_declared_timeout():
 
 
 def test_search_code_keeps_its_output_format_confinement_and_exclusions(repo):
-    out = cap.search_code(ctx(repo), r"class A0[01] ", "*.java")
+    out = repo_tools.search_code(ctx(repo), r"class A0[01] ", "*.java")
     assert out.splitlines() == [
         "src/main/java/com/example/A00.java:2: class A00 { void go() {} }",
         "src/main/java/com/example/A01.java:2: class A01 { void go() {} }",
     ]
-    assert cap.search_code(ctx(repo), "binary-ish") == "(no matches)"  # target/ is excluded
-    every = cap.search_code(ctx(repo), "^package", "*.java")
+    assert repo_tools.search_code(ctx(repo), "binary-ish") == "(no matches)"  # target/ is excluded
+    every = repo_tools.search_code(ctx(repo), "^package", "*.java")
     assert len(every.splitlines()) == 31  # 30 sources + 1 test, each declaring its package once
     assert all(line.endswith(":1: package com.example;") for line in every.splitlines())
     (repo / "many").mkdir()
-    for i in range(cap.MAX_MATCHES + 10):
+    for i in range(repo_tools.MAX_MATCHES + 10):
         (repo / "many" / f"m{i:03d}.txt").write_text("needle\n")
-    capped = cap.search_code(ctx(repo), "needle", "*.txt")
-    assert capped.endswith(f"\n... truncated at {cap.MAX_MATCHES} matches")
-    assert len(capped.splitlines()) == cap.MAX_MATCHES + 1
+    capped = repo_tools.search_code(ctx(repo), "needle", "*.txt")
+    assert capped.endswith(f"\n... truncated at {repo_tools.MAX_MATCHES} matches")
+    assert len(capped.splitlines()) == repo_tools.MAX_MATCHES + 1
     with pytest.raises(ModelRetry, match="Invalid regex"):
-        cap.search_code(ctx(repo), "(")
+        repo_tools.search_code(ctx(repo), "(")
 
 
 def test_a_file_larger_than_the_read_cap_is_read_only_up_to_the_cap(repo, monkeypatch):
@@ -340,21 +344,21 @@ def test_a_file_larger_than_the_read_cap_is_read_only_up_to_the_cap(repo, monkey
         return fh
 
     monkeypatch.setattr(Path, "open", counting_open)
-    edge = cap.read_file(ctx(repo), "big.txt", 222_221, 222_230)
+    edge = repo_tools.read_file(ctx(repo), "big.txt", 222_221, 222_230)
     assert sum(read_sizes) <= rt.MAX_FILE_BYTES + 1, "more than the cap was read from disk"
     assert "L0222222" in edge and "L0222223" not in edge
     assert "of at least 222222" in edge.splitlines()[0]
     assert "larger than 2000000 bytes" in edge.splitlines()[0]
-    beyond = cap.read_file(ctx(repo), "big.txt", 250_000, 250_010)
+    beyond = repo_tools.read_file(ctx(repo), "big.txt", 250_000, 250_010)
     assert "L0250000" not in beyond
 
 
 def test_one_huge_line_cannot_flood_a_single_read(repo):
     """400 lines is not a byte bound when one line is megabytes, as in minified bundles."""
     (repo / "bundle.min.js").write_text("v" * 3_000_000)
-    out = cap.read_file(ctx(repo), "bundle.min.js")
-    assert len(out.encode()) <= cap.MAX_BATCH_BYTES + 100
-    assert out.rstrip().endswith(f"truncated at {cap.MAX_BATCH_BYTES} bytes")
+    out = repo_tools.read_file(ctx(repo), "bundle.min.js")
+    assert len(out.encode()) <= repo_tools.MAX_BATCH_BYTES + 100
+    assert out.rstrip().endswith(f"truncated at {repo_tools.MAX_BATCH_BYTES} bytes")
 
 
 def test_a_file_link_leaving_the_listed_directory_but_not_the_snapshot_is_still_listed(repo):
@@ -362,9 +366,9 @@ def test_a_file_link_leaving_the_listed_directory_but_not_the_snapshot_is_still_
     must not reject it merely because its target lies outside that subdirectory."""
     (repo / "docs").mkdir()
     (repo / "docs/README.md").symlink_to("../README.md")
-    assert cap.list_files(ctx(repo), "docs") == "docs/README.md"
-    assert "docs/  files=1" in cap.list_tree(ctx(repo), "docs")
-    assert "# app" in cap.read_file(ctx(repo), "docs/README.md")
+    assert repo_tools.list_files(ctx(repo), "docs") == "docs/README.md"
+    assert "docs/  files=1" in repo_tools.list_tree(ctx(repo), "docs")
+    assert "# app" in repo_tools.read_file(ctx(repo), "docs/README.md")
 
 
 @pytest.mark.parametrize("kind", ["external-file-link", "directory-link"])
@@ -382,11 +386,11 @@ def test_listing_fails_closed_on_an_entry_the_snapshot_boundary_rejects(tmp_path
         (repo / "token.txt").symlink_to(secret / "token.txt")
     else:
         (repo / "linked").symlink_to(secret, target_is_directory=True)
-    for tool in (lambda: cap.list_files(ctx(repo), "."), lambda: cap.list_tree(ctx(repo), "."),
-                 lambda: cap.search_code(ctx(repo), "must-not-leak")):
+    for tool in (lambda: repo_tools.list_files(ctx(repo), "."), lambda: repo_tools.list_tree(ctx(repo), "."),
+                 lambda: repo_tools.search_code(ctx(repo), "must-not-leak")):
         with pytest.raises(ModelRetry, match="traversal was rejected"):
             tool()
-    digest = cap.repo_digest(ctx(repo))
+    digest = repo_tools.repo_digest(ctx(repo))
     assert "traversal was rejected" in digest and "must-not-leak" not in digest
 
 

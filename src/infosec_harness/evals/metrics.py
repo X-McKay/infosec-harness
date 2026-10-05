@@ -14,6 +14,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from infosec_harness.domain.models import ExperimentStatus
+
 PERCENTILE_METHOD = "nearest-rank-v1"
 
 # The outcome of a scored attempt. Exactly one per attempt, so the failure categories below
@@ -98,7 +100,7 @@ def failure_categories(scored: Sequence[Attempt]) -> dict[str, int]:
 
 
 def experiment_metrics(
-    attempts: Sequence[Attempt], plan: RunPlan, *, status: str, cases_completed: int
+    attempts: Sequence[Attempt], plan: RunPlan, *, status: ExperimentStatus, cases_completed: int
 ) -> dict[str, Any]:
     """Every metric an experiment publishes, from its attempts and its plan."""
     scored = [a for a in attempts if a["outcome"] != "failed"]
@@ -192,7 +194,7 @@ def gateable_metrics(*, unevidenced_safety: bool) -> frozenset[str]:
     """The numeric metric names a run publishes, so a policy can be checked against them."""
     plan = RunPlan(cases=0, repetitions=1, execution_checks=0,
                    unevidenced_safety=unevidenced_safety, uncovered_material_scenarios=0)
-    shape = experiment_metrics([], plan, status="complete", cases_completed=0)
+    shape = experiment_metrics([], plan, status=ExperimentStatus.complete, cases_completed=0)
     return frozenset(
         name for name, value in shape.items()
         if value is None or (isinstance(value, int | float) and not isinstance(value, bool))

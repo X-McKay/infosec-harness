@@ -1,21 +1,16 @@
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import io
 import json
 import shlex
 from pathlib import Path
 
 import pytest
+from conftest import load_script
 
 ROOT = Path(__file__).resolve().parents[2]
-MODULE_SPEC = importlib.util.spec_from_file_location(
-    "openshell_artifacts", ROOT / "scripts" / "openshell_artifacts.py"
-)
-assert MODULE_SPEC is not None and MODULE_SPEC.loader is not None
-openshell_artifacts = importlib.util.module_from_spec(MODULE_SPEC)
-MODULE_SPEC.loader.exec_module(openshell_artifacts)
+openshell_artifacts = load_script("openshell_artifacts")
 ArtifactError = openshell_artifacts.ArtifactError
 download_artifact = openshell_artifacts.download_artifact
 load_manifest = openshell_artifacts.load_manifest

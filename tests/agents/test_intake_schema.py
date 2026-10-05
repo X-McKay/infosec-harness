@@ -221,14 +221,14 @@ async def test_canonical_registry_resolves_current_atomic_spec_through_mock_open
     monkeypatch.setattr(openai, "AsyncOpenAI", mock_sdk_client)
     monkeypatch.setenv("HARNESS_MODEL_MODE", "live")
     monkeypatch.setenv("HARNESS_MODEL_BACKEND", "gateway")
+    monkeypatch.setenv("HARNESS_MODEL_BASE_URL", "https://gateway.invalid/v1")
     get_settings.cache_clear()
     model_factory.load_models_config.cache_clear()
     model_factory._build_live.cache_clear()
     try:
         agent = build_agent("intake", durable=False)
         result = await agent.run(
-            render_intake_prompt("Synthetic task", {"report": report, "known": {"x": 1}},
-                                 protocol="intake-atomic-claims/v2"),
+            render_intake_prompt("Synthetic task", {"report": report, "known": {"x": 1}}),
             deps=AgentDeps(repo_path="/synthetic", report_text=report),
         )
     finally:

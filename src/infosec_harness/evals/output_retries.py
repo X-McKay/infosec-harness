@@ -15,7 +15,8 @@ from typing import Literal, TypedDict
 
 from pydantic_ai.messages import ModelMessage
 
-from infosec_harness.evals.messages import OUTPUT_TOOL, Walk, iter_retry_prompts
+from infosec_harness.agents.trajectory import OUTPUT_TOOL
+from infosec_harness.evals.messages import Walk, iter_retry_prompts
 
 RetryCategory = Literal[
     "source_unavailable", "unknown_field", "quote_not_verbatim", "positive_quote_missing",

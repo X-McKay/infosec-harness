@@ -4,7 +4,7 @@
     uv run python scripts/measure_exploration.py --json out.json   # machine-readable
 
 No provider and no container are involved: the model is a `FunctionModel` running the fixed
-exploration procedure in `evals/exploration.py`, and the repository is synthetic so its size
+exploration procedure in `scripts/exploration.py`, and the repository is synthetic so its size
 is the only variable. See that module's docstring for what this does and does not measure.
 """
 
@@ -16,9 +16,10 @@ import json
 import tempfile
 from pathlib import Path
 
+from exploration import Measurement, measure_recon, synth_repo
+
 from infosec_harness.agents.budgets import run_budget, size_factor
 from infosec_harness.agents.registry import load_spec
-from infosec_harness.evals.exploration import Measurement, measure_recon, synth_repo
 
 DEFAULT_SIZES = (10, 100, 500, 2000)
 

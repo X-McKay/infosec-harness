@@ -20,7 +20,6 @@ from infosec_harness.domain.models import (
     BuildResult,
     EnvironmentSpec,
     Finding,
-    FindingInput,
     InconclusiveReason,
     ProbeExecution,
     ProbeSource,
@@ -102,8 +101,6 @@ def classify_pipeline_failure(e: BaseException) -> InconclusiveReason:
 
 
 class Ops(Protocol):
-    async def normalize_finding(self, inp: FindingInput) -> Finding: ...
-
     async def resolve_location(self, finding: Finding, repo_path: str) -> Finding | None: ...
 
     async def run_agent(
@@ -159,11 +156,6 @@ class LocalOps:
             self._agents[name] = (build_agent(name, durable=False),
                                   resolve_agent_config(name, load_spec(name), durable=False))
         return self._agents[name]
-
-    async def normalize_finding(self, inp: FindingInput) -> Finding:
-        from infosec_harness.intake.adapters import to_finding
-
-        return to_finding(inp)
 
     async def resolve_location(self, finding: Finding, repo_path: str) -> Finding | None:
         from infosec_harness.intake.adapters import resolve_location

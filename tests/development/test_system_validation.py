@@ -16,7 +16,7 @@ import pytest
 from pydantic_ai import ModelRetry
 from pydantic_ai.models.test import TestModel
 
-from infosec_harness.agents import capabilities as caps
+from infosec_harness.agents import repo_tools
 from infosec_harness.agents.deps import AgentDeps
 from infosec_harness.agents.registry import AGENT_BINDINGS, build_agent, load_spec
 from infosec_harness.agents.render import render_prompt
@@ -121,13 +121,13 @@ def test_repo_tools_execute_and_confine(tmp_path):
     (tmp_path / "pkg").mkdir()
     (tmp_path / "pkg" / "u.py").write_text("SECRET=1\n")
     ctx = SimpleNamespace(deps=AgentDeps(repo_path=str(tmp_path)))
-    assert "app.py" in caps.list_files(ctx, ".", "*.py")
-    body = caps.read_file(ctx, "app.py", 1, 3)
+    assert "app.py" in repo_tools.list_files(ctx, ".", "*.py")
+    body = repo_tools.read_file(ctx, "app.py", 1, 3)
     assert "os.system" in body and "lines 1-3" in body
-    assert "app.py:3" in caps.search_code(ctx, r"os\.system", "*.py")
+    assert "app.py:3" in repo_tools.search_code(ctx, r"os\.system", "*.py")
     for bad in ("../../etc/passwd", "pkg/../../../etc/hosts"):
         with pytest.raises(ModelRetry):
-            caps.read_file(ctx, bad)
+            repo_tools.read_file(ctx, bad)
 
 
 def test_skills_load_with_real_content():

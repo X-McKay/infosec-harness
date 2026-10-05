@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from typing import Any
+
+from infosec_harness.domain.canonical import canonical_bytes, sha256_hex
 
 EXECUTION_RECORD_PREFIX = "HARNESS_EXECUTION_RECORD::"
 EXECUTION_PROTOCOL = "unit-probe-execution/v1"
@@ -18,9 +18,9 @@ def execution_record(*, image_tag: str, test_file_path: str, test_command: str, 
     identity = "\0".join((image_tag, test_file_path, nonce, str(attempt)))
     return {
         "version": EXECUTION_PROTOCOL,
-        "execution_id": hashlib.sha256(identity.encode()).hexdigest()[:24],
+        "execution_id": sha256_hex(identity)[:24],
         "attempt": attempt,
-        "probe_digest": hashlib.sha256(content.encode()).hexdigest(),
+        "probe_digest": sha256_hex(content),
         "test_file_path": test_file_path,
         "test_command": test_command,
         "process": {
@@ -45,17 +45,4 @@ def execution_record(*, image_tag: str, test_file_path: str, test_command: str, 
 
 
 def encode_execution_record(record: dict[str, Any]) -> str:
-    return EXECUTION_RECORD_PREFIX + json.dumps(
-        record, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-
-
-def parse_execution_record(text: str) -> dict[str, Any] | None:
-    for line in reversed((text or "").splitlines()):
-        if not line.startswith(EXECUTION_RECORD_PREFIX):
-            continue
-        try:
-            value = json.loads(line.removeprefix(EXECUTION_RECORD_PREFIX))
-        except (TypeError, ValueError):
-            return None
-        return value if isinstance(value, dict) and value.get("version") == EXECUTION_PROTOCOL else None
-    return None
+    return EXECUTION_RECORD_PREFIX + canonical_bytes(record).decode()

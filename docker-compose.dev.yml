@@ -66,6 +66,8 @@ services:
       - /root/.docker/buildx:/root/.docker/buildx
     environment:
       AWS_PROFILE: !reset null
+      # Local sources the worker may snapshot: the smoke fixture and the seeded corpus.
+      HARNESS_LOCAL_REPO_ROOTS: '["/app/deploy/dev-runtime/fixture", "/app/eval-corpus"]'
       HARNESS_DATABASE_URL: postgresql+asyncpg://harness:${HARNESS_POSTGRES_PASSWORD}@postgres:5432/harness
       HARNESS_S3_ACCESS_KEY: ${HARNESS_MINIO_ACCESS_KEY}
       HARNESS_S3_SECRET_KEY: ${HARNESS_MINIO_SECRET_KEY}

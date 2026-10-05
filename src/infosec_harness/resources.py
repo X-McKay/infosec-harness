@@ -69,12 +69,3 @@ def models_config() -> Path:
     """The approved-model catalogue. Governance data, so it ships with the code it governs."""
     return package_root() / "config" / "models.yaml"
 
-
-def project_file(*parts: str) -> Path | None:
-    """A repository file that is deliberately not packaged, or ``None`` off a checkout.
-
-    Used for the threat model and the eval corpus: reviewable artifacts that a running
-    deployment has no business reading.
-    """
-    root = source_checkout()
-    return root.joinpath(*parts) if root else None

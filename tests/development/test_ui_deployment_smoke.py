@@ -23,6 +23,10 @@ def deployment():
                "status_counts": {}, "verdict_counts": {}, "trends": [], "stages": [], "definitions": {}}
     for field in ("tokens", "input_tokens", "output_tokens", "cost_usd", "wall_time_s", "agent_time_s"):
         metrics[field] = {"count": 0, "population": 0, "coverage": None}
+    run_page = {"items": [], "total": 0, "offset": 0, "limit": 50, "as_of": runtime["as_of"]}
+    config = {"model_mode": runtime["model_mode"], "agents": [
+        {"name": agent, "model_tier": "sonnet", "config_hash": "0" * 16,
+         "resolved_model": "local:configured-model"} for agent in smoke.AGENT_BINDINGS]}
     requests = []
     overrides = {}
 
@@ -37,6 +41,10 @@ def deployment():
             return httpx.Response(200, json=qualification)
         if request.url.path == "/api/metrics":
             return httpx.Response(200, json=metrics)
+        if request.url.path == "/api/run-page":
+            return httpx.Response(200, json=run_page)
+        if request.url.path == "/api/config":
+            return httpx.Response(200, json=config)
         if request.url.path.startswith("/api/"):
             return httpx.Response(200, json=[])
         if request.url.path == "/assets/app.js":
@@ -62,7 +70,7 @@ def test_real_contract_empty_operational_data_and_all_asset_routes(deployment):
     requests = deployment[1]
     assert all(request.method == "GET" for request in requests)
     for request in requests:
-        if request.url.path in {"/api/batches", "/api/runs", "/api/experiments", "/api/metrics"}:
+        if request.url.path in {"/api/batches", "/api/run-page", "/api/experiments", "/api/metrics"}:
             assert dict(request.url.params) == {"population": "operational"}
     assert {"/", "/qualification", "/experiments", "/assets/app.js", "/assets/app.css"} <= {
         request.url.path for request in requests}
@@ -159,7 +167,8 @@ def test_metrics_must_report_operational_population(deployment):
 def test_unpaginated_existing_experiment_summaries_larger_than_five_mib(deployment):
     # The deployed API returned 82 summaries / 6,678,651 bytes. Model the same scale
     # with valid contracts, without copying findings, provider responses or live data.
-    rows = [{"id": f"experiment-{index}", "agent": "context", "dataset": "controlled",
+    rows = [{"id": f"experiment-{index}", "agent": "context", "status": "complete",
+             "dataset": "controlled",
              "dataset_version": "1", "git_sha": COMMIT, "overlay": "", "repetitions": 1,
              "metrics": {"retained_metadata": "x" * 81_000}, "config_hash": "a" * 64,
              "git_dirty": False, "model_name": "controlled", "backend": "live",
@@ -273,3 +282,12 @@ def test_wait_ready_does_not_retry_arbitrary_read_timeout(deployment, monkeypatc
     with pytest.raises(smoke.SmokeFailure, match="transport check failed"):
         run(deployment, wait_ready=True)
     assert len(deployment[1]) == 1
+
+
+def test_config_missing_an_agent_fails(deployment):
+    def partial(request):
+        return httpx.Response(200, json={"model_mode": "live", "agents": []})
+
+    deployment[2]["api.test", "/api/config"] = partial
+    with pytest.raises(smoke.SmokeFailure, match="incomplete agent configuration"):
+        run(deployment)

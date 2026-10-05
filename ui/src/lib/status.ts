@@ -1,9 +1,25 @@
+import type { components } from "../api/schema";
+
+type RunStatus = components["schemas"]["RunStatus"];
+type BatchStatus = components["schemas"]["BatchStatus"];
+type ExperimentStatus = components["schemas"]["ExperimentStatus"];
+
 /**
- * One activity policy per recorded entity. The backend stores a run as pending or running
- * until it reaches a terminal value; batches and evaluations have their own lifecycles.
+ * One activity policy per recorded entity, over the vocabularies the API publishes. The backend
+ * stores a run as pending or running until it reaches a terminal value; batches and evaluations
+ * have their own lifecycles.
  */
-const TERMINAL = new Set(["complete", "needs_info", "failed", "cancelled"]);
-const ACTIVE_RUN = new Set(["pending", "running"]);
+const TERMINAL: ReadonlySet<string> = new Set<RunStatus | BatchStatus>([
+  "complete",
+  "needs_info",
+  "failed",
+  "cancelled",
+]);
+const ACTIVE_RUN: ReadonlySet<string> = new Set<RunStatus>([
+  "pending",
+  "running",
+]);
+const ACTIVE_EXPERIMENT: ExperimentStatus = "running";
 
 export function terminal(status: string): boolean {
   return TERMINAL.has(status);
@@ -18,5 +34,5 @@ export function batchActive(status: string): boolean {
 }
 /** Evaluations record running, truncated or complete; only running ones change. */
 export function experimentActive(status: unknown): boolean {
-  return status === "running";
+  return status === ACTIVE_EXPERIMENT;
 }

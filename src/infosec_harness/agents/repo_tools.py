@@ -15,9 +15,15 @@ from pathlib import Path
 from pydantic_ai import ModelRetry, RunContext
 
 from infosec_harness.agents.deps import AgentDeps
-from infosec_harness.repo.access import RepositoryAccessError, resolve_confined, walk_files
+from infosec_harness.repo.access import (
+    BUILD_OUTPUT_DIRS,
+    DEPENDENCY_DIRS,
+    RepositoryAccessError,
+    resolve_confined,
+    walk_files,
+)
 
-SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", "target", "build", "dist", ".idea"}
+SKIP_DIRS = DEPENDENCY_DIRS | BUILD_OUTPUT_DIRS
 MAX_READ_LINES = 400
 MAX_LIST = 300
 MAX_MATCHES = 60
@@ -577,11 +583,3 @@ def search_code(ctx: RunContext[AgentDeps], regex: str, file_glob: str = "*") ->
     if len(hits) >= MAX_MATCHES:
         return "\n".join(hits) + f"\n... truncated at {MAX_MATCHES} matches"
     return "\n".join(hits) or "(no matches)"
-
-
-# --- describe_callables ------------------------------------------------------------------
-# Reading a file shows you that `countLines` exists; it does not tell you that
-# `module.exports = { countLines }` makes it a NAMED export, so
-# `const countLines = require("../src/cmd")` silently binds the module object and the probe
-# call throws inside a swallowed promise. That false negative is what this tool exists to
-# prevent, so every symbol it reports carries the form a test must use to reach it.

@@ -49,17 +49,14 @@ test("evaluation lists and reports poll only while an evaluation is running", ()
   assert.equal(interval(list, []), false);
   assert.equal(
     interval(list, [
-      { metrics: { status: "complete" } },
-      { metrics: { status: "truncated" } },
-      { metrics: {} },
+      { status: "complete" },
+      { status: "truncated" },
+      { status: null },
     ]),
     false,
   );
   assert.equal(
-    interval(list, [
-      { metrics: { status: "complete" } },
-      { metrics: { status: "running" } },
-    ]),
+    interval(list, [{ status: "complete" }, { status: "running" }]),
     10000,
   );
   const detail = queries.experiment("id");

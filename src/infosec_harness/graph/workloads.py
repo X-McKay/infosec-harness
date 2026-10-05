@@ -24,8 +24,10 @@ from infosec_harness.sandbox import canary, docker, evidence
 async def build_environment(snapshot: RepoSnapshot, spec: EnvironmentSpec) -> BuildResult:
     """Render a Dockerfile from the spec and build it (cached by repo hash + spec).
 
-    Fails closed if the gVisor runtime is unavailable; the build itself validates the base image
-    against the allowlist and confines egress to the operator's build boundary (D2/D14)."""
+    Fails closed if the gVisor runtime is unavailable, before a cached image is reused: an image
+    that exists is not evidence that this host can still run it under isolation. The build
+    validates the base image against the allowlist; build egress is the operator's proxy
+    allowlist (not anything derived from the repository) on an internal network (D2/D14)."""
     from infosec_harness.sandbox.policy import (
         DisallowedBaseImage,
         InvalidEnvironmentSpec,
@@ -35,12 +37,12 @@ async def build_environment(snapshot: RepoSnapshot, spec: EnvironmentSpec) -> Bu
 
     tag = docker.image_tag_for(snapshot.content_hash, spec)
     store = get_store()
-    if await docker.image_exists(tag):
-        return BuildResult(ok=True, image_tag=tag, spec=spec, duration_s=0.0)
     try:
         await ensure_runtime_available("build the target environment")
     except SandboxUnavailable as e:
         return BuildResult(ok=False, spec=spec, error_excerpt=str(e))
+    if await docker.image_exists(tag):
+        return BuildResult(ok=True, image_tag=tag, spec=spec, duration_s=0.0)
     start = time.monotonic()
     try:
         res = await docker.build_image(snapshot.path, spec, tag)
@@ -48,9 +50,6 @@ async def build_environment(snapshot: RepoSnapshot, spec: EnvironmentSpec) -> Bu
         return BuildResult(ok=False, spec=spec, error_excerpt=str(e))
     log_ref = store.put_text(res.stdout + "\n" + res.stderr, media_type="text/plain")
     ok = res.exit_code == 0 and not res.timed_out
-    # A built environment may sit between smoke/probe activities with no container referencing
-    # its image. Until durable image leases exist, build completion must not evict another
-    # workflow's prepared environment. `docker.prune_images` remains manual maintenance only.
     return BuildResult(
         ok=ok, image_tag=tag if ok else None, spec=spec, log_artifact=log_ref,
         error_excerpt="" if ok else docker.tail(res.stderr or res.stdout, 3000),
@@ -68,14 +67,14 @@ async def smoke_test(image_tag: str, test_command: str = "", *, language: str = 
     of build repair instead.
     """
 
-    res = await docker.run_shell(image_tag, "echo harness-smoke-ok", network=False, timeout=60)
+    res = await docker.run_shell(image_tag, "echo harness-smoke-ok", timeout=60)
     if res.exit_code != 0 or "harness-smoke-ok" not in res.stdout:
         return SmokeResult(ok=False, output_excerpt=docker.tail(res.stdout + res.stderr, 500))
 
     check = docker.runner_check_command(test_command)
     runner_excerpt = docker.tail(res.stdout, 500)
     if check is not None:
-        runner = await docker.run_shell(image_tag, check, network=False, timeout=120)
+        runner = await docker.run_shell(image_tag, check, timeout=120)
         if runner.exit_code != 0:
             return SmokeResult(
                 ok=False,

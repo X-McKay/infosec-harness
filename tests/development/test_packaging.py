@@ -34,7 +34,10 @@ import pytest
 from infosec_harness.resources import package_root, source_checkout
 
 REPO = source_checkout()
-pytestmark = pytest.mark.skipif(REPO is None, reason="needs a source checkout to build from")
+pytestmark = [
+    pytest.mark.network,
+    pytest.mark.skipif(REPO is None, reason="needs a source checkout to build from"),
+]
 
 
 @pytest.fixture(scope="session")
@@ -83,6 +86,13 @@ def test_the_approved_model_catalogue_ships_in_the_wheel(wheel):
     """Model policy is governance data, so it travels with the code it governs rather than
     being something a deployment is trusted to place correctly."""
     assert "infosec_harness/config/models.yaml" in _names(wheel)
+
+
+def test_qualification_tooling_does_not_ship(wheel):
+    """The broker qualification package carries fakes and test-only patches; operators run it
+    from a checkout, and nothing in serving code may depend on it."""
+    shipped = [n for n in _names(wheel) if n.startswith("infosec_harness/qualification/broker/")]
+    assert not shipped, f"qualification tooling ships in the wheel: {shipped[:5]}"
 
 
 def test_the_wheel_carries_no_build_droppings(wheel):

@@ -29,6 +29,7 @@ from pydantic_ai_harness.warn_on_cache_busts import WarnOnCacheBusts
 from temporalio.common import RetryPolicy
 from temporalio.workflow import ActivityConfig
 
+from infosec_harness.agents import governance
 from infosec_harness.agents import models as model_factory
 from infosec_harness.agents.budgets import (
     BudgetResolution,
@@ -63,6 +64,7 @@ from infosec_harness.agents.validators import (
     validate_probe,
     validate_verdict,
 )
+from infosec_harness.domain.canonical import digest as canonical_digest
 from infosec_harness.domain.models import (
     EnvironmentSpec,
     ExtractedFinding,
@@ -72,7 +74,6 @@ from infosec_harness.domain.models import (
     ProbeSource,
     RepoProfile,
     Verdict,
-    canonical_json,
 )
 from infosec_harness.resources import package_root
 from infosec_harness.sandbox.install_sources import install_source_policy
@@ -158,9 +159,7 @@ class ResolvedAgentConfig(BaseModel):
 
     @property
     def digest(self) -> str:
-        return hashlib.sha256(canonical_json(self.model_dump(mode="json")).encode()).hexdigest()[
-            :16
-        ]
+        return canonical_digest(self.model_dump(mode="json"))[:16]
 
     @property
     def effective_digest(self) -> str:
@@ -198,7 +197,7 @@ class ResolvedAgentConfig(BaseModel):
             "model": model,
             "budget": budget,
         }
-        return hashlib.sha256(canonical_json(payload).encode()).hexdigest()[:16]
+        return canonical_digest(payload)[:16]
 
     def for_source_files(self, source_files: int | None) -> ResolvedAgentConfig:
         """Replay-safe per-run variant with repository-size scaling applied."""
@@ -414,106 +413,6 @@ def _capability_skills(spec: AgentSpec) -> set[str]:
     return names
 
 
-def _assert_capabilities_match_metadata(name: str, spec: AgentSpec) -> None:
-    """Governance metadata must describe the capabilities the agent actually has.
-
-    ``enabled_toolsets`` and ``enabled_skills`` are what a reviewer reads and what the execution
-    class is judged against; a capability reachable from the spec but absent from them is
-    governed by nothing. Every toolset name must have a declared policy.
-    """
-    from infosec_harness.tools.policies import load_policies
-
-    meta = spec.metadata or {}
-    policies = load_policies()
-    declared_toolsets = list(meta.get("enabled_toolsets") or [])
-    unknown = sorted(set(declared_toolsets) - set(policies))
-    if unknown:
-        raise GovernanceError(
-            f"Agent {name!r} enables toolsets with no declared policy: {unknown}; "
-            f"known: {sorted(policies)}")
-    actual_toolsets = _capability_toolsets(spec)
-    if set(declared_toolsets) != set(actual_toolsets):
-        raise GovernanceError(
-            f"Agent {name!r} metadata.enabled_toolsets {sorted(declared_toolsets)} does not match "
-            f"its capabilities {sorted(actual_toolsets)}")
-    declared_skills = set(meta.get("enabled_skills") or [])
-    actual_skills = _capability_skills(spec)
-    if declared_skills != actual_skills:
-        raise GovernanceError(
-            f"Agent {name!r} metadata.enabled_skills {sorted(declared_skills)} does not match "
-            f"its Skills capabilities {sorted(actual_skills)}")
-
-
-def _assert_execution_class_covers_tools(name: str, spec: AgentSpec) -> None:
-    """An agent's execution class must be at least what its most consequential tool requires.
-
-    This is the rule that makes an execution class mean something: `sandbox-shell` executes
-    code, so any agent enabling it is at least `durable`. The requirement is derived from the
-    capabilities the spec actually attaches, not from what its metadata claims. Declaring a
-    stronger class is fine; declaring a weaker one is not.
-    """
-    from infosec_harness.tools.policies import EXECUTION_CLASS_ORDER, load_policies
-
-    policies = load_policies()
-    declared = (spec.metadata or {}).get("execution_class")
-    required = max(
-        [policies[toolset].minimum_execution_class for toolset in _capability_toolsets(spec)]
-        + ["ephemeral"],
-        key=EXECUTION_CLASS_ORDER.index,
-    )
-    if EXECUTION_CLASS_ORDER.index(declared) < EXECUTION_CLASS_ORDER.index(required):
-        raise GovernanceError(
-            f"Agent {name!r} declares execution_class {declared!r} but its capabilities "
-            f"require at least {required!r}"
-        )
-
-
-def _assert_model_policy(name: str, spec: AgentSpec) -> None:
-    """A committed spec's model policy must resolve to exactly the tier it runs.
-
-    Experiment overlays may substitute a model (that is what a model sweep is) and are recorded
-    as overlay provenance; the committed spec itself must not let the two drift apart.
-    """
-    policy = (spec.metadata or {}).get("model_policy")
-    policies = model_factory.load_models_config().model_policies
-    tier = _spec_tier(name, spec)
-    if policies.get(policy) != tier:
-        raise GovernanceError(
-            f"Agent {name!r} metadata.model_policy {policy!r} resolves to "
-            f"{policies.get(policy)!r}, not the spec's model tier {tier!r}")
-
-
-def _assert_tools_are_declared(name: str, spec: AgentSpec) -> None:
-    """Every repo tool an agent can call must appear in the toolset's own policy.
-
-    The policy in `tools/repo-read-only/tool.yaml` is what the execution class is judged
-    against and what a reviewer reads; a tool reachable from a spec but absent from it is
-    governed by nothing. This is checked against the spec rather than against the code's default
-    surface, because `RepoReadOnly(tools=[...])` lets a spec name a subset -- and a typo in that
-    list would otherwise silently narrow the agent's tools instead of failing.
-    """
-    from infosec_harness.agents.capabilities import DEFAULT_REPO_RO_TOOLS, REPO_RO_TOOLS
-    from infosec_harness.tools.policies import load_policies
-
-    declared = {t.name for t in load_policies()["repo-read-only"].tools}
-    for cap in spec.capabilities:
-        if cap.name != "RepoReadOnly":
-            continue
-        selected = (cap.kwargs or {}).get("tools") or DEFAULT_REPO_RO_TOOLS
-        unknown = sorted(set(selected) - set(REPO_RO_TOOLS))
-        if unknown:
-            raise GovernanceError(
-                f"Agent {name!r} selects repo tools that do not exist: {unknown}. "
-                f"Available: {sorted(REPO_RO_TOOLS)}"
-            )
-        undeclared = sorted(set(selected) - declared)
-        if undeclared:
-            raise GovernanceError(
-                f"Agent {name!r} can call repo tools that tools/repo-read-only/tool.yaml does "
-                f"not declare: {undeclared}"
-            )
-
-
 def _resolve_agent_model(
     name: str, tier: str, *, durable: bool, atomic_intake: bool, deps: AgentDeps | None = None,
 ):
@@ -661,7 +560,7 @@ AGENT_BINDINGS: dict[str, type[BaseModel]] = {name: b.domain_type for name, b in
 # Temporal derives model/tool activity identities from the agent's name. Bumping this retires
 # every recorded activity identity at once: histories from an earlier generation are not
 # replayable by design and must be retried as new workflows.
-EXECUTION_GENERATION = "v5"
+EXECUTION_GENERATION = "v6"
 
 
 def binding_for(name: str) -> AgentBinding:
@@ -707,11 +606,15 @@ def build_agent(
     # risk tier, risk assessment, model policy, budget, skills, and toolsets are all required,
     # and the spec's risk tier must match its assessment's governance tier (§3).
     assert_governed(name, spec.metadata)
-    _assert_tools_are_declared(name, spec)
-    _assert_capabilities_match_metadata(name, spec)
-    _assert_execution_class_covers_tools(name, spec)
+    governance.assert_tools_are_declared(
+        name, [(cap.kwargs or {}).get("tools") for cap in spec.capabilities
+               if cap.name == "RepoReadOnly"])
+    toolsets = _capability_toolsets(spec)
+    governance.assert_capabilities_match_metadata(
+        name, spec.metadata, toolsets=toolsets, skills=_capability_skills(spec))
+    governance.assert_execution_class_covers_tools(name, spec.metadata, toolsets)
     if overlay is None:
-        _assert_model_policy(name, spec)
+        governance.assert_model_policy(name, spec.metadata, _spec_tier(name, spec))
     if binding.atomic_intake:
         _assert_intake_protocol(name, spec)
     spec = _absolutize_skill_dirs(effective_spec(name, spec))

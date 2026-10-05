@@ -15,12 +15,13 @@ from pydantic import TypeAdapter
 from infosec_harness.agents.registry import AGENT_BINDINGS
 from infosec_harness.api.contracts import (
     BatchSummary,
+    ConfigResponse,
     ExperimentSummary,
-    MetricsResponse,
     QualificationStatus,
-    RunSummary,
+    RunPage,
     RuntimeStatus,
 )
+from infosec_harness.persistence.metrics import MetricsResponse
 
 # Evaluation summaries are unpaginated and can exceed 5 MiB in a populated deployment.
 # Keep a finite transport ceiling independent of semantic contract validation.
@@ -131,11 +132,20 @@ def check(api_url, web_url, *, timeout=60, expected_source_commit=None,
                         raise SmokeFailure("deployment identity mismatch")
                 observed.append((runtime.api_source_commit, runtime.model_mode,
                                  runtime.assessment_transport))
-                for path, model in (("batches", BatchSummary), ("runs", RunSummary),
+                for path, model in (("batches", BatchSummary),
                                     ("experiments", ExperimentSummary)):
                     rows = TypeAdapter(list[model]).validate_json(fetch(
                         origin + f"/api/{path}?population=operational", "json"))
                     counts[path] = len(rows)
+                # The runs view reads the paginated page, so that is the contract checked.
+                page = RunPage.model_validate_json(fetch(
+                    origin + "/api/run-page?population=operational", "json"))
+                counts["runs"] = page.total
+                config = ConfigResponse.model_validate_json(fetch(origin + "/api/config", "json"))
+                if {agent.name for agent in config.agents} != set(AGENT_BINDINGS):
+                    raise SmokeFailure("incomplete agent configuration")
+                if config.model_mode != runtime.model_mode:
+                    raise SmokeFailure("deployment identity mismatch")
                 metrics = MetricsResponse.model_validate_json(fetch(
                     origin + "/api/metrics?population=operational", "json"))
                 if metrics.population != "operational":

@@ -12,12 +12,14 @@ import pytest
 import yaml
 
 from infosec_harness.agents.registry import AGENT_BINDINGS
-from infosec_harness.evals.adapters import UNEVIDENCED_SAFETY_AGENTS, is_unevidenced_safe
+from infosec_harness.evals.adapters import defines_unevidenced_safety, is_unevidenced_safe
+from infosec_harness.evals.dataset import load_dataset
+from infosec_harness.evals.gates import agents_gated_on, load_policy, policy_problems
 from infosec_harness.resources import agents_dir
 
 POLICIES = {name: agents_dir() / name / "evals" / "release-policy.yaml" for name in AGENT_BINDINGS}
 # Owner-approved task-success floor for iterative development; hard gates stay independent of
-# it. See docs/evaluation/AGENT_QUALITY_PLAN.md for the explicit policy and its limits.
+# it. See docs/evaluation/RELEASE_EVIDENCE.md for the explicit policy and its limits.
 SUCCESS_FLOOR = 0.75
 REQUIRED_PROVENANCE = {"git_commit", "agent_version", "config_hash", "model", "dataset_version"}
 
@@ -32,27 +34,10 @@ def test_every_agent_has_a_release_policy(name):
 
 
 @pytest.mark.parametrize("name", sorted(AGENT_BINDINGS))
-def test_every_gate_the_policy_names_is_a_metric_the_report_emits(name):
-    """Otherwise the gate silently never applies."""
-    policy = _policy(name)
-    # Verified against a real report: `harness eval run <agent> --report` writes each of
-    # these. uncovered_material_scenarios comes from evals.coverage and is computed
-    # statically, so it is emitted even when no case ran.
-    emitted = {"schema_validity_rate", "budget_exhausted_count", "uncovered_material_scenarios"}
-    if name in UNEVIDENCED_SAFETY_AGENTS:
-        emitted.add("unevidenced_safe_verdicts")
-    if name == "build-repair":
-        emitted.update({"execution_not_checked_count", "execution_failed_count"})
-    assert set(policy["hard_gates"]) <= emitted, (
-        f"{name}: policy names gates the report never writes: "
-        f"{sorted(set(policy['hard_gates']) - emitted)}"
-    )
-
-
-@pytest.mark.parametrize("name", sorted(AGENT_BINDINGS))
-def test_thresholds_name_metrics_the_report_emits(name):
-    emitted = {"task_success_rate", "average_cost_usd", "p95_model_requests"}
-    assert set(_policy(name)["thresholds"]) <= emitted, name
+def test_every_check_the_policy_names_is_measurable_and_can_fail(name):
+    """A gate on a metric the run never publishes, or on execution evidence the dataset never
+    produces, silently never applies."""
+    assert policy_problems(load_policy(name), load_dataset(name).cases) == []
 
 
 @pytest.mark.parametrize("name", sorted(AGENT_BINDINGS))
@@ -71,8 +56,10 @@ def test_uncovered_material_risk_blocks_release_everywhere(name):
 
 
 def test_the_agents_on_the_false_negative_path_carry_the_safety_gate():
-    for name in UNEVIDENCED_SAFETY_AGENTS:
-        assert "unevidenced_safe_verdicts" in _policy(name)["hard_gates"], name
+    """Every agent with an unevidenced-safety predicate is gated on it, and only those."""
+    defined = {name for name in AGENT_BINDINGS if defines_unevidenced_safety(name)}
+    assert defined
+    assert set(agents_gated_on("unevidenced_safe_verdicts")) == defined
 
 
 def test_unattested_probe_observations_are_not_release_gates():

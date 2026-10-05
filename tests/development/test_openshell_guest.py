@@ -1,20 +1,14 @@
 from __future__ import annotations
 
-import importlib.util
 import json
 import subprocess
 import tomllib
 from pathlib import Path
 
 import pytest
+from conftest import load_script
 
-ROOT = Path(__file__).resolve().parents[2]
-SPEC = importlib.util.spec_from_file_location(
-    "openshell_guest_review", ROOT / "scripts" / "openshell_guest.py"
-)
-assert SPEC is not None and SPEC.loader is not None
-guest = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(guest)
+guest = load_script("openshell_guest")
 
 
 def test_daemon_contract_is_unix_only_and_separates_owned_state(tmp_path: Path):

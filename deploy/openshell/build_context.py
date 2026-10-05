@@ -61,16 +61,16 @@ def build_context(root: Path, output: Path, *, machine: str = "aarch64") -> None
     package_dir = output / "infosec_harness"
     (package_dir / "inference").mkdir(parents=True)
     (package_dir / "agents").mkdir()
-    for path in (package_dir, package_dir / "inference", package_dir / "agents"):
+    (package_dir / "domain").mkdir()
+    for path in (package_dir, package_dir / "inference", package_dir / "agents",
+                 package_dir / "domain"):
         (path / "__init__.py").write_text("")
     for name in ("auth", "codec", "compat", "diagnostics", "executor", "http_service", "protocol", "timing"):
         shutil.copyfile(
             root / f"src/infosec_harness/inference/{name}.py", package_dir / f"inference/{name}.py"
         )
-    shutil.copyfile(
-        root / "src/infosec_harness/agents/intake_schema.py",
-        package_dir / "agents/intake_schema.py",
-    )
+    for relative in ("agents/intake_schema.py", "domain/canonical.py"):
+        shutil.copyfile(root / "src/infosec_harness" / relative, package_dir / relative)
     shutil.copyfile(root / "deploy/openshell/Dockerfile.executor", output / "Dockerfile")
 
 

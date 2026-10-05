@@ -45,7 +45,7 @@ async def test_build_adapter_sandbox_tool_receives_failed_specs_image(adapter, m
         (
             "perl:5.40",
             "perl -MDBI -e 1",
-            {"network": False, "timeout": 180, "idempotency_key": "eval-run:probe-1:v1"},
+            {"timeout": 180, "idempotency_key": "eval-run:probe-1:v1"},
         )
     ]
     assert "[exit code: 0]" in result

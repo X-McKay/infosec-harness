@@ -16,8 +16,6 @@ from infosec_harness.domain.models import (
 )
 from infosec_harness.persistence import db, store
 
-TERMINAL = TERMINAL_RUN_STATUSES
-
 
 async def accept_batch(batch_id: str, findings: list[FindingInput], label: str,
                        payload: dict) -> None:
@@ -66,7 +64,7 @@ async def record_progress(batch_id: str, fingerprint: str, phase: str,
         if run is None:
             return
         existing_event = await session.get(db.RunEventRecord, f"{run_id}:{event_key}")
-        if existing_event and not (phase in TERMINAL and run.status not in TERMINAL):
+        if existing_event and not (phase in TERMINAL_RUN_STATUSES and run.status not in TERMINAL_RUN_STATUSES):
             return
         if not existing_event:
             session.add(db.RunEventRecord(id=f"{run_id}:{event_key}", run_id=run_id,
@@ -74,11 +72,11 @@ async def record_progress(batch_id: str, fingerprint: str, phase: str,
         previous_status = run.status
         telemetry = dict(run.telemetry or {})
         status = previous_status
-        can_update = previous_status not in TERMINAL or phase == previous_status
+        can_update = previous_status not in TERMINAL_RUN_STATUSES or phase == previous_status
         if can_update:
-            status = phase if phase in TERMINAL else RunStatus.running
+            status = phase if phase in TERMINAL_RUN_STATUSES else RunStatus.running
             telemetry.update(phase=phase, updated_at=datetime.now(UTC).isoformat())
-            if phase in TERMINAL and telemetry.get("completed_at") is None:
+            if phase in TERMINAL_RUN_STATUSES and telemetry.get("completed_at") is None:
                 now = datetime.now(UTC)
                 accepted = telemetry.get("accepted_at")
                 telemetry.update(completed_at=now.isoformat(),
@@ -88,7 +86,7 @@ async def record_progress(batch_id: str, fingerprint: str, phase: str,
                 # A terminal write that wins after the read must never be resurrected.
                 await session.execute(update(db.TriageRun).where(
                     db.TriageRun.id == run_id,
-                    db.TriageRun.status.notin_(TERMINAL) if phase in TERMINAL and previous_status not in TERMINAL
+                    db.TriageRun.status.notin_(TERMINAL_RUN_STATUSES) if phase in TERMINAL_RUN_STATUSES and previous_status not in TERMINAL_RUN_STATUSES
                     else db.TriageRun.status == previous_status
                 ).values(status=status, telemetry=telemetry))
             await session.commit()
@@ -147,7 +145,7 @@ async def finish_pending(batch_id: str, status: BatchStatus | str, detail: str) 
     async with db.session() as session:
         runs = (await session.execute(select(db.TriageRun).where(
             db.TriageRun.batch_id == batch_id))).scalars().all()
-        pending = [(r.fingerprint, r.id) for r in runs if r.status not in TERMINAL]
+        pending = [(r.fingerprint, r.id) for r in runs if r.status not in TERMINAL_RUN_STATUSES]
     if pending and status == BatchStatus.complete:
         status = BatchStatus.failed
         detail = "Workflow finished without persisting every accepted finding."

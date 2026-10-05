@@ -25,9 +25,15 @@ with workflow.unsafe.imports_passed_through():
 
     from infosec_harness.agents import registry
     from infosec_harness.persistence import budgets, db
-    from infosec_harness.qualification.broker.service import AGENTS, ROOT, environment
+    from infosec_harness.qualification.broker.service import (
+        AGENTS,
+        ROOT,
+        environment,
+        use_service_activity_timeout,
+    )
 
-    # Must precede any durable agent import so the shortened model activity timeout applies.
+    if os.environ.get("HARNESS_BROKER_SERVICE_MANIFEST"):
+        use_service_activity_timeout()
     from infosec_harness.qualification.broker.service_workflow import BrokerQualificationWorkflow
 
 pytestmark = pytest.mark.requires_service("HARNESS_BROKER_SERVICE_MANIFEST")
@@ -57,13 +63,12 @@ async def stop_worker(process):
         await asyncio.to_thread(process.wait, 5)
 
 
-async def seed_root(root_id, *, accepted=True):
+async def seed_root(root_id):
     from infosec_harness.agents.durable import CONFIGS
 
     state = budgets.initial_state({"requests": 10000, "tokens": 100_000_000, "cost_usd": 1000.0,
         "tool_calls": 10000, "agent_runs": 100, "execution_seconds": 10_000_000}, elapsed_seconds=240)
-    if accepted:
-        state["agent_config_digests"] = {name: config.digest for name, config in CONFIGS.items()}
+    state["agent_config_digests"] = {name: config.digest for name, config in CONFIGS.items()}
     async with db.session() as session:
         session.add(db.BudgetLedger(root_id=root_id, state=state))
         await session.commit()
@@ -149,8 +154,7 @@ async def test_real_temporal_worker_restart_saved_activity_and_zero_io_replay(se
 async def test_real_direct_stub_history_replays_under_broker_config_without_io(services, monkeypatch):
     """Record a direct SDK history on a separate stub worker, then replay broker code."""
     root_id = "brokerqualification-direct-" + uuid.uuid4().hex
-    # An older root without accepted-config metadata is the supported legacy contract.
-    await seed_root(root_id, accepted=False)
+    await seed_root(root_id)
     before = len(services.events())
     process = start_worker(services.values, direct_stub=True)
     handle = None

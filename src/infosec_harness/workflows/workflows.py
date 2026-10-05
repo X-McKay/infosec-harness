@@ -216,8 +216,7 @@ class TriageBatchWorkflow:
         manifest = execution_manifest(prep.prepared) if prep.prepared else {}
         out: dict[int, TriageRunOutput] = {}
         for i, f in enumerate(group):
-            finding = await workflow.execute_activity(
-                activities.normalize_finding_activity, f, **_ACT)
+            finding = Finding.from_input(f)
             output = inconclusive_output(finding, prep.failure_reason, rationale, status,
                                          prep.invocations if i == 0 else [], manifest)
             await self._save(output)
@@ -240,8 +239,7 @@ class TriageBatchWorkflow:
             except Exception as exc:  # noqa: BLE001 - one finding must not sink the batch
                 if is_cancelled_exception(exc):
                     raise
-                finding = await workflow.execute_activity(
-                    activities.normalize_finding_activity, f, **_ACT)
+                finding = Finding.from_input(f)
                 cause = failure_cause(exc)
                 output = inconclusive_output(finding, classify_pipeline_failure(cause),
                     f"Finding workflow failed: {describe_failure(cause)}", "failed")

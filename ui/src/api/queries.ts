@@ -61,7 +61,7 @@ export const queries = {
       queryKey: queryKeys.experiments,
       queryFn: api.experiments,
       refetchInterval: (query) =>
-        query.state.data?.some((item) => experimentActive(item.metrics.status))
+        query.state.data?.some((item) => experimentActive(item.status))
           ? EVALUATION_REFRESH_MS
           : false,
     }),

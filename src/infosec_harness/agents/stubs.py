@@ -33,6 +33,7 @@ from infosec_harness.agents.ecosystem_contract import (
     RUNTIME_HOME,
     maven_image_for_release,
 )
+from infosec_harness.domain.models import StackFingerprint
 
 
 def _prompt_text(messages: list[ModelMessage]) -> str:
@@ -56,8 +57,7 @@ def _tag(text: str, name: str) -> Any:
 
 
 def _primary_language(stack: dict | None) -> str:
-    langs = (stack or {}).get("languages") or {}
-    return max(langs, key=langs.get) if langs else "unknown"
+    return StackFingerprint.model_validate(stack or {}).top_language or "unknown"
 
 
 # One command per Node runner, because the runner is not interchangeable with its selector.

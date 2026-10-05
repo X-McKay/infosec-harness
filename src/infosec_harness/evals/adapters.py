@@ -43,7 +43,7 @@ def _deps(case: dict, **kw: Any) -> AgentDeps:
     if "source_files" not in kw and case.get("repo"):
         from infosec_harness.repo.detect import detect_stack
 
-        kw["source_files"] = sum((detect_stack(repo_path).languages or {}).values()) or None
+        kw["source_files"] = detect_stack(repo_path).source_files
     return AgentDeps(repo_path=repo_path, **kw)
 
 

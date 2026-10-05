@@ -10,8 +10,6 @@ re-deriving a path of its own.
 
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +17,7 @@ from typing import Any
 
 import yaml
 
+from infosec_harness.domain.canonical import canonical_bytes, sha256_hex
 from infosec_harness.resources import source_checkout
 from infosec_harness.settings import get_settings
 
@@ -62,9 +61,9 @@ def case_set_identity(cases: Iterable[Mapping[str, object]]) -> dict[str, object
         {"name": case.get("name"), "group": case_group(case), "expected": case.get("expected")}
         for case in cases
     ]
-    encoded = json.dumps(contracts, sort_keys=True, separators=(",", ":"))
     return {
-        "case_set_digest": hashlib.sha256(encoded.encode()).hexdigest(),
+        # Persisted comparison identity: the ASCII-escaped encoding it has always used.
+        "case_set_digest": sha256_hex(canonical_bytes(contracts, ascii_only=True)),
         "case_ids": [str(case.get("name")) for case in cases],
         "groups": sorted({case_group(case) for case in cases}),
     }
@@ -92,9 +91,6 @@ class Dataset:
         if not selected:
             raise ValueError(f"no cases selected for groups {sorted(groups or ())} in {self.path}")
         return selected
-
-    def groups(self) -> set[str]:
-        return {case_group(case) for case in self.cases}
 
 
 def load_dataset(agent: str, path: Path | None = None) -> Dataset:

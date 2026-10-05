@@ -18,6 +18,17 @@ async def test_health(client):
     assert (await client.get("/api/health")).json()["status"] == "ok"
 
 
+async def test_cross_origin_reads_are_not_granted(client):
+    """The UI is same-origin (nginx or the Vite proxy); no other origin may read the API."""
+    response = await client.get("/api/health", headers={"Origin": "https://elsewhere.example"})
+    assert "access-control-allow-origin" not in response.headers
+    preflight = await client.options(
+        "/api/batches",
+        headers={"Origin": "https://elsewhere.example", "Access-Control-Request-Method": "POST"},
+    )
+    assert "access-control-allow-origin" not in preflight.headers
+
+
 async def test_config_lists_agents(client):
     cfg = (await client.get("/api/config")).json()
     names = {a["name"] for a in cfg["agents"]}

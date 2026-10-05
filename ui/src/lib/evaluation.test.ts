@@ -11,6 +11,7 @@ import {
   percentile,
   qualityFraction,
 } from "./evaluation.ts";
+import { text } from "./json.ts";
 
 // Small report-shaped fixtures exercise interpretation only, never operational data.
 const experiment = (
@@ -31,6 +32,7 @@ const experiment = (
   pricing: "",
   harness_version: "",
   created_at: "",
+  status: (text(metrics.status) || null) as ExperimentSummary["status"],
   metrics,
   ...fields,
 });
@@ -80,7 +82,13 @@ test("absent gate measurements remain unknown and never establish promotion", ()
     {
       label: "Budget evidence",
       status: "unknown",
-      detail: "No budget enforcement counters were recorded.",
+      detail: "No budget exhaustion count was recorded.",
+    },
+    {
+      label: "Release gates",
+      status: "unknown",
+      detail:
+        "No release-gate evaluation was recorded (only complete runs are evaluated).",
     },
     {
       label: "Completion evidence",
@@ -109,9 +117,8 @@ test("recorded gates retain measured fractions, budget findings, and completion 
     n: 4,
     n_planned: 5,
     status: "complete",
-    budget_enforcement_violations: 0,
-    unexpected_budget_stops: 0,
-    expected_budget_stops: 1,
+    budget_exhausted_count: 0,
+    gate_evaluation: { status: "passed", checks: [] },
   };
   assert.deepEqual(gateObservations(experiment(metrics)), [
     {
@@ -122,8 +129,12 @@ test("recorded gates retain measured fractions, budget findings, and completion 
     {
       label: "Budget evidence",
       status: "clear",
-      detail:
-        "0 enforcement violations · 0 unexpected stops · 1 expected stops",
+      detail: "0 case runs exhausted their budget",
+    },
+    {
+      label: "Release gates",
+      status: "passed",
+      detail: "The agent's release policy evaluated this run as passed.",
     },
     {
       label: "Completion evidence",
@@ -133,16 +144,16 @@ test("recorded gates retain measured fractions, budget findings, and completion 
   ]);
   assert.equal(qualityFraction(metrics), "3 / 4 cases");
   assert.equal(
-    gateObservations(experiment({ unexpected_budget_stops: 1 }))[1].status,
+    gateObservations(experiment({ budget_exhausted_count: 2 }))[1].status,
     "findings",
   );
   assert.equal(
-    gateObservations(experiment({ budget_enforcement_violations: 0 }))[1]
+    gateObservations(experiment({ gate_evaluation: { status: "failed" } }))[2]
       .status,
-    "findings",
+    "failed",
   );
   assert.equal(
-    gateObservations(experiment({ status: "running" }))[2].detail,
+    gateObservations(experiment({ status: "running" }))[3].detail,
     "Run status: running; planned and completed counts unavailable.",
   );
 });

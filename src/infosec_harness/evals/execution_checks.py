@@ -82,13 +82,8 @@ async def _secure_engine(
 ) -> ExecutionCheckResult:
     """Build the model output and run one controller-authored check without network access."""
     from infosec_harness.repo.checkout import checkout
-    from infosec_harness.repo.detect import detect_stack
     from infosec_harness.sandbox import docker
-    from infosec_harness.sandbox.policy import (
-        SandboxUnavailable,
-        build_egress_allowlist,
-        ensure_runtime_available,
-    )
+    from infosec_harness.sandbox.policy import SandboxUnavailable, ensure_runtime_available
     from infosec_harness.settings import get_settings
 
     if check_name != "perl_dbd_sqlite_v1":
@@ -132,8 +127,7 @@ async def _secure_engine(
         cached = await docker.image_exists(image_tag)
         build_duration_s = 0.0
         if not cached:
-            egress = build_egress_allowlist(detect_stack(snapshot.path))
-            built = await docker.build_image(snapshot.path, spec, image_tag, egress_hosts=egress)
+            built = await docker.build_image(snapshot.path, spec, image_tag)
             if built.exit_code != 0 or built.timed_out:
                 output = built.stderr or built.stdout
                 infrastructure = _builder_infrastructure_failure(output)

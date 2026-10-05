@@ -13,34 +13,15 @@ from typing import Any
 from pydantic_ai import ModelRetry, RunContext
 
 from infosec_harness.agents.deps import AgentDeps
-
-# Stable re-exports: prompts, stubs, evals, and downstream callers historically imported
-# these names from validators. The implementation lives in a focused versioned adapter contract.
-from infosec_harness.agents.ecosystem_contract import (  # noqa: F401
-    ADAPTER_CONTRACT_VERSION,
-    BUILD_HOME,
-    GRADLE_TEST_COMMAND,
-    JEST_TEST_COMMAND,
-    MAVEN_TEST_COMMAND,
-    MAVEN_WARMUP_COMMAND,
-    MAVEN_WARMUP_COMMANDS,
-    PYTEST_TEST_COMMAND,
-    RUNTIME_HOME,
-    VITEST_TEST_COMMAND,
-    _pathish_selector_violation,
-    _short_flag,
-    declared_java_release,
+from infosec_harness.agents.ecosystem_contract import (
     environment_spec_violations,
-    image_jdk_major,
     install_path_violations,
     jdk_compatibility_violations,
     js_runner_choice_violations,
-    maven_image_for_release,
     offline_warmup_violations,
     repo_java_release,
     repo_js_runners,
     repo_jvm_test_framework,
-    warmup_framework,
 )
 from infosec_harness.agents.intake_evidence import extraction_evidence_violations
 from infosec_harness.domain.models import (

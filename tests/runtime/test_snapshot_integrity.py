@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from infosec_harness.agents.ecosystem_contract import ADAPTER_CONTRACT_VERSION
+from infosec_harness.domain.canonical import canonical_bytes, digest
 from infosec_harness.domain.models import (
     BuildResult,
     EnvironmentSpec,
@@ -19,8 +20,6 @@ from infosec_harness.domain.models import (
     SmokeResult,
     SourceMode,
     StackFingerprint,
-    canonical_json,
-    sha256_text,
 )
 from infosec_harness.graph.manifests import execution_manifest
 from infosec_harness.persistence.identity import persisted_manifest
@@ -33,7 +32,7 @@ from infosec_harness.settings import get_settings
 @pytest.fixture
 def snapshot_workspace(tmp_path, monkeypatch):
     workspace = tmp_path / "workspace"
-    monkeypatch.setattr(checkout_module, "default_workspace", lambda: workspace)
+    monkeypatch.setattr(checkout_module, "workspace_dir", lambda: workspace)
     # Local sources are admitted only beneath operator-approved roots.
     monkeypatch.setattr(get_settings(), "local_repo_roots", [tmp_path])
     return workspace
@@ -165,12 +164,12 @@ async def test_generated_output_directory_is_captured_as_source(snapshot_workspa
 
 def test_omitted_source_mode_preserves_legacy_finding_identity():
     finding = FindingInput(title="SQL injection", repo_url="/repo", revision="HEAD")
-    legacy_key = canonical_json({
+    identity = digest({
         "repo": "/repo", "rev": "HEAD", "file": None, "line": None, "cwe": None,
         "title": "SQL injection", "ext": None,
     })
 
-    assert Finding.compute_fingerprint(finding) == sha256_text(legacy_key)[:24]
+    assert Finding.compute_fingerprint(finding) == identity[:24]
     assert Finding.compute_fingerprint(
         finding.model_copy(update={"source_mode": SourceMode.working_snapshot})
     ) != Finding.compute_fingerprint(finding)
@@ -245,7 +244,7 @@ def test_execution_manifest_records_identities_without_environment_values(tmp_pa
         },
         "smoke": {"ok": True},
     }
-    assert "do-not-persist" not in canonical_json(manifest)
+    assert b"do-not-persist" not in canonical_bytes(manifest)
 
 
 async def test_local_source_outside_approved_roots_is_rejected(tmp_path, monkeypatch):

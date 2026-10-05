@@ -14,11 +14,13 @@ Everything here is pure and deterministic, so the same checks run at worker star
 from __future__ import annotations
 
 import re
+from collections.abc import Collection, Iterable
 from pathlib import Path
 from typing import Any
 
-EXECUTION_CLASSES = ("ephemeral", "durable", "human_governed")
-RISK_TIERS = ("low", "medium", "high", "critical")
+from infosec_harness.agents.risk import TIER_ORDER as RISK_TIERS
+from infosec_harness.tools.policies import EXECUTION_CLASS_ORDER as EXECUTION_CLASSES
+
 DATA_CLASSIFICATIONS = ("public", "internal", "confidential", "restricted")
 SEMVER = re.compile(r"^\d+\.\d+\.\d+(?:[-+].+)?$")
 
@@ -134,6 +136,101 @@ def _reference_violations(agent_name: str, meta: dict[str, Any]) -> list[str]:
         return [f"metadata.evaluation_policy points at {meta['evaluation_policy']!r}, which "
                 f"does not exist"]
     return []
+
+
+def assert_capabilities_match_metadata(name: str, metadata: dict[str, Any] | None, *,
+                                       toolsets: Collection[str],
+                                       skills: Collection[str]) -> None:
+    """Governance metadata must describe the capabilities the agent actually has.
+
+    ``enabled_toolsets`` and ``enabled_skills`` are what a reviewer reads and what the execution
+    class is judged against; a capability reachable from the spec but absent from them is
+    governed by nothing. Every toolset name must have a declared policy.
+    """
+    from infosec_harness.tools.policies import load_policies
+
+    meta = metadata or {}
+    policies = load_policies()
+    declared_toolsets = list(meta.get("enabled_toolsets") or [])
+    unknown = sorted(set(declared_toolsets) - set(policies))
+    if unknown:
+        raise GovernanceError(
+            f"Agent {name!r} enables toolsets with no declared policy: {unknown}; "
+            f"known: {sorted(policies)}")
+    if set(declared_toolsets) != set(toolsets):
+        raise GovernanceError(
+            f"Agent {name!r} metadata.enabled_toolsets {sorted(declared_toolsets)} does not match "
+            f"its capabilities {sorted(toolsets)}")
+    declared_skills = set(meta.get("enabled_skills") or [])
+    if declared_skills != set(skills):
+        raise GovernanceError(
+            f"Agent {name!r} metadata.enabled_skills {sorted(declared_skills)} does not match "
+            f"its Skills capabilities {sorted(skills)}")
+
+
+def assert_execution_class_covers_tools(name: str, metadata: dict[str, Any] | None,
+                                        toolsets: Collection[str]) -> None:
+    """An agent's execution class must be at least what its most consequential tool requires.
+
+    This is the rule that makes an execution class mean something: `sandbox-shell` executes
+    code, so any agent enabling it is at least `durable`. The requirement is derived from the
+    capabilities the spec actually attaches, not from what its metadata claims. Declaring a
+    stronger class is fine; declaring a weaker one is not.
+    """
+    from infosec_harness.tools.policies import required_execution_class
+
+    declared = (metadata or {}).get("execution_class")
+    required = required_execution_class(list(toolsets))
+    if EXECUTION_CLASSES.index(declared) < EXECUTION_CLASSES.index(required):
+        raise GovernanceError(
+            f"Agent {name!r} declares execution_class {declared!r} but its capabilities "
+            f"require at least {required!r}"
+        )
+
+
+def assert_model_policy(name: str, metadata: dict[str, Any] | None, tier: str) -> None:
+    """A committed spec's model policy must resolve to exactly the tier it runs.
+
+    Experiment overlays may substitute a model (that is what a model sweep is) and are recorded
+    as overlay provenance; the committed spec itself must not let the two drift apart.
+    """
+    from infosec_harness.agents.models import load_models_config
+
+    policy = (metadata or {}).get("model_policy")
+    policies = load_models_config().model_policies
+    if policies.get(policy) != tier:
+        raise GovernanceError(
+            f"Agent {name!r} metadata.model_policy {policy!r} resolves to "
+            f"{policies.get(policy)!r}, not the spec's model tier {tier!r}")
+
+
+def assert_tools_are_declared(name: str, selections: Iterable[Collection[str] | None]) -> None:
+    """Every repo tool an agent can call must appear in the toolset's own policy.
+
+    The policy in `tools/repo-read-only/tool.yaml` is what the execution class is judged
+    against and what a reviewer reads; a tool reachable from a spec but absent from it is
+    governed by nothing. ``selections`` are the spec's `RepoReadOnly(tools=[...])` arguments
+    (None: the default surface), so a typo in a subset fails rather than silently narrowing
+    the agent's tools.
+    """
+    from infosec_harness.agents.capabilities import DEFAULT_REPO_RO_TOOLS, REPO_RO_TOOLS
+    from infosec_harness.tools.policies import load_policies
+
+    declared = {t.name for t in load_policies()["repo-read-only"].tools}
+    for tools in selections:
+        selected = tools or DEFAULT_REPO_RO_TOOLS
+        unknown = sorted(set(selected) - set(REPO_RO_TOOLS))
+        if unknown:
+            raise GovernanceError(
+                f"Agent {name!r} selects repo tools that do not exist: {unknown}. "
+                f"Available: {sorted(REPO_RO_TOOLS)}"
+            )
+        undeclared = sorted(set(selected) - declared)
+        if undeclared:
+            raise GovernanceError(
+                f"Agent {name!r} can call repo tools that tools/repo-read-only/tool.yaml does "
+                f"not declare: {undeclared}"
+            )
 
 
 def assert_governed(agent_name: str, metadata: dict[str, Any] | None, *,

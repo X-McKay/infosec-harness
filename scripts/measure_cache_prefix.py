@@ -23,6 +23,13 @@ import asyncio
 import tempfile
 from pathlib import Path
 
+from exploration import (
+    MEASUREMENT_LIMITS,
+    prefix_report,
+    recording_model,
+    serialise_history,
+    synth_repo,
+)
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo
 
@@ -36,13 +43,6 @@ from infosec_harness.domain.models import (
     ProbePlan,
     RepoProfile,
     StackFingerprint,
-)
-from infosec_harness.evals.exploration import (
-    MEASUREMENT_LIMITS,
-    prefix_report,
-    recording_model,
-    serialise_history,
-    synth_repo,
 )
 
 _STACK = StackFingerprint(languages={"java": 500}, manifests=["pom.xml"],
@@ -127,9 +127,8 @@ async def recon_prefix(tools: tuple[str, ...], source_files: int = 500):
     import sys
 
     sys.path.insert(0, str(Path(__file__).parent))
+    from exploration import _RECON_OUTPUT, DEFAULT_NEED, Explorer
     from measure_exploration import overlay_for
-
-    from infosec_harness.evals.exploration import _RECON_OUTPUT, DEFAULT_NEED, Explorer
 
     with tempfile.TemporaryDirectory() as tmp:
         repo = synth_repo(Path(tmp) / "repo", source_files)

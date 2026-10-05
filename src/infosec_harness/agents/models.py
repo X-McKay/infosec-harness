@@ -8,9 +8,7 @@ never enter workflow history. In ``stub`` mode a deterministic in-process model 
 
 from __future__ import annotations
 
-import hashlib
 import importlib.metadata
-import json
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -20,12 +18,10 @@ import yaml
 from pydantic import BaseModel, Field, model_validator
 from pydantic_ai.models import Model
 
+from infosec_harness.domain.canonical import canonical_bytes, sha256_hex
 from infosec_harness.inference.compat import (
     CompatOpenAIChatModel,
     apply_max_tokens_floor,
-)
-from infosec_harness.inference.compat import (
-    merge_leading_system_messages as merge_leading_system_messages,
 )
 from infosec_harness.inference.protocol import BrokerError, ExecutorContract, ReservationBinding
 from infosec_harness.settings import get_settings
@@ -149,8 +145,8 @@ class ResolvedModelConfig(BaseModel):
 
     @property
     def digest(self) -> str:
-        payload = json.dumps(self.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
-        return hashlib.sha256(payload.encode()).hexdigest()[:16]
+        # Persisted identity: the ASCII-escaped encoding it has always been hashed under.
+        return sha256_hex(canonical_bytes(self.model_dump(mode="json"), ascii_only=True))[:16]
 
 
 class ModelsConfig(BaseModel):
@@ -177,10 +173,31 @@ class ModelsConfig(BaseModel):
             raise KeyError(f"Tier {tier!r} has no model for backend {backend!r}") from e
 
 
+class ModelEndpointUnconfigured(ValueError):
+    """An OpenAI-compatible backend was selected with no endpoint to send requests to."""
+
+
 @lru_cache
 def load_models_config(path: Path | None = None) -> ModelsConfig:
-    path = path or get_settings().models_config
-    return ModelsConfig.model_validate(yaml.safe_load(Path(path).read_text()))
+    settings = get_settings()
+    config = ModelsConfig.model_validate(
+        yaml.safe_load(Path(path or settings.models_config).read_text()))
+    if settings.model_base_url:
+        config.backends = {
+            name: (backend.model_copy(update={"base_url": settings.model_base_url})
+                   if backend.kind == "openai_compatible" and backend.base_url is None
+                   else backend)
+            for name, backend in config.backends.items()
+        }
+    return config
+
+
+def require_endpoint(backend_name: str, backend: BackendConfig) -> None:
+    """Refuse an OpenAI-compatible backend without an explicit endpoint."""
+    if backend.kind == "openai_compatible" and not backend.base_url:
+        raise ModelEndpointUnconfigured(
+            f"model backend {backend_name!r} has no base_url; set HARNESS_MODEL_BASE_URL or "
+            "give the backend a base_url in the model catalogue (HARNESS_MODELS_CONFIG)")
 
 
 def max_tokens_floor(agent_name: str | None = None) -> int:
@@ -234,6 +251,7 @@ def resolve_config(
     cfg = load_models_config()
     backend_name = cfg.backend_for(agent_name)
     backend = cfg.backends[backend_name]
+    require_endpoint(backend_name, backend)
     model_id = cfg.model_id(tier, backend_name)
     resolved_model = f"{backend_name}:{model_id}"
     source = pricing_source(resolved_model)
@@ -312,6 +330,7 @@ def _build_live(
         return BedrockConverseModel(model_id, provider=provider)
     from pydantic_ai.providers.openai import OpenAIProvider
 
+    require_endpoint(backend_name, backend)
     # Some gateways (e.g. an internal LLM proxy) require no key. Fall back to a placeholder
     # so the OpenAI client still constructs; if the endpoint enforces auth it returns 401.
     api_key = os.environ.get(backend.api_key_env or "", "") or "no-key"
@@ -402,7 +421,7 @@ def strip_backend_prefix(model_name: str) -> str:
 
 
 def _content_digest(value: bytes) -> str:
-    return hashlib.sha256(value).hexdigest()[:16]
+    return sha256_hex(value)[:16]
 
 
 def pricing_table_identity(backend_name: str) -> str:
@@ -413,11 +432,10 @@ def pricing_table_identity(backend_name: str) -> str:
     config_path = Path(get_settings().models_config)
     config_digest = _content_digest(config_path.read_bytes())
     backend_prices = cfg.backends[backend_name].prices
-    custom_digest = _content_digest(json.dumps(
+    custom_digest = _content_digest(canonical_bytes(
         {name: price.model_dump(mode="json") for name, price in sorted(backend_prices.items())},
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode())
+        ascii_only=True,
+    ))
     try:
         import genai_prices
 

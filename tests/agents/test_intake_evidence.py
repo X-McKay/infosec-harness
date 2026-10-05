@@ -103,16 +103,13 @@ async def test_production_local_intake_receives_the_same_exact_report(tmp_path, 
         captured.append(deps.report_text)
         return AgentOutcome(agent=name, output=ExtractedFinding())
 
-    async def normalize_finding(inp):
-        return local.adapters.to_finding(inp)
-
     async def resolve_location(*_args):
         return None
 
     from infosec_harness.graph import pipeline
 
     monkeypatch.setattr(pipeline, "execution_manifest", lambda _prepared: {})
-    await local.triage_one(SimpleNamespace(run_agent=run_agent, normalize_finding=normalize_finding,
+    await local.triage_one(SimpleNamespace(run_agent=run_agent,
                                            resolve_location=resolve_location), FindingInput(
         title="Synthetic extraction", description=report, repo_url=str(tmp_path)),
         SimpleNamespace(snapshot=SimpleNamespace(path=str(tmp_path)), status="ready"))

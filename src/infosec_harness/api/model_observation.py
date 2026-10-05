@@ -9,8 +9,7 @@ from typing import Literal, TypedDict
 
 from infosec_harness.agents.registry import AGENT_BINDINGS
 from infosec_harness.api.contracts import ModelConnectivity
-from infosec_harness.api.evidence_io import COMMIT, read_evidence
-from infosec_harness.qualification.ledger import read_bytes
+from infosec_harness.api.evidence_io import COMMIT, read_bytes, read_evidence
 from infosec_harness.settings import get_settings
 
 
@@ -42,7 +41,7 @@ def model_runtime() -> tuple[list[str], ModelConnectivity]:
         names = sorted(set(names))
     except Exception:
         return [], observation
-    path = getattr(settings, "model_connection_observation", None)
+    path = settings.model_connection_observation
     if path is None or settings.model_mode != "live":
         return names, observation
     try:

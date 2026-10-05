@@ -23,6 +23,7 @@ from pydantic_ai.usage import RunUsage
 from infosec_harness.agents.deps import AgentDeps
 from infosec_harness.agents.intake_contracts import render_intake_prompt
 from infosec_harness.agents.models import estimate_cost
+from infosec_harness.agents.trajectory import count_repeated_calls, inspect_messages
 from infosec_harness.domain.models import (
     AgentOutcome,
     ComponentProfile,
@@ -37,7 +38,6 @@ from infosec_harness.domain.models import (
     Verdict,
     VerdictLabel,
 )
-from infosec_harness.evals.trajectory import count_repeated_calls, inspect_messages
 from infosec_harness.graph.manifests import execution_manifest
 from infosec_harness.graph.ops import Ops, classify_pipeline_failure
 from infosec_harness.graph.prepare import PrepareFailed, prepare_resolved_component
@@ -226,7 +226,7 @@ async def triage_finding(ops: Ops, inp: FindingInput, prepared: PreparedEnvironm
     inconclusive with every agent call, the context and the executions it had already produced.
     Only a cancellation (as ``is_cancelled`` recognises it) propagates.
     """
-    finding = await ops.normalize_finding(inp)
+    finding = Finding.from_input(inp)
     invocations: list[AgentOutcome] = []
     state: TriageState | None = None
     try:

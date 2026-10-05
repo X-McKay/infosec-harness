@@ -2,31 +2,36 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from pathlib import Path
-from typing import Any, TypedDict, cast
+from typing import Any, TypedDict
 
-from infosec_harness.qualification.ledger import read_bytes
-from infosec_harness.settings import get_settings
+from infosec_harness.domain.canonical import is_sha256, sha256_hex
 
 COMMIT = re.compile(r"^[a-f0-9]{40}$")
-_HASH = re.compile(r"^[a-f0-9]{64}$")
+MAX_EVIDENCE_BYTES = 32 * 1024 * 1024
+
+
+class EvidenceUnavailable(ValueError):
+    pass
+
+
+def read_bytes(path: str | Path, *, limit: int = MAX_EVIDENCE_BYTES) -> bytes:
+    """Bounded read of an operator-owned regular file; symlinks anywhere on the path refuse."""
+    p = Path(path).absolute()
+    if any(part.is_symlink() for part in (p, *p.parents)) or not p.is_file():
+        raise EvidenceUnavailable("artifact unavailable")
+    with p.open("rb") as stream:
+        data = stream.read(limit + 1)
+    if len(data) > limit:
+        raise EvidenceUnavailable("artifact oversized")
+    return data
 
 
 class EvidenceReference(TypedDict):
     file: str
     sha256: str
-
-
-class QualificationBundle(TypedDict):
-    version: int
-    ledger: EvidenceReference
-    current: EvidenceReference
-    reviews: EvidenceReference
-    selection: dict[str, str]
-    broker_observation: EvidenceReference
 
 
 def reject_duplicate_fields(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -41,7 +46,7 @@ def reject_duplicate_fields(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 def read_evidence(path: Path, expected: str | None = None) -> Any:
     data = read_bytes(path)
     if expected is not None and (
-        not _HASH.fullmatch(expected) or hashlib.sha256(data).hexdigest() != expected
+        not is_sha256(expected) or sha256_hex(data) != expected
     ):
         raise ValueError("evidence drift")
     return json.loads(data, object_pairs_hook=reject_duplicate_fields)
@@ -52,16 +57,3 @@ def read_reference(ref: EvidenceReference) -> Any:
         raise ValueError("invalid reference")
     return read_evidence(Path(ref["file"]), ref["sha256"])
 
-
-def load_bundle() -> QualificationBundle:
-    settings = get_settings()
-    if settings.qualification_bundle is None:
-        raise ValueError("evidence unavailable")
-    value = read_evidence(settings.qualification_bundle)
-    if (
-        set(value) != {"version", "ledger", "current", "reviews", "selection", "broker_observation"}
-        or type(value["version"]) is not int
-        or value["version"] != 1
-    ):
-        raise ValueError("invalid bundle")
-    return cast(QualificationBundle, value)

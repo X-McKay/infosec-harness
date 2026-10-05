@@ -28,11 +28,13 @@ from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
 from infosec_harness.agents.intake_contracts import render_intake_prompt
 from infosec_harness.agents.planning_window import planning_window_diagnostic
 from infosec_harness.agents.render import render_prompt
+from infosec_harness.domain.models import ExperimentStatus
 from infosec_harness.evals.adapters import ADAPTERS, defines_unevidenced_safety, is_unevidenced_safe
 from infosec_harness.evals.budget_stop import budget_stop_diagnostic
 from infosec_harness.evals.coverage import scenario_coverage
 from infosec_harness.evals.dataset import Dataset, case_group, case_set_identity, load_dataset
 from infosec_harness.evals.errors import failure_diagnostic
+from infosec_harness.evals.gates import load_policy
 from infosec_harness.evals.intake_fields import intake_field_summary
 from infosec_harness.evals.invocation import AgentRunTimeout, run_with_timeout
 from infosec_harness.evals.metrics import RunPlan, experiment_metrics
@@ -167,7 +169,7 @@ async def _run_case(subject: _Subject, case: dict, adapted: tuple, rep: int,
 
     agent = subject.agent
     task_text, payload, deps, predict, expected = adapted
-    prompt = (render_intake_prompt(task_text, payload, protocol=subject.intake_protocol)
+    prompt = (render_intake_prompt(task_text, payload)
               if agent == "intake" else render_prompt(task_text, payload))
     config = resolve_agent_config(agent, subject.spec, source_files=deps.source_files,
                                   durable=True)
@@ -381,7 +383,7 @@ async def run_experiment(
     attempts: list[dict] = []
     completed_cases = 0
 
-    def metrics_now(status: str, truncation: dict | None = None) -> dict[str, Any]:
+    def metrics_now(status: ExperimentStatus, truncation: dict | None = None) -> dict[str, Any]:
         metrics = experiment_metrics(attempts, plan, status=status,
                                      cases_completed=completed_cases)
         metrics.update(
@@ -392,9 +394,13 @@ async def run_experiment(
         )
         if truncation is not None:
             metrics["truncated"] = truncation
+        if status is ExperimentStatus.complete:
+            # The policy verdict travels with the stored run, so a reader of the experiment
+            # store sees the same gate status the release report records.
+            metrics["gate_evaluation"] = load_policy(agent).evaluate(metrics).as_report()
         return metrics
 
-    async def persist(status: str, rows: list, truncation: dict | None = None) -> dict:
+    async def persist(status: ExperimentStatus, rows: list, truncation: dict | None = None) -> dict:
         """Upsert the experiment with the metrics so far and append the new case rows."""
         metrics = metrics_now(status, truncation)
         async with db.session() as session:
@@ -413,7 +419,7 @@ async def run_experiment(
     await db.create_all()
     # Claim the row before the first model call: a run that dies on case 1 is still a visible
     # `status=running` experiment rather than nothing at all.
-    await persist("running", [])
+    await persist(ExperimentStatus.running, [])
     case_name, rep = "", 0
     # Rows scored but not yet committed: never more than one case's worth, and flushed on the
     # way out too, so the persisted rows always match the persisted counters.
@@ -425,7 +431,7 @@ async def run_experiment(
             for rep in range(repeat):
                 pending.append(await _run_case(subject, case, adapted, rep, attempts))
             completed_cases += 1
-            await persist("running", pending)
+            await persist(ExperimentStatus.running, pending)
             pending = []
     except BaseException as exc:
         # Anything the per-case handlers did not classify is not an answer about the model:
@@ -437,7 +443,7 @@ async def run_experiment(
             "completed_runs": scored, "planned_runs": plan.runs,
             "completed_cases": completed_cases, "planned_cases": plan.cases,
         }
-        await persist("truncated", pending, truncation)
+        await persist(ExperimentStatus.truncated, pending, truncation)
         # The persisted record is sanitized; the operator running this still needs the
         # actual failure, so the full traceback goes to this process's stderr only.
         traceback.print_exception(exc, file=sys.stderr)
@@ -454,7 +460,7 @@ async def run_experiment(
             raise  # an interrupt or a cancellation keeps its own semantics
         raise TruncatedExperiment(exp_id, truncation) from exc
 
-    metrics = await persist("complete", pending)
+    metrics = await persist(ExperimentStatus.complete, pending)
     cost_label = (f"${metrics['cost_usd_per_case']:.4f}"
                   if metrics["cost_usd_per_case"] is not None else "unknown")
     cache_label = (f"{metrics['cache_hit_ratio']:.2%}"

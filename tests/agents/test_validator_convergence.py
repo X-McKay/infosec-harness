@@ -16,7 +16,7 @@ properties that would have caught it without one.
 """
 import pytest
 
-from infosec_harness.agents.validators import (
+from infosec_harness.agents.ecosystem_contract import (
     GRADLE_TEST_COMMAND,
     MAVEN_TEST_COMMAND,
     MAVEN_WARMUP_COMMAND,

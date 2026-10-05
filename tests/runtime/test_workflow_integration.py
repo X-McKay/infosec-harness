@@ -7,28 +7,25 @@ activity boundary so the test needs neither a daemon nor a registry.
 from __future__ import annotations
 
 import asyncio
-import shutil
-import tempfile
 import uuid
 from pathlib import Path
 
 import pytest
 
-temporal_bin = shutil.which("temporal")
-pytestmark = pytest.mark.skipif(temporal_bin is None, reason="temporal CLI not available")
+pytestmark = pytest.mark.requires_temporal
 
 
 @pytest.fixture
-def fixture_repo():
-    repo = tempfile.mkdtemp(prefix="harness-itest-")
+def fixture_repo(tmp_path):
+    repo = str(tmp_path / "harness-itest")
+    Path(repo).mkdir()
     Path(repo, "requirements.txt").write_text("")
     Path(repo, "app.py").write_text(
         "def lookup(db, name):\n"
         "    return db.execute(\"SELECT * FROM u WHERE n='\" + name + \"'\")\n"
     )
     Path(repo, "tests").mkdir()
-    yield repo
-    shutil.rmtree(repo, ignore_errors=True)
+    return repo
 
 
 async def _fake_build(snapshot_path, spec, tag):
@@ -62,13 +59,13 @@ async def _fake_probe(image, test_file_path, content, test_command, nonce, modul
     return ProcResult(exit_code=0, stdout=stdout, stderr="", timed_out=False, duration_s=0.1)
 
 
-async def _fake_shell(image, command, *, network, timeout=None):
+async def _fake_shell(image, command, *, timeout=None, idempotency_key=None):
     from infosec_harness.sandbox.docker import ProcResult
 
     return ProcResult(exit_code=0, stdout="harness-smoke-ok", stderr="", timed_out=False, duration_s=0.0)
 
 
-async def test_batch_workflow_end_to_end(fixture_repo, monkeypatch):
+async def test_batch_workflow_end_to_end(temporal_cli, fixture_repo, monkeypatch):
     monkeypatch.setenv("HARNESS_MODEL_MODE", "stub")
     from infosec_harness.sandbox import docker
 
@@ -93,7 +90,7 @@ async def test_batch_workflow_end_to_end(fixture_repo, monkeypatch):
     env = None
     for attempt in range(3):
         try:
-            env = await WorkflowEnvironment.start_local(dev_server_existing_path=temporal_bin)
+            env = await WorkflowEnvironment.start_local(dev_server_existing_path=temporal_cli)
             break
         except RuntimeError:
             if attempt == 2:
@@ -125,7 +122,7 @@ async def _true():
     return True
 
 
-async def test_durable_acceptance_restart_results_and_history_replay(fixture_repo, monkeypatch):
+async def test_durable_acceptance_restart_results_and_history_replay(temporal_cli, fixture_repo, monkeypatch):
     """A submitter can disappear; a replacement worker persists outputs and replays history."""
     from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
     from temporalio.client import Client
@@ -153,7 +150,7 @@ async def test_durable_acceptance_restart_results_and_history_replay(fixture_rep
                            start_line=2, cwe="CWE-89", severity="high")
     payload = {"batch_id": batch_id, "findings": [finding.model_dump(mode="json")]}
     await lifecycle.accept_batch(batch_id, [finding, finding], "Recovery", payload)
-    env = await WorkflowEnvironment.start_local(dev_server_existing_path=temporal_bin)
+    env = await WorkflowEnvironment.start_local(dev_server_existing_path=temporal_cli)
     try:
         client = await Client.connect(env.client.service_client.config.target_host,
                                       plugins=[PydanticAIPlugin()])
@@ -178,6 +175,7 @@ async def test_durable_acceptance_restart_results_and_history_replay(fixture_rep
 
 
 async def test_finding_failure_preserves_completed_invocations_and_budget_reason(
+    temporal_cli,
     fixture_repo, monkeypatch,
 ):
     """A later budget failure cannot erase earlier paid finding-stage calls."""
@@ -224,7 +222,7 @@ async def test_finding_failure_preserves_completed_invocations_and_budget_reason
                            start_line=2, cwe="CWE-89", severity="high", ado_work_item_id=43)
     payload = {"batch_id": batch_id, "findings": [finding.model_dump(mode="json")]}
     await lifecycle.accept_batch(batch_id, [finding], "Partial failure", payload)
-    env = await WorkflowEnvironment.start_local(dev_server_existing_path=temporal_bin)
+    env = await WorkflowEnvironment.start_local(dev_server_existing_path=temporal_cli)
     try:
         client = await Client.connect(env.client.service_client.config.target_host,
                                       plugins=[PydanticAIPlugin()])
@@ -243,7 +241,7 @@ async def test_finding_failure_preserves_completed_invocations_and_budget_reason
         await env.shutdown()
 
 
-async def test_cancellation_during_optional_writeback_cancels_batch(fixture_repo, monkeypatch):
+async def test_cancellation_during_optional_writeback_cancels_batch(temporal_cli, fixture_repo, monkeypatch):
     """Cancelling blocked ADO postprocessing still cancels the durable workflow."""
     from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
     from temporalio.client import Client, WorkflowFailureError
@@ -280,7 +278,7 @@ async def test_cancellation_during_optional_writeback_cancels_batch(fixture_repo
                            start_line=2, cwe="CWE-89", severity="high", ado_work_item_id=44)
     payload = {"batch_id": batch_id, "findings": [finding.model_dump(mode="json")]}
     await lifecycle.accept_batch(batch_id, [finding], "Blocked writeback", payload)
-    env = await WorkflowEnvironment.start_local(dev_server_existing_path=temporal_bin)
+    env = await WorkflowEnvironment.start_local(dev_server_existing_path=temporal_cli)
     try:
         client = await Client.connect(env.client.service_client.config.target_host,
                                       plugins=[PydanticAIPlugin()])
@@ -297,7 +295,7 @@ async def test_cancellation_during_optional_writeback_cancels_batch(fixture_repo
         await env.shutdown()
 
 
-async def test_durable_polyglot_components_prepare_independent_environments(fixture_repo, monkeypatch):
+async def test_durable_polyglot_components_prepare_independent_environments(temporal_cli, fixture_repo, monkeypatch):
     import json
 
     from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
@@ -332,7 +330,7 @@ async def test_durable_polyglot_components_prepare_independent_environments(fixt
                 for path in ("services/api/app.py", "web/app.js")]
     payload = {"batch_id": batch_id, "findings": [f.model_dump(mode="json") for f in findings]}
     await lifecycle.accept_batch(batch_id, findings, "Component fixture", payload)
-    env = await WorkflowEnvironment.start_local(dev_server_existing_path=temporal_bin)
+    env = await WorkflowEnvironment.start_local(dev_server_existing_path=temporal_cli)
     try:
         client = await Client.connect(env.client.service_client.config.target_host,
                                       plugins=[PydanticAIPlugin()])

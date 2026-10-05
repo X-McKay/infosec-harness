@@ -13,7 +13,6 @@ from importlib.metadata import PackageNotFoundError, version
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from infosec_harness.api.contracts import (
@@ -31,7 +30,7 @@ from infosec_harness.api.contracts import (
 )
 from infosec_harness.api.observations import router
 from infosec_harness.api.status import router as status_router
-from infosec_harness.domain.models import FindingInput, VerdictLabel
+from infosec_harness.domain.models import ExperimentStatus, FindingInput, VerdictLabel
 from infosec_harness.persistence import db, store
 from infosec_harness.persistence.population import Population, experiment_population
 from infosec_harness.settings import get_settings
@@ -91,7 +90,6 @@ app = FastAPI(title="InfoSec Harness", version=_api_version(), lifespan=lifespan
 
 app.include_router(router)
 app.include_router(status_router)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
 async def _submit(findings: list[FindingInput], label: str, mode: SubmissionMode) -> str:
@@ -182,7 +180,9 @@ async def experiments(population: Population | None = None) -> list[ExperimentSu
         if population is not None:
             statement = statement.where(experiment_population(population))
         rows = (await s.execute(statement.order_by(db.EvalExperiment.created_at.desc()).limit(100))).scalars().all()
-        return [{"id": e.id, "agent": e.agent, "dataset": e.dataset, "dataset_version": e.dataset_version,
+        known = {s.value for s in ExperimentStatus}
+        return [{"id": e.id, "agent": e.agent, "dataset": e.dataset,
+                 "status": e.metrics.get("status") if e.metrics.get("status") in known else None, "dataset_version": e.dataset_version,
                  "git_sha": e.git_sha, "overlay": e.overlay, "repetitions": e.repetitions,
                  "metrics": e.metrics, "config_hash": e.config_hash, "git_dirty": e.git_dirty,
                  "model_name": e.model_name, "backend": e.backend, "pricing": e.pricing,

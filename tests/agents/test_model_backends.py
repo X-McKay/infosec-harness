@@ -39,14 +39,21 @@ def test_openai_compatible_construction_applies_the_production_transport_contrac
     monkeypatch.setattr(openai, "AsyncOpenAI", Client)
     monkeypatch.setattr(pydantic_ai.providers.openai, "OpenAIProvider", Provider)
     monkeypatch.setattr(models, "CompatOpenAIChatModel", ChatModel)
-    backend = models.load_models_config().backends["gateway"]
-    assert backend.api_key_env
-    monkeypatch.setenv(backend.api_key_env, "test-key")
+    from infosec_harness.settings import get_settings
+
+    monkeypatch.setenv("HARNESS_MODEL_BASE_URL", "https://gateway.invalid/v1")
+    get_settings.cache_clear()
+    models.load_models_config.cache_clear()
     models._build_live.cache_clear()
     try:
+        backend = models.load_models_config().backends["gateway"]
+        assert backend.api_key_env
+        monkeypatch.setenv(backend.api_key_env, "test-key")
         result = models._build_live("gateway", "model-under-test", durable=True)
     finally:
         models._build_live.cache_clear()
+        models.load_models_config.cache_clear()
+        get_settings.cache_clear()
 
     assert isinstance(result, ChatModel)
     assert captured["model_id"] == "model-under-test"
@@ -101,6 +108,7 @@ def test_backend_capabilities_preserve_typed_output_and_tool_calling(monkeypatch
     from infosec_harness.settings import get_settings
 
     monkeypatch.setenv("HARNESS_MODEL_MODE", "live")
+    monkeypatch.setenv("HARNESS_MODEL_BASE_URL", "https://gateway.invalid/v1")
     try:
         for backend in ("gateway", "bedrock"):
             monkeypatch.setenv("HARNESS_MODEL_BACKEND", backend)

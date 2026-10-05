@@ -32,11 +32,6 @@ class PricingStatus(StrEnum):
         """True only when a cost metric derived from this model can be nonzero."""
         return self is PricingStatus.PRICED
 
-    @property
-    def cost_is_known_zero(self) -> bool:
-        """True when a run's cost is exactly zero by construction, not by measurement."""
-        return self in {PricingStatus.STUB, PricingStatus.ZERO_PRICED}
-
 
 class _ProbeUsage:
     """A usage record large enough that any real price table yields a nonzero cost."""

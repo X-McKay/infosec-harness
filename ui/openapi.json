@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "InfoSec Harness",
-    "version": "2.0.0"
+    "version": "2.0.0.dev0"
   },
   "paths": {
     "/api/run-page": {
@@ -973,8 +973,7 @@
             "title": "Id"
           },
           "status": {
-            "type": "string",
-            "title": "Status"
+            "$ref": "#/components/schemas/BatchStatus"
           },
           "label": {
             "type": "string",
@@ -1075,6 +1074,19 @@
         ],
         "title": "BatchDetail"
       },
+      "BatchStatus": {
+        "type": "string",
+        "enum": [
+          "accepted",
+          "running",
+          "cancellation_requested",
+          "complete",
+          "failed",
+          "cancelled"
+        ],
+        "title": "BatchStatus",
+        "description": "Persisted lifecycle of one submitted batch."
+      },
       "BatchSummary": {
         "properties": {
           "id": {
@@ -1082,8 +1094,7 @@
             "title": "Id"
           },
           "status": {
-            "type": "string",
-            "title": "Status"
+            "$ref": "#/components/schemas/BatchStatus"
           },
           "label": {
             "type": "string",
@@ -1252,8 +1263,7 @@
       "CancelResponse": {
         "properties": {
           "status": {
-            "type": "string",
-            "title": "Status"
+            "$ref": "#/components/schemas/BatchStatus"
           }
         },
         "type": "object",
@@ -1453,6 +1463,16 @@
         ],
         "title": "ExperimentDetail"
       },
+      "ExperimentStatus": {
+        "type": "string",
+        "enum": [
+          "running",
+          "complete",
+          "truncated"
+        ],
+        "title": "ExperimentStatus",
+        "description": "Persisted lifecycle of one eval experiment (`evals.run.run_experiment`)."
+      },
       "ExperimentSummary": {
         "properties": {
           "id": {
@@ -1462,6 +1482,16 @@
           "agent": {
             "type": "string",
             "title": "Agent"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExperimentStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "dataset": {
             "type": "string",
@@ -1523,6 +1553,7 @@
         "required": [
           "id",
           "agent",
+          "status",
           "dataset",
           "dataset_version",
           "git_sha",
@@ -2129,6 +2160,10 @@
           },
           "decision": {
             "type": "string",
+            "enum": [
+              "confirm",
+              "override"
+            ],
             "title": "Decision"
           },
           "override_label": {
@@ -2208,8 +2243,7 @@
             "title": "Severity"
           },
           "status": {
-            "type": "string",
-            "title": "Status"
+            "$ref": "#/components/schemas/RunStatus"
           },
           "verdict": {
             "anyOf": [
@@ -2488,6 +2522,19 @@
         ],
         "title": "RunPage"
       },
+      "RunStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "running",
+          "complete",
+          "needs_info",
+          "failed",
+          "cancelled"
+        ],
+        "title": "RunStatus",
+        "description": "Persisted lifecycle of one finding's triage run."
+      },
       "RunSummary": {
         "properties": {
           "id": {
@@ -2530,8 +2577,7 @@
             "title": "Severity"
           },
           "status": {
-            "type": "string",
-            "title": "Status"
+            "$ref": "#/components/schemas/RunStatus"
           },
           "verdict": {
             "anyOf": [
@@ -3004,12 +3050,11 @@
           "mode": {
             "type": "string",
             "enum": [
-              "auto",
               "local",
               "temporal"
             ],
             "title": "Mode",
-            "default": "auto"
+            "default": "temporal"
           }
         },
         "type": "object",

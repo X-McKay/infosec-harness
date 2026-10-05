@@ -10,7 +10,7 @@ from .protocol import BrokerError
 LEDGER_TIMEOUT_S = 30.0
 # Successful direct model activities reached 104.23 s. Double that observed
 # maximum, add 30 s, and round up: 240 s. Keep the outer worker below 600 s.
-# See docs/validation/CREDENTIAL_BROKER_TIMEOUTS.md for the finite timing sample.
+# See docs/evidence/2026-10-01-broker-implementation/CREDENTIAL_BROKER_TIMEOUTS.md for the finite timing sample.
 PROVIDER_TIMEOUT_S = 240.0
 # Candidate startup controls each allow 60 s; retain a bounded 120 s total
 # preparation wall. See the retained pre-inference failure and rationale.

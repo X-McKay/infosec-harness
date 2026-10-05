@@ -21,7 +21,7 @@ version: "1"
 # output retries and returns nothing at all — which scores as a failed case. So a regression
 # case here does not have to encode the flag in its expected label: it only has to be a repo
 # whose plan must satisfy those checks, and to say which measured defect it is standing guard
-# over. All of them are recorded in docs/validation/LIVE_VALIDATION.md.
+# over. All of them are recorded in docs/evidence/2026-09-25-live-model-validation/LIVE_VALIDATION.md.
 cases:
   - name: python-pip-pytest
     category: smoke
@@ -96,7 +96,7 @@ cases:
                      test_framework: jest, test_layout: "__tests__/"}
     expected: node/jest
 
-  # --- Regressions: defects measured in live runs (docs/validation/LIVE_VALIDATION.md) -----------------
+  # --- Regressions: defects measured in live runs (docs/evidence/2026-09-25-live-model-validation/LIVE_VALIDATION.md) -----------------
   - name: a-jvm-selector-must-name-a-class-not-a-file
     category: regression
     # Measured on java-sqli-fixed. The planner wrote `-Dtest={test_file}`; the harness

@@ -11,15 +11,11 @@ from pathlib import Path, PurePosixPath
 
 from infosec_harness.domain.canonical import canonical_bytes, digest, sha256_hex
 from infosec_harness.domain.models import RepoRef, RepoSnapshot, SourceMode
-from infosec_harness.repo.access import RepositoryAccessError, walk_files
-from infosec_harness.sandbox.docker import default_workspace
+from infosec_harness.persistence.paths import workspace_dir
+from infosec_harness.repo.access import DEPENDENCY_DIRS, RepositoryAccessError, walk_files
 from infosec_harness.sandbox.process import run_bounded
 from infosec_harness.settings import get_settings
 
-# Source capture excludes repository metadata and dependency/cache trees. Generated build output
-# (`target`, `build`, `dist`) remains source material: a directory name alone cannot prove it is
-# irrelevant, and hard size/count limits provide the bound.
-SKIP = {".git", "node_modules", ".venv", "venv", "__pycache__"}
 MAX_FILES = 100_000
 MAX_FILE_BYTES = 32 * 1024 * 1024
 MAX_TOTAL_BYTES = 512 * 1024 * 1024
@@ -76,7 +72,7 @@ def _content_identity(root: Path) -> tuple[str, int]:
     hasher = hashlib.sha256()
     total = 0
     count = 0
-    for rel, path in walk_files(root, skip_dirs=SKIP, max_entries=MAX_FILES * 2):
+    for rel, path in walk_files(root, skip_dirs=DEPENDENCY_DIRS, max_entries=MAX_FILES * 2):
         count += 1
         if count > MAX_FILES:
             raise RepositoryAccessError(f"snapshot exceeds {MAX_FILES} files")
@@ -103,7 +99,7 @@ def _content_identity(root: Path) -> tuple[str, int]:
 
 
 def _policy_hash(exclude_paths: list[str]) -> str:
-    return digest({"excluded_dir_names": sorted(SKIP),
+    return digest({"excluded_dir_names": sorted(DEPENDENCY_DIRS),
                    "requested_paths": sorted(set(exclude_paths))})
 
 
@@ -189,8 +185,8 @@ async def _materialize_git(repo_url: str, revision: str, dest: Path,
 def _copy_working_snapshot(source: Path, dest: Path) -> None:
     if not source.is_dir():
         raise ValueError(f"working snapshot source is not a directory: {source}")
-    tuple(walk_files(source, skip_dirs=SKIP, max_entries=MAX_FILES * 2))
-    shutil.copytree(source, dest, symlinks=True, ignore=shutil.ignore_patterns(*SKIP))
+    tuple(walk_files(source, skip_dirs=DEPENDENCY_DIRS, max_entries=MAX_FILES * 2))
+    shutil.copytree(source, dest, symlinks=True, ignore=shutil.ignore_patterns(*DEPENDENCY_DIRS))
 
 
 def _make_read_only(root: Path) -> None:
@@ -217,7 +213,7 @@ def _make_writable_for_cleanup(root: Path) -> None:
 
 
 async def checkout(ref: RepoRef) -> RepoSnapshot:
-    workspace = default_workspace() / "snapshots"
+    workspace = workspace_dir() / "snapshots"
     workspace.mkdir(parents=True, exist_ok=True)
     local, local_path = _is_local(ref.repo_url)
     if not local:

@@ -11,13 +11,8 @@ from infosec_harness.domain.models import (
     CodeLocation,
     ExtractedFinding,
     Finding,
-    FindingInput,
 )
 from infosec_harness.repo.access import RepositoryAccessError, resolve_confined
-
-
-def to_finding(inp: FindingInput) -> Finding:
-    return Finding.from_input(inp)
 
 
 def needs_extraction(finding: Finding) -> bool:

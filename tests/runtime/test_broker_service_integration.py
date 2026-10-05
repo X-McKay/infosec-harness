@@ -303,11 +303,10 @@ async def test_every_registered_agent_executes_actual_broker_transport(services,
 async def test_local_prepare_and_triage_graph_uses_actual_broker_for_each_agent(services, tmp_path):
     from sqlalchemy import select
 
-    from infosec_harness.domain.models import FindingInput, ProbeExecution, RepoSnapshot
+    from infosec_harness.domain.models import Finding, FindingInput, ProbeExecution, RepoSnapshot
     from infosec_harness.graph.ops import LocalOps
     from infosec_harness.graph.prepare import run_prepare
     from infosec_harness.graph.triage import TRIAGE_GRAPH, PreFilter, TriageDeps, TriageState
-    from infosec_harness.intake.adapters import to_finding
     from infosec_harness.repo.detect import detect_stack
 
     class QualificationOps(LocalOps):
@@ -332,7 +331,7 @@ async def test_local_prepare_and_triage_graph_uses_actual_broker_for_each_agent(
         prepared = await run_prepare(ops, RepoSnapshot(repo_url=repo, revision="HEAD", path=repo,
             content_hash="a" * 64), detect_stack(repo))
         assert prepared.prepared.status == "ready"
-        finding = to_finding(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
+        finding = Finding.from_input(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
             start_line=2, cwe="CWE-89", severity="high"))
         state = TriageState(finding=finding, prepared=prepared.prepared)
         result = await TRIAGE_GRAPH.run(state=state, deps=TriageDeps(ops=ops), inputs=PreFilter())

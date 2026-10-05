@@ -4,13 +4,8 @@ from __future__ import annotations
 
 from infosec_harness.agents.ecosystem_contract import ADAPTER_CONTRACT_VERSION
 from infosec_harness.agents.ecosystem_profiles import profile_manifest
-from infosec_harness.domain.models import (
-    PreparedEnvironment,
-    RepoSnapshot,
-    StackFingerprint,
-    canonical_json,
-    sha256_text,
-)
+from infosec_harness.domain.canonical import digest, sha256_hex
+from infosec_harness.domain.models import PreparedEnvironment, RepoSnapshot, StackFingerprint
 
 
 def source_manifest(snapshot: RepoSnapshot, stack: StackFingerprint | None = None) -> dict:
@@ -27,7 +22,7 @@ def source_manifest(snapshot: RepoSnapshot, stack: StackFingerprint | None = Non
     }
     manifest = {"schema_version": 1, "source": source}
     if stack is not None:
-        manifest["stack_digest"] = sha256_text(canonical_json(stack))
+        manifest["stack_digest"] = digest(stack.model_dump(mode="json"))
     return manifest
 
 
@@ -40,7 +35,7 @@ def execution_manifest(prepared: PreparedEnvironment) -> dict:
         "adapter_profiles": profile_manifest(prepared.stack.languages),
         "status": prepared.status,
         "image_tag": prepared.build.image_tag if prepared.build is not None else None,
-        "spec_digest": sha256_text(canonical_json(spec)) if spec is not None else None,
+        "spec_digest": digest(spec.model_dump(mode="json")) if spec is not None else None,
     }
     if spec is not None:
         environment.update({
@@ -48,8 +43,8 @@ def execution_manifest(prepared: PreparedEnvironment) -> dict:
             "scope": spec.scope,
             "module_path": spec.module_path,
             "env_names": sorted(spec.env),
-            "install_command_digests": [sha256_text(command) for command in spec.install_commands],
-            "test_command_digest": sha256_text(spec.test_command),
+            "install_command_digests": [sha256_hex(command) for command in spec.install_commands],
+            "test_command_digest": sha256_hex(spec.test_command),
         })
     manifest["environment"] = environment
     manifest["preparation"] = {

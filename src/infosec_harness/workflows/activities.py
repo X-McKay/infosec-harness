@@ -8,7 +8,6 @@ agent's TemporalDurability capability.
 from __future__ import annotations
 
 import secrets
-from datetime import timedelta
 
 from temporalio import activity
 
@@ -16,7 +15,6 @@ from infosec_harness.domain.models import (
     BuildResult,
     EnvironmentSpec,
     Finding,
-    FindingInput,
     ProbeExecution,
     ProbeSource,
     RepoRef,
@@ -25,19 +23,12 @@ from infosec_harness.domain.models import (
     StackFingerprint,
 )
 from infosec_harness.graph import workloads
-from infosec_harness.intake.adapters import resolve_location, to_finding
+from infosec_harness.intake.adapters import resolve_location
 from infosec_harness.persistence import recipes
 from infosec_harness.repo.checkout import checkout
 from infosec_harness.repo.detect import detect_stack
 from infosec_harness.workflows.heartbeat import with_heartbeat
 from infosec_harness.workflows.progress import ACTIVITIES as PROGRESS_ACTIVITIES
-
-DEFAULT_TIMEOUTS = {"start_to_close_timeout": timedelta(minutes=5)}
-
-
-@activity.defn
-async def normalize_finding_activity(inp: FindingInput) -> Finding:
-    return to_finding(inp)
 
 
 @activity.defn
@@ -106,7 +97,6 @@ async def record_recipe_activity(args: dict) -> None:
 
 
 ALL_ACTIVITIES = [
-    normalize_finding_activity,
     checkout_activity,
     detect_stack_activity,
     build_environment_activity,
