@@ -104,18 +104,7 @@ def _expand_braces(text: str) -> list[str]:
 
 
 def _exists(reference: str) -> bool:
-    """A cited path exists, or is a documented local output that git ignores.
-
-    The repository guide names output locations (`ui/dist/`, `.harness/`) that a fresh checkout
-    does not have yet; a gitignored path is a legitimate citation of where output goes.
-    """
-    if (ROOT / reference).exists():
-        return True
-    ignored = subprocess.run(["git", "check-ignore", "-q", "--", reference], cwd=ROOT,
-                             capture_output=True)
-    return ignored.returncode == 0
-
-
+    """A literal path must exist; a pattern must match, or at least its fixed directory must.
 
     ``evals/baselines/<agent>/<tier>.json`` describes where files go, and is valid while no
     baseline is recorded yet, provided ``evals/baselines/`` itself exists.
@@ -128,9 +117,19 @@ def _exists(reference: str) -> bool:
             fixed = re.split(r"[<*]", candidate, maxsplit=1)[0].rpartition("/")[0]
             if fixed and (ROOT / fixed).is_dir():
                 return True
-        elif (ROOT / candidate).exists():
+        elif (ROOT / candidate).exists() or _ignored_output(candidate):
             return True
     return False
+
+
+def _ignored_output(candidate: str) -> bool:
+    """A gitignored path is a documented output location (`ui/dist/`, `.harness/reports/`).
+
+    A fresh checkout does not have it yet, and the guide's job is to say where it will go.
+    """
+    result = subprocess.run(["git", "check-ignore", "-q", "--", candidate], cwd=ROOT,
+                            capture_output=True)
+    return result.returncode == 0
 
 
 def _repository_path(span: str) -> str | None:
