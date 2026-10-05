@@ -392,8 +392,12 @@ class OpenShell:
                        or p.metadata.resource_version <= 0 or not p.type for p in providers)):
             raise OpenShellError("native credential provider attachment was not established")
         outer = await self._inspect(sandbox)
+        # Each admission is a new observation, not a replay of the prior probe.
+        # Native terminal exec receipts do not retain their output streams.
+        # An uncertain observation closes this sandbox through create's guard;
+        # model/repository operations retain their stable IDs and receipt fence.
         result = await asyncio.to_thread(self._stream, sandbox, [_PYTHON, "-I", "-c", _PROBE], 10, None,
-                                        _request_id(sandbox.id + ":boundary-observation"),
+                                        str(uuid.uuid4()),
                                         self.config.max_output_bytes)
         try:
             proof = json.loads(result[0].stdout)

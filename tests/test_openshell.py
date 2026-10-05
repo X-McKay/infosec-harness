@@ -56,6 +56,8 @@ class Native:
     def __init__(self):
         self.resources = {}
         self.execs = []
+        self.request_ids = set()
+        self.observations = []
         self.creates = []
         self.proof = PROOF.copy()
         self.next_output = "ok"
@@ -88,7 +90,13 @@ class Native:
         assert str(uuid.UUID(request.request_id)) == request.request_id
         assert request.no_login_shell and not request.tty and not request.environment
         assert request.execution_timeout.seconds > 0
-        if "boundary-observation" not in request.request_id and "NoNewPrivs" not in request.command[-1]:
+        if request.request_id in self.request_ids:
+            raise RuntimeError("execution terminated, but its output stream is not stored; "
+                               "this request was not launched again")
+        self.request_ids.add(request.request_id)
+        if "NoNewPrivs" in request.command[-1]:
+            self.observations.append(request)
+        else:
             self.execs.append(request)
         text = json.dumps(self.proof) if "NoNewPrivs" in request.command[-1] else self.next_output
         if request.command[0] == "/usr/bin/tar":
@@ -166,6 +174,35 @@ async def test_native_create_and_exec_receipt_replay(adapter):
     assert receipt.command == ["printf", "ok"] and receipt.sandbox.id == sandbox.id
     assert native.execs[0].sandbox == sandbox.name
     assert MessageToDict(native.creates[0].spec.template.resources) == {"limits": {"cpu": "1", "memory": "512Mi"}}
+
+
+@pytest.mark.asyncio
+async def test_repeated_model_admission_observes_anew_without_replaying_commands(adapter):
+    boundary, native = adapter
+    sandbox = await boundary.create("run", profile="model")
+    first = await boundary.execute(sandbox, "model request", operation_id="model:2", timeout=3)
+    again = await boundary.create("run", profile="model")
+    second = await boundary.execute(again, "next model request", operation_id="model:3", timeout=3)
+    assert sandbox == again and len(native.creates) == 1
+    assert len(native.observations) == 2
+    assert native.observations[0].request_id != native.observations[1].request_id
+    assert native.observations[0].command == native.observations[1].command
+    command_ids = [request.request_id for request in native.execs]
+    assert await boundary.execute(again, "model request", operation_id="model:2", timeout=3) == first
+    assert await boundary.execute(again, "next model request", operation_id="model:3", timeout=3) == second
+    assert [request.request_id for request in native.execs] == command_ids
+
+
+@pytest.mark.asyncio
+async def test_unknown_admission_closes_instead_of_resending_observation(adapter):
+    boundary, native = adapter
+    native.next_code = None
+    with pytest.raises(ExecutionUnknown, match="without an exit receipt"):
+        await boundary.create("run", profile="model")
+    with pytest.raises(OpenShellError, match="closed investigation"):
+        await boundary.create("run", profile="model")
+    assert len(native.observations) == 1 and len(native.creates) == 1
+    assert not native.resources and not boundary.receipts("run")
 
 
 @pytest.mark.asyncio
