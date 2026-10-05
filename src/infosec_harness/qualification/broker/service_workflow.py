@@ -14,7 +14,7 @@ with workflow.unsafe.imports_passed_through():
     from infosec_harness.qualification.broker.service import AGENTS
     from infosec_harness.qualification.broker.support import serve_worker as serve
     from infosec_harness.runtime.deps import AgentDeps
-    from infosec_harness.runtime.durable import AGENT_LIST
+    from infosec_harness.runtime.durable import AGENT_LIST, CONFIGS
     from infosec_harness.workflows.activities import ALL_ACTIVITIES
     from infosec_harness.workflows.temporal_ops import TemporalOps
 
@@ -27,7 +27,7 @@ class BrokerQualificationWorkflow:
 
     @workflow.run
     async def run(self, args: dict) -> dict:
-        ops = TemporalOps(root_id=args["root_id"], fingerprint="service-qualification")
+        ops = TemporalOps(root_id=args["root_id"], fingerprint=args["fingerprint"])
         try:
             if args.get("all_agents"):
                 outputs = {}
@@ -48,6 +48,8 @@ class BrokerQualificationWorkflow:
             await ops.close()
 
 
-async def serve_worker(manifest: dict) -> None:
+async def serve_worker(manifest: dict, *, ready: Path | None = None) -> None:
     await serve(manifest["temporal_address"], manifest["task_queue"], [BrokerQualificationWorkflow],
-                activities=ALL_ACTIVITIES, ready=Path(manifest["directory"]) / "temporal-worker-ready")
+                activities=ALL_ACTIVITIES, ready=ready,
+                ready_metadata={"agent_config_digests": {
+                    name: config.digest for name, config in CONFIGS.items()}})

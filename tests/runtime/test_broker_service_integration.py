@@ -240,11 +240,12 @@ async def test_every_registered_agent_executes_actual_broker_transport(services,
         ContextOutput,
         InconclusiveOutput,
         PartialEnvironmentOutput,
+        PlannedEnvironmentOutput,
     )
     from infosec_harness.runtime.registry import BINDINGS
 
     expected_types = {
-        "intake": ExtractedFinding, "recon": RepoProfile, "env-planner": EnvironmentSpec,
+        "intake": ExtractedFinding, "recon": RepoProfile, "env-planner": PlannedEnvironmentOutput,
         "build-repair": EnvironmentSpec, "partial-build": PartialEnvironmentOutput,
         "context": ContextOutput, "probe-planner": ProbePlan, "probe-author": ProbeSource,
         "probe-diagnosis": ProbeDiagnosis, "probe-repair": ProbeSource, "verdict": InconclusiveOutput,
@@ -312,9 +313,9 @@ async def test_local_prepare_and_triage_graph_uses_actual_broker_for_each_agent(
 
     class QualificationOps(LocalOps):
         """Actual agent/broker execution; explicitly simulated sandbox execution."""
-        async def run_agent(self, name, prompt, deps):
+        async def run_agent(self, name, prompt, deps, *, record=None):
             marker = f"<broker-qualification-agent>{name}</broker-qualification-agent>"
-            return await super().run_agent(name, [marker, *prompt], deps)
+            return await super().run_agent(name, [marker, *prompt], deps, record=record)
 
         async def execute_probe(self, image, probe, spec, nonce, attempt):
             return ProbeExecution(attempt=attempt, exit_code=0, oracle_fired=False,

@@ -428,6 +428,7 @@ def main():
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--config", type=Path)
     parser.add_argument("--direct-stub", action="store_true")
+    parser.add_argument("--ready", type=Path)
     args = parser.parse_args()
     manifest = json.loads(args.manifest.read_text())
     os.environ.update(environment(manifest))
@@ -442,7 +443,7 @@ def main():
     else:
         use_service_activity_timeout()
         from infosec_harness.qualification.broker.service_workflow import serve_worker
-        asyncio.run(serve_worker(manifest))
+        asyncio.run(serve_worker(manifest, ready=args.ready))
 
 
 if __name__ == "__main__":

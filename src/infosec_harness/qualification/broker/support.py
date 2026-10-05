@@ -104,7 +104,8 @@ def reap(process: subprocess.Popen, *, grace: float = 10) -> bool:
 
 
 async def serve_worker(address: str, queue: str, workflows: Sequence[type], *,
-                       activities: Sequence = (), ready: Path | None = None) -> None:
+                       activities: Sequence = (), ready: Path | None = None,
+                       ready_metadata: dict[str, Any] | None = None) -> None:
     """One Temporal worker on an owned queue; ``ready`` records its pid once it is built."""
     from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
     from temporalio.client import Client
@@ -113,7 +114,10 @@ async def serve_worker(address: str, queue: str, workflows: Sequence[type], *,
     client = await Client.connect(address, plugins=[PydanticAIPlugin()])
     worker = Worker(client, task_queue=queue, workflows=list(workflows), activities=list(activities))
     if ready is not None:
-        ready.write_text(str(os.getpid()))
+        if ready_metadata is None:
+            ready.write_text(str(os.getpid()))
+        else:
+            write_json(ready, {"pid": os.getpid(), **ready_metadata}, sort_keys=True)
     await worker.run()
 
 

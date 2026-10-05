@@ -23,7 +23,7 @@ with workflow.unsafe.imports_passed_through():
     from temporalio.worker import Replayer
     from test_broker_service_integration import services  # noqa: F401
 
-    from infosec_harness.persistence import budgets, db
+    from infosec_harness.persistence import db
     from infosec_harness.qualification.broker.service import (
         AGENTS,
         ROOT,
@@ -40,14 +40,15 @@ pytestmark = pytest.mark.requires_service("HARNESS_BROKER_SERVICE_MANIFEST")
 
 
 def start_worker(manifest: dict, *, direct_stub=False):
+    ready = Path(manifest["directory"]) / f"temporal-worker-ready-{uuid.uuid4().hex}.json"
     with (Path(manifest["directory"]) / "temporal-worker.log").open("ab") as log:
         process = subprocess.Popen([sys.executable, "-m", "infosec_harness.qualification.broker.service",
             "temporal-worker", "--manifest", manifest["manifest"],
-            *(["--direct-stub"] if direct_stub else [])], cwd=ROOT, env=environment(manifest),
-            stdout=log, stderr=log, start_new_session=True)
+            *(["--direct-stub"] if direct_stub else []), "--ready", str(ready)], cwd=ROOT,
+            env=environment(manifest), stdout=log, stderr=log, start_new_session=True)
     with (Path(manifest["directory"]) / "pids.jsonl").open("a") as output:
         output.write(json.dumps({"pid": process.pid, "role": "temporal-worker"}) + "\n")
-    return process
+    return process, ready
 
 
 async def stop_worker(process):
@@ -63,34 +64,48 @@ async def stop_worker(process):
         await asyncio.to_thread(process.wait, 5)
 
 
-async def seed_root(root_id):
-    from infosec_harness.runtime.durable import CONFIGS
+async def worker_config_digests(process, ready: Path) -> dict[str, str]:
+    for _ in range(200):
+        if process.poll() is not None:
+            raise RuntimeError("Temporal fixture worker exited before publishing its configuration")
+        if ready.exists():
+            value = json.loads(ready.read_text())
+            assert value["pid"] == process.pid
+            return value["agent_config_digests"]
+        await asyncio.sleep(0.05)
+    raise TimeoutError("Temporal fixture worker did not publish its frozen configuration")
 
-    state = budgets.initial_state({"requests": 10000, "tokens": 100_000_000, "cost_usd": 1000.0,
-        "tool_calls": 10000, "agent_runs": 100, "execution_seconds": 10_000_000}, elapsed_seconds=240)
-    state["agent_config_digests"] = {name: config.digest for name, config in CONFIGS.items()}
-    async with db.session() as session:
-        session.add(db.BudgetLedger(root_id=root_id, state=state))
-        await session.commit()
+
+async def seed_root(root_id, repo: str, config_digests: dict[str, str]) -> str:
+    from infosec_harness.domain.models import Finding, FindingInput
+    from infosec_harness.persistence.lifecycle import accept_batch
+
+    item = FindingInput(title="Broker service qualification", repo_url=repo)
+    finding = Finding.from_input(item)
+    await accept_batch(root_id, [item], "broker service qualification", None,
+                       agent_config_digests=config_digests)
+    return finding.fingerprint
 
 
 async def test_real_temporal_worker_restart_saved_activity_and_zero_io_replay(services, monkeypatch):
     values = services.values
     root_id = "brokerqualification-" + uuid.uuid4().hex
-    await seed_root(root_id)
-    before = len(services.events())
     services.arm("hold_ack")
     directory = Path(values["directory"])
     marker = directory / "executor-result-committed"
     marker.unlink(missing_ok=True)
     release = directory / "release-executor-ack"
     release.unlink(missing_ok=True)
-    first = start_worker(values)
+    first, first_ready = start_worker(values)
     second = None
     handle = None
     try:
+        config_digests = await worker_config_digests(first, first_ready)
+        fingerprint = await seed_root(root_id, values["repo"], config_digests)
+        before = len(services.events())
         client = await Client.connect(values["temporal_address"], plugins=[PydanticAIPlugin()])
-        handle = await client.start_workflow(BrokerQualificationWorkflow.run, {"repo": values["repo"], "root_id": root_id},
+        handle = await client.start_workflow(BrokerQualificationWorkflow.run,
+            {"repo": values["repo"], "root_id": root_id, "fingerprint": fingerprint},
             id="batch:" + root_id, task_queue=values["task_queue"])
         for _ in range(600):
             if first.poll() is not None:
@@ -108,7 +123,8 @@ async def test_real_temporal_worker_restart_saved_activity_and_zero_io_replay(se
         os.killpg(first.pid, signal.SIGKILL)
         await asyncio.to_thread(first.wait, 5)
         release.write_text("release fixture response")
-        second = start_worker(values)
+        second, second_ready = start_worker(values)
+        assert await worker_config_digests(second, second_ready) == config_digests
         result = await asyncio.wait_for(handle.result(), 150)
         assert result["summary"] == "qualification context" and result["requests"] == 2
         assert any(name.endswith("read_file") for name in result["tools"])
@@ -154,14 +170,16 @@ async def test_real_temporal_worker_restart_saved_activity_and_zero_io_replay(se
 async def test_real_direct_stub_history_replays_under_broker_config_without_io(services, monkeypatch):
     """Record a direct SDK history on a separate stub worker, then replay broker code."""
     root_id = "brokerqualification-direct-" + uuid.uuid4().hex
-    await seed_root(root_id)
-    before = len(services.events())
-    process = start_worker(services.values, direct_stub=True)
+    process, ready = start_worker(services.values, direct_stub=True)
     handle = None
     try:
+        config_digests = await worker_config_digests(process, ready)
+        fingerprint = await seed_root(root_id, services.values["repo"], config_digests)
+        before = len(services.events())
         client = await Client.connect(services.values["temporal_address"], plugins=[PydanticAIPlugin()])
         handle = await client.start_workflow(BrokerQualificationWorkflow.run,
-            {"repo": services.values["repo"], "root_id": root_id}, id="batch:" + root_id,
+            {"repo": services.values["repo"], "root_id": root_id, "fingerprint": fingerprint},
+            id="batch:" + root_id,
             task_queue=services.values["task_queue"])
         result = await asyncio.wait_for(handle.result(), 60)
         assert result["summary"] == "stub context"
@@ -194,20 +212,22 @@ async def test_real_temporal_all_registered_agents_execute_and_replay_without_io
 
     assert set(AGENTS) == set(registry.BINDINGS) == set(CONFIGS)
     root_id = "brokerqualification-all-" + uuid.uuid4().hex
-    await seed_root(root_id)
-    before = len(services.events())
-    process = start_worker(services.values)
+    process, ready = start_worker(services.values)
     handle = None
     expected_types = {
-        "intake": "ExtractedFinding", "recon": "RepoProfile", "env-planner": "EnvironmentSpec",
+        "intake": "ExtractedFinding", "recon": "RepoProfile", "env-planner": "PlannedEnvironmentOutput",
         "build-repair": "EnvironmentSpec", "partial-build": "PartialEnvironmentOutput",
         "context": "ContextOutput", "probe-planner": "ProbePlan", "probe-author": "ProbeSource",
         "probe-diagnosis": "ProbeDiagnosis", "probe-repair": "ProbeSource", "verdict": "InconclusiveOutput",
     }
     try:
+        config_digests = await worker_config_digests(process, ready)
+        fingerprint = await seed_root(root_id, services.values["repo"], config_digests)
+        before = len(services.events())
         client = await Client.connect(services.values["temporal_address"], plugins=[PydanticAIPlugin()])
         handle = await client.start_workflow(BrokerQualificationWorkflow.run,
-            {"repo": services.values["repo"], "root_id": root_id, "all_agents": True}, id="batch:" + root_id,
+            {"repo": services.values["repo"], "root_id": root_id, "fingerprint": fingerprint,
+             "all_agents": True}, id="batch:" + root_id,
             task_queue=services.values["task_queue"])
         result = await asyncio.wait_for(handle.result(), 150)
         assert set(result) == set(expected_types)
