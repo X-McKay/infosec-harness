@@ -135,7 +135,12 @@ async def build_image(snapshot_path: str, spec: EnvironmentSpec, tag: str) -> Pr
     await ensure_runtime_available("build the target environment")
     await ensure_build_egress_boundary()
     await ensure_builder()
-    with tempfile.TemporaryDirectory(prefix="harness-build-") as tmp:
+    # Stage the Dockerfile under the workspace, not the host's temp dir: the daemon may run in
+    # a VM that shares only the checkout (./dev's Lima VM mounts the home directory and nothing
+    # under /var/folders), and the snapshot it builds from already lives there.
+    staging = s.workspace_dir.resolve() / "build"
+    staging.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="harness-build-", dir=staging) as tmp:
         dockerfile = Path(tmp) / "Dockerfile"
         dockerfile.write_text(dockerfile_text)
         Path(tmp, "Dockerfile.dockerignore").write_text(".git\n")
