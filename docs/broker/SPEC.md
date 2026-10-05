@@ -227,8 +227,11 @@ Failures are logged as `IH_INFERENCE_FAILURE boundary=<boundary> category=<categ
 
 The executor reads and checks its lease file before it parses a request. Child processes the
 broker starts receive an environment with every `AWS_*` and `HARNESS_BROKER_*` variable
-removed. These changes are in the executor's packaged sources, so the executor image must
-be rebuilt and freshly qualified before a brokered deployment uses them.
+removed: the native adapter starts the OpenShell CLI with a fixed four-variable environment
+(`src/infosec_harness/inference/native/openshell.py`) and the qualification runners strip both
+prefixes (`src/infosec_harness/qualification/broker/support.py`). The lease-file check is executor
+code, and the executor's packaged sources changed in this revision, so the executor image must be
+rebuilt and freshly qualified before a brokered deployment uses them.
 
 ## Configuration and provenance changes
 

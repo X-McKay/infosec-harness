@@ -112,8 +112,10 @@ or with a different digest, is refused (`src/infosec_harness/persistence/budgets
 no unaccounted mode. A run's usage (`RunTelemetry`, schema 2, in
 `src/infosec_harness/persistence/run_telemetry.py`) is complete only when every recorded agent
 call has exactly one ledger operation and every one of them settled; otherwise totals stay
-unknown rather than zero, with the known part recorded separately. In-process runs reserve nothing in the ledger, so they report their
-usage as not fully accounted.
+unknown rather than zero, with the known part recorded separately. A call that failed but
+returned a partial outcome settles as `usage: partial_lower_bound`, which releases nothing from
+its reservation. In-process runs reserve nothing in the ledger, so they report their usage as
+not fully accounted.
 
 ## Prompt construction
 

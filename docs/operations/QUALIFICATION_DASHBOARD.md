@@ -19,7 +19,9 @@ names; when it is unset the broker row reports `not_checked`.
 
 Configure the real broker catalog through `HARNESS_BROKER_CONFIG`. Configuration alone establishes only `configured: true`. Without a valid observation the broker remains `not_checked`; an unconfigured deployment defaults to `configured: false` and `not_checked`.
 
-The version-1 broker observation has exactly `version`, `checked_at`, `valid_until`, `status`, `catalog_sha256`, `dependencies` and `evidence`. Its `evidence` contains pinned `owner`, `health` and `readiness` references. These trusted operator receipts must agree on source and owner, controller identity, loaded inference-module bytes, configuration identities and all 11 native contract readiness observations. The readiness receipt must attest that its exact owned test leases were deleted and native inventory returned to zero. The catalog and relevant files are checked against their retained hashes.
+The version-1 broker observation has exactly `version`, `checked_at`, `valid_until`, `status`, `catalog_sha256`, `dependencies` and `evidence`. Its `evidence` contains pinned `owner`, `health` and `readiness` references. These trusted operator receipts must agree on source and owner, controller identity, loaded inference-module bytes (the inventory lists subpackage paths such
+as `inference/wire/protocol.py`, and the adapter keys are `controller/service.py`,
+`native/openshell.py` and `worker/transport.py`), configuration identities and all 11 native contract readiness observations. The readiness receipt must attest that its exact owned test leases were deleted and native inventory returned to zero. The catalog and relevant files are checked against their retained hashes.
 
 `HARNESS_QUALIFICATION_OBSERVATION_MAX_AGE_SECONDS` defaults to `3600` and permits values from `30` through `86400`. Observation timestamps must be timezone-aware, ordered and within this configured lifetime. Expired observations are labeled stale and report `not_checked`; increasing the limit does not create a new measurement.
 

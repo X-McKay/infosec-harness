@@ -24,6 +24,9 @@ failed check `not_checked`, and is listed in `gate_evaluation.missing_provenance
 Every hard-gate set includes `schema_validity_rate: 1.0` and `budget_exhausted_count: 0`; budget
 behavior is gated by that count alone. `task_success_rate` is the one pass rate an agent eval
 reports (there is no separate `accuracy`), and its floor is `min: 0.75` for every agent.
+`average_cost_usd` is likewise the one cost metric; the API's experiment summary exposes both
+under those names and the UI shows "accuracy" only as a display label. The evaluator identity
+recorded in every report is `deterministic-agent-output-v13`.
 Most agents' floor was lowered from 0.85 at the owner's explicit request on 2026-09-29: it is a
 quality-policy decision, not evidence of better agents, and it does not relax any other gate or
 regrade an earlier result ([agent-quality evidence](../evidence/2026-09-30-agent-quality/README.md)).
