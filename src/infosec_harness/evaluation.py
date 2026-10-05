@@ -100,7 +100,7 @@ async def evaluate_corpus(manifest: Path, output: Path) -> dict:
     candidate = {
         "version": 1,
         "commit": commit,
-        "generation": "v9",
+        "generation": "v10",
         "model": settings.model_name,
         "worker_identity": identity.model_dump(),
         "dataset_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),

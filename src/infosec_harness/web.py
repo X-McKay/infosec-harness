@@ -29,7 +29,7 @@ from infosec_harness.models import (
 from infosec_harness.services import temporal_connection_options
 
 WORKFLOW = "InvestigationWorkflow"
-PREFIX = "investigate-v9-"
+PREFIX = "investigate-v10-"
 RPC_TIMEOUT = timedelta(seconds=10)
 
 
@@ -83,7 +83,7 @@ async def health(client: TemporalClient) -> dict[str, str]:
         GetSystemInfoRequest(),
         timeout=RPC_TIMEOUT,
     )
-    return {"status": "control_plane_ready", "runtime": "not_checked", "generation": "v9"}
+    return {"status": "control_plane_ready", "runtime": "not_checked", "generation": "v10"}
 
 
 @app.post("/api/runs", response_model=RunState, status_code=202)
@@ -113,7 +113,10 @@ async def runs(
     except (binascii.Error, ValueError) as exc:
         raise HTTPException(400, "Invalid page token") from exc
     iterator = client.list_workflows(
-        f"WorkflowType = '{WORKFLOW}'", page_size=50, next_page_token=token, rpc_timeout=RPC_TIMEOUT
+        f"WorkflowType = '{WORKFLOW}' AND WorkflowId STARTS_WITH '{PREFIX}'",
+        page_size=50,
+        next_page_token=token,
+        rpc_timeout=RPC_TIMEOUT,
     )
     await iterator.fetch_next_page()
     items = []

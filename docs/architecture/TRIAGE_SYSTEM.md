@@ -49,8 +49,10 @@ and total workflow time. Cancellation reaches owned activities and cleanup. Test
 real local Temporal replay, worker restart, deadline and unknown-delivery behavior, separately
 from mocked OpenShell checks and actual native qualification.
 
-Workflow generation v9 breaks compatibility with the former staged graph. Drain old task
-queues before changing workers. The API lists this generation's investigations only.
+Workflow generation v10 uses `investigate-v10` and binds every native model/tool activity
+to the identity captured during preparation. It breaks compatibility with v9 and the
+former staged graph. Drain old task queues before changing workers. The API lists this
+generation's investigations only.
 
 The pinned native Docker driver leaves the workload root filesystem writable. Filesystem
 confinement is therefore OpenShell's mandatory Landlock policy, verified with both an

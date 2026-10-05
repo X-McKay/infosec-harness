@@ -29,6 +29,7 @@ with workflow.unsafe.imports_passed_through():
         WorkerIdentity,
     )
     from .openshell import OpenShell
+    from .process import _finish
     from .repository import validate_citation
 
 
@@ -42,6 +43,11 @@ class FinalizeInvestigation(BaseModel):
     prepared: PreparedInvestigation
     verdict: Verdict
     usage: dict
+
+
+class CleanupInvestigation(BaseModel):
+    run_id: str
+    expected_worker_identity: str | None = None
 
 
 class InvestigationActivities:
@@ -66,8 +72,14 @@ class InvestigationActivities:
             raise ValueError("Requested candidate does not match this worker identity")
         run_id = activity.info().workflow_id
         snapshot = await self.snapshot(request.finding, run_id)
-        sandbox = await self.openshell.create(run_id, profile="workspace")
-        await self.openshell.upload(sandbox, Path(snapshot.path), "/workspace/repo")
+        try:
+            sandbox = await self.openshell.create(run_id, profile="workspace")
+            await self.openshell.upload(sandbox, Path(snapshot.path), "/workspace/repo")
+        except BaseException:
+            # This worker knows which runtime received the create, even when no
+            # Prepared result reaches the workflow. Close that ownership locally.
+            await _finish(asyncio.ensure_future(self.openshell.close_run(run_id)))
+            raise
         return PreparedInvestigation(
             deps=InvestigationDeps(
                 run_id=run_id,
@@ -75,6 +87,7 @@ class InvestigationActivities:
                 source_digest=snapshot.digest,
                 snapshot_path=str(snapshot.path),
                 request=request,
+                worker_identity=self.bound_identity,
             ),
             snapshot_path=str(snapshot.path),
             worker_identity=self.bound_identity,
@@ -133,11 +146,13 @@ class InvestigationActivities:
                 "Source checks bracket probe execution; they cannot exclude changes that are restored during execution."
             )
         verdict = payload.verdict
+        report_ids = set(verdict.evidence_ids)
         if verdict.label != "inconclusive":
             expected = verdict.label == "potentially_exploitable"
-            corroborated = any(
-                item.id in verdict.evidence_ids
-                and item.kind == "probe"
+            qualified = [
+                item
+                for item in evidence
+                if item.kind == "probe"
                 and item.exit_code == 0
                 and isinstance(item.observations.get("workspace_digest"), str)
                 and item.observations.get("source_verified") is True
@@ -152,26 +167,50 @@ class InvestigationActivities:
                         "negative_control",
                     )
                 )
-                and item.observations.get("vulnerability_observed") is expected
-                for item in evidence
+                and type(item.observations.get("vulnerability_observed")) is bool
+            ]
+            corroborated = any(
+                item.id in verdict.evidence_ids
+                and item.observations["vulnerability_observed"] is expected
+                for item in qualified
             )
-            if not verdict.citations or not corroborated:
+            contrary = [
+                item
+                for item in qualified
+                if item.observations["vulnerability_observed"] is not expected
+            ]
+            if contrary:
                 limitations.append(
-                    f"Proposed {verdict.label} verdict lacked a cited successful offline probe with both controls and source citations."
+                    "Successful source-verified offline probes reported contradictory observations: "
+                    + ", ".join(item.id for item in contrary)
+                    + ". The contradiction prevents a definitive verdict."
+                )
+                # Retain contrary excerpts within the existing ten-receipt report bound;
+                # every contrary ID remains named above even when excerpts do not fit.
+                for item in contrary:
+                    if len(report_ids) >= 10:
+                        break
+                    report_ids.add(item.id)
+            if not verdict.citations or not corroborated or contrary:
+                if not verdict.citations or not corroborated:
+                    limitations.append(
+                        f"Proposed {verdict.label} verdict lacked a cited successful offline probe with both controls and source citations."
+                    )
+                explanation = (
+                    "The proposed conclusion could not reconcile contradictory successful offline probe observations. "
+                    if contrary
+                    else "The proposed conclusion could not be corroborated by the required execution and source evidence. "
                 )
                 verdict = verdict.model_copy(
                     update={
                         "label": "inconclusive",
-                        "summary": (
-                            "The proposed conclusion could not be corroborated by the required execution and source evidence. "
-                            + verdict.summary
-                        )[:12000],
+                        "summary": (explanation + verdict.summary)[:12000],
                     }
                 )
-        # Native receipts retain full bounded output. Reports contain only cited excerpts.
+        # Native receipts retain full bounded output. Reports contain cited and contrary excerpts.
         reported = []
         for item in evidence:
-            if item.id not in verdict.evidence_ids:
+            if item.id not in report_ids:
                 continue
             excerpted = any(
                 len(value.encode()) > 4096 for value in (item.command, item.stdout, item.stderr)
@@ -202,8 +241,22 @@ class InvestigationActivities:
         )
 
     @activity.defn(name="cleanup_investigation")
-    async def cleanup(self, run_id: str) -> None:
-        await self.openshell.close_run(run_id)
+    async def cleanup(self, payload: CleanupInvestigation) -> None:
+        expected = payload.expected_worker_identity
+        if expected is not None and (
+            self.bound_identity is None or expected != self.bound_identity.fingerprint
+        ):
+            raise ApplicationError(
+                "Owned sandbox cleanup reached a different worker identity", non_retryable=True
+            )
+        # Current code/policy drift must not prevent the original bound adapter
+        # from closing its own sandboxes.
+        await self.openshell.close_run(payload.run_id)
+        if self.identity is not None and expected is None:
+            raise ApplicationError(
+                "Local cleanup attempted, but original worker identity is unknown; cleanup unverified",
+                non_retryable=True,
+            )
 
 
 @workflow.defn
@@ -227,6 +280,7 @@ class InvestigationWorkflow(PydanticAIWorkflow):
         )
         result = None
         caught = None
+        prepared = None
         try:
             async with asyncio.timeout(request.limits.timeout_seconds):
                 prepared = await workflow.execute_activity(
@@ -280,13 +334,22 @@ class InvestigationWorkflow(PydanticAIWorkflow):
             self._state.phase = "cleaning_up"
             try:
                 # A cancelled caller still waits for owned sandbox cleanup to settle.
-                await asyncio.shield(
-                    workflow.execute_activity(
-                        "cleanup_investigation",
-                        run_id,
-                        start_to_close_timeout=timedelta(minutes=5),
-                        retry_policy=RetryPolicy(maximum_attempts=3),
-                        cancellation_type=workflow.ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
+                await _finish(
+                    asyncio.ensure_future(
+                        workflow.execute_activity(
+                            "cleanup_investigation",
+                            CleanupInvestigation(
+                                run_id=run_id,
+                                expected_worker_identity=(
+                                    prepared.worker_identity.fingerprint
+                                    if prepared is not None and prepared.worker_identity is not None
+                                    else request.expected_worker_identity
+                                ),
+                            ),
+                            start_to_close_timeout=timedelta(minutes=5),
+                            retry_policy=RetryPolicy(maximum_attempts=3),
+                            cancellation_type=workflow.ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
+                        )
                     )
                 )
             except Exception as error:
@@ -315,6 +378,7 @@ def create_worker(client, settings):
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 
     from . import repository
+    from .agent import WorkerIdentityInterceptor
     from .identity import worker_identity
     from .model import OpenShellModel
     from .openshell import OpenShellConfig
@@ -340,6 +404,7 @@ def create_worker(client, settings):
         task_queue=settings.task_queue,
         workflows=[InvestigationWorkflow],
         activities=[activities.prepare, activities.finalize, activities.cleanup],
+        interceptors=[WorkerIdentityInterceptor(partial(worker_identity, settings))],
         workflow_runner=SandboxedWorkflowRunner(
             restrictions=SandboxRestrictions.default.with_passthrough_modules(
                 __name__, "annotated_types", "typing_inspection"

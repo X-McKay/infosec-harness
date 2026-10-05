@@ -17,7 +17,7 @@ class Settings(BaseSettings):
 
     temporal_address: str = "localhost:7233"
     temporal_namespace: str = "default"
-    task_queue: str = "investigate-v9"
+    task_queue: str = "investigate-v10"
     temporal_tls: bool = False
     temporal_tls_ca_file: Path | None = None
     temporal_tls_client_cert: Path | None = None

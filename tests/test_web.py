@@ -32,7 +32,7 @@ async def test_submit_records_native_workflow_and_server_limits(client):
     assert response.status_code == 202
     args, kwargs = client.start_workflow.call_args
     assert args[0] == "InvestigationWorkflow"
-    assert kwargs["task_queue"] == "investigate-v9"
+    assert kwargs["task_queue"] == "investigate-v10"
     assert kwargs["id"] == response.json()["id"]
     assert args[1].limits.max_requests == 30
     assert kwargs["execution_timeout"] == timedelta(seconds=args[1].limits.timeout_seconds + 600)
@@ -51,11 +51,11 @@ async def test_terminal_cancellation_never_rewrites_completed_outcome(client):
         cancel=AsyncMock(),
     )
     client.get_workflow_handle = lambda *args, **kwargs: handle
-    response = await request("POST", "/api/runs/investigate-v9-test/cancel")
+    response = await request("POST", "/api/runs/investigate-v10-test/cancel")
     assert response.json()["status"] == "completed"
     handle.cancel.assert_not_awaited()
     handle.describe.return_value.status = WorkflowExecutionStatus.RUNNING
-    response = await request("POST", "/api/runs/investigate-v9-test/cancel")
+    response = await request("POST", "/api/runs/investigate-v10-test/cancel")
     assert response.json()["status"] == "cancellation_requested"
     handle.cancel.assert_awaited_once()
 
@@ -77,7 +77,7 @@ async def test_completed_result_comes_from_temporal_not_a_shadow_database(client
         describe=AsyncMock(return_value=description), result=AsyncMock(return_value=result)
     )
     client.get_workflow_handle = lambda *args, **kwargs: handle
-    response = await request("GET", "/api/runs/investigate-v9-test")
+    response = await request("GET", "/api/runs/investigate-v10-test")
     assert response.status_code == 200
     assert response.json()["result"]["verdict"]["label"] == "inconclusive"
     assert (await request("GET", "/api/runs/old-batch")).status_code == 404
@@ -85,7 +85,7 @@ async def test_completed_result_comes_from_temporal_not_a_shadow_database(client
 
 async def test_pagination_bounded_and_invalid_token_never_reaches_temporal(client):
     row = SimpleNamespace(
-        id="investigate-v9-test",
+        id="investigate-v10-test",
         status=WorkflowExecutionStatus.RUNNING,
         start_time=datetime.now(UTC),
         close_time=None,

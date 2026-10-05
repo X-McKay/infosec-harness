@@ -586,3 +586,118 @@ async def test_model_finding_prompt_excludes_host_variant_path(temporal_cli, tmp
     assert json.loads(prompts[0])["description"] == finding.description
     assert result.finding == finding
     assert shell.closed == [queue]
+
+
+@pytest.mark.parametrize("label", ["potentially_exploitable", "likely_not_exploitable"])
+@pytest.mark.parametrize("both_cited", [False, True])
+async def test_complete_contrary_probe_prevents_definitive_verdict_even_when_uncited(
+    tmp_path, label, both_cited
+):
+    import json
+
+    from infosec_harness.openshell import CommandResult
+
+    shell = FakeOpenShell()
+    request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
+    prepared = PreparedInvestigation(
+        deps=InvestigationDeps(
+            run_id="run",
+            sandbox=await shell.create("run"),
+            source_digest="digest",
+            snapshot_path=str(tmp_path),
+            request=request,
+        ),
+        snapshot_path=str(tmp_path),
+    )
+    (tmp_path / "sink.py").write_text("source\n")
+    expected = label == "potentially_exploitable"
+    for name, observed in (("matching", expected), ("contrary", not expected)):
+        marker = {
+            key: True
+            for key in ("target_reached", "oracle_valid", "positive_control", "negative_control")
+        }
+        marker["vulnerability_observed"] = observed
+        shell._receipts.append(
+            SimpleNamespace(
+                sandbox=await shell.create("run", profile="probe", slot=name),
+                command=["python", name + ".py"],
+                operation_id=f"probe:1:{name}",
+                workspace_digest="native-source-checked-archive",
+                source_verified=True,
+                result=CommandResult(0, "HARNESS_PROBE " + json.dumps(marker), ""),
+            )
+        )
+    verdict = Verdict(
+        label=label,
+        summary="Proposed conclusion.",
+        evidence_ids=["probe:1:matching", "probe:1:contrary"]
+        if both_cited
+        else ["probe:1:matching"],
+        citations=[Citation(path="sink.py", start_line=1, end_line=1)],
+    )
+    result = await InvestigationActivities(shell, None, "fixture").finalize(
+        FinalizeInvestigation(prepared=prepared, verdict=verdict, usage={})
+    )
+    assert result.verdict.label == "inconclusive"
+    assert "contradictory" in result.verdict.summary
+    assert any(
+        "probe:1:contrary" in limitation and "contradictory" in limitation
+        for limitation in result.limitations
+    )
+    assert {item.id for item in result.evidence} == {"probe:1:matching", "probe:1:contrary"}
+
+
+@pytest.mark.parametrize("defect", ["failed", "truncated", "unverified", "control_failed"])
+async def test_incomplete_contrary_probe_is_not_a_qualified_observation(tmp_path, defect):
+    import json
+
+    from infosec_harness.openshell import CommandResult
+
+    shell = FakeOpenShell()
+    request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
+    prepared = PreparedInvestigation(
+        deps=InvestigationDeps(
+            run_id="run",
+            sandbox=await shell.create("run"),
+            source_digest="digest",
+            snapshot_path=str(tmp_path),
+            request=request,
+        ),
+        snapshot_path=str(tmp_path),
+    )
+    (tmp_path / "sink.py").write_text("source\n")
+    for name, observed in (("matching", False), ("contrary", True)):
+        contrary = name == "contrary"
+        marker = {
+            key: True
+            for key in ("target_reached", "oracle_valid", "positive_control", "negative_control")
+        }
+        marker["vulnerability_observed"] = observed
+        if contrary and defect == "control_failed":
+            marker["negative_control"] = False
+        shell._receipts.append(
+            SimpleNamespace(
+                sandbox=await shell.create("run", profile="probe", slot=name),
+                command=["probe"],
+                operation_id=f"probe:1:{name}",
+                workspace_digest="checked",
+                source_verified=not (contrary and defect == "unverified"),
+                result=CommandResult(
+                    1 if contrary and defect == "failed" else 0,
+                    "HARNESS_PROBE " + json.dumps(marker),
+                    "",
+                    contrary and defect == "truncated",
+                ),
+            )
+        )
+    verdict = Verdict(
+        label="likely_not_exploitable",
+        summary="Blocked tested payload.",
+        evidence_ids=["probe:1:matching"],
+        citations=[Citation(path="sink.py", start_line=1, end_line=1)],
+    )
+    result = await InvestigationActivities(shell, None, "fixture").finalize(
+        FinalizeInvestigation(prepared=prepared, verdict=verdict, usage={})
+    )
+    assert result.verdict.label == "likely_not_exploitable"
+    assert not any("contradictory" in limitation for limitation in result.limitations)

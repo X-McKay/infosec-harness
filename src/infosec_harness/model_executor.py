@@ -32,6 +32,7 @@ def provider_model(invocation: ModelInvocation) -> Model:
     if invocation.provider == "openai":
         from openai import AsyncOpenAI
         from pydantic_ai.models.openai import OpenAIChatModel
+        from pydantic_ai.profiles.openai import OpenAIModelProfile
         from pydantic_ai.providers.openai import OpenAIProvider
 
         endpoint = urlsplit(invocation.base_url or "")
@@ -51,7 +52,14 @@ def provider_model(invocation: ModelInvocation) -> Model:
             base_url=invocation.base_url,
             max_retries=0,
         )
-        return OpenAIChatModel(invocation.model_name, provider=OpenAIProvider(openai_client=client))
+        return OpenAIChatModel(
+            invocation.model_name,
+            provider=OpenAIProvider(openai_client=client),
+            profile=OpenAIModelProfile(
+                supports_inline_system_prompts=False,
+                openai_chat_supports_multiple_system_messages=False,
+            ),
+        )
     if invocation.provider == "bedrock":
         import boto3
         from botocore.config import Config
@@ -77,7 +85,9 @@ async def execute(invocation: ModelInvocation) -> bytes:
     model = provider_model(invocation)
     async with model:
         response = await model.request(
-            invocation.messages, invocation.settings, invocation.parameters
+            model.prepare_messages(invocation.messages, invocation.parameters),
+            invocation.settings,
+            invocation.parameters,
         )
     encoded = RESPONSE.dump_json(response)
     if len(encoded) > MAX_RESPONSE_BYTES:
