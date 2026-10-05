@@ -38,6 +38,9 @@ that would change the assessment strategy and require a separate quality evaluat
 - The eval trace-injection subsystem is deleted: it was restricted to a few hardcoded Python
   cases, candidate-forgeable, and explicitly not release evidence. Structural scores still
   claim no independent target attestation. Actual declared execution checks and thresholds remain.
+- Unused direct-Anthropic and Pydantic Evals dependencies are removed. The lockfile drops
+  `anthropic`, `docstring-parser`, and `pydantic-evals`; Bedrock, OpenAI-compatible inference,
+  PydanticAI specifications, skills, and Temporal integration remain.
 - Recipe caching has one implementation, no unused success counter, and uses the existing
   atomic writer. A failed publication leaves the previous complete recipe intact; disabled
   caching performs no filesystem operations.
@@ -80,6 +83,11 @@ The first integrated pass completed with 3,380 tests passed, 24 service-qualifie
 unattested trace subsystem; its final gates are recorded below. Detailed local logs are under
 `.harness/reports/astra-simplification/` and are not release evidence.
 
+- `passed`: final `HARNESS_TEST_REQUIRE_TEMPORAL=1 just test` after dependency pruning:
+  **3,186 passed**, **24 skipped** (explicit external service qualification), **9 deselected**
+  (network packaging checked separately), 124.82 seconds. Temporal availability was required.
+- `not_checked`: the 24 skipped external-service qualification cases; unset native Temporal
+  and broker-service manifests are not evidence that those services work.
 - `passed`: targeted repository detection (41 tests) and persistence lifecycle (13 tests).
 - `passed`: focused agent autonomy, output contracts, skills, specification, and documentation
   checks (402 tests); provider/broker/OpenShell-controller focused checks (384 tests plus 18
