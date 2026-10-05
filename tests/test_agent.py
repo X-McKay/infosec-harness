@@ -273,7 +273,7 @@ async def test_output_feedback_repairs_exact_id_or_failed_probe_without_reexecut
         ]
         assert feedback
         assert (
-            "Workspace execute cannot substitute" if definitive else "exact full Evidence.id"
+            "cannot support a definitive verdict" if definitive else "exact full Evidence.id"
         ) in feedback[-1]
         return final_response(info, evidence_ids=["execute:1:receipt-suffix"])
 
@@ -366,9 +366,18 @@ async def test_verdict_validator_requires_complete_matching_offline_evidence(fai
         )
         verdict.evidence_ids.append(exploratory.id)
     if failure:
-        match = (
-            "target_reached must be true" if failure == "target_reached" else "definitive verdict"
-        )
+        # Feedback must name the exact failing condition, not a generic rule restatement.
+        match = {
+            "failed": "is not a complete probe: exit code 1",
+            "truncated": "output was truncated",
+            "unverified": "is not source-verified",
+            "wrong-source": "No run_probe evidence cited",
+            "controls": "negative_control=false",
+            "target_reached": "target_reached=false; target_reached is true when the real target",
+            "oracle_valid": "oracle_valid=false",
+            "positive_control": "positive_control=false",
+            "contrary": "contradict potentially_exploitable",
+        }[failure]
         with pytest.raises(ModelRetry, match=match):
             await validate_verdict(ctx, verdict)
     else:
@@ -445,7 +454,7 @@ async def test_failed_offline_probe_and_successful_workspace_execution_require_i
             return response
         assert any(
             isinstance(part, RetryPromptPart)
-            and "Workspace execute cannot substitute" in part.content
+            and "is not a complete probe: exit code" in part.content
             for message in messages
             if isinstance(message, ModelRequest)
             for part in message.parts
@@ -512,10 +521,10 @@ async def test_split_probe_marker_feedback_repairs_with_new_bounded_probe():
                     for part in message.parts
                     if isinstance(part, RetryPromptPart)
                 ]
-                assert "SAME final stdout line" in feedback[-1]
-                assert "print('HARNESS_PROBE '+json.dumps(observations))" in feedback[-1]
-                assert "no extra fields such as details" in feedback[-1]
-                assert "actual target and control checks" in feedback[-1]
+                # The computed reason names the parse failure and the exact line contract.
+                assert "has no parsed HARNESS_PROBE line" in feedback[-1]
+                assert "share the final stdout line" in feedback[-1]
+                assert "run a new corrected probe" in feedback[-1]
             return ModelResponse(
                 parts=[
                     ToolCallPart(
@@ -588,11 +597,10 @@ async def test_blocked_target_feedback_requires_new_complete_probe():
                     for part in message.parts
                     if isinstance(part, RetryPromptPart)
                 ][-1]
-                assert "target_reached must be true" in feedback
-                assert "observed security rejection still reaches" in feedback
-                assert "Setup/import failures or stand-ins do not qualify" in feedback
-                assert "run a new probe" in feedback
-                assert "do not relabel the existing receipt" in feedback
+                assert "target_reached=false" in feedback
+                assert "even if its guard rejected it" in feedback
+                assert "run a new corrected probe" in feedback
+                assert "do not relabel" in feedback
             return ModelResponse(
                 parts=[
                     ToolCallPart(
@@ -691,7 +699,7 @@ async def test_post_probe_integrity_failure_recovery_is_narrow(failure):
             assert returned["id"] == "probe:1:unsafe"
             assert returned["exit_code"] == 0
             assert returned["observations"]["source_verified"] is False
-            assert "finally block" in returned["observations"]["integrity_feedback"]
+            assert "not source-verified" in returned["observations"]["integrity_feedback"]
             assert "not retried" in returned["observations"]["integrity_feedback"]
         if calls == 3:
             # The invalid probe cannot qualify even with matching claims and citations.

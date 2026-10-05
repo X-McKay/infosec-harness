@@ -275,7 +275,7 @@ image, adapter or runtime configuration:
 ```
 
 Qualification must exercise workspace and fresh offline-probe creation, native policy
-admission, upload, bounded execution and download, original-source verification, cleanup,
+admission, upload, bounded execution, original-source verification, cleanup,
 and replay of saved receipts. It records actual container properties and in-sandbox controls.
 Preserve failed-run evidence privately; remove only resources whose native IDs and dedicated
 daemon ownership have been corroborated.
