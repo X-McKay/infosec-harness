@@ -15,6 +15,10 @@ export HARNESS_MODEL_BASE_URL=https://gateway.example.internal/v1
 export HARNESS_OPENAI_API_KEY=...        # only if the gateway requires a key
 ```
 
+`HARNESS_MODEL_BASE_URL` is required for every OpenAI-compatible backend: the packaged catalogue
+ships no endpoint, and resolving a live model without one fails closed with
+`ModelEndpointUnconfigured` rather than defaulting to a public API.
+
 The catalogue maps each model tier (`opus`, `sonnet`, `haiku`) to a concrete model id per
 backend. The `gateway:` column must name ids the endpoint actually serves
 (`curl "$HARNESS_MODEL_BASE_URL/models"`). To change that mapping, prices or any other backend

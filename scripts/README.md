@@ -22,6 +22,7 @@ scripts below are operator entry points around them.
 | `dev_setup_smoke.py` | API/UI/storage readiness and Temporal demonstration; `./dev smoke` |
 | `check_api_schema.py` | Check committed OpenAPI against FastAPI; `just generated-check` |
 | `conformance.py` | Playbook conformance through external `agentctl`; `just conformance [/path/to/playbooks/tools/agentctl]` |
+| `exploration.py` | The offline exploration measurement library the `measure_*` scripts and tests import (moved out of the shipped package) |
 | `measure_exploration.py` | Offline repository read-tool round trips; `just measure` |
 | `measure_cache_prefix.py` | Offline prompt-prefix stability; `just measure` |
 | `measure_batch_schedule.py` | Offline scheduling/cache measurements; `just measure` |

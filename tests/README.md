@@ -6,7 +6,7 @@ remain in `conftest.py`.
 
 | Directory | Coverage |
 | --- | --- |
-| `agents/` | Agent configuration, models, budgets, capabilities, skills, validation and prompt costs |
+| `agents/` | Agent configuration, models, budgets, capabilities, skills, validation and prompt costs; `agents/skill_support/` holds the skill lint the skill evals import |
 | `runtime/` | Graphs, workflows/recovery, sandbox boundaries, repository detection, API and telemetry |
 | `persistence/` | Run store, artifacts, migrations, recipes and metric lifecycle |
 | `evals/` | Datasets, calibration, reporting, provenance, corpus, harvesting and trajectories |

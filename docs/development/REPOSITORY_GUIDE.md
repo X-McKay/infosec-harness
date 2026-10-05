@@ -78,7 +78,7 @@ Use absolute environment paths when invoking from elsewhere.
 | Environment recipe cache | `.harness/workspace/recipes/` | `HARNESS_RECIPE_CACHE_DIR` |
 | Log snapshots | `.harness/logs/compose-*` | Full startup and `./dev logs [SERVICE]` |
 | Full-stack database and S3 objects | Checkout compose volumes | Kept by `./dev stop`; deleted only by `./dev reset` |
-| Frontend output and cache | `ui/dist/`, `ui/node_modules/.cache/` | Vite and TypeScript |
+| Frontend output and dependencies | `ui/dist/`, `ui/node_modules/` | Vite, TypeScript and `npm ci` |
 
 An eval release report carries `run` (status, split, `n` of `n_planned`, the case-set digest and
 dataset path), the policy verdict `gate_evaluation`, and `inert_checks` (policy checks that could

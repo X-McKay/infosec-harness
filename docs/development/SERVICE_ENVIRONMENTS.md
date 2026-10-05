@@ -35,7 +35,8 @@ Temporal credentials; workers do not need native controller/provider authority.
 | Telemetry | Optional local HTTP collector | HTTPS collector with optional authenticated headers, CA and mTLS |
 | Models/broker | Stub by default; an explicit gateway endpoint or Bedrock ([model endpoints](../operations/MODEL_ENDPOINTS.md)) | Explicitly configured endpoints and HTTPS controller catalog; no location-dependent fallback |
 | Sandbox executor | Managed verified runsc/build-egress | Independently qualified Docker/runsc executor; Kubernetes worker placement does not replace it |
-| Local repositories | `HARNESS_LOCAL_REPO_ROOTS` set by `./dev` to the eval corpus | Usually empty: only remote HTTPS repositories are accepted |
+| Local repositories | `HARNESS_LOCAL_REPO_ROOTS` set by `./dev` to the eval corpus; the dev worker container approves `/app/eval-corpus` and `/app/deploy/dev-runtime/fixture` | Usually empty: only remote HTTPS repositories are accepted |
+| Broker measurement | unset | `HARNESS_BROKER_OBSERVATION` points at the broker measurement JSON the Qualification view verifies; unset reports `not_checked` |
 
 Temporal authentication uses `HARNESS_TEMPORAL_API_KEY` or
 `HARNESS_TEMPORAL_API_KEY_FILE`; a missing/empty key file fails. API keys require TLS.
@@ -67,7 +68,8 @@ completion and binary content remain excluded from instrumentation.
 
 ## API exposure
 
-The API has no authentication of its own and sends no CORS headers. Serve the UI and the API
+The API has no authentication of its own and sends no CORS headers (the wildcard CORS middleware
+was removed, so a browser on another origin cannot call it). Serve the UI and the API
 from one origin: the web image's nginx proxies `/api/` to the API, and the Vite development
 server does the same. Expose the API only behind an authenticated internal gateway; the
 Kubernetes template gives it a ClusterIP service and no Ingress.
@@ -80,9 +82,9 @@ database at any other revision: run `harness migrate` first.
 ## Deploying a new execution generation
 
 Temporal workflow types and durable agent identities carry the execution generation from
-`EXECUTION_GENERATION` in `src/infosec_harness/agents/registry.py` (currently `v5`:
-`TriageBatch-v5`, `ComponentPreparation-v5`, `FindingTriage-v5`, and agent identities such as
-`verdict-v5`). Workers register only the current generation, and histories recorded by an earlier
+`EXECUTION_GENERATION` in `src/infosec_harness/agents/registry.py` (currently `v6`:
+`TriageBatch-v6`, `ComponentPreparation-v6`, `FindingTriage-v6`, and agent identities such as
+`verdict-v6`). Workers register only the current generation, and histories recorded by an earlier
 generation are not replayable by design. Before deploying a worker with a new generation, let
 in-flight batches finish or terminate them, then resubmit any that were cut short as new
 batches. Workflow ids are opaque (`batch:<batch-id>`); do not parse them.

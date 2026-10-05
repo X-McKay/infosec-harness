@@ -13,6 +13,8 @@ with the change that produced them; the service does not measure them or promote
 evidence. The component ledger the page used to read was removed because it could not be
 reproduced outside one workstation ([release evidence](../evaluation/RELEASE_EVIDENCE.md)).
 Qualification evidence predating that change is under [`docs/evidence/`](../evidence/README.md).
+The broker measurement the view verifies is read from the file `HARNESS_BROKER_OBSERVATION`
+names; when it is unset the broker row reports `not_checked`.
 
 ## Broker observation
 

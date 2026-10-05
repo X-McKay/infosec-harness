@@ -29,6 +29,8 @@ regrade an earlier result ([agent-quality evidence](../evidence/2026-09-30-agent
 `harness eval run <agent>` writes a release report to `.harness/reports/evals/` carrying `run`
 (status, split, `n` of `n_planned`, the case-set digest and dataset path), the policy verdict
 `gate_evaluation`, and `inert_checks`: policy checks that could not have failed for this run.
+Complete experiments also store `gate_evaluation` and a `status` in the experiment record, which
+the API exposes as `ExperimentSummary.status` and the UI shows as the release-gate row.
 `harness eval inert-gates REPORT [--policy PATH]` re-audits a report on disk. Inertness is
 evidence quality, not a gate, so the command always exits 0.
 
@@ -52,7 +54,8 @@ The report labels such a run `split: external` and records the dataset path and 
 `evals/heldout/quality-gates-v1/STAGING.md` is the staging protocol and attempt budget.
 
 `harness eval corpus` scores the paired ground-truth corpus end to end and writes a report under
-`.harness/reports/corpus/`. `--manifest` selects another corpus (for example
+`.harness/reports/corpus/`. A corpus run approves only its own manifest's directory as a local
+repository root; cases that resolve outside it are refused. `--manifest` selects another corpus (for example
 `eval-corpus/external/vul4j.json`), `--dataset` labels its source, and `--limit N` scores the
 first N cases while keeping vulnerable/fixed pairs together.
 

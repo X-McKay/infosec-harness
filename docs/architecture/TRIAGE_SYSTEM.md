@@ -93,7 +93,7 @@ prompt prefix. Grouping, scheduling, the per-finding pipeline and failure record
 with the in-process path, which runs stub models only; real assessments always run on Temporal.
 
 Workflow type names and agent activity identities carry the execution generation
-(`EXECUTION_GENERATION`, currently `v5`). There are no retained earlier generations and no
+(`EXECUTION_GENERATION`, currently `v6`). There are no retained earlier generations and no
 `workflow.patched` branches: a history recorded by an earlier generation is not replayable, so a
 deployment drains or terminates in-flight batches first
 ([service environments](../development/SERVICE_ENVIRONMENTS.md#deploying-a-new-execution-generation)).
