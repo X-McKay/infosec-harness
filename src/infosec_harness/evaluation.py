@@ -17,9 +17,10 @@ from temporalio.common import WorkflowIDReusePolicy
 
 from infosec_harness._io import write_json
 from infosec_harness.config import get_settings
+from infosec_harness.identity import worker_identity
 from infosec_harness.models import Finding, InvestigationRequest, InvestigationResult
 from infosec_harness.process import _finish
-from infosec_harness.web import PREFIX, RPC_TIMEOUT, WORKFLOW, connect
+from infosec_harness.web import PREFIX, RPC_TIMEOUT, WORKFLOW, connect, execution_timeout
 
 
 class ReleasePolicy(BaseModel):
@@ -82,6 +83,12 @@ def corpus_cases(manifest: Path) -> list[tuple[Finding, str, str]]:
     return cases
 
 
+async def cancel_owned(client, run_id: str) -> None:
+    # The RPC timeout and local bound also cover a persistently unavailable transport.
+    async with asyncio.timeout(RPC_TIMEOUT.total_seconds()):
+        await client.get_workflow_handle(run_id).cancel(rpc_timeout=RPC_TIMEOUT)
+
+
 async def evaluate_corpus(manifest: Path, output: Path) -> dict:
     if output.exists():
         raise ValueError("Report exists; preserve the previous cohort and choose a new path")
@@ -89,11 +96,13 @@ async def evaluate_corpus(manifest: Path, output: Path) -> dict:
     commit = source_identity()
     cases = corpus_cases(manifest)
     policy, policy_digest = release_policy()
+    identity = worker_identity(settings)
     candidate = {
         "version": 1,
         "commit": commit,
         "generation": "v9",
         "model": settings.model_name,
+        "worker_identity": identity.model_dump(),
         "dataset_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
         "runtime_config_sha256": hashlib.sha256(settings.openshell_config.read_bytes()).hexdigest(),
         "limits": settings.limits.model_dump(),
@@ -128,15 +137,26 @@ async def evaluate_corpus(manifest: Path, output: Path) -> dict:
         try:
             handle = await client.start_workflow(
                 WORKFLOW,
-                InvestigationRequest(finding=finding, limits=settings.limits),
+                InvestigationRequest(
+                    finding=finding,
+                    limits=settings.limits,
+                    expected_worker_identity=identity.fingerprint,
+                ),
                 id=run_id,
                 task_queue=settings.task_queue,
                 result_type=InvestigationResult,
                 id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
                 memo={"finding": finding.model_dump(mode="json")},
                 rpc_timeout=RPC_TIMEOUT,
+                execution_timeout=execution_timeout(settings.limits),
             )
-            result = InvestigationResult.model_validate(await handle.result())
+            wait_seconds = (execution_timeout(settings.limits) + RPC_TIMEOUT).total_seconds()
+            async with asyncio.timeout(wait_seconds):
+                result = InvestigationResult.model_validate(await handle.result())
+            if result.model != settings.model_name or result.worker_identity != identity:
+                raise ValueError(
+                    "Evaluation result does not match the requested worker/model identity"
+                )
             record.update(
                 status="completed",
                 predicted=result.verdict.label,
@@ -144,6 +164,7 @@ async def evaluate_corpus(manifest: Path, output: Path) -> dict:
                 source_digest=result.source_digest,
                 usage=result.usage,
                 limitations=result.limitations,
+                worker_identity=result.worker_identity.model_dump(),
             )
         except BaseException as exc:
             # A failed workflow may have completed an external request. Never silently resend it.
@@ -151,17 +172,18 @@ async def evaluate_corpus(manifest: Path, output: Path) -> dict:
             candidate["status"] = "failed"
             candidate["gates"]["complete_corpus"] = "failed"
             write_json(output, candidate)
-            if isinstance(exc, (asyncio.CancelledError, KeyboardInterrupt, SystemExit)):
+            interrupted = isinstance(exc, (asyncio.CancelledError, KeyboardInterrupt, SystemExit))
+            if interrupted or isinstance(exc, TimeoutError):
                 # Reconcile the one owned ID; never resend an uncertain start or inference.
                 try:
-                    owned = client.get_workflow_handle(run_id)
-                    await _finish(asyncio.ensure_future(owned.cancel(rpc_timeout=RPC_TIMEOUT)))
+                    await _finish(asyncio.ensure_future(cancel_owned(client, run_id)))
                     record["cancellation"] = "requested"
                 except Exception as cancellation_error:
                     record["cancellation"] = "unconfirmed"
                     record["cancellation_error_type"] = type(cancellation_error).__name__
                 write_json(output, candidate)
-                raise
+                if interrupted:
+                    raise
             break
         write_json(output, candidate)
     rows = candidate["cases"]

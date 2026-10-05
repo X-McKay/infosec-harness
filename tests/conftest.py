@@ -1,6 +1,8 @@
 """Deterministic tests use fake models and isolated state; Temporal tests use a real server."""
+import importlib
 import os
 import shutil
+import sys
 import tomllib
 from pathlib import Path
 
@@ -36,3 +38,14 @@ def temporal_cli():
             pytest.fail("Pinned Temporal CLI is required for durable qualification")
         pytest.skip("Pinned Temporal CLI unavailable; durable qualification not checked")
     return found
+
+
+def load_script(name: str):
+    """Import one trusted repository utility without shadowing installed packages."""
+    scripts = ROOT / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.append(str(scripts))
+    module = importlib.import_module(name)
+    if Path(module.__file__).resolve() != scripts / f"{name}.py":
+        raise ImportError(f"Unexpected utility module: {name}")
+    return module

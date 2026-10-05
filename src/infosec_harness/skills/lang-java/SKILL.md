@@ -17,7 +17,7 @@ metadata:
 ## Do not use this skill when
 
 - The repository is primarily another language.
-- You are planning the build itself — use `build-maven` or `build-gradle`.
+- You are planning the build itself — use `environment`.
 
 ## Procedure
 

@@ -22,7 +22,7 @@ metadata:
 ## When another skill also applies
 
 - `cwe-22-path-traversal` also fires when the caller-chosen destination resolves under a scheme such as `file:` that reaches the filesystem, and each skill redirects to the other. **This skill wins** while a URL resolver stands between the value and the file: the fetcher is the sink and destination validation is the guard under test. Use `cwe-22-path-traversal` when the value is joined onto a base directory and opened with no resolver in between.
-- `probe-oracle-protocol` forbids substituting the sink, and this is the one weakness class whose probe must: the sandbox has no egress, so there is no real request to observe. **This skill wins** — inject the fake transport — but only after confirming from the code that the target uses the client you injected, because a transport the code never picked up produces exactly the silent false negative that rule exists to prevent.
+- Use `probe` for source integrity, controls and evidence requirements. A substituted HTTP transport can explain intent but does not establish actual network behavior.
 
 ## Procedure
 
@@ -36,24 +36,19 @@ private/loopback/link-local ranges before the request.
 
 ## Oracle
 
-Probes run with **no external network**, which fits SSRF triage: the exploit condition is
-**"the code would issue a request to an attacker-chosen destination."** Observe intent, not a
-real fetch:
+Probes have no external network. Prefer a loopback listener started inside the sandbox,
+with a unique response marker, and exercise the original callable and real HTTP client.
+Confirm the listener is reachable with a positive control, then compare benign and
+attacker-selected destinations. Observe the request at the listener or the marker returned
+by the target; an exception alone is not a successful block.
 
-- Preferred: pass input naming a destination and capture the request the code *attempts* via a
-  fake/stub HTTP client or transport injected into the target. Fire the oracle when the
-  captured destination is the attacker-chosen one (i.e. no allowlist/SSRF guard rejected it).
-  Unlike most weaknesses this one cannot use the real sink — the sandbox has no egress — so
-  the substitution is deliberate. It is only sound if the target genuinely uses the client you
-  injected: verify that from the code before relying on it. A transport the code never picked
-  up produces a silent false negative that looks exactly like a clean one, so if you cannot
-  confirm the injection point, use the loopback listener below instead.
-- If the code binds its own client, point the input at a loopback listener the test starts
-  inside the sandbox that responds with `HARNESS_ORACLE::<nonce>`; fire the oracle when the
-  code returns/threads that response through. A guard that blocks loopback/private targets
-  yields a valid negative.
+A loopback rejection only establishes that tested boundary. It does not prove that all
+redirects, alternate encodings, DNS changes or other destinations are safe. Trace those
+conditions in the source and scope the conclusion accordingly. If the sandbox cannot
+support the required observation, report the limitation. A fake transport can diagnose
+which URL the target attempted, but cannot substitute for an execution claim.
 
-Never rely on reaching a real external host; the sandbox has no egress.
+Never contact an external host or modify original source to force the outcome.
 
 ## Safety constraints
 

@@ -21,6 +21,7 @@ from infosec_harness.models import (
     Finding,
     InvestigationRequest,
     InvestigationResult,
+    Limits,
     RunPage,
     RunState,
     RunSummary,
@@ -30,6 +31,11 @@ from infosec_harness.services import temporal_connection_options
 WORKFLOW = "InvestigationWorkflow"
 PREFIX = "investigate-v9-"
 RPC_TIMEOUT = timedelta(seconds=10)
+
+
+def execution_timeout(limits: Limits) -> timedelta:
+    # Starts at submission, including time queued without a worker. Reserve cleanup time.
+    return timedelta(seconds=limits.timeout_seconds + 600)
 
 
 async def connect() -> Client:
@@ -93,6 +99,7 @@ async def submit(finding: Finding, client: TemporalClient) -> RunState:
         id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
         memo={"finding": finding.model_dump(mode="json")},
         rpc_timeout=RPC_TIMEOUT,
+        execution_timeout=execution_timeout(settings.limits),
     )
     return RunState(id=run_id, status="pending", phase="queued", finding=finding)
 

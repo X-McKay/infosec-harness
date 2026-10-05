@@ -40,7 +40,7 @@ value is a single argument, or the value is strictly allowlisted.
 
 ## Oracle
 
-Use a **canary_file** oracle (see probe-oracle-protocol). Construct the input so that, *if*
+Use a **canary_file** oracle (see probe). Construct the input so that, *if*
 the shell interprets it, a benign marker command runs that creates the sandbox file
 `/tmp/harness_canary_<nonce>` (for example, appending a shell separator followed by a `touch`
 of that path). The marker command does nothing but create that file inside the sandbox — no

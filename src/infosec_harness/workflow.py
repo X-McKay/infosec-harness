@@ -16,10 +16,18 @@ with workflow.unsafe.imports_passed_through():
     from pydantic import BaseModel
     from pydantic_ai import Agent
     from pydantic_ai.durable_exec.temporal import PydanticAIWorkflow
+    from pydantic_ai.tool_manager import ToolManager
     from pydantic_ai.usage import UsageLimits
 
     from .agent import InvestigationDeps, build_agent, parse_probe_observations
-    from .models import Evidence, InvestigationRequest, InvestigationResult, RunState, Verdict
+    from .models import (
+        Evidence,
+        InvestigationRequest,
+        InvestigationResult,
+        RunState,
+        Verdict,
+        WorkerIdentity,
+    )
     from .openshell import OpenShell
     from .repository import validate_citation
 
@@ -27,6 +35,7 @@ with workflow.unsafe.imports_passed_through():
 class PreparedInvestigation(BaseModel):
     deps: InvestigationDeps
     snapshot_path: str
+    worker_identity: WorkerIdentity | None = None
 
 
 class FinalizeInvestigation(BaseModel):
@@ -36,13 +45,25 @@ class FinalizeInvestigation(BaseModel):
 
 
 class InvestigationActivities:
-    def __init__(self, openshell: OpenShell, snapshot, model_name: str):
+    def __init__(self, openshell: OpenShell, snapshot, model_name: str, *, identity=None):
         self.openshell = openshell
         self.snapshot = snapshot
         self.model_name = model_name
+        self.identity = identity
+        self.bound_identity = identity() if identity else None
+
+    def check_identity(self):
+        if self.identity and self.identity() != self.bound_identity:
+            raise ValueError("Worker code or isolation configuration changed; restart the worker")
 
     @activity.defn(name="prepare_investigation")
     async def prepare(self, request: InvestigationRequest) -> PreparedInvestigation:
+        self.check_identity()
+        if request.expected_worker_identity and (
+            self.bound_identity is None
+            or request.expected_worker_identity != self.bound_identity.fingerprint
+        ):
+            raise ValueError("Requested candidate does not match this worker identity")
         run_id = activity.info().workflow_id
         snapshot = await self.snapshot(request.finding, run_id)
         sandbox = await self.openshell.create(run_id, profile="workspace")
@@ -56,10 +77,14 @@ class InvestigationActivities:
                 request=request,
             ),
             snapshot_path=str(snapshot.path),
+            worker_identity=self.bound_identity,
         )
 
     @activity.defn(name="finalize_investigation")
     async def finalize(self, payload: FinalizeInvestigation) -> InvestigationResult:
+        self.check_identity()
+        if payload.prepared.worker_identity != self.bound_identity:
+            raise ValueError("Investigation changed worker identity before finalization")
         deps = payload.prepared.deps
         evidence = []
         for receipt in self.openshell.receipts(deps.run_id):
@@ -171,6 +196,7 @@ class InvestigationActivities:
             evidence=reported,
             source_digest=deps.source_digest,
             model=self.model_name,
+            worker_identity=payload.prepared.worker_identity,
             usage=payload.usage,
             limitations=limitations,
         )
@@ -214,15 +240,18 @@ class InvestigationWorkflow(PydanticAIWorkflow):
                 self._state.phase = "investigating"
                 if self.agent is None:
                     raise RuntimeError("Investigator is not bound to this worker")
-                run = await self.agent.run(
-                    request.finding.model_dump_json(),
-                    deps=prepared.deps,
-                    usage_limits=UsageLimits(
-                        request_limit=request.limits.max_requests,
-                        tool_calls_limit=request.limits.max_tool_calls,
-                        total_tokens_limit=request.limits.total_tokens,
-                    ),
-                )
+                # All tools, including Skills, are native serial barriers. Each history
+                # guard therefore sees the preceding activity completion before scheduling.
+                with ToolManager.parallel_execution_mode("sequential"):
+                    run = await self.agent.run(
+                        request.finding.model_dump_json(exclude={"repo_url"}),
+                        deps=prepared.deps,
+                        usage_limits=UsageLimits(
+                            request_limit=request.limits.max_requests,
+                            tool_calls_limit=request.limits.max_tool_calls,
+                            total_tokens_limit=request.limits.total_tokens,
+                        ),
+                    )
                 self._state.phase = "validating"
                 result = await workflow.execute_activity(
                     "finalize_investigation",
@@ -286,6 +315,7 @@ def create_worker(client, settings):
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 
     from . import repository
+    from .identity import worker_identity
     from .model import OpenShellModel
     from .openshell import OpenShellConfig
 
@@ -300,7 +330,10 @@ def create_worker(client, settings):
     agent = build_agent(openshell, model)
     bind_investigator(agent)
     activities = InvestigationActivities(
-        openshell, partial(repository.snapshot, settings=settings), settings.model_name
+        openshell,
+        partial(repository.snapshot, settings=settings),
+        settings.model_name,
+        identity=partial(worker_identity, settings),
     )
     return Worker(
         client,

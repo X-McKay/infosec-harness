@@ -173,6 +173,7 @@ export interface components {
             source_digest: string;
             /** Model */
             model: string;
+            worker_identity?: components["schemas"]["WorkerIdentity"] | null;
             /** Usage */
             usage?: {
                 [key: string]: number | null;
@@ -242,6 +243,19 @@ export interface components {
             evidence_ids?: string[];
             /** Citations */
             citations?: components["schemas"]["Citation"][];
+        };
+        /** WorkerIdentity */
+        WorkerIdentity: {
+            /** Fingerprint */
+            fingerprint: string;
+            /** Code Sha256 */
+            code_sha256: string;
+            /** Config Sha256 */
+            config_sha256: string;
+            /** Dependencies */
+            dependencies: {
+                [key: string]: string;
+            };
         };
     };
     responses: never;

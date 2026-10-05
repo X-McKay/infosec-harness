@@ -1,4 +1,4 @@
-# Backend image for the API and the Temporal worker (same image, different command).
+# Control-plane API image. The trusted worker uses separately provisioned OpenShell access.
 # Every base is pinned by version and digest. The Python and uv versions must equal .mise.toml;
 # Keep these pins aligned when upgrading tools.
 FROM ghcr.io/astral-sh/uv:0.12.7@sha256:95f2aa1fe59274951cfe9b0cbc7972e879ff1004bc8945d130a32eb0dbd85945 AS uv
@@ -18,14 +18,14 @@ RUN --mount=type=bind,target=/tmp/context \
         cp /tmp/context/deploy/extra-ca.crt /usr/local/share/ca-certificates/extra-ca.crt \
         && update-ca-certificates; fi
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
-    REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt UV_NATIVE_TLS=1
+    REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt UV_SYSTEM_CERTS=1
 
 COPY pyproject.toml uv.lock README.md ./
-COPY src ./src
 # Install the same locked runtime dependencies used by local development and CI.
 RUN uv export --locked --no-dev --no-emit-project --format requirements-txt -o /tmp/requirements.txt \
     && uv pip install --system --no-cache --require-hashes -r /tmp/requirements.txt \
-    && uv pip install --system --no-cache --no-deps . \
     && rm /tmp/requirements.txt
+COPY src ./src
+RUN uv pip install --system --no-cache --no-deps .
 ENV HARNESS_WORKSPACE_DIR=/workspace
 CMD ["harness", "api", "--host", "0.0.0.0", "--port", "8000"]

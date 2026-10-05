@@ -6,18 +6,23 @@ from pathlib import Path
 
 from pydantic import BaseModel
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, ValidatedToolArgs
 from pydantic_ai.durable_exec.temporal import TemporalDurability, TemporalRunContext
 from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.models import Model, ModelRequestContext
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness import Skills
 from pydantic_core import to_json
+from temporalio import workflow
 from temporalio.common import RetryPolicy
 
 from .model_executor import MAX_INVOCATION_BYTES
 from .models import Evidence, InvestigationRequest, Verdict
 from .openshell import OpenShell, Sandbox
+
+MAX_HISTORY_BYTES = 32 * 1024 * 1024
 
 
 class InvestigationDeps(BaseModel):
@@ -29,11 +34,20 @@ class InvestigationDeps(BaseModel):
 
 
 class DurablePayloadLimit(AbstractCapability[InvestigationDeps]):
-    """Pure workflow guard, before native durability schedules a model activity."""
+    """Pure guards before native scheduling; reserve history space for finalization/cleanup."""
+
+    @staticmethod
+    def check_history() -> None:
+        if (
+            workflow.in_workflow()
+            and workflow.info().get_current_history_size() >= MAX_HISTORY_BYTES
+        ):
+            raise UsageLimitExceeded("Investigation exceeds the durable history budget")
 
     async def before_model_request(
         self, ctx: RunContext[InvestigationDeps], request_context: ModelRequestContext
     ) -> ModelRequestContext:
+        self.check_history()
         encoded = to_json(
             {
                 "messages": request_context.messages,
@@ -46,6 +60,26 @@ class DurablePayloadLimit(AbstractCapability[InvestigationDeps]):
         if len(encoded) > MAX_INVOCATION_BYTES:
             raise UsageLimitExceeded("Investigation exceeds the durable payload budget")
         return request_context
+
+    async def before_tool_execute(
+        self,
+        ctx: RunContext[InvestigationDeps],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+    ) -> ValidatedToolArgs:
+        self.check_history()
+        encoded = to_json(
+            {
+                "args": args,
+                "deps": ctx.deps,
+                "context": TemporalRunContext.serialize_run_context(ctx),
+            }
+        )
+        if len(encoded) > MAX_INVOCATION_BYTES:
+            raise UsageLimitExceeded("Tool call exceeds the durable payload budget")
+        return args
 
 
 # This script executes only inside OpenShell. It handles model-authored paths as data.

@@ -17,7 +17,7 @@ metadata:
 ## Do not use this skill when
 
 - The repository is primarily another language; load that `lang-*` skill instead.
-- You are choosing a base image or install commands — use `build-python`.
+- You are choosing a base image or install commands — use `environment`.
 
 ## Procedure
 

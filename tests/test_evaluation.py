@@ -44,11 +44,16 @@ async def test_failed_external_effect_is_not_retried_or_hidden(tmp_path, monkeyp
     assert result["status"] == "failed"
     assert [case["status"] for case in result["cases"]] == ["failed", "unstarted"]
     client.start_workflow.assert_awaited_once()
+    assert client.start_workflow.call_args.kwargs[
+        "execution_timeout"
+    ] == evaluation.execution_timeout(settings.limits)
     with pytest.raises(ValueError, match="preserve"):
         await evaluation.evaluate_corpus(manifest, report)
 
 
-async def test_false_negative_blocks_release_even_above_accuracy_threshold(tmp_path, monkeypatch):
+async def test_false_negative_blocks_release_even_above_accuracy_threshold(
+    tmp_path, monkeypatch, fixture_worker_identity
+):
     finding = Finding(title="case", repo_url="repo")
     monkeypatch.setattr(evaluation, "source_identity", lambda: "commit")
     cases = [(finding, "likely_not_exploitable", str(i)) for i in range(4)]
@@ -62,7 +67,8 @@ async def test_false_negative_blocks_release_even_above_accuracy_threshold(tmp_p
         verdict=Verdict(label="likely_not_exploitable", summary="fixture"),
         evidence=[],
         source_digest="hash",
-        model="fixture",
+        model=evaluation.get_settings().model_name,
+        worker_identity=fixture_worker_identity,
     )
     client = SimpleNamespace(
         start_workflow=AsyncMock(
@@ -171,3 +177,112 @@ async def test_unavailable_temporal_preserves_failed_cohort_and_unchecked_qualit
         "task_success_rate": "not_checked",
         "unsafe_negatives": "not_checked",
     }
+
+
+@pytest.fixture(autouse=True)
+def fixture_worker_identity(monkeypatch):
+    from infosec_harness.models import WorkerIdentity
+
+    identity = WorkerIdentity(
+        fingerprint="a" * 64,
+        code_sha256="b" * 64,
+        config_sha256="c" * 64,
+        dependencies={"fixture": "1"},
+    )
+    monkeypatch.setattr(evaluation, "worker_identity", lambda settings: identity)
+    return identity
+
+
+@pytest.mark.parametrize("mismatch", ["model", "worker"])
+async def test_mismatched_worker_cannot_qualify_candidate(
+    tmp_path, monkeypatch, fixture_worker_identity, mismatch
+):
+    finding = Finding(title="case", repo_url="repo")
+    monkeypatch.setattr(evaluation, "source_identity", lambda: "commit")
+    monkeypatch.setattr(evaluation, "corpus_cases", lambda path: [(finding, "inconclusive", "a")])
+    config = tmp_path / "runtime.json"
+    config.write_text("{}")
+    settings = evaluation.get_settings()
+    settings.openshell_config = config
+    result = InvestigationResult(
+        finding=finding,
+        verdict=Verdict(label="inconclusive", summary="fixture"),
+        evidence=[],
+        source_digest="hash",
+        model="wrong" if mismatch == "model" else settings.model_name,
+        worker_identity=None if mismatch == "worker" else fixture_worker_identity,
+    )
+    client = SimpleNamespace(
+        start_workflow=AsyncMock(
+            return_value=SimpleNamespace(result=AsyncMock(return_value=result))
+        )
+    )
+    monkeypatch.setattr(evaluation, "connect", AsyncMock(return_value=client))
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text("{}")
+    report = await evaluation.evaluate_corpus(manifest, tmp_path / "report.json")
+    assert report["status"] == "failed"
+    assert report["cases"][0]["error_type"] == "ValueError"
+    assert report["gates"]["task_success_rate"] == "not_checked"
+    assert (
+        client.start_workflow.call_args.args[1].expected_worker_identity
+        == fixture_worker_identity.fingerprint
+    )
+
+
+@pytest.mark.parametrize("cancellation_unavailable", [False, True])
+async def test_result_transport_outage_is_bounded_and_cancelled_once(
+    tmp_path, monkeypatch, cancellation_unavailable
+):
+    import asyncio
+    from datetime import timedelta
+
+    finding = Finding(title="case", repo_url="repo")
+    monkeypatch.setattr(evaluation, "source_identity", lambda: "commit")
+    monkeypatch.setattr(
+        evaluation,
+        "corpus_cases",
+        lambda path: [(finding, "inconclusive", "first"), (finding, "inconclusive", "second")],
+    )
+    monkeypatch.setattr(evaluation, "execution_timeout", lambda limits: timedelta(seconds=0.02))
+    monkeypatch.setattr(evaluation, "RPC_TIMEOUT", timedelta(seconds=0.01))
+    config = tmp_path / "runtime.json"
+    config.write_text("{}")
+    evaluation.get_settings().openshell_config = config
+    result_wait_stopped = asyncio.Event()
+
+    async def unavailable_result():
+        try:
+            await asyncio.Event().wait()
+        finally:
+            result_wait_stopped.set()
+
+    async def unavailable_cancel(**kwargs):
+        await asyncio.Event().wait()
+
+    handle = SimpleNamespace(
+        result=AsyncMock(side_effect=unavailable_result),
+        cancel=AsyncMock(side_effect=unavailable_cancel if cancellation_unavailable else None),
+    )
+    client = SimpleNamespace(
+        start_workflow=AsyncMock(return_value=handle), get_workflow_handle=lambda run_id: handle
+    )
+    monkeypatch.setattr(evaluation, "connect", AsyncMock(return_value=client))
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text("{}")
+    output = tmp_path / "report.json"
+    report = await asyncio.wait_for(evaluation.evaluate_corpus(manifest, output), 1)
+    assert result_wait_stopped.is_set()
+    assert report == json.loads(output.read_text())
+    assert report["status"] == "failed"
+    assert report["cases"][0]["error_type"] == "TimeoutError"
+    assert report["cases"][0]["cancellation"] == (
+        "unconfirmed" if cancellation_unavailable else "requested"
+    )
+    assert report["cases"][1]["status"] == "unstarted"
+    assert report["gates"]["task_success_rate"] == "not_checked"
+    if cancellation_unavailable:
+        assert report["cases"][0]["cancellation_error_type"] == "TimeoutError"
+    client.start_workflow.assert_awaited_once()
+    handle.result.assert_awaited_once()
+    handle.cancel.assert_awaited_once()

@@ -51,3 +51,23 @@ from mocked OpenShell checks and actual native qualification.
 
 Workflow generation v9 breaks compatibility with the former staged graph. Drain old task
 queues before changing workers. The API lists this generation's investigations only.
+
+The pinned native Docker driver leaves the workload root filesystem writable. Filesystem
+confinement is therefore OpenShell's mandatory Landlock policy, verified with both an
+allowed workspace write and denied direct/symlink writes into world-writable `/dev/shm`.
+An `/etc` denial alone would only demonstrate ordinary UNIX permissions and is insufficient.
+The adapter records the observed rootfs property; it never substitutes a configured policy
+name for these checks. Supervisor/driver/kernel changes require fresh qualification.
+
+Evaluation binds the expected worker to its runtime code, packaged skills, release policy,
+SDK dependency versions, model configuration and actual policy-file bytes. Admission
+rejects a different worker before source capture or model dispatch; finalization rejects
+drift. This identifies the configured model endpoint, not the weights served behind it.
+Model history is bounded before native Temporal scheduling, and model responses are bounded
+before activity completion. Server and local evaluation deadlines include cleanup time.
+
+Investigations stop before scheduling another model or tool activity once native Temporal
+history reaches 32MiB. All tool calls, including deferred skill loading, execute sequentially
+so the next check observes completed history. This independent limit can stop a run before
+its token/request/tool limits and reserves room for finalization and owned cleanup. Model
+activity input is capped at 1,000,000 bytes and its response at 512,000 bytes.

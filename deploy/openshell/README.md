@@ -1,211 +1,290 @@
-# Minimal native inference executor
+# OpenShell runtime
 
-Use the operator deployment and migration instructions in
-the [broker runbook](../../docs/broker/RUNBOOK.md). After any change to the executor's packaged
-sources, rebuild the image and qualify it again before brokered use.
-The executor image includes the typed inference protocol, codec, compatible model
-adapter, and their hash-pinned dependencies. It excludes the controller, database,
-worker, tool execution, and provider credentials.
+The investigator runs one Temporal workflow through the checkout's native OpenShell runtime.
+The workspace, offline probe and model executor are separate native profiles. The repository
+does not fall back to direct model access or ordinary Docker when OpenShell qualification fails.
+OpenShell release archives and OCI image identities are pinned in
+[`.dev-tools/openshell.json`](../../.dev-tools/openshell.json).
 
-Generate a fresh private context using the checkout's pinned Python environment:
+## Prepare the checkout-owned runtime
+
+Use the canonical setup entry point. Full setup checks the managed VM, actual runsc builder,
+control plane and configured native runtime; offline mode intentionally leaves native runtime
+and live inference `not_checked`.
+
+```bash
+./dev --profile offline
+# Configure the dedicated gateway and runtime JSON described below before full setup.
+./dev
+```
+
+Download release archives only through the manifest-checking helper. It validates SHA-256
+before publishing files beneath `.harness/openshell/artifacts/`; the separate official-image
+OCI digests remain in the same manifest.
+
+```bash
+for artifact in cli-macos-arm64 gateway-linux-arm64 supervisor-linux-arm64 sandbox-linux-arm64 sdk-wheel; do
+  .harness/bin/mise exec -- uv run --locked python scripts/openshell_artifacts.py "$artifact"
+done
+```
+
+Build the workspace/toolchain image only through the already qualified runsc build-egress
+builder. `.harness/dev.env` supplies its checkout-local builder and approved proxy; it is a
+private file, so do not print it or commit the resulting log or tar. The image is then streamed
+into the dedicated guest daemon without selecting a host Docker context:
+
+The qualified workspace base is the official `python:3.12.13-slim-bookworm` image pinned by
+the manifest-verified index digest
+`sha256:4766d8b510c428e595d74b9cc5bbb2fae8e26316fffb4adc89908d79aacd58a2`. Bookworm supplies
+OpenJDK 17, which supports both the Java 7 compatibility corpus and Java 17 corpus. The
+observed Java executables are `/usr/lib/jvm/java-17-openjdk-arm64/bin/java` and
+`/usr/lib/jvm/java-17-openjdk-arm64/bin/javac`; workspace policies should allow only those
+observed compiler/runtime paths when Java package egress is needed.
+
+```bash
+set -a
+source .harness/dev.env
+set +a
+.harness/bin/docker buildx build -f deploy/openshell/Dockerfile.workspace \
+  --builder "$HARNESS_BUILDX_BUILDER" \
+  --build-arg HTTP_PROXY="$HARNESS_BUILD_EGRESS_PROXY" \
+  --build-arg HTTPS_PROXY="$HARNESS_BUILD_EGRESS_PROXY" \
+  --output type=docker,dest=.harness/openshell/workspace.tar deploy/openshell
+
+CHECKOUT_ID="$(basename "$(cat .harness/runtime-home)")"
+LIMA_VERSION="$(awk -F= '$1 == "LIMA_VERSION" {print $2}' .dev-tools/versions.env)"
+LIMA_HOME="$(cat .harness/runtime-home)" \
+  ".harness/tools/lima-${LIMA_VERSION}/bin/limactl" shell --tty=false --workdir "$PWD" h \
+  sudo --non-interactive docker \
+  --host "unix:///var/lib/ih-openshell/$CHECKOUT_ID/run/docker.sock" load \
+  <.harness/openshell/workspace.tar
+```
+
+Record the resulting image ID from the load/inspect result in each workspace and probe profile.
+The copy-up of apt-owned files and the package installation intentionally run in one Dockerfile
+layer because the runsc BuildKit overlay cannot create dpkg backup hardlinks to lower-layer
+files.
+
+Build the separate, minimal model executor from the current module and hash-locked dependency
+closure. The context generator copies only `model_executor.py`; choose a new output directory
+for each build. It contains no Temporal worker, controller, repository snapshot or credentials.
 
 ```bash
 .harness/bin/mise exec -- uv run --locked python deploy/openshell/build_context.py \
   --machine aarch64 --output .harness/openshell/executor-context
-```
-
-Build through the already qualified runsc build-egress builder. Supply the checkout's
-actual builder name and approved build proxy; do not use a host Docker context:
-
-```bash
-.harness/bin/docker buildx build --builder <checkout-runsc-builder> \
-  --build-arg HTTP_PROXY=<approved-build-proxy> \
-  --build-arg HTTPS_PROXY=<approved-build-proxy> \
+set -a
+source .harness/dev.env
+set +a
+.harness/bin/docker buildx build -f .harness/openshell/executor-context/Dockerfile \
+  --builder "$HARNESS_BUILDX_BUILDER" \
+  --build-arg HTTP_PROXY="$HARNESS_BUILD_EGRESS_PROXY" \
+  --build-arg HTTPS_PROXY="$HARNESS_BUILD_EGRESS_PROXY" \
   --output type=docker,dest=.harness/openshell/executor.tar \
   .harness/openshell/executor-context
+
+CHECKOUT_ID="$(basename "$(cat .harness/runtime-home)")"
+LIMA_VERSION="$(awk -F= '$1 == "LIMA_VERSION" {print $2}' .dev-tools/versions.env)"
+LIMA_HOME="$(cat .harness/runtime-home)" \
+  ".harness/tools/lima-${LIMA_VERSION}/bin/limactl" shell --tty=false --workdir "$PWD" h \
+  sudo --non-interactive docker \
+  --host "unix:///var/lib/ih-openshell/$CHECKOUT_ID/run/docker.sock" load \
+  <.harness/openshell/executor.tar
 ```
 
-Load the artifact into the dedicated OpenShell daemon and record its observed manifest
-SHA256. The complete executor contract must use that immutable digest and the approved
-supervisor digest. The native adapter checks actual workload images and confinement;
-image names and configured runtime strings are insufficient evidence.
+Record the loaded image ID from the native daemon's load/inspect result in the model profile.
+The executor's provider-free startup/import check must pass in an actual native sandbox before
+configuring a provider. Image loading and import qualification dispatch no model request.
 
-## Native qualification
-
-`infosec_harness.qualification.broker.native` is a bounded, mock-provider acceptance check. It
-uses the production controller, native adapter, executor and durable ledger with three
-registered scopes: `local`, `temporal` and `cachepoint`, each with one static invocation. It
-rejects any contract whose backend or model is not the module's mock backend and mock model.
-It requires a private operator JSON file referenced by `IH_NATIVE_FIXTURE_CONFIG`, containing
-`native` (the `NativeDeploymentConfig` fields), the full `contract`, `controller_origin`,
-`controller_ca` and `scope`. Native specs are keyed by the full contract digest; the approved
-effective policy and observed provider ID/version/profile digests must come from actual
-operator inventory. This is not a production issuance policy.
-
-Start the counted mock HTTPS provider where the executor's provider route reaches it. Its
-gateway provider record must hold only the module's fixed test canary. Write its stats beside
-the operator configuration as `native-mock-stats.json`:
+Keep gateway configuration, generated PKI, runtime JSON, policy files, logs and reports under
+`.harness/openshell/private/` with mode `0700` for the directory and `0600` for private files.
+Never commit client keys, gateway JWT keys, provider credentials or runtime receipts. Create
+the dedicated daemon only inside the managed VM with the ownership-checked helper:
 
 ```bash
-.harness/bin/mise exec -- uv run --locked python -m infosec_harness.qualification.broker.native \
-  mock-provider --bind-address <guest-address> --port 18443 \
-  --certificate <cert.pem> --private-key <key.pem> --stats-file <config-dir>/native-mock-stats.json
+LIMA_VERSION="$(awk -F= '$1 == "LIMA_VERSION" {print $2}' .dev-tools/versions.env)"
+CHECKOUT_ID="$(basename "$(cat .harness/runtime-home)")"
+LIMA_HOME="$(cat .harness/runtime-home)" \
+  ".harness/tools/lima-${LIMA_VERSION}/bin/limactl" shell --tty=false --workdir "$PWD" h \
+  sudo --non-interactive python3 "$PWD/scripts/openshell_guest.py" start \
+  --checkout-id "$CHECKOUT_ID"
 ```
 
-Start the trusted acceptance controller with a migrated private test database and real TLS
-certificate, using `--factory infosec_harness.qualification.broker.native:controller_factory`.
-The controller alone receives gateway mTLS/admin access and the dedicated Docker socket. The
-executor receives neither host mounts nor database access. Then:
+The helper owns a separate Docker socket, data root and containerd namespace. It checks the
+shared firewall, route and forwarding invariants. Use only this guest socket for OpenShell;
+do not change the host Docker context or point OpenShell at the harness daemon. The dedicated
+gateway uses the Docker driver's `socket_path`, `compute_driver = "docker"`, the pinned OCI
+images, TLS with client authentication, and launch-scoped gateway JWT keys. The gateway process
+is launched with the pinned binary, its private config, the Docker driver and mTLS auth enabled.
+Run its configuration preflight before startup and independently inspect the guest process and
+selected daemon socket afterward.
+
+## Configuration contract
+
+The private gateway TOML uses the v0.1.2 schema. Replace every path and digest placeholder
+below with private generated files and manifest-pinned images; the placeholders are not active
+credentials or deployment defaults.
+
+```toml
+[openshell]
+version = 1
+
+[openshell.gateway]
+name = "checkout-openshell"
+bind_address = "127.0.0.1"
+health_bind_address = "127.0.0.1"
+log_level = "info"
+compute_driver = "docker"
+disable_tls = false
+guest_tls_ca = "/var/lib/ih-openshell/<checkout-id>/certs/ca.crt"
+guest_tls_cert = "/var/lib/ih-openshell/<checkout-id>/certs/server.crt"
+guest_tls_key = "/var/lib/ih-openshell/<checkout-id>/certs/server.key"
+
+[openshell.gateway.tls]
+cert_path = "/var/lib/ih-openshell/<checkout-id>/certs/server.crt"
+key_path = "/var/lib/ih-openshell/<checkout-id>/certs/server.key"
+client_ca_path = "/var/lib/ih-openshell/<checkout-id>/certs/ca.crt"
+
+[openshell.gateway.gateway_jwt]
+signing_key_path = "/var/lib/ih-openshell/<checkout-id>/certs/signing.pem"
+public_key_path = "/var/lib/ih-openshell/<checkout-id>/certs/public.pem"
+kid_path = "/var/lib/ih-openshell/<checkout-id>/certs/kid"
+
+[openshell.drivers.docker]
+socket_path = "/var/lib/ih-openshell/<checkout-id>/run/docker.sock"
+sandbox_pids_limit = 256
+default_image = "sha256:<workspace-image-id>"
+sandbox_runtime_image = "<manifest-pinned-sandbox-image>@sha256:<digest>"
+supervisor_image = "<manifest-pinned-supervisor-image>@sha256:<digest>"
+image_pull_policy = "if_not_present"
+sandbox_label = "<checkout-owned-label>"
+grpc_endpoint = "<guest-local-gateway-address>"
+```
+
+Run the pinned gateway's configuration preflight before launch. Start the binary using this
+private config, the Docker driver and mTLS authentication. Verify the guest PID belongs to that
+exact binary/config invocation and independently verify the selected dedicated daemon socket.
+Do not enable plaintext listeners or host Docker access.
+
+`HARNESS_OPENSHELL_CONFIG` points to private JSON with the host-forwarded gRPC endpoint,
+workspace, durable receipt directory, client mTLS paths, exact dedicated Docker
+`inspection_socket` and read-only command, Lima home, observed supervisor image ID, and the
+three profile definitions. Each profile has an immutable image digest, absolute policy path,
+CPU and memory limits. Only the `model` profile may name a provider; `workspace` and `probe`
+must not. This is the JSON contract consumed by the adapter:
+
+```json
+{
+  "endpoint": "127.0.0.1:<forwarded-grpc-port>",
+  "workspace": "default",
+  "state_dir": "/absolute/private/openshell/receipts",
+  "tls_ca": "/absolute/private/openshell/client-ca.crt",
+  "tls_cert": "/absolute/private/openshell/client.crt",
+  "tls_key": "/absolute/private/openshell/client.key",
+  "inspection_socket": "unix:///var/lib/ih-openshell/<checkout-id>/run/docker.sock",
+  "inspection_command": [
+    "/absolute/path/to/limactl", "shell", "h", "sudo", "--non-interactive",
+    "docker", "--host", "unix:///var/lib/ih-openshell/<checkout-id>/run/docker.sock"
+  ],
+  "inspection_lima_home": "/absolute/path/to/managed-lima-home",
+  "supervisor_image": "sha256:<observed-image-id>",
+  "profiles": {
+    "workspace": {
+      "image": "sha256:<workspace-image-id>",
+      "policy": "/absolute/private/openshell/workspace-policy.yaml",
+      "cpu": "1", "memory": "512Mi"
+    },
+    "probe": {
+      "image": "sha256:<workspace-image-id>",
+      "policy": "/absolute/private/openshell/probe-policy.yaml",
+      "cpu": "1", "memory": "512Mi"
+    },
+    "model": {
+      "image": "sha256:<model-executor-image-id>",
+      "policy": "/absolute/private/openshell/model-policy.yaml",
+      "cpu": "1", "memory": "512Mi",
+      "provider": "<native-provider-name>"
+    }
+  }
+}
+```
+
+Policies are authored operator configuration, not execution evidence. This minimal example
+permits only the two exact Python package hosts; add other exact hosts and observed client
+binary paths only for required toolchains. The qualified toolchain profile also allows
+`/dev/null` as a write target because Maven and other tools use it. The adapter verifies that
+it is the actual character device major 1, minor 3, opens it without following symlinks, and
+confirms writes are discarded and reads return EOF; do not make `/dev` writable.
+
+```yaml
+version: 1
+filesystem:
+  include_workdir: false
+  read_only: [/usr, /bin, /lib, /lib64, /etc, /proc, /sys/fs/cgroup]
+  read_write: [/workspace, /tmp, /dev/null]
+landlock:
+  compatibility: hard_requirement
+process:
+  run_as_user: 65532
+  run_as_group: 65532
+network_policies:
+  packages:
+    binaries:
+      - path: /usr/local/bin/python3.12
+    endpoints:
+      - host: pypi.org
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: {method: GET, path: "/**"}
+          - allow: {method: HEAD, path: "/**"}
+      - host: files.pythonhosted.org
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: {method: GET, path: "/**"}
+          - allow: {method: HEAD, path: "/**"}
+```
+
+Omit TLS mode so native OpenShell automatically terminates HTTPS on port 443. Do not combine
+`access` presets with explicit `rules`. The probe policy has the same filesystem and process
+sections but no `network_policies`; it has no provider. The model profile has no repository
+workspace and attaches only its explicitly configured native provider. Do not add wildcard
+hosts or Docker registry access to workload egress.
+
+OpenShell v0.1.2's Docker driver leaves the workload root filesystem writable. Qualification
+therefore requires live Landlock discriminators: a successful write/delete in `/workspace`,
+denial of writes to `/dev/shm`, and denial of a symlink escape from the workspace. The trusted
+runtime also independently inspects exact native-owned workloads for pinned image, non-root
+identity, dropped capabilities, seccomp, no-new-privileges, disabled network, bounded
+CPU/memory/PIDs and absence of host bind mounts. A configured profile, sandbox name or gateway
+`Ready` state alone is not proof.
+
+## Qualification and evaluation
+
+Full `./dev` runs native qualification. The direct command is useful after changing a policy,
+image, adapter or runtime configuration:
 
 ```bash
-.harness/bin/mise exec -- uv run --locked python -m infosec_harness.qualification.broker.native worker
-.harness/bin/mise exec -- uv run --locked python -m infosec_harness.qualification.broker.native prove
+uv run --locked harness qualify --output .harness/reports/native-review.json
 ```
 
-The first command runs a real Pydantic AI agent through the production broker. The second
-checks authentication rejection, committed result retrieval, actual native close, repeat
-close and saved results after closure while asserting the independent mock provider counter
-remains unchanged. It writes a sanitized `native-<scope>-proof.json` beside the private
-operator configuration. The `temporal` scope adds an acceptance-only ACK barrier after
-production ledger completion (`native-temporal-committed.json` / `native-temporal-release`
-in the same directory); its host runner terminates a worker, retrieves the same saved request
-on retry and replays history with sends forbidden. The `cachepoint` scope sends the actual
-`render_prompt` output with an authored SDK CachePoint and checks its exact retained
-representation plus one counted provider send before the authentication, saved-result and
-native-close assertions. See `src/infosec_harness/qualification/broker/native_temporal.py` for the
-Temporal host runner's strict operator inputs; `tests/runtime/test_broker_native_temporal.py`
-runs it only when `HARNESS_NATIVE_TEMPORAL_CONFIG` is set.
+Qualification must exercise workspace and fresh offline-probe creation, native policy
+admission, upload, bounded execution and download, original-source verification, cleanup,
+and replay of saved receipts. It records actual container properties and in-sandbox controls.
+Preserve failed-run evidence privately; remove only resources whose native IDs and dedicated
+daemon ownership have been corroborated.
 
-Preserve failed-attempt evidence. Stop only corroborated owned resources, and run
-`scripts/openshell_guest.py stop` inside the checkout-owned guest after all dedicated
-Docker containers and containerd tasks are gone. The helper refuses closure if shared
-firewall, forwarding, route, or bridge invariants differ. A native create acknowledged
-before its ID is persisted requires manual ownership reconciliation; the broker
-refuses to acknowledge cleanup or delete an uncorroborated resource by name.
-
-
-## Authorized local-provider qualification
-
-The live runners are separate from mock acceptance and live in
-`infosec_harness.qualification.broker`. Prepare an immutable reviewed manifest naming the
-endpoint and model explicitly (there are no defaults), the frozen per-agent cases and dataset
-hashes, the candidate direct and brokered model files, the broker catalog, a zero-price policy,
-and the declared ordered phases (`direct`, `native-local`, `native-temporal`). The manifest's
-source commit must be the clean checkout HEAD, and its report directory must be inside the
-checkout so sandbox temporary files are guest-visible.
+Live model evaluation is a separate, explicitly authorized step. Configure the endpoint and
+served model identifier in the worker environment, and put provider credentials only in the
+native model provider. Run the unchanged registered corpus with:
 
 ```bash
-PILOT="uv run --locked python -m infosec_harness.qualification.broker.pilot"
-$PILOT --manifest <manifest.json> --manifest-sha256 <sha256>
-$PILOT --manifest <manifest.json> --manifest-sha256 <sha256> --phase direct --allow-inference
-$PILOT --manifest <manifest.json> --manifest-sha256 <sha256> \
-  --phase local --allow-inference --baseline-report <pilot-dir>/direct.json
+uv run --locked harness eval --allow-inference --output .harness/reports/model-review.json
 ```
 
-`scripts/broker_real_provider_check.py` is an equivalent wrapper.
-
-The default `validate` phase resolves every agent's direct and native route from the frozen
-files without constructing a client and makes no provider call. Each phase of a manifest is
-claimed once and runs in its own reaped child. A native phase compares against a passed direct
-phase of the same manifest: exact effective settings, endpoint, resolved model, capability
-profile, full budget and price inputs must match; only transport fields and the catalog-bytes
-component of the pricing identity may differ. The user must authorize the provider and data
-scope before execution.
-
-`scripts/broker_real_graph_check.py` freezes, then executes once by digest, one complete
-production Temporal graph per pilot and phase with real sandbox build/probe execution,
-persisted API checks and root/child replay with external I/O forbidden. Generated temporary
-build inputs stay in a private trial `TMPDIR` visible to the checkout-owned Lima guest.
-
-Earlier live results, retained failures and remaining rollout gates are in
-[`CREDENTIAL_BROKER_LIVE_PROVIDER.md`](../../docs/evidence/2026-10-01-broker-implementation/CREDENTIAL_BROKER_LIVE_PROVIDER.md).
-No endpoint discovery response attests deployed tokenizer identity or upstream
-authentication. Never resend `completion_unknown` requests when changing images.
-
-
-## Comparing a recorded controller configuration
-
-`scripts/openshell_controller_configuration.py` is an importable operator validation utility.
-It does not inspect Docker, load credentials, start containers, or establish ownership.
-Use `configuration_digest(saved_inspect)` to compare the complete `Config`, `HostConfig`,
-`Mounts`, and `NetworkSettings` projection. Both mount-record arrays are sorted; all
-other configuration values remain exact. Keep inspection files private because `Config`
-can contain credentials.
-
-`validate_replacement_host_config(old_host_config, new_host_config, created=True)`
-checks a newly created replacement against an explicitly recorded old null
-`OomKillDisable`. A created replacement must have boolean false. With `created=False`,
-the running replacement may have null or boolean false, reflecting Docker's default
-and unsupported-option representation. True, numeric zero, missing fields, and every
-other HostConfig difference are rejected. The actual running OOM value remains part
-of the configuration digest; later health checks compare that recorded value exactly.
-
-Before using either result for recovery, independently authenticate the exact issued
-container IDs, process identity, source and image pins, mounts, TLS, and retained state.
-A matching digest grants no permission to start, adopt, retry, release, or delete anything.
-
-Run `pytest tests/development/test_openshell_controller_configuration.py` for the pure
-regressions. Serving code, executor images, model controls, budgets, and durable workflow
-identities are unaffected; this utility requires no replay generation change.
-
-
-## Parent-prepared boundary seccomp candidate
-
-`Dockerfile.sandbox-backport` and `.dev-tools/openshell-sandbox-backport.json`
-record a separate arm64 boundary build on the unchanged pinned OpenShell source.
-Patch 0003 prepares the existing seccomp BPF bytes before fork and installs those
-bytes in the child without tracing or recompilation. The BPF rules, compatibility
-filter order, mandatory no-new-privileges, Landlock baseline and child self-protection
-remain unchanged. Existing provider-readiness and startup-control patches retain
-separate provenance. This local patch is not an NVIDIA release.
-
-The confirmed source defect is tracing through the production OCSF writer mutex
-from post-fork `pre_exec`. The deterministic regression deliberately holds that
-mutex: the original path must block, while raw prepared installation and the actual
-capability-free integration must finish and retain syscall denials. This proves the
-source defect; it does not establish the cause of a historical native startup failure.
-Compilation, image loading and native startup each need their own measured evidence.
-
-The recipe runs exact unprivileged tests with non-symlink artifact selection and
-rejects missing/duplicate test names. A positive Landlock ABI >=3 query is mandatory
-because one upstream behavioral test otherwise returns without exercising enforcement.
-The GNU binary must load in both the unified image and the actual executor Python
-rootfs with network disabled, read-only filesystem, no capabilities and nonroot UID.
-No shared libraries may be added to make a failing artifact load.
-
-Supply the hash-pinned source and tool archives declared in the manifest. The local
-base tag in the recipe is an operator input: load the retained attested base and
-verify its actual ID equals the manifest's base digest before and after `--pull=false`
-build. Bare `sha256:<local image ID>` is not a portable registry reference. If the
-base is published later, use its independently verified repository@digest reference;
-never resolve an arbitrary replacement tag. The canonical recipe hash and exact
-measured private build recipe hash are recorded separately.
-
-Activation requires the same fresh immutable digest for gateway `supervisor_image`
-and `sandbox_runtime_image`, removal of `supervisor_bin`, and an owned gateway reload:
-the Docker driver caches boundary bytes when constructed. Retain the previous image,
-configuration and host boundary artifact. Reconfirm each actual lease's image, full
-contract and confinement before untrusted execution. No wire schema, retry, timeout,
-admission budget, idempotency, cancellation or durable workflow behavior changes.
-Rollback uses exact retained images/configuration and the same ownership checks;
-all uncertain requests/reservations remain held and must never be resent. Build/test
-success alone does not change rollout or qualification status.
-
-The boundary's unchanged PTY code calls `nix::pty::openpty` through locked nix0.29.0.
-Its GNU target needs `libutil.so.1`, included explicitly in the closed dependency list.
-This adds no library to either image. The upstream sandbox release staging target is
-musl; this candidate deliberately uses GNU2.28 with actual loader validation in both
-existing root filesystems, and does not claim to reproduce the official sandbox ABI.
-
-The measured private V8 recipe completed with Rust1.95 formatting, both new
-regressions, all fourteen existing isolation guards and GNU2.28 symbol checks passed.
-Its exact hash is distinct from the canonical recipe hash because the canonical
-header and patch filename differ. The retained unified image was not rebuilt for
-loader validation. Both strict loader attestations passed: the unified image loaded
-the binary, and a derived copy of the existing executor image added only that binary
-with mode0555, then ran it nonroot/read-only/network-none/capability-free. This avoids
-copying files into a read-only container; it adds no runtime libraries or source code.
-The source build commit and actual image/binary hashes are recorded in the manifest.
-The old-runtime100-startup zero-model diagnostic also passed. Neither result identifies
-the cause of the earlier intermittent startup failure. The new candidate's native
-startup and full-agent qualification remain `not_checked` until separately executed.
+Review the manifest, endpoint, model, dataset hashes, report destination and bounded request
+budget before dispatch. Setup, native qualification and deterministic tests make zero model
+calls. See the [runtime architecture](../../docs/architecture/TRIAGE_SYSTEM.md) and the
+[repository runbook](../../README.md) for the Temporal workflow and recovery boundaries.

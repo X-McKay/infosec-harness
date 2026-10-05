@@ -1,13 +1,13 @@
-.git
-.harness
-ui/node_modules
-ui/dist
-**/__pycache__
-.venv
-.ruff_cache
-.pytest_cache
-research
-docs
-# The backend image needs nothing from deploy/ except an optional proxy CA (see Dockerfile).
+# Only build inputs enter the trusted control-plane image context.
+**
+!Dockerfile
+!pyproject.toml
+!uv.lock
+!README.md
+!src/
+!src/**
+src/**/__pycache__
+src/**/*.pyc
+!deploy/
 deploy/*
 !deploy/extra-ca.crt

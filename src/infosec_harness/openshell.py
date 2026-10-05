@@ -162,8 +162,18 @@ def _path(path: str) -> str:
 # Runs before any repository upload, through the same native exec endpoint. A named
 # driver, ready status, or configured policy alone is insufficient execution evidence.
 _PROBE = """
-import errno,json,os,socket,pathlib
+import errno,json,os,socket,pathlib,stat
 s=dict(l.split(':',1) for l in open('/proc/self/status') if ':' in l)
+null_sink=False;null_major=None;null_minor=None
+try:
+ fd=os.open('/dev/null',os.O_WRONLY|os.O_NOFOLLOW)
+ info=os.fstat(fd)
+ null_major=os.major(info.st_rdev);null_minor=os.minor(info.st_rdev)
+ valid=stat.S_ISCHR(info.st_mode) and null_major==1 and null_minor==3
+ written=os.write(fd,b'ih-null-sink') if valid else 0;os.close(fd)
+ fd=os.open('/dev/null',os.O_RDONLY|os.O_NOFOLLOW)
+ null_sink=valid and written==12 and os.read(fd,1)==b'';os.close(fd)
+except OSError: pass
 workspace=False
 control=pathlib.Path('/workspace')/('.ih-control-'+str(os.getpid()))
 try:
@@ -175,6 +185,21 @@ try:
  f=os.open('/etc/ih-boundary-deny',os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
  os.close(f);os.unlink('/etc/ih-boundary-deny')
 except OSError as e: blocked=e.errno in (errno.EACCES,errno.EPERM,errno.EROFS)
+shared_mode=0; shared_denied=False; escape_denied=False
+target=pathlib.Path('/dev/shm')/('ih-boundary-deny-'+str(os.getpid()))
+link=pathlib.Path('/workspace')/('ih-boundary-link-'+str(os.getpid()))
+def denied(path,follow=False):
+ try:
+  fd=os.open(path,os.O_WRONLY|os.O_CREAT|(0 if follow else os.O_EXCL),0o600)
+  os.close(fd);os.unlink(target if follow else path);return False
+ except OSError as e: return e.errno in (errno.EACCES,errno.EPERM)
+try:
+ info=os.stat('/dev/shm')
+ if stat.S_ISDIR(info.st_mode): shared_mode=stat.S_IMODE(info.st_mode)
+ if shared_mode==0o1777:
+  shared_denied=denied(target)
+  os.symlink(target,link);escape_denied=denied(link,True);link.unlink()
+except OSError: pass
 n=False
 sock=socket.socket();sock.settimeout(2)
 try: sock.connect(('1.1.1.1',443))
@@ -184,6 +209,10 @@ def read(p): return pathlib.Path(p).read_text().strip()
 print(json.dumps({'uid':os.getuid(),'nnp':s['NoNewPrivs'].strip(),
  'seccomp':s['Seccomp'].strip(),'caps':int(s['CapEff'],16),
  'filesystem_denied':blocked,'network_denied':n,
+ 'shared_tmp_mode':shared_mode,'shared_tmp_denied':shared_denied,
+ 'null_sink_verified':null_sink,
+ 'null_device_major':null_major,'null_device_minor':null_minor,
+ 'symlink_escape_denied':escape_denied,
  'workspace_writable':workspace,
  'memory':read('/sys/fs/cgroup/memory.max'),'cpu':read('/sys/fs/cgroup/cpu.max'),
  'sockets_absent':not any(os.path.exists(p) for p in ('/var/run/docker.sock','/run/docker.sock','/run/containerd/containerd.sock')),
@@ -245,8 +274,7 @@ class OpenShell:
                 or policy.process.run_as_user != "65532"
                 or policy.process.run_as_group != "65532"
                 or policy.filesystem.include_workdir
-                or any(p not in ("/workspace", "/tmp") for p in policy.filesystem.read_write)
-                or not {"/workspace", "/tmp"}.issubset(policy.filesystem.read_write)
+                or set(policy.filesystem.read_write) != {"/workspace", "/tmp", "/dev/null"}
                 or (profile != "workspace" and policy.network_policies)):
             raise OpenShellError("profile must require Landlock, nonroot, confined writes and deny egress")
         for rule in policy.network_policies.values():
@@ -363,7 +391,7 @@ class OpenShell:
                        or p.metadata.workspace != self.config.workspace
                        or p.metadata.resource_version <= 0 or not p.type for p in providers)):
             raise OpenShellError("native credential provider attachment was not established")
-        await self._inspect(sandbox)
+        outer = await self._inspect(sandbox)
         result = await asyncio.to_thread(self._stream, sandbox, [_PYTHON, "-I", "-c", _PROBE], 10, None,
                                         _request_id(sandbox.id + ":boundary-observation"),
                                         self.config.max_output_bytes)
@@ -377,14 +405,21 @@ class OpenShell:
         try:
             quota, period = (int(v) for v in proof["cpu"].split())
             valid = (proof["uid"] == 65532 and proof["nnp"] == "1" and proof["seccomp"] == "2"
-                     and proof["caps"] == 0 and proof["filesystem_denied"]
-                     and proof["workspace_writable"] and proof["network_denied"] and proof["sockets_absent"]
-                     and proof["credentials_absent"] and 0 < int(proof["memory"]) <= memory
+                     and proof["caps"] == 0 and proof["shared_tmp_mode"] == 0o1777
+                     and type(proof["null_device_major"]) is int and proof["null_device_major"] == 1
+                     and type(proof["null_device_minor"]) is int and proof["null_device_minor"] == 3
+                     and all(proof[k] is True for k in ("filesystem_denied", "shared_tmp_denied",
+                         "symlink_escape_denied", "workspace_writable", "network_denied",
+                         "sockets_absent", "credentials_absent", "null_sink_verified"))
+                     and 0 < int(proof["memory"]) <= memory
                      and 0 < quota / period <= cpu)
-        except (ValueError, KeyError, TypeError, ZeroDivisionError):
+        except (ValueError, KeyError, TypeError, AttributeError, ZeroDivisionError):
             valid = False
         if result[0].exit_code != 0 or result[0].output_truncated or not valid:
             raise OpenShellError("actual workload confinement was not established")
+        self._save(self._record("qualification", sandbox.id),
+            {"sandbox": asdict(sandbox), "outer": outer, "workload": proof,
+             "landlock_compatibility": observed.spec.policy.landlock.compatibility})
 
     def _owned(self, sandbox: Sandbox) -> None:
         key = self._key(sandbox)
@@ -417,7 +452,7 @@ class OpenShell:
                 await process.wait()
         return data.decode()
 
-    async def _inspect(self, sandbox: Sandbox, *, deleted: bool = False) -> None:
+    async def _inspect(self, sandbox: Sandbox, *, deleted: bool = False) -> dict[str, Any] | None:
         ids = (await self._inspection_call(["ps", "-a", "-q", "--filter",
                f"label=openshell.ai/sandbox-id={sandbox.id}"])).split()
         if deleted:
@@ -448,12 +483,15 @@ class OpenShell:
                 and "no-new-privileges:true" in host.get("SecurityOpt", [])
                 and not host.get("Devices") and not host.get("DeviceRequests")
                 and host.get("PidMode", "") != "host" and host.get("IpcMode", "") != "host"
-                and host.get("ReadonlyRootfs") and 0 < host.get("PidsLimit", 0) <= 1024
+                and 0 < host.get("PidsLimit", 0) <= 1024
                 and 0 < host.get("Memory", 0) <= memory and 0 < observed_cpu <= cpu
                 and all(m["Type"] == "volume" and "docker.sock" not in m["Destination"]
                         for m in workload.get("Mounts", [])))
             if not valid:
                 raise OpenShellError("observed outer workload fence failed")
+            return {"rootfs_readonly": bool(host.get("ReadonlyRootfs")),
+                    "pids_limit": host["PidsLimit"], "image": workload["Image"],
+                    "network_mode": host["NetworkMode"], "runtime": host["Runtime"]}
         except (ValueError, KeyError, TypeError, AttributeError, ZeroDivisionError):
             raise OpenShellError("container inspection was incomplete") from None
 
@@ -789,7 +827,14 @@ print(base64.b64encode(data).decode())
         self._save(self._record("closed-runs", run_id), {"run_id": run_id})
         # Persist the fence first; a create racing the scan observes it and
         # cleans up its own exact native ID before it can return a handle.
+        failures = []
         for path in (self.config.state_dir / "sandboxes").glob("*.json"):
             saved = json.loads(path.read_bytes())
             if saved["sandbox"]["run_id"] == run_id and not saved["closed"]:
-                await self.close(Sandbox(**saved["sandbox"]))
+                try:
+                    await self.close(Sandbox(**saved["sandbox"]))
+                except Exception as exc:
+                    failures.append(exc)
+        if failures:
+            failures[0].add_note(f"{len(failures)} owned sandbox cleanup operation(s) failed")
+            raise failures[0]

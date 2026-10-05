@@ -32,6 +32,14 @@ class Limits(Contract):
 class InvestigationRequest(Contract):
     finding: Finding
     limits: Limits = Field(default_factory=Limits)
+    expected_worker_identity: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+
+class WorkerIdentity(Contract):
+    fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    code_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    config_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    dependencies: dict[str, str]
 
 
 class Citation(Contract):
@@ -75,6 +83,7 @@ class InvestigationResult(Contract):
     evidence: list[Evidence]
     source_digest: str
     model: str
+    worker_identity: WorkerIdentity | None = None
     usage: dict[str, int | float | None] = Field(default_factory=dict)
     limitations: list[str] = Field(default_factory=list)
 

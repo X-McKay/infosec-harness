@@ -419,6 +419,16 @@
             "type": "string",
             "title": "Model"
           },
+          "worker_identity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkerIdentity"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "usage": {
             "additionalProperties": {
               "anyOf": [
@@ -660,6 +670,41 @@
           "summary"
         ],
         "title": "Verdict"
+      },
+      "WorkerIdentity": {
+        "properties": {
+          "fingerprint": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Fingerprint"
+          },
+          "code_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Code Sha256"
+          },
+          "config_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Config Sha256"
+          },
+          "dependencies": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Dependencies"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "fingerprint",
+          "code_sha256",
+          "config_sha256",
+          "dependencies"
+        ],
+        "title": "WorkerIdentity"
       }
     }
   }

@@ -9,8 +9,7 @@ network permissions are operator-selected; instructions cannot widen them.
 
 Keep the original source unchanged. Put new probes and dependencies under `/workspace/repo`
 so they can be copied into the fresh offline probe sandbox. Use a separate dependency folder
-such as `.harness-deps` and an external cache when a tool would rewrite tracked files. Avoid
-virtualenv symlinks: the transfer accepts regular files/directories only. Never rely on files
+such as `.harness-deps` and an external cache when a tool would rewrite tracked files. Avoid dependency symlinks, including virtualenv links and npm bin links: the transfer accepts regular files/directories only. Never rely on files
 in `/tmp` or a home directory surviving into the probe sandbox.
 
 Choose the smallest environment that exercises the actual target. These are starting points,
@@ -19,7 +18,7 @@ not mandatory command templates:
 | Repository | Useful approach |
 | --- | --- |
 | Python | Read pyproject/requirements. Install only needed packages with `python -m pip install --target .harness-deps ...`, then use `PYTHONPATH=.harness-deps`. Standard-library probes often need no install. |
-| Node | Read package.json and its lockfile. Prefer existing dependencies; use declared runner binaries directly. Installation scripts execute untrusted repository code and stay inside OpenShell. Avoid changing the original lockfile or package.json. |
+| Node | Read package.json and its lockfile. Prefer existing dependencies; use declared runner binaries directly and install with `--no-bin-links` when appropriate. Installation scripts execute untrusted repository code and stay inside OpenShell. Avoid changing the original lockfile or package.json. |
 | Java/Maven | Inspect pom.xml, compiler level, and test provider. Put Maven's dependency cache inside the copied workspace; use offline mode for probes. JUnit 5 needs a compatible Surefire provider. Select the actual test class, not a source filename. |
 | Java/Gradle | Inspect wrapper/build settings and available JDK. Cache dependencies in the workspace. Force a real test execution when incremental tasks would otherwise be up-to-date; ensure test stdout is forwarded. |
 | Perl | Inspect Makefile.PL/cpanfile and actual imports. Prefer core modules where sufficient. Keep required libraries under the copied workspace; use verbose TAP output when diagnosing discovery. |

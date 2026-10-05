@@ -51,8 +51,8 @@ export HARNESS_LOCAL_REPO_ROOTS='["/absolute/path/to/approved/repositories"]'
 ```
 
 The model name must match the endpoint's served identifier. The self-hosted model is not
-provisioned or downloaded by this repository. Bedrock is an alternative operator-selected
-provider, with its region and credentials configured through the native model profile.
+provisioned or downloaded by this repository. A Bedrock executor is included, but its native credential-profile integration is not yet
+qualified; do not treat the provider option as working execution evidence.
 
 The API binds loopback by default. It has no authentication layer: deploy it behind an
 authenticated service boundary before exposing it to other users. Local repository roots

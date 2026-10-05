@@ -47,7 +47,9 @@ def output(text, code=0):
 PROOF = {"uid": 65532, "nnp": "1", "seccomp": "2", "caps": 0,
          "filesystem_denied": True, "network_denied": True, "memory": "536870912",
          "cpu": "100000 100000", "sockets_absent": True, "credentials_absent": True,
-         "workspace_writable": True}
+         "workspace_writable": True, "shared_tmp_mode": 0o1777,
+         "shared_tmp_denied": True, "symlink_escape_denied": True,
+         "null_sink_verified": True, "null_device_major": 1, "null_device_minor": 3}
 
 
 class Native:
@@ -117,7 +119,7 @@ def adapter(tmp_path, monkeypatch):
     policy = tmp_path / "policy.yaml"
     policy.write_text(json.dumps({"version": 1,
         "filesystem": {"include_workdir": False, "read_only": ["/usr", "/etc", "/proc", "/sys"],
-                       "read_write": ["/workspace", "/tmp"]},
+                       "read_write": ["/workspace", "/tmp", "/dev/null"]},
         "landlock": {"compatibility": "hard_requirement"},
         "process": {"run_as_user": "65532", "run_as_group": "65532"},
         "network_policies": {}}))
@@ -221,6 +223,10 @@ async def test_output_overflow_cancels_rpc_and_closes_sandbox(adapter):
 @pytest.mark.parametrize("field,value", [("uid", 0), ("caps", 1), ("nnp", "0"),
     ("seccomp", "0"), ("filesystem_denied", False), ("network_denied", False),
     ("workspace_writable", False),
+    ("shared_tmp_mode", 0o755), ("shared_tmp_denied", False),
+    ("shared_tmp_denied", "true"), ("symlink_escape_denied", False),
+    ("null_sink_verified", False), ("null_sink_verified", "true"),
+    ("null_device_major", 0), ("null_device_minor", 5),
     ("sockets_absent", False), ("credentials_absent", False), ("memory", "max"),
     ("cpu", "max 100000")])
 @pytest.mark.asyncio
@@ -231,6 +237,45 @@ async def test_unconfined_workload_is_deleted_before_handle_return(adapter, fiel
         await boundary.create("run")
     assert len(native.deleted) == 1
     assert not native.execs
+
+
+@pytest.mark.asyncio
+async def test_missing_discriminating_native_filesystem_proof_refuses_workload(adapter):
+    boundary, native = adapter
+    native.proof.pop("shared_tmp_denied")
+    with pytest.raises(OpenShellError, match="confinement"):
+        await boundary.create("run")
+    assert len(native.deleted) == 1 and not native.execs
+
+
+@pytest.mark.parametrize("writes", [["/workspace", "/tmp"],
+    ["/workspace", "/tmp", "/dev"], ["/workspace", "/tmp", "/dev/null", "/dev/zero"]])
+def test_only_explicit_null_sink_is_allowed_outside_workspace(adapter, writes):
+    boundary, _ = adapter
+    path = boundary.config.profiles["workspace"].policy
+    document = json.loads(path.read_bytes())
+    document["filesystem"]["read_write"] = writes
+    path.write_text(json.dumps(document))
+    with pytest.raises(OpenShellError, match="confined writes"):
+        boundary._spec("workspace")
+
+
+@pytest.mark.asyncio
+async def test_cleanup_failure_does_not_skip_other_owned_sandboxes(adapter, monkeypatch):
+    boundary, native = adapter
+    first = await boundary.create("run")
+    other = await boundary.create("run", profile="probe", slot="other")
+    original = boundary.close
+
+    async def close(sandbox):
+        if sandbox.id == first.id:
+            raise ExecutionUnknown("first cleanup unknown")
+        await original(sandbox)
+
+    monkeypatch.setattr(boundary, "close", close)
+    with pytest.raises(ExecutionUnknown, match="first cleanup unknown"):
+        await boundary.close_run("run")
+    assert native.deleted == [other.name] and first.name in native.resources
 
 
 @pytest.mark.asyncio

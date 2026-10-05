@@ -24,7 +24,7 @@ metadata:
 ## When another skill also applies
 
 - `cwe-78-os-command-injection` also fires when the query goes out through a command-line client (`psql -c`, `mysql -e`): one value, concatenated into SQL and handed to a shell, and each skill redirects to the other. **That skill wins** — classify by the first interpreter the value reaches. A payload that does not survive the shell's quoting never reaches the query at all.
-- `probe-oracle-protocol` states the rule this skill's structure oracle is likeliest to break: drive the real callable, do not mock the sink. **That skill wins** wherever the two disagree, which is why the fallback below hooks the real connection instead of replacing it — a run that wrapped the cursor in a stand-in the target never used reported a clean negative on an exploitable finding (docs/evidence/2026-09-25-live-model-validation/LIVE_VALIDATION.md).
+- `probe` states the rule this skill's structure oracle is likeliest to break: drive the real callable, do not mock the sink. **That skill wins** wherever the two disagree, which is why the fallback below hooks the real connection instead of replacing it — a run that wrapped the cursor in a stand-in the target never used reported a clean negative on an exploitable finding (docs/evidence/2026-09-25-live-model-validation/LIVE_VALIDATION.md).
 
 ## Procedure
 
@@ -47,7 +47,7 @@ being treated as a single literal."**
 Whichever oracle you use, the probe must drive the **real** callable against the **real**
 driver. Never substitute a fake or stub connection, cursor, or engine for the one the code
 under test uses: that replaces the sink instead of exercising it (see
-`probe-oracle-protocol`), and a probe whose wrapper is not actually the object the target
+`probe`), and a probe whose wrapper is not actually the object the target
 uses reports a silent false negative rather than a clean one.
 
 - **Preferred (result oracle).** Stand up an in-memory database (SQLite `:memory:`, H2) seeded

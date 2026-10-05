@@ -376,3 +376,213 @@ async def test_report_excerpts_do_not_invalidate_complete_native_probe(tmp_path)
     assert result.evidence[0].output_truncated is False
     assert len(result.evidence[0].stdout.encode()) <= 4096
     assert result.evidence[0].observations["report_excerpted"] is True
+
+
+@pytest.mark.requires_temporal
+async def test_history_budget_fails_before_oversized_schedule_and_cleans_up(temporal_cli, tmp_path):
+    from pydantic_ai.messages import ThinkingPart
+
+    shell = FakeOpenShell()
+    model_calls = []
+
+    def respond(messages, info):
+        model_calls.append(len(messages))
+        return ModelResponse(
+            parts=[
+                ThinkingPart("x" * 400_000),
+                ToolCallPart("execute", {"command": "true"}, tool_call_id=f"cmd{len(model_calls)}"),
+            ]
+        )
+
+    bind_investigator(build_agent(shell, FunctionModel(respond)))
+
+    async def snapshot(finding, run_id):
+        return SimpleNamespace(path=str(tmp_path), digest="digest")
+
+    activities = InvestigationActivities(shell, snapshot, "fixture")
+    queue = f"budget-{uuid.uuid4()}"
+    async with await WorkflowEnvironment.start_local(
+        dev_server_existing_path=temporal_cli, plugins=[PydanticAIPlugin()]
+    ) as env:
+        async with Worker(
+            env.client,
+            task_queue=queue,
+            workflows=[InvestigationWorkflow],
+            activities=[activities.prepare, activities.finalize, activities.cleanup],
+            workflow_runner=runner(),
+        ):
+            handle = await env.client.start_workflow(
+                InvestigationWorkflow.run,
+                InvestigationRequest(
+                    finding=Finding(title="Sink", repo_url="fixture"),
+                    limits=Limits(total_tokens=2_000_000),
+                ),
+                id=queue,
+                task_queue=queue,
+            )
+            with pytest.raises(WorkflowFailureError) as error:
+                await asyncio.wait_for(handle.result(), 30)
+            assert "durable payload budget" in str(error.value.cause)
+            assert len(model_calls) == 3
+            assert len(shell.executions) == 3
+            assert shell.closed == [queue]
+            assert (await handle.query(InvestigationWorkflow.state)).status == "failed"
+        history = await handle.fetch_history()
+        await Replayer(
+            workflows=[InvestigationWorkflow],
+            plugins=[PydanticAIPlugin()],
+            workflow_runner=runner(),
+        ).replay_workflow(history)
+        assert len(model_calls) == 3
+
+
+@pytest.mark.requires_temporal
+async def test_total_history_guard_stops_mixed_tool_batch_and_replays(
+    temporal_cli, tmp_path, monkeypatch
+):
+    from temporalio import workflow
+
+    from infosec_harness.agent import DurablePayloadLimit
+
+    # Large valid finding repeats in native activity dependencies; lower the test guard
+    # to cross it in one batch, rather than constructing tens of megabytes of history.
+    monkeypatch.setattr("infosec_harness.agent.MAX_HISTORY_BYTES", 2_000_000)
+    shell = FakeOpenShell()
+    observed = []
+    before = DurablePayloadLimit.before_tool_execute
+
+    async def observe(self, ctx, *, call, tool_def, args):
+        observed.append(
+            (
+                call.tool_name,
+                workflow.info().get_current_history_size(),
+                ctx.tool_manager.get_parallel_execution_mode(),
+            )
+        )
+        return await before(self, ctx, call=call, tool_def=tool_def, args=args)
+
+    monkeypatch.setattr(DurablePayloadLimit, "before_tool_execute", observe)
+    calls = []
+
+    def respond(messages, info):
+        calls.append(len(messages))
+        return ModelResponse(
+            parts=[
+                ToolCallPart("load_capability", {"id": "investigate"}, tool_call_id="skill-first"),
+                ToolCallPart("execute", {"command": "true"}, tool_call_id="first"),
+                ToolCallPart("load_capability", {"id": "probe"}, tool_call_id="skill-after"),
+                ToolCallPart("execute", {"command": "true"}, tool_call_id="after"),
+            ]
+        )
+
+    bind_investigator(build_agent(shell, FunctionModel(respond)))
+
+    async def snapshot(finding, run_id):
+        return SimpleNamespace(path=str(tmp_path), digest="digest")
+
+    activities = InvestigationActivities(shell, snapshot, "fixture")
+    queue = f"history-{uuid.uuid4()}"
+    async with await WorkflowEnvironment.start_local(
+        dev_server_existing_path=temporal_cli, plugins=[PydanticAIPlugin()]
+    ) as env:
+        async with Worker(
+            env.client,
+            task_queue=queue,
+            workflows=[InvestigationWorkflow],
+            activities=[activities.prepare, activities.finalize, activities.cleanup],
+            workflow_runner=runner(),
+        ):
+            handle = await env.client.start_workflow(
+                InvestigationWorkflow.run,
+                InvestigationRequest(
+                    finding=Finding(
+                        title="Large finding", repo_url="fixture", description="\U0001f63a" * 90_000
+                    ),
+                    limits=Limits(total_tokens=2_000_000),
+                ),
+                id=queue,
+                task_queue=queue,
+            )
+            with pytest.raises(WorkflowFailureError) as error:
+                await asyncio.wait_for(handle.result(), 30)
+            assert "durable history budget" in str(error.value.cause)
+            assert len(calls) == 1
+            assert len(shell.executions) == 1
+            assert shell.closed == [queue]
+            assert [item[0] for item in observed] == [
+                "load_capability",
+                "execute",
+                "load_capability",
+            ]
+            assert all(item[2] == "sequential" for item in observed)
+            assert observed[1][1] < 2_000_000 <= observed[2][1]
+            assert (await handle.query(InvestigationWorkflow.state)).status == "failed"
+        history = await handle.fetch_history()
+        await Replayer(
+            workflows=[InvestigationWorkflow],
+            plugins=[PydanticAIPlugin()],
+            workflow_runner=runner(),
+        ).replay_workflow(history)
+        assert len(calls) == 1 and len(shell.executions) == 1
+
+
+@pytest.mark.requires_temporal
+async def test_model_finding_prompt_excludes_host_variant_path(temporal_cli, tmp_path):
+    import json
+
+    from pydantic_ai.messages import ModelRequest, UserPromptPart
+
+    shell = FakeOpenShell()
+    prompts = []
+
+    def respond(messages, info):
+        prompts.extend(
+            part.content
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, UserPromptPart)
+        )
+        return final_response(info)
+
+    bind_investigator(build_agent(shell, FunctionModel(respond)))
+
+    async def snapshot(finding, run_id):
+        assert finding.repo_url == "/operator/private/eval-corpus/python/cmdi/fixed"
+        return SimpleNamespace(path=str(tmp_path), digest="digest")
+
+    activities = InvestigationActivities(shell, snapshot, "fixture")
+    finding = Finding(
+        title="Command input",
+        repo_url="/operator/private/eval-corpus/python/cmdi/fixed",
+        description="Inspect the target handler.",
+        cwe="CWE-78",
+    )
+    queue = f"prompt-{uuid.uuid4()}"
+    async with (
+        await WorkflowEnvironment.start_local(
+            dev_server_existing_path=temporal_cli, plugins=[PydanticAIPlugin()]
+        ) as env,
+        Worker(
+            env.client,
+            task_queue=queue,
+            workflows=[InvestigationWorkflow],
+            activities=[activities.prepare, activities.finalize, activities.cleanup],
+            workflow_runner=runner(),
+        ),
+    ):
+        result = await asyncio.wait_for(
+            env.client.execute_workflow(
+                InvestigationWorkflow.run,
+                InvestigationRequest(finding=finding),
+                id=queue,
+                task_queue=queue,
+            ),
+            30,
+        )
+    assert len(prompts) == 1
+    assert "repo_url" not in json.loads(prompts[0])
+    assert "fixed" not in prompts[0] and "/operator/private" not in prompts[0]
+    assert json.loads(prompts[0])["description"] == finding.description
+    assert result.finding == finding
+    assert shell.closed == [queue]

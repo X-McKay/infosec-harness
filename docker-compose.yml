@@ -21,6 +21,7 @@ services:
       options:
         max-size: 10m
         max-file: '3'
+    runtime: runc
   temporal:
     image: temporalio/auto-setup:1.25.2@sha256:b1edc1e20002d958c8182f2ae08dee877a125083683a627a44917683419ba6a8
     depends_on:
@@ -41,6 +42,7 @@ services:
       options:
         max-size: 10m
         max-file: '3'
+    runtime: runc
   temporal-ui:
     image: temporalio/ui:2.34.0@sha256:cb17ea423d76a8a19a269d0bcd81fc12eee1f6365acd2a56b590dafb35696a95
     depends_on:
@@ -54,6 +56,7 @@ services:
       options:
         max-size: 10m
         max-file: '3'
+    runtime: runc
   api:
     build: .
     command:
@@ -74,6 +77,7 @@ services:
       options:
         max-size: 10m
         max-file: '3'
+    runtime: runc
   web:
     build: ./ui
     depends_on:
@@ -85,6 +89,7 @@ services:
       options:
         max-size: 10m
         max-file: '3'
+    runtime: runc
   egress-proxy:
     image: ubuntu/squid:6.6-24.04_beta@sha256:6a097f68bae708cedbabd6188d68c7e2e7a38cedd05a176e1cc0ba29e3bbe029
     volumes:
@@ -96,5 +101,6 @@ services:
       options:
         max-size: 10m
         max-file: '3'
+    runtime: runc
 volumes:
   pgdata: null

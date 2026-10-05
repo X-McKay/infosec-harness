@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -35,6 +35,7 @@ async def test_submit_records_native_workflow_and_server_limits(client):
     assert kwargs["task_queue"] == "investigate-v9"
     assert kwargs["id"] == response.json()["id"]
     assert args[1].limits.max_requests == 30
+    assert kwargs["execution_timeout"] == timedelta(seconds=args[1].limits.timeout_seconds + 600)
     invalid = await request(
         "POST",
         "/api/runs",
@@ -168,5 +169,34 @@ async def test_real_temporal_submit_query_and_cancellation(temporal_cli, tmp_pat
                 final = await request("GET", f"/api/runs/{run_id}")
                 assert final.json()["status"] == "cancelled"
                 assert shell.closed == [run_id]
+        finally:
+            web.app.dependency_overrides.clear()
+
+
+@pytest.mark.requires_temporal
+async def test_queued_run_has_server_deadline_without_a_worker(temporal_cli, monkeypatch):
+    import asyncio
+
+    from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
+    from temporalio.client import WorkflowFailureError
+    from temporalio.testing import WorkflowEnvironment
+
+    monkeypatch.setattr(web, "execution_timeout", lambda limits: timedelta(seconds=1))
+    async with await WorkflowEnvironment.start_local(
+        dev_server_existing_path=temporal_cli, plugins=[PydanticAIPlugin()]
+    ) as env:
+        web.app.dependency_overrides[web.temporal] = lambda: env.client
+        try:
+            submitted = await request(
+                "POST", "/api/runs", json={"title": "Queued", "repo_url": "fixture"}
+            )
+            run_id = submitted.json()["id"]
+            handle = env.client.get_workflow_handle(run_id)
+            with pytest.raises(WorkflowFailureError):
+                await asyncio.wait_for(handle.result(), 10)
+            assert (await handle.describe()).status == WorkflowExecutionStatus.TIMED_OUT
+            state = (await request("GET", f"/api/runs/{run_id}")).json()
+            assert state["status"] == "failed"
+            assert state["error"] == "timed_out"
         finally:
             web.app.dependency_overrides.clear()

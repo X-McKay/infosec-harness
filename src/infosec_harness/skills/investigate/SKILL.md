@@ -11,7 +11,7 @@ and framework behavior. Inspect tests and dependency versions when they affect t
 Choose experiments that discriminate between competing explanations. State the input,
 precondition, expected observation and counterexample before interpreting results. Run a positive
 control when a negative result could instead mean that the fixture never reached the target.
-Load the relevant language, build, test and CWE skills as needed. Install or build prerequisites
+Load the relevant language, environment, probe and CWE skills as needed. Install or build prerequisites
 in the workspace, then use `run_probe` for offline execution. A failed build, unreachable target,
 crash or timeout may establish a limitation without establishing exploitability.
 

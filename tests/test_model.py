@@ -204,3 +204,61 @@ async def test_native_openai_tools_messages_and_usage_with_mock_transport(monkey
         assert response.parts[0].args == '{"path":"sink.py"}'
         assert response.usage.input_tokens == 12
         assert response.usage.output_tokens == 4
+
+
+async def test_executor_response_budget_rejects_before_activity_return(monkeypatch):
+    monkeypatch.setattr(
+        model_executor,
+        "provider_model",
+        lambda _: FunctionModel(
+            lambda messages, info: ModelResponse(
+                parts=[TextPart("x" * model_executor.MAX_RESPONSE_BYTES)]
+            )
+        ),
+    )
+    invocation = ModelInvocation(
+        provider="openai",
+        model_name="fixture",
+        messages=[],
+        settings=None,
+        parameters=ModelRequestParameters(),
+    )
+    with pytest.raises(ValueError, match="response exceeds the durable payload budget"):
+        await model_executor.execute(invocation)
+
+
+async def test_adapter_rejects_oversized_input_before_sandbox_creation(monkeypatch):
+    shell = FakeOpenShell()
+    creations = []
+
+    async def create(*args, **kwargs):
+        creations.append(args)
+        raise AssertionError("Oversized request must not allocate resources")
+
+    shell.create = create
+    monkeypatch.setattr(
+        "infosec_harness.model.activity.info",
+        lambda: SimpleNamespace(workflow_id="run", activity_id="7"),
+    )
+    with pytest.raises(ValueError, match="invocation exceeds the durable payload budget"):
+        await OpenShellModel(shell, "fixture").request(
+            [ModelRequest(parts=[UserPromptPart("x" * model_executor.MAX_INVOCATION_BYTES)])],
+            None,
+            ModelRequestParameters(),
+        )
+    assert creations == []
+
+
+async def test_adapter_rejects_oversized_native_response(monkeypatch):
+    shell = FakeOpenShell()
+
+    async def execute(*args, **kwargs):
+        return CommandResult(0, "x" * (model_executor.MAX_RESPONSE_BYTES + 1), "")
+
+    shell.execute = execute
+    monkeypatch.setattr(
+        "infosec_harness.model.activity.info",
+        lambda: SimpleNamespace(workflow_id="run", activity_id="7"),
+    )
+    with pytest.raises(ValueError, match="response exceeds the durable payload budget"):
+        await OpenShellModel(shell, "fixture").request([], None, ModelRequestParameters())

@@ -83,6 +83,12 @@ bootstrap_mise() {
 }
 
 
+if [[ "$COMMAND" == --help || "$COMMAND" == -h || "$COMMAND" == help ]]; then
+  echo "Usage: ./dev [--profile full|offline] [start|check|test|worker|status|logs|doctor|smoke|stop]"
+  echo "Full mode requires explicit OpenShell configuration; see deploy/openshell/README.md."
+  echo "stop preserves volumes and the VM; no implicit reset or paid inference."
+  exit 0
+fi
 bootstrap_mise
 managed() { "$MISE_BIN" exec -- "$@"; }
 setup() { managed python scripts/dev_setup.py --profile "$PROFILE" "$@"; }
@@ -119,7 +125,12 @@ case "$COMMAND" in
       HARNESS_TEST_REQUIRE_TEMPORAL=1 managed just test
       echo "Native OpenShell and live inference: not_checked (offline profile)"
     else
-      compose up --build -d
+      compose up -d --force-recreate egress-proxy
+      managed uv run --locked python scripts/dev_sandbox_check.py \
+        --runtime runsc --network "$HARNESS_BUILD_EGRESS_NETWORK" \
+        --proxy "$HARNESS_BUILD_EGRESS_PROXY" --builder "$HARNESS_BUILDX_BUILDER" \
+        --compose-project "$COMPOSE_PROJECT_NAME"
+      compose up --build -d --remove-orphans
       control_plane
       qualify
       echo "Control plane and OpenShell checked. Start a worker with ./dev worker."
@@ -132,10 +143,6 @@ case "$COMMAND" in
   logs) compose logs --no-color --tail=100 "$@" ;;
   doctor) setup --check-only; if [[ "$PROFILE" == full ]]; then qualify; fi ;;
   smoke) control_plane; qualify ;;
-  stop) compose down ;;
-  -h|--help|help)
-    echo "Usage: ./dev [--profile full|offline] [start|check|test|worker|status|logs|doctor|smoke|stop]"
-    echo "Full mode requires explicit OpenShell configuration; see deploy/openshell/README.md."
-    echo "stop preserves volumes and the VM; no implicit reset or paid inference." ;;
+  stop) compose down --remove-orphans ;;
   *) echo "unknown command: $COMMAND" >&2; exit 2 ;;
 esac
