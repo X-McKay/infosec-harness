@@ -136,14 +136,15 @@ async def request_cancellation(batch_id: str) -> BatchStatus:
     Raises ``KeyError`` for an unknown batch.
     """
     async with db.session() as session:
-        batch = await session.get(db.Batch, batch_id)
-        if batch is None:
-            raise KeyError(batch_id)
-        if batch.status in TERMINAL_BATCH_STATUSES:
-            return BatchStatus(batch.status)
-        batch.status = BatchStatus.cancellation_requested
+        await session.execute(update(db.Batch).where(
+            db.Batch.id == batch_id,
+            db.Batch.status.notin_(TERMINAL_BATCH_STATUSES),
+        ).values(status=BatchStatus.cancellation_requested))
         await session.commit()
-    return BatchStatus.cancellation_requested
+        status = await session.scalar(select(db.Batch.status).where(db.Batch.id == batch_id))
+        if status is None:
+            raise KeyError(batch_id)
+        return BatchStatus(status)
 
 
 async def cancellation_requested() -> list[str]:

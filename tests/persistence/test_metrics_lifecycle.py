@@ -181,3 +181,60 @@ async def test_histogram_drill_down_uses_matching_population_and_bin_edges():
         assert (await client.get("/api/run-page", params={**params, "upper_inclusive": True})).json()["total"] == 2
         assert (await client.get("/api/run-page", params={**params, "population": "operational"})).json()["total"] == 0
         assert (await client.get("/api/run-page", params={**params, "lower": "nan"})).status_code == 422
+
+
+@pytest.mark.parametrize("terminal", ["complete", "failed", "cancelled"])
+async def test_cancellation_cannot_resurrect_a_concurrently_finished_batch(monkeypatch, terminal):
+    """Completion wins between cancellation's initial access and its status write."""
+    from sqlalchemy import update
+
+    await db.create_all()
+    batch_id = f"cancel-after-{terminal}"
+    await lifecycle.accept_batch(batch_id, [], "race", None, agent_config_digests={})
+    real_session = db.session
+
+    class CompletingSession:
+        def __init__(self):
+            self.inner = real_session()
+            self.completed = False
+
+        async def __aenter__(self):
+            await self.inner.__aenter__()
+            return self
+
+        async def __aexit__(self, *args):
+            return await self.inner.__aexit__(*args)
+
+        def __getattr__(self, name):
+            return getattr(self.inner, name)
+
+        async def finish(self):
+            if not self.completed:
+                self.completed = True
+                async with real_session() as other:
+                    await other.execute(update(db.Batch).where(db.Batch.id == batch_id)
+                                        .values(status=terminal))
+                    await other.commit()
+
+        async def get(self, *args, **kwargs):
+            stale = await self.inner.get(*args, **kwargs)
+            await self.finish()
+            return stale
+
+        async def execute(self, *args, **kwargs):
+            await self.finish()
+            return await self.inner.execute(*args, **kwargs)
+
+    monkeypatch.setattr(db, "session", CompletingSession)
+    assert await lifecycle.request_cancellation(batch_id) == terminal
+    async with real_session() as session:
+        assert (await session.get(db.Batch, batch_id)).status == terminal
+
+
+async def test_cancellation_is_idempotent_and_rejects_unknown_batches():
+    await db.create_all()
+    await lifecycle.accept_batch("cancel-twice", [], "cancel", None, agent_config_digests={})
+    assert await lifecycle.request_cancellation("cancel-twice") == "cancellation_requested"
+    assert await lifecycle.request_cancellation("cancel-twice") == "cancellation_requested"
+    with pytest.raises(KeyError):
+        await lifecycle.request_cancellation("missing-batch")
