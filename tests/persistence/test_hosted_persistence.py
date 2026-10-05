@@ -18,12 +18,26 @@ def tls_settings(**changes):
         database_tls_client_cert=None, database_tls_client_key=None, **changes)
 
 
-def test_postgresql_system_trust_requires_certificate_and_hostname():
+def test_postgresql_system_trust_requires_certificate_and_hostname(monkeypatch):
+    """With no operator CA file the context is the system-trust default, verifying and hostname-checking.
+
+    The system store's *contents* are an environment fact (a standalone Python build may find no
+    CA directory at all), so the test pins the behaviour: the default context is requested with
+    no `cafile`, so the interpreter's trust store is what applies.
+    """
+    requested = []
+    original = ssl.create_default_context
+
+    def recording(**kwargs):
+        requested.append(kwargs)
+        return original(**kwargs)
+
+    monkeypatch.setattr(ssl, 'create_default_context', recording)
     context = db.database_connect_args('postgresql+asyncpg://operator:encoded%40password@db.example/harness',
                                        tls_settings())['ssl']
     assert context.verify_mode == ssl.CERT_REQUIRED
     assert context.check_hostname is True
-    assert context.get_ca_certs()
+    assert requested == [{'cafile': None}]
 
 
 @pytest.mark.parametrize('url,enabled', [('sqlite+aiosqlite:///:memory:', True),
@@ -161,10 +175,22 @@ def test_backend_selection_supports_aws_chain_and_existing_local_defaults(monkey
         artifacts.get_store.cache_clear()
 
 
-def test_operator_ca_bundle_controls_postgresql_trust(tmp_path):
-    certificate = ssl.create_default_context().get_ca_certs(binary_form=True)[0]
+def _self_signed_ca(tmp_path):
+    """A throwaway CA certificate, so the test does not depend on the host's trust store."""
+    import shutil
+    import subprocess
+
+    if shutil.which('openssl') is None:
+        pytest.skip('openssl is not installed; cannot mint a test CA certificate')
     ca = tmp_path / 'operator-ca.pem'
-    ca.write_text(ssl.DER_cert_to_PEM_cert(certificate))
+    subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
+                    '-subj', '/CN=harness-test-ca', '-keyout', str(tmp_path / 'operator-ca.key'),
+                    '-out', str(ca)], check=True, capture_output=True)
+    return ca, ssl.PEM_cert_to_DER_cert(ca.read_text())
+
+
+def test_operator_ca_bundle_controls_postgresql_trust(tmp_path):
+    ca, certificate = _self_signed_ca(tmp_path)
     settings = tls_settings()
     settings.database_tls_ca_file = ca
     context = db.database_connect_args('postgresql+asyncpg://db.example/harness', settings)['ssl']

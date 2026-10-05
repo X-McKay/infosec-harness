@@ -77,6 +77,18 @@ pydantic-ai's own Agent Spec schema accepts an integer *or* an `AgentRetries` ma
 distinction the framework supports and the retry-bound calculation relies on. Worth raising
 upstream.
 
+**No per-agent risk-assessment document** (waived, `AGENT008`/`AGENT035`, 11 agents). The
+playbook expects `metadata.risk_assessment` to name a document. Here the assessment is the
+packaged scenario library (`agents/risk-scenarios.yaml`): governance derives each agent's tier
+from it and refuses to construct a spec that declares another, which is stricter than a
+document a validator opens and nothing enforces. The narrative assessment is in the
+[threat model](../threat-models/triage-system.md).
+
+**Tool policies carry only enforced fields** (waived, `TOOL003`/`TOOL009`/`TOOL011`/`TOOL012`).
+`owner`, `authorization_scopes` and `data_classification` were declared in every `tool.yaml`
+and read by nothing, which made them claims no check could fail. The remaining fields (effect,
+retry safety, timeout, output bound, tools) are read and enforced by `agents/capabilities.py`.
+
 **A shared threat model.** Each agent's spec points at
 `docs/threat-models/triage-system.md` rather than a per-agent document, because the trust
 boundaries are system-level: the same untrusted repository reaches all of them, and the same
