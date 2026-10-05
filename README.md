@@ -75,7 +75,7 @@ outside the approved source tree.
 
 ```bash
 uv run --locked harness submit finding.json
-uv run --locked harness report investigate-v10-<id>
+uv run --locked harness report investigate-v11-<id>
 ```
 
 For a local uncommitted fixture, use `source_mode: working_snapshot` and `revision: HEAD`.
@@ -107,6 +107,6 @@ Those observations are model-authored claims, not independent semantic attestati
 command delivery, missing controls, truncation, failure or contradictory evidence must not
 be reported as a verified negative result. See [architecture and boundaries](docs/architecture/TRIAGE_SYSTEM.md).
 
-The current workflow generation uses the `investigate-v10` queue. It binds every native
+The current workflow generation uses the `investigate-v11` queue. It binds every native
 model/tool activity to the captured worker identity. V9 and older staged workflows are
 incompatible; drain them before deployment. Historical reports do not qualify this candidate.

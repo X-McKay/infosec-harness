@@ -49,8 +49,12 @@ and total workflow time. Cancellation reaches owned activities and cleanup. Test
 real local Temporal replay, worker restart, deadline and unknown-delivery behavior, separately
 from mocked OpenShell checks and actual native qualification.
 
-Workflow generation v10 uses `investigate-v10` and binds every native model/tool activity
-to the identity captured during preparation. It breaks compatibility with v9 and the
+Workflow generation v11 uses `investigate-v11` and binds every native model/tool activity
+to the identity captured during preparation. Pure PydanticAI output validation gives
+bounded feedback about exact receipt IDs and complete offline-probe claims before
+finalization independently reconstructs trusted evidence. Output correction schedules
+new deliberation within existing budgets; it never retries native dispatch. It breaks
+compatibility with v10 and the
 former staged graph. Drain old task queues before changing workers. The API lists this
 generation's investigations only.
 

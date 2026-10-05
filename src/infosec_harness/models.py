@@ -76,6 +76,28 @@ class Evidence(Contract):
     source_digest: str
     observations: dict[str, bool | str | int | None] = Field(default_factory=dict)
 
+    @property
+    def complete_verified_probe(self) -> bool:
+        """Qualified observation claims; callers must establish receipt/source provenance."""
+        return (
+            self.kind == "probe"
+            and self.exit_code == 0
+            and not self.timed_out
+            and not self.output_truncated
+            and isinstance(self.observations.get("workspace_digest"), str)
+            and self.observations.get("source_verified") is True
+            and all(
+                self.observations.get(key) is True
+                for key in (
+                    "target_reached",
+                    "oracle_valid",
+                    "positive_control",
+                    "negative_control",
+                )
+            )
+            and type(self.observations.get("vulnerability_observed")) is bool
+        )
+
 
 class InvestigationResult(Contract):
     finding: Finding

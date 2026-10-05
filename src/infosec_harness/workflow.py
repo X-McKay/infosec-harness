@@ -149,26 +149,7 @@ class InvestigationActivities:
         report_ids = set(verdict.evidence_ids)
         if verdict.label != "inconclusive":
             expected = verdict.label == "potentially_exploitable"
-            qualified = [
-                item
-                for item in evidence
-                if item.kind == "probe"
-                and item.exit_code == 0
-                and isinstance(item.observations.get("workspace_digest"), str)
-                and item.observations.get("source_verified") is True
-                and not item.timed_out
-                and not item.output_truncated
-                and all(
-                    item.observations.get(key) is True
-                    for key in (
-                        "target_reached",
-                        "oracle_valid",
-                        "positive_control",
-                        "negative_control",
-                    )
-                )
-                and type(item.observations.get("vulnerability_observed")) is bool
-            ]
+            qualified = [item for item in evidence if item.complete_verified_probe]
             corroborated = any(
                 item.id in verdict.evidence_ids
                 and item.observations["vulnerability_observed"] is expected

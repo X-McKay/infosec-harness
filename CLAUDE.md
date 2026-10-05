@@ -55,8 +55,8 @@ contexts or shared firewall policy. Stop preserves data; there is no implicit re
 Behavior changes require affected contracts and risk, selected checks, provenance and a
 replay/recovery assessment. Breaking workflow changes require a new task queue/generation
 and draining old workers; backward compatibility is not promised. The current generation is
-`v10`, with task queue `investigate-v10` and run prefix `investigate-v10-`. It binds
-every native model/tool activity to the captured worker identity; v9 histories and
+`v11`, with task queue `investigate-v11` and run prefix `investigate-v11-`. It binds
+every native model/tool activity to the captured worker identity; v10 and older histories and
 workers must drain before replacement. Unknown external execution must never be blindly
 retried. Cancellation must reach owned work and cleanup.
 

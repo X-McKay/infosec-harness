@@ -237,3 +237,208 @@ async def test_modified_source_refuses_probe_and_closes_offline_sandbox(tmp_path
     assert len(shell.executions) == 1
     assert shell.executions[0][0].profile == "workspace"
     assert shell.closed == ["probe-probe:2:probe"]
+
+
+@pytest.mark.parametrize("definitive", [False, True])
+async def test_output_feedback_repairs_exact_id_or_failed_probe_without_reexecuting(definitive):
+    from pydantic_ai.messages import RetryPromptPart
+
+    shell = FakeOpenShell()
+    calls = 0
+
+    def respond(messages, info):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "execute", {"command": "python probe.py"}, tool_call_id="receipt-suffix"
+                    )
+                ]
+            )
+        if calls == 2:
+            response = final_response(
+                info, evidence_ids=["execute:1" if not definitive else "execute:1:receipt-suffix"]
+            )
+            if definitive:
+                response.parts[0].args["label"] = "potentially_exploitable"
+            return response
+        feedback = [
+            part.content
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, RetryPromptPart)
+        ]
+        assert feedback
+        assert (
+            "Workspace execute cannot substitute" if definitive else "exact full Evidence.id"
+        ) in feedback[-1]
+        return final_response(info, evidence_ids=["execute:1:receipt-suffix"])
+
+    request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
+    result = await build_agent(shell, FunctionModel(respond)).run(
+        "Inspect",
+        deps=InvestigationDeps(
+            run_id="run",
+            sandbox=await shell.create("run"),
+            source_digest="digest",
+            snapshot_path="/fixture",
+            request=request,
+        ),
+    )
+    assert result.output.label == "inconclusive"
+    assert calls == 3
+    assert len(shell.executions) == 1
+
+
+@pytest.mark.parametrize(
+    "failure", [None, "failed", "truncated", "unverified", "wrong-source", "controls", "contrary"]
+)
+async def test_verdict_validator_requires_complete_matching_offline_evidence(failure):
+    from pydantic_ai import ModelRetry
+
+    from infosec_harness.agent import validate_verdict
+    from infosec_harness.models import Evidence, Verdict
+
+    observations = dict(
+        workspace_digest="workspace",
+        source_verified=True,
+        target_reached=True,
+        oracle_valid=True,
+        positive_control=True,
+        negative_control=True,
+        vulnerability_observed=True,
+    )
+    if failure == "unverified":
+        observations["source_verified"] = False
+    if failure == "controls":
+        observations["negative_control"] = False
+    if failure == "contrary":
+        observations["vulnerability_observed"] = False
+    evidence = Evidence(
+        id="probe:6:full-suffix",
+        kind="probe",
+        command="python probe.py",
+        exit_code=1 if failure == "failed" else 0,
+        output_truncated=failure == "truncated",
+        source_digest="other" if failure == "wrong-source" else "digest",
+        sandbox_id="offline",
+        observations=observations,
+    )
+    ctx = SimpleNamespace(
+        deps=SimpleNamespace(source_digest="digest"),
+        messages=[
+            ModelRequest(
+                parts=[
+                    ToolReturnPart("run_probe", evidence.model_dump(), tool_call_id="full-suffix")
+                ]
+            )
+        ],
+    )
+    verdict = Verdict(
+        label="potentially_exploitable",
+        summary="Source-supported path",
+        evidence_ids=[evidence.id],
+        citations=[dict(path="sink.py", start_line=1, end_line=1)],
+    )
+    if failure:
+        with pytest.raises(ModelRetry, match="definitive verdict"):
+            await validate_verdict(ctx, verdict)
+    else:
+        assert await validate_verdict(ctx, verdict) == verdict
+
+
+async def test_output_feedback_is_bounded_and_never_retries_tool_dispatch():
+    from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+    shell = FakeOpenShell()
+    calls = 0
+
+    def respond(messages, info):
+        nonlocal calls
+        calls += 1
+        return final_response(info, evidence_ids=["invented"])
+
+    request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
+    with pytest.raises(UnexpectedModelBehavior, match="retries"):
+        await build_agent(shell, FunctionModel(respond)).run(
+            "Inspect",
+            deps=InvestigationDeps(
+                run_id="run",
+                sandbox=await shell.create("run"),
+                source_digest="digest",
+                snapshot_path="/fixture",
+                request=request,
+            ),
+        )
+    assert calls == 3
+    assert shell.executions == []
+
+
+async def test_failed_offline_probe_and_successful_workspace_execution_require_inconclusive():
+    from pydantic_ai.messages import RetryPromptPart
+
+    shell = FakeOpenShell()
+    native_execute = shell.execute
+
+    async def execute(sandbox, command, **kwargs):
+        result = await native_execute(sandbox, command, **kwargs)
+        if sandbox.profile == "probe":
+            return CommandResult(2, "", "python: can't open file '/tmp/probe.py'")
+        return result
+
+    shell.execute = execute
+    calls = 0
+
+    def respond(messages, info):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "run_probe",
+                        {"command": "cd /tmp && python probe.py"},
+                        tool_call_id="offline",
+                    )
+                ]
+            )
+        if calls == 2:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "execute", {"command": "python probe.py"}, tool_call_id="workspace"
+                    )
+                ]
+            )
+        if calls == 3:
+            response = final_response(info, evidence_ids=["probe:1:offline", "execute:2:workspace"])
+            response.parts[0].args["label"] = "potentially_exploitable"
+            response.parts[0].args["citations"] = [dict(path="sink.py", start_line=1, end_line=1)]
+            return response
+        assert any(
+            isinstance(part, RetryPromptPart)
+            and "Workspace execute cannot substitute" in part.content
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+        return final_response(info, evidence_ids=["probe:1:offline", "execute:2:workspace"])
+
+    request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
+    result = await build_agent(shell, FunctionModel(respond)).run(
+        "Inspect",
+        deps=InvestigationDeps(
+            run_id="run",
+            sandbox=await shell.create("run"),
+            source_digest="digest",
+            snapshot_path="/fixture",
+            request=request,
+        ),
+    )
+    assert result.output.label == "inconclusive"
+    assert len(shell.executions) == 2
+    assert calls == 4
+    assert shell.closed == ["probe-probe:1:offline"]

@@ -67,6 +67,8 @@ async def test_finalize_rejects_invented_receipt_and_source_lines(tmp_path):
 
 @pytest.mark.requires_temporal
 async def test_real_temporal_replay_and_restart(temporal_cli, tmp_path):
+    from pydantic_ai.messages import ModelRequest, RetryPromptPart
+
     shell = FakeOpenShell()
     model_calls = []
     command_done = asyncio.Event()
@@ -88,6 +90,14 @@ async def test_real_temporal_replay_and_restart(temporal_cli, tmp_path):
                     ToolCallPart("execute", {"command": "python regression.py"}, tool_call_id="cmd")
                 ]
             )
+        if len(model_calls) == 2:
+            return final_response(info, evidence_ids=["execute:1"])
+        assert any(
+            isinstance(part, RetryPromptPart) and "exact full Evidence.id" in part.content
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
         return final_response(info, evidence_ids=[shell._receipts[0].operation_id])
 
     agent = build_agent(shell, FunctionModel(respond))
@@ -141,6 +151,7 @@ async def test_real_temporal_replay_and_restart(temporal_cli, tmp_path):
         assert model_calls == calls_before
         assert shell.executions == commands_before
         assert len(shell.executions) == 1
+        assert len(model_calls) == 3
 
 
 @pytest.mark.requires_temporal

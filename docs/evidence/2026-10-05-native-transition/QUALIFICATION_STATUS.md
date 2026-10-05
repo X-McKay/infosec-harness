@@ -4,7 +4,10 @@ Implementation candidate: `2d28974` on `feature/astra-simplification`.
 PR: https://github.com/X-McKay/infosec-harness/pull/6 (target `develop`).
 
 The rewrite is implemented and pushed. Live release qualification is **blocked** by
-an unresolved connection loss during self-hosted inference. This candidate is not
+an unresolved end-to-end evaluation failure. A fresh authorized cohort completed
+seven native model requests, then failed verdict validation; see
+[verdict feedback evidence](VERDICT_FEEDBACK.md). The earlier connection loss remains
+undetermined. This candidate is not
 qualified for promotion. No claim of improved model accuracy or zero remaining
 technical debt is supported by the available evidence.
 
@@ -31,7 +34,7 @@ technical debt is supported by the available evidence.
 Runtime Python is 17 files, approximately 3,044 lines, versus 178 files / 28,527 lines
 before the rewrite (about 89% fewer lines). One PydanticAI investigator chooses skills
 and tools; Temporal owns durable execution; OpenShell is the only agent execution and
-provider boundary. The current generation is `investigate-v10`; incompatible old
+provider boundary. The next candidate generation is `investigate-v11`; incompatible old
 workers must drain. Durable receipts and source snapshots must remain available to
 the queue's workers. See the architecture documentation for the exact recovery limits.
 

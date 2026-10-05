@@ -29,7 +29,7 @@ from infosec_harness.models import (
 from infosec_harness.services import temporal_connection_options
 
 WORKFLOW = "InvestigationWorkflow"
-PREFIX = "investigate-v10-"
+PREFIX = "investigate-v11-"
 RPC_TIMEOUT = timedelta(seconds=10)
 
 
@@ -83,7 +83,7 @@ async def health(client: TemporalClient) -> dict[str, str]:
         GetSystemInfoRequest(),
         timeout=RPC_TIMEOUT,
     )
-    return {"status": "control_plane_ready", "runtime": "not_checked", "generation": "v10"}
+    return {"status": "control_plane_ready", "runtime": "not_checked", "generation": "v11"}
 
 
 @app.post("/api/runs", response_model=RunState, status_code=202)
