@@ -7,7 +7,7 @@ decided from a deterministic oracle signal.
 Most of what the multi-agent playbook asks a System Spec to declare already exists here as
 *code*: the pydantic-graph topology in `src/infosec_harness/graph/triage.py`, the repair
 budgets in `src/infosec_harness/settings.py` and each `agent.yaml`, the verdict contract in
-`src/infosec_harness/agents/validators.py`. This page states the composition
+`src/infosec_harness/runtime/validators.py`. This page states the composition
 in prose so it can be reviewed; it is not a second source of truth, and where it and the code
 disagree, the code is what runs. Member versions, skills, toolsets and budgets are read from
 `src/infosec_harness/agents/<name>/agent.yaml`.
@@ -38,6 +38,12 @@ decides every transition, dispatches each agent with typed evidence it assembled
 what comes back. No agent delegates to another, membership is fixed, and delegation depth is
 zero. There is deliberately no coordinator agent, which is the strongest form of the
 playbook's "deterministic control, probabilistic collaboration".
+
+Within an invocation, agents choose their observations and tool turns under the declared
+request, tool, token and cost ceilings. Build repair has no fixed halfway cutoff that removes
+its tools. Probe validators enforce path and evidence-marker contracts; they do not infer
+whether a test ran from source-language substrings. The sandbox's positive and negative
+controls verify the runner, and observed execution markers govern definitive verdicts.
 
 ## Why a multi-agent system
 
@@ -79,6 +85,12 @@ oracle signal, since the contract is deterministic in both.
 | probe execution | probe-diagnosis, verdict | markers are detected deterministically, never by a model |
 | verdict | nobody downstream | rejected by a deterministic validator if the facts do not support it |
 
+Environment skills teach dependency setup, framework selection and output visibility. Sandbox
+policy validates image authority, confined paths and the probe addressing contract; successful
+build and positive/negative smoke executions establish viability. The runtime binds image
+allowlists into resolved agent provenance before durable execution, so output validation does
+not reread operator settings while replaying.
+
 Egress: none at probe time or from the sandbox shell tool; at build time only the operator's
 allowlisting proxy (`deploy/squid-allowlist.conf`), never a list derived from the repository; the tracker write-back is
 comment-only and never edits or closes an item.
@@ -93,7 +105,7 @@ prompt prefix. Grouping, scheduling, the per-finding pipeline and failure record
 with the in-process path, which runs stub models only; real assessments always run on Temporal.
 
 Workflow type names and agent activity identities carry the execution generation
-(`EXECUTION_GENERATION`, currently `v7`). Workflow and activity arguments are typed models
+(`EXECUTION_GENERATION`, currently `v8`). Workflow and activity arguments are typed models
 (`src/infosec_harness/workflows/payloads.py`) validated on both sides of the Temporal boundary,
 and every activity's retry policy bounds its attempts or names its non-retryable errors
 (`src/infosec_harness/workflows/activity_options.py`). There are no retained earlier generations
@@ -102,8 +114,8 @@ replayable, so a deployment drains or terminates in-flight batches first
 ([service environments](../development/SERVICE_ENVIRONMENTS.md#deploying-a-new-execution-generation)).
 Workflow ids are opaque. Each result persists a manifest (`schema_version` 3, assigned in
 `src/infosec_harness/persistence/identity.py`) whose environment section records the probe
-adapter contract `ADAPTER_CONTRACT_VERSION` (`unit-probe-adapters/v2`, in
-`src/infosec_harness/agents/ecosystem_contract.py`) and `adapter_profiles`: `{id, support}` per
+adapter contract `ADAPTER_CONTRACT_VERSION` (`unit-probe-adapters/v3`, in
+`src/infosec_harness/sandbox/profiles.py`) and `adapter_profiles`: `{id, support}` per
 recognised ecosystem profile, plus each unmapped language as unsupported.
 
 **Accounting.** Every batch, durable or in-process, is accepted with a root budget ledger that
@@ -119,7 +131,7 @@ not fully accounted.
 
 ## Prompt construction
 
-`src/infosec_harness/agents/render.py` is the only path from typed inputs to prompt text. The
+`src/infosec_harness/runtime/render.py` is the only path from typed inputs to prompt text. The
 layout is stable to volatile (repository context, a cache point, then the finding payload), and
 volatile fields are dropped by model and field name, never by bare key, so
 `FindingContext.path` (the source-to-sink chain) reaches the probe planner, probe author and
@@ -127,7 +139,7 @@ verdict agents. Every value, strings included, is encoded as one line of JSON wi
 as `<\/`: payload text cannot contain a raw newline or a closing tag, so the only section markers
 in a prompt are the renderer's.
 
-The repository read tools in `src/infosec_harness/agents/repo_tools.py` are confined to the
+The repository read tools in `src/infosec_harness/tools/repository.py` are confined to the
 snapshot and byte-capped per call. `search_code` runs its regular expression in a child process
 (`sys.executable -I -S`) that is killed at a deadline, so the worker must be able to spawn its
 own interpreter. `repo_digest` treats a directory as test code when any whole path segment

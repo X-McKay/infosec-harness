@@ -31,7 +31,6 @@ from infosec_harness.inference.wire.protocol import (
     LOGICAL_NAME_PATTERN,
     EnvName,
     ExecutorContract,
-    ExtensionBinding,
     HttpsOrigin,
     ImageDigest,
     LogicalName,
@@ -135,7 +134,7 @@ class ExecutorProfile(_StrictModel, ProviderAdaptation):
     max_input_tokens_per_request: int | None = Field(
         default=None, gt=0, exclude_if=lambda value: value is None)
     credential_driver: Literal["native"] = "native"
-    inspection: tuple[ExtensionBinding, ...] = ()
+    inspection: tuple[()] = ()
     provider_retries: Literal[0] = 0
 
     @field_validator("approved_policy")
@@ -146,15 +145,6 @@ class ExecutorProfile(_StrictModel, ProviderAdaptation):
             # Canonical policy identity validates JSON-only content and rejects malformed
             # effective policy maps before the catalog is trusted.
             effective_policy_digest(value)
-        return value
-
-    @field_validator("inspection")
-    @classmethod
-    def unsupported_inspection_fails_closed(
-        cls, value: tuple[ExtensionBinding, ...]
-    ) -> tuple[ExtensionBinding, ...]:
-        if value:
-            raise ValueError("Inspection bindings are unsupported by protocol v1")
         return value
 
     @property
@@ -198,14 +188,6 @@ class BrokerConfig(_StrictModel):
     agent_profiles: dict[str, str]
     root_limits: InvocationBounds
     agent_limits: dict[str, InvocationBounds]
-    pricing_identity: str | None = None
-
-    @field_validator("pricing_identity")
-    @classmethod
-    def nonsecret_pricing_identity(cls, value: str | None) -> str | None:
-        if value is not None and (not value or len(value) > 256 or _SECRET_KEYS.search(value)):
-            raise ValueError("Pricing identity must be nonsecret metadata")
-        return value
 
     @model_validator(mode="after")
     def catalog_is_consistent(self) -> BrokerConfig:
@@ -314,16 +296,13 @@ class BrokerConfig(_StrictModel):
             strict_closed_output_tools=profile.strict_closed_output_tools,
             enable_thinking=profile.enable_thinking,
             thinking_token_budget=profile.thinking_token_budget,
-            provider_retries=0,
-            credential_driver="native",
-            inspection=(),
         )
 
 
 def load_broker_config(path: Path | None = None, *, agents: Iterable[str]) -> BrokerConfig:
     """Load and validate packaged/operator YAML, including full coverage of ``agents``.
 
-    Callers pass the registered agent names (``agents.registry.BINDINGS``).
+    Callers pass the registered agent names (``runtime.registry.BINDINGS``).
     """
     source = path or (package_root() / "config" / "credential-broker.yaml")
     try:

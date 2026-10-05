@@ -13,7 +13,6 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from infosec_harness.agents.registry import BINDINGS
 from infosec_harness.evals.adapters import defines_unevidenced_safety, is_unevidenced_safe
 from infosec_harness.evals.dataset import load_dataset
 from infosec_harness.evals.gates import ReleasePolicy, agents_gated_on, load_policy, parse_policy
@@ -21,6 +20,7 @@ from infosec_harness.evals.metrics import GATEABLE_METRICS, UNEVIDENCED_SAFETY_M
 from infosec_harness.evals.provenance import CodeVersion
 from infosec_harness.evals.release_report import report_provenance
 from infosec_harness.resources import agents_dir
+from infosec_harness.runtime.registry import BINDINGS
 
 POLICIES = {name: agents_dir() / name / "evals" / "release-policy.yaml" for name in BINDINGS}
 # Owner-approved task-success floor for iterative development; hard gates stay independent of

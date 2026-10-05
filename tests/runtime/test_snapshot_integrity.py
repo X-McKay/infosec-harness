@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-from infosec_harness.agents.ecosystem_contract import ADAPTER_CONTRACT_VERSION
 from infosec_harness.domain.canonical import canonical_bytes, digest
 from infosec_harness.domain.models import (
     BuildResult,
@@ -26,6 +25,7 @@ from infosec_harness.persistence.identity import persisted_manifest
 from infosec_harness.repo import checkout as checkout_module
 from infosec_harness.repo.access import RepositoryAccessError
 from infosec_harness.repo.checkout import checkout
+from infosec_harness.sandbox.profiles import ADAPTER_CONTRACT_VERSION
 from infosec_harness.settings import get_settings
 
 

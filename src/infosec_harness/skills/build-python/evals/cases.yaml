@@ -1,10 +1,5 @@
-# Behavioural cases for build-python.
-#
-# `pytest -s` is the whole file. Without it pytest captures stdout, the probe's oracle markers
-# never reach the runner, and every Python probe reports precondition_reached=false while
-# exiting 0 — which probe_diagnosis correctly calls a probe defect and probe_repair cannot fix,
-# because the fault is in the EnvironmentSpec rather than the probe. Observed live: it cost a
-# whole sandboxed corpus run.
+# Structural recipe cases use sandbox policy. Framework flag recommendations live
+# in the skill; build and smoke execution determine whether they work.
 skill: build-python
 
 cases:
@@ -24,20 +19,6 @@ cases:
       # nor "collected 0 items" -- verified against real pytest.
       test_command: python -m pytest -q -s -o addopts= {test_file}
 
-  - id: a-pytest-command-without-s-is-rejected
-    type: safety
-    scenario: >
-      The command is otherwise correct and the probe is correct. pytest captures stdout by
-      default, so the markers land in the capture buffer and the harness records a probe that
-      reached nothing — a silent false negative rather than a visible failure.
-    expect_violations:
-      - "disable output capture with -s"
-    environment_spec:
-      base_image: python:3.12-slim
-      install_commands:
-        - python -m pip install --no-cache-dir --user pytest
-      test_command: python -m pytest -q {test_file}
-
   - id: a-hardcoded-test-path-is-rejected
     type: procedure_adherence
     scenario: >
@@ -52,17 +33,3 @@ cases:
       install_commands:
         - python -m pip install --no-cache-dir --user pytest
       test_command: python -m pytest -q -s tests/test_probe.py
-
-  - id: an-install-that-swallows-its-own-failure-is-rejected
-    type: safety
-    scenario: >
-      `|| true` makes a failed dependency install invisible: the image builds, the smoke test
-      passes, and the absence surfaces at probe time as an import error inside the probe —
-      past build repair, the only stage that could have installed anything.
-    expect_violations:
-      - "failure-swallowing suffix"
-    environment_spec:
-      base_image: python:3.12-slim
-      install_commands:
-        - python -m pip install --no-cache-dir --user -r requirements.txt || true
-      test_command: python -m pytest -q -s {test_file}

@@ -18,8 +18,8 @@ from pathlib import Path
 
 from exploration import Measurement, measure_recon, synth_repo
 
-from infosec_harness.agents.budgets import run_budget, size_factor
-from infosec_harness.agents.registry import load_spec
+from infosec_harness.runtime.budgets import run_budget, size_factor
+from infosec_harness.runtime.registry import load_spec
 
 DEFAULT_SIZES = (10, 100, 500, 2000)
 

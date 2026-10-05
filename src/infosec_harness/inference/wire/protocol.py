@@ -9,7 +9,7 @@ import importlib.metadata
 import re
 from enum import StrEnum
 from functools import cache
-from typing import Annotated, Any, ClassVar, Literal, get_args
+from typing import Annotated, Any, Literal, get_args
 from urllib.parse import urlsplit
 
 from pydantic import (
@@ -20,7 +20,6 @@ from pydantic import (
     StrictBool,
     StrictInt,
     ValidationError,
-    field_validator,
     model_validator,
 )
 
@@ -119,12 +118,6 @@ def sanitize_diagnostic(value: object) -> dict[str, str] | None:
     return {"boundary": value["boundary"], "category": value["category"]}
 
 
-class ExtensionBinding(StrictModel):
-    implementation: str
-    version: str
-    required: StrictBool = True
-
-
 def validate_thinking_token_budget(
     budget: int | None, enable_thinking: bool | None, maximum: Any = None,
     *, require_output_cap: bool = False,
@@ -154,16 +147,9 @@ class ProviderAdaptation(BaseModel):
     thinking_token_budget: int | None = Field(
         default=None, gt=0, strict=True, exclude_if=lambda value: value is None)
 
-    # A contract knows its effective output cap; a profile template does not.
-    _requires_output_cap: ClassVar[bool] = False
-
-    def _output_cap(self) -> Any:
-        return None
-
     @model_validator(mode="after")
     def thinking_budget_leaves_answer_room(self):
-        validate_thinking_token_budget(self.thinking_token_budget, self.enable_thinking,
-                                       self._output_cap(), require_output_cap=self._requires_output_cap)
+        validate_thinking_token_budget(self.thinking_token_budget, self.enable_thinking)
         return self
 
 
@@ -186,19 +172,13 @@ class ExecutorContract(StrictModel, ProviderAdaptation):
     atomic_intake: StrictBool = False
     provider_retries: Literal[0] = 0
     credential_driver: Literal["native"] = "native"
-    inspection: tuple[ExtensionBinding, ...] = ()
+    inspection: tuple[()] = ()
 
-    _requires_output_cap: ClassVar[bool] = True
-
-    def _output_cap(self) -> Any:
-        return self.model_settings.get("max_tokens")
-
-    @field_validator("inspection")
-    @classmethod
-    def reject_extensions(cls, value: tuple[ExtensionBinding, ...]) -> tuple[ExtensionBinding, ...]:
-        if value:
-            raise ValueError("Inspection bindings are unsupported in protocol v1")
-        return value
+    @model_validator(mode="after")
+    def thinking_budget_fits_output(self):
+        validate_thinking_token_budget(self.thinking_token_budget, self.enable_thinking,
+                                       self.model_settings.get("max_tokens"), require_output_cap=True)
+        return self
 
     @property
     def digest(self) -> str:

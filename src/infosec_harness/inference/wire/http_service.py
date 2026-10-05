@@ -89,12 +89,12 @@ def parse_response(body: bytes) -> dict[str, Any]:
         raise BrokerError("invalid_response") from None
 
 
-def response_error(status: int, body: bytes) -> BrokerError:
-    """Map a non-200 response by status first; its body is optional untrusted detail.
+def response_error(body: bytes) -> BrokerError:
+    """Map a non-200 response's closed broker disposition; other bodies mean unavailable.
 
-    A proxy or gateway fault (for example an HTML 502 page) is ``unavailable``. Only a known
-    closed error code is relayed, and the optional diagnostic stays observability-only.
-    Retryable codes keep their distinct transient type.
+    The caller uses status to distinguish success from failure. For failures, a known error
+    code owns retry disposition, independently of status. A gateway fault such as an HTML
+    502 page is ``unavailable``; diagnostics stay observability-only.
     """
     try:
         value = _canonical_object(body)
@@ -268,7 +268,7 @@ class JsonChannel:
             record_failure(self.boundary, error)
             raise BrokerError.of("unavailable") from None
         if status != 200:
-            raise response_error(status, received)
+            raise response_error(received)
         return parse_response(received)
 
 
@@ -288,7 +288,11 @@ class _BrokerHandler(BaseHTTPRequestHandler):
             raise BrokerError("identity")
         if any(len(self.headers.get_all(name, [])) > 1 for name in CREDENTIAL_HEADERS):
             raise BrokerError("auth")
-        length = int(self.headers["Content-Length"])
+        length_text = self.headers["Content-Length"]
+        if (len(length_text) > len(str(MAX_BODY_BYTES))
+                or not length_text.isascii() or not length_text.isdecimal()):
+            raise BrokerError("identity")
+        length = int(length_text)
         if length <= 0 or length > MAX_BODY_BYTES:
             raise BrokerError("identity")
         body = self.rfile.read(length)
@@ -368,15 +372,19 @@ def serve(
     loop = asyncio.new_event_loop()
     thread = threading.Thread(target=loop.run_forever, daemon=True)
     thread.start()
-    if startup is not None:
-        asyncio.run_coroutine_threadsafe(startup(), loop).result()
-    server = _BoundedServer((host, port), core=core, loop=loop, tls=tls)
+    server = None
     try:
+        if startup is not None:
+            asyncio.run_coroutine_threadsafe(startup(), loop).result()
+        server = _BoundedServer((host, port), core=core, loop=loop, tls=tls)
         server.serve_forever()
     finally:
-        server.server_close()
+        if server is not None:
+            server.server_close()
         loop.call_soon_threadsafe(loop.stop)
         thread.join(timeout=5)
+        if not thread.is_alive():
+            loop.close()
 
 
 def server_tls(cert: str, key: str, *, client_ca: str | None = None) -> ssl.SSLContext:

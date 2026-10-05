@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import yaml
 
-from infosec_harness.agents.models import load_models_config
-from infosec_harness.agents.registry import (
+from infosec_harness.inference.models import load_models_config
+from infosec_harness.runtime.registry import (
     ACTIVITY_MAX_ATTEMPTS,
     ACTIVITY_RETRY,
     MODEL_ACTIVITY,

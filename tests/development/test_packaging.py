@@ -139,7 +139,7 @@ def test_every_agent_builds_from_the_installed_wheel(installed, tmp_path):
     assumption anywhere in spec loading, skill loading or model resolution fails here."""
     names = json.loads(_run(installed, """
 import json
-from infosec_harness.agents.registry import BINDINGS, build_agent
+from infosec_harness.runtime.registry import BINDINGS, build_agent
 built = []
 for name in sorted(BINDINGS):
     build_agent(name)
@@ -157,7 +157,7 @@ def test_skills_resolve_to_the_package_not_the_working_directory(installed, tmp_
     directory does not exist: skills` from anywhere but the repository root.
     """
     resolved = _run(installed, """
-from infosec_harness.agents.registry import load_spec, _absolutize_skill_dirs
+from infosec_harness.runtime.registry import load_spec, _absolutize_skill_dirs
 spec = _absolutize_skill_dirs(load_spec('context'))
 dumped = spec.model_dump(by_alias=True, exclude_none=True, mode='json')
 for cap in dumped['capabilities']:

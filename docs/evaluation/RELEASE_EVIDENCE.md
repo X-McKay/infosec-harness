@@ -71,10 +71,11 @@ command. Complete experiments also store `gate_evaluation` and a `status` in the
 record, which the API exposes as `ExperimentSummary.status` and the UI shows as the release-gate
 row.
 
-The opt-in sandbox execution checks (`src/infosec_harness/evals/execution_checks.py`,
-`src/infosec_harness/evals/probe_execution.py`) share one fixture-image helper. A fixture image
-that fails to build because the builder infrastructure failed is `not_checked`; one whose
-declared environment fails to build is `failed`.
+Declared sandbox execution checks run through `src/infosec_harness/evals/execution_checks.py`.
+A fixture image that fails to build because the builder infrastructure failed is `not_checked`;
+one whose declared environment fails to build is `failed`. Probe-writing evals use structural
+scoring and claim no independent target attestation. Candidate-forgeable in-process tracing
+has been retired; it supplied no release-gate evidence.
 
 ## Baselines
 

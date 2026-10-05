@@ -27,8 +27,8 @@ from pathlib import Path
 import pytest
 from conftest import load_script
 
-from infosec_harness.agents.budgets import run_budget
-from infosec_harness.agents.registry import load_spec
+from infosec_harness.runtime.budgets import run_budget
+from infosec_harness.runtime.registry import load_spec
 
 exploration = load_script("exploration")
 measure_recon = exploration.measure_recon
@@ -163,7 +163,7 @@ async def test_the_cheaper_run_stays_far_below_the_compaction_trigger(repos):
     compaction is also what rewrites the history and so breaks the provider's cached prefix. A
     run that needs a handful of calls never reaches the trigger, so it never pays either cost.
     """
-    from infosec_harness.agents.registry import DEFAULT_CLEAR_TOOL_TOKENS
+    from infosec_harness.runtime.registry import DEFAULT_CLEAR_TOOL_TOKENS
 
     before = await _measure(repos, SHIPPED, 500)
     after = await _measure(repos, ALL_TOOLS, 500)

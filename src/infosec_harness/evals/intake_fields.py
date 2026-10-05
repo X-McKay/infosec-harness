@@ -23,11 +23,6 @@ from typing import Any, Literal, TypedDict, cast
 from pydantic import ValidationError
 from pydantic_ai.messages import ModelMessage
 
-from infosec_harness.agents.intake_claims import AtomicFinding, ReferenceError, reconstruct
-from infosec_harness.agents.intake_evidence import (
-    INTAKE_EVIDENCE_POLICY_VERSION,
-    extraction_evidence_diagnostics,
-)
 from infosec_harness.domain.models import ExtractedFinding
 from infosec_harness.evals.messages import (
     MAX_NODES,
@@ -36,6 +31,11 @@ from infosec_harness.evals.messages import (
     decode_arguments,
     iter_output_proposals,
     measure_shape,
+)
+from infosec_harness.intake.claims import AtomicFinding, ReferenceError, reconstruct
+from infosec_harness.intake.evidence import (
+    INTAKE_EVIDENCE_POLICY_VERSION,
+    extraction_evidence_diagnostics,
 )
 
 MAX_EVIDENCE = 64

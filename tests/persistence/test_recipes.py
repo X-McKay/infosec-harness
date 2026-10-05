@@ -4,8 +4,7 @@ from pathlib import Path
 
 from infosec_harness.domain.models import EnvironmentSpec, StackFingerprint
 from infosec_harness.persistence.recipes import (
-    FilesystemRecipeStore,
-    NullRecipeStore,
+    RecipeStore,
     is_cacheable,
     stack_key,
 )
@@ -24,8 +23,8 @@ def _spec(**kw) -> EnvironmentSpec:
     return EnvironmentSpec(**{**base, **kw})
 
 
-def _store() -> FilesystemRecipeStore:
-    return FilesystemRecipeStore(root=Path(tempfile.mkdtemp()))
+def _store() -> RecipeStore:
+    return RecipeStore(root=Path(tempfile.mkdtemp()))
 
 
 def test_the_key_is_the_shape_of_a_repo_not_its_size():
@@ -59,6 +58,7 @@ def test_a_recipe_is_evicted_the_moment_it_stops_working():
 
 def test_a_corrupt_entry_is_dropped_rather_than_breaking_the_run():
     store, key = _store(), stack_key(_maven())
+    store.root.mkdir(parents=True, exist_ok=True)
     (store.root / f"{key}.json").write_text("{not json at all")
     assert store.lookup(key) is None
     assert not (store.root / f"{key}.json").exists(), "the bad entry should be gone, not retried"
@@ -72,7 +72,7 @@ def test_a_partial_build_is_never_cached():
 
 
 def test_the_disabled_store_changes_nothing():
-    store = NullRecipeStore()
+    store = RecipeStore(enabled=False)
     store.record("k", _spec())
     assert store.lookup("k") is None
 
@@ -139,21 +139,19 @@ async def test_a_second_repo_of_the_same_shape_skips_the_planner(tmp_path, monke
 def test_one_switch_and_one_configured_directory(tmp_path, monkeypatch):
     """`enabled` overrides the settings switch; the directory comes from settings, not os.environ."""
     from infosec_harness.persistence.recipes import (
-        FilesystemRecipeStore,
-        NullRecipeStore,
-        get_recipe_store,
-        record_recipe_outcome,
+        RecipeStore,
+            record_recipe_outcome,
     )
     from infosec_harness.settings import get_settings
 
     monkeypatch.setattr(get_settings(), "recipe_cache_dir", tmp_path / "configured")
     monkeypatch.setattr(get_settings(), "recipe_cache_enabled", True)
-    assert isinstance(get_recipe_store(False), NullRecipeStore)
-    store = get_recipe_store()
-    assert isinstance(store, FilesystemRecipeStore) and store.root == tmp_path / "configured"
+    assert not RecipeStore(enabled=False).enabled
+    store = RecipeStore()
+    assert isinstance(store, RecipeStore) and store.root == tmp_path / "configured"
     monkeypatch.setattr(get_settings(), "recipe_cache_enabled", False)
-    assert isinstance(get_recipe_store(), NullRecipeStore)
-    assert isinstance(get_recipe_store(True), FilesystemRecipeStore)
+    assert not RecipeStore().enabled
+    assert RecipeStore(enabled=True).enabled
 
     stack = StackFingerprint(languages={"python": 3}, build_systems=["pip"])
     spec = EnvironmentSpec(base_image="python:3.12-slim", test_command="pytest {test_file}")
@@ -164,3 +162,36 @@ def test_one_switch_and_one_configured_directory(tmp_path, monkeypatch):
     assert store.lookup(stack_key(stack)) == spec, "a partial spec neither replaces nor evicts"
     record_recipe_outcome(stack, spec, worked=False, store=store)
     assert store.lookup(stack_key(stack)) is None
+
+
+def test_failed_recipe_publication_preserves_the_previous_complete_recipe(tmp_path, monkeypatch):
+    import pytest
+
+    from infosec_harness import _io
+
+    store = RecipeStore(tmp_path)
+    key = stack_key(_maven())
+    original = _spec()
+    store.record(key, original)
+
+    def refuse_replace(*args):
+        raise OSError("publication interrupted")
+
+    monkeypatch.setattr(_io.os, "replace", refuse_replace)
+    with pytest.raises(OSError, match="publication interrupted"):
+        store.record(key, _spec(base_image="maven:3.9-eclipse-temurin-21"))
+    assert store.lookup(key) == original
+    assert list(tmp_path.iterdir()) == [tmp_path / f"{key}.json"]
+
+
+def test_disabled_cache_does_not_create_a_directory_or_touch_existing_recipes(tmp_path):
+    root = tmp_path / "recipes"
+    disabled = RecipeStore(root, enabled=False)
+    disabled.record("key", _spec())
+    disabled.forget("key")
+    assert disabled.lookup("key") is None
+    assert not root.exists()
+    active = RecipeStore(root, enabled=True)
+    active.record("key", _spec())
+    disabled.forget("key")
+    assert active.lookup("key") == _spec()

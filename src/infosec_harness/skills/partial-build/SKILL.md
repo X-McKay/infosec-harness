@@ -4,7 +4,7 @@ description: Tactics for building only the sub-unit that contains the finding. U
   build has exhausted its repair budget.
 metadata:
   owner: appsec
-  version: 1.0.0
+  version: 1.0.1
 ---
 
 # Partial builds
@@ -31,7 +31,7 @@ contains the file under investigation and can run one unit test. Set `scope: par
   tmpfs copy under `/work/home`, and a narrowed spec is where it is easiest to drop.
   `-am` also builds the modules it depends on.
 - **Gradle:** target the owning subproject: `:<subproject>:testClasses` then
-  `:<subproject>:test --tests '<fqcn>'`.
+  `:<subproject>:test --tests '*<ProbeClassName>'`.
 - **Python:** install just the finding's package/extra and pytest, skipping optional heavy
   extras; run the single probe file. If an unrelated import at module import time breaks
   collection, add a minimal conftest or stub for that dependency — never stub the code under
@@ -58,4 +58,3 @@ partial vs full accuracy.
 - The test runner itself is installed, not merely assumed present.
 - No install command swallows its own failure (`|| true`, `|| :`, `; true`). A dependency install that reports success when it failed surfaces only at probe time, where probe repair cannot fix it and build repair never sees it.
 - `scope` is `partial` and `module_path` names the unit that was built.
-

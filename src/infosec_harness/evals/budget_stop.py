@@ -9,8 +9,8 @@ from typing import Literal, TypedDict, cast
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import ModelMessage, ModelResponse
 
-from infosec_harness.agents.budgets import BudgetResolution
 from infosec_harness.evals.trajectory import summarize_calls
+from infosec_harness.runtime.budgets import BudgetResolution
 
 BudgetBound = Literal[
     "request_limit", "tool_call_limit", "input_token_limit", "output_token_limit",

@@ -11,14 +11,14 @@ import json
 import pytest
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 
-from infosec_harness.agents.intake_evidence import (
+from infosec_harness.domain.models import ExtractedFinding
+from infosec_harness.evals.intake_fields import FIELD_RULES as RULES
+from infosec_harness.evals.intake_fields import FIELDS, guard_summary, intake_field_summary
+from infosec_harness.intake.evidence import (
     EXTRACTED_FIELDS,
     extraction_evidence_diagnostics,
     extraction_evidence_violations,
 )
-from infosec_harness.domain.models import ExtractedFinding
-from infosec_harness.evals.intake_fields import FIELD_RULES as RULES
-from infosec_harness.evals.intake_fields import FIELDS, guard_summary, intake_field_summary
 
 REPORT = "Caller input is\ninterpolated into a shell command."
 

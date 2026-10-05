@@ -15,10 +15,10 @@ from pathlib import Path
 import pytest
 from pydantic_ai import ModelRetry
 
-from infosec_harness.agents import capabilities as cap
-from infosec_harness.agents import repo_tools
-from infosec_harness.agents import repo_tools as rt
-from infosec_harness.agents.deps import AgentDeps
+from infosec_harness.runtime import capabilities as cap
+from infosec_harness.runtime.deps import AgentDeps
+from infosec_harness.tools import repository as repo_tools
+from infosec_harness.tools import repository as rt
 from infosec_harness.tools.policies import load_policies
 
 
@@ -435,7 +435,7 @@ def test_an_empty_selection_fails_rather_than_exposing_nothing():
 
 def test_clip_bytes_keeps_each_callers_model_visible_marker_byte_for_byte():
     """One helper serves every byte clip; the markers the model sees must not change."""
-    from infosec_harness.agents.repo_tools import clip_bytes
+    from infosec_harness.tools.repository import clip_bytes
 
     assert clip_bytes("abc", 3) == "abc"
     assert clip_bytes("abcdef", 3) == "abc\n... truncated at 3 bytes"

@@ -61,9 +61,9 @@ def prepare_case(agent: str, manifest: RealProviderManifest):
     """Public workflow input plus host-only scorer and expected label for one frozen case."""
     import yaml
 
-    from infosec_harness.agents.render import render_intake_prompt, render_prompt
     from infosec_harness.evals.adapters import ADAPTERS
     from infosec_harness.inference.wire.protocol import digest
+    from infosec_harness.runtime.render import render_intake_prompt, render_prompt
     path = AGENTS_DIR / agent / "evals/dataset.yaml"
     frozen = manifest.datasets[agent]
     if Path(frozen.path).resolve() != path.resolve():
@@ -91,13 +91,13 @@ def prepare_case(agent: str, manifest: RealProviderManifest):
 
 
 def output_class(agent: str):
-    from infosec_harness.agents.outputs import (
+    from infosec_harness.runtime.outputs import (
         ContextOutput,
         InconclusiveOutput,
         PartialEnvironmentOutput,
         PlannedEnvironmentOutput,
     )
-    from infosec_harness.agents.registry import BINDINGS
+    from infosec_harness.runtime.registry import BINDINGS
     if agent == "verdict":
         return InconclusiveOutput
     return {"env-planner": PlannedEnvironmentOutput, "context": ContextOutput,
@@ -107,7 +107,7 @@ def output_class(agent: str):
 def score_output(agent: str, output, predict, expected) -> dict:
     from pydantic import BaseModel
 
-    from infosec_harness.agents.outputs import InconclusiveOutput, NegativeOutput, PositiveOutput
+    from infosec_harness.runtime.outputs import InconclusiveOutput, NegativeOutput, PositiveOutput
     expected_type = output_class(agent)
     valid = (isinstance(output, (InconclusiveOutput, NegativeOutput, PositiveOutput)) if agent == "verdict"
              else type(output) is expected_type)
@@ -149,9 +149,9 @@ async def run_local_case(manifest: RealProviderManifest, phase: str, agent: str,
     """One unchanged production LocalOps case; the caller owns its finite scope."""
     from pydantic_ai import capture_run_messages
 
-    from infosec_harness.agents.registry import load_spec, resolve_agent_config
     from infosec_harness.graph.ops import LocalOps
     from infosec_harness.inference.wire.protocol import digest
+    from infosec_harness.runtime.registry import load_spec, resolve_agent_config
 
     inputs, predict, expected, case_digest = prepare_case(agent, manifest)
     ops = LocalOps(sandbox=True, recipe_cache=False)
@@ -209,7 +209,7 @@ def _summarize(report: dict, gates: tuple[str, ...]) -> None:
 
 
 async def run_local(manifest: RealProviderManifest, phase: str, report_path: Path) -> dict:
-    from infosec_harness.agents.registry import BINDINGS
+    from infosec_harness.runtime.registry import BINDINGS
     if set(CASES) != set(BINDINGS):
         raise ValueError("Every registered agent must have a frozen case")
     report = {"phase": phase, "status": "running", "provider": manifest.endpoint, "model": manifest.model,
@@ -229,9 +229,9 @@ async def run_local(manifest: RealProviderManifest, phase: str, report_path: Pat
 
 
 async def seed_root(root_id: str, manifest: RealProviderManifest) -> None:
-    from infosec_harness.agents.durable import CONFIGS
-    from infosec_harness.agents.registry import ACTIVITY_MAX_ATTEMPTS
     from infosec_harness.persistence import budgets, db
+    from infosec_harness.runtime.durable import CONFIGS
+    from infosec_harness.runtime.registry import ACTIVITY_MAX_ATTEMPTS
     # Derive the existing RootAccounting retry envelope from the exact accepted configs.
     totals = dict.fromkeys(("requests", "tokens", "cost_usd", "tool_calls", "agent_runs", "execution_seconds"), 0)
     for config in CONFIGS.values():
@@ -269,7 +269,7 @@ async def recover_owned_submission(client, workflow_id: str, queue: str):
 
 def temporal_case_config(agent: str, inputs: dict):
     """Match the production per-run repository-size budget resolution."""
-    from infosec_harness.agents.durable import CONFIGS
+    from infosec_harness.runtime.durable import CONFIGS
     return CONFIGS[agent].for_source_files(inputs["deps"].source_files)
 
 
@@ -296,9 +296,9 @@ async def run_temporal(manifest: RealProviderManifest, report_path: Path) -> dic
     from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
     from temporalio.client import Client
 
-    from infosec_harness.agents.outputs import InconclusiveOutput, NegativeOutput, PositiveOutput
     from infosec_harness.inference.worker import invocations
     from infosec_harness.qualification.broker.workflow import RealProviderWorkflow
+    from infosec_harness.runtime.outputs import InconclusiveOutput, NegativeOutput, PositiveOutput
     for agent in CASES:
         inputs, _predict, _expected, case_digest = prepare_case(agent, manifest)
         config = temporal_case_config(agent, inputs)

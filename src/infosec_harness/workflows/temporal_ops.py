@@ -15,10 +15,10 @@ from datetime import timedelta
 from pydantic_ai.messages import UserContent
 from temporalio import workflow
 
-from infosec_harness.agents.deps import AgentDeps
 from infosec_harness.domain.models import (
     AgentOutcome,
     BuildResult,
+    CodeRef,
     EnvironmentSpec,
     Finding,
     ProbeExecution,
@@ -27,18 +27,19 @@ from infosec_harness.domain.models import (
     SmokeResult,
     StackFingerprint,
 )
+from infosec_harness.runtime.deps import AgentDeps
 
 with workflow.unsafe.imports_passed_through():
     # Imported here, on the host, so nothing below imports or reads configuration in-workflow.
     import pydantic_ai.usage  # noqa: F401 - used by graph.pipeline.partial_outcome
 
-    import infosec_harness.agents.models  # noqa: F401 - used by graph.pipeline
-    import infosec_harness.agents.stubs  # noqa: F401 - resolved lazily by stub-mode model resolution
-    import infosec_harness.agents.trajectory  # noqa: F401 - used by graph.pipeline
+    import infosec_harness.inference.models  # noqa: F401 - used by graph.pipeline
     import infosec_harness.inference.wire.protocol  # noqa: F401 - used for broker bindings
     import infosec_harness.inference.worker.provenance  # noqa: F401 - used by graph.pipeline
-    from infosec_harness.agents.durable import AGENTS, CONFIGS
+    import infosec_harness.runtime.stubs  # noqa: F401 - resolved lazily by stub-mode model resolution
+    import infosec_harness.runtime.trajectory  # noqa: F401 - used by graph.pipeline
     from infosec_harness.graph.pipeline import run_recorded
+    from infosec_harness.runtime.durable import AGENTS, CONFIGS
     from infosec_harness.workflows import activities
     from infosec_harness.workflows.accounting import RootAccounting
     from infosec_harness.workflows.activity_options import HEARTBEAT, RETRY, SHORT
@@ -49,6 +50,7 @@ with workflow.unsafe.imports_passed_through():
         RecordRecipeArgs,
         ResolveLocationArgs,
         SmokeArgs,
+        ValidateCitationsArgs,
     )
 
 
@@ -75,6 +77,11 @@ class TemporalOps:
     async def resolve_location(self, finding: Finding, repo_path: str) -> Finding | None:
         return await workflow.execute_activity(activities.resolve_location_activity,
             ResolveLocationArgs(finding=finding, repo_path=repo_path), **SHORT)
+
+    async def validate_citations(self, repo_path: str,
+                                 references: list[CodeRef | None]) -> list[CodeRef | None]:
+        return await workflow.execute_activity(activities.validate_citations_activity,
+            ValidateCitationsArgs(repo_path=repo_path, references=references), **SHORT)
 
     async def run_agent(
         self, name: str, prompt: Sequence[UserContent], deps: AgentDeps, *,

@@ -16,8 +16,8 @@ from temporalio.exceptions import ActivityError, ApplicationError
 with workflow.unsafe.imports_passed_through():
     from pydantic_ai.exceptions import UsageLimitExceeded
 
-    from infosec_harness.agents.registry import ACTIVITY_MAX_ATTEMPTS, ResolvedAgentConfig
     from infosec_harness.domain.models import AgentOutcome
+    from infosec_harness.runtime.registry import ACTIVITY_MAX_ATTEMPTS, ResolvedAgentConfig
     from infosec_harness.workflows.activity_options import LEDGER
     from infosec_harness.workflows.payloads import ProgressArgs, ReserveArgs, SettleArgs
     from infosec_harness.workflows.persistence_activities import (

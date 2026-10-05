@@ -11,14 +11,14 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from infosec_harness.agents.budgets import (
+from infosec_harness.resources import agents_dir
+from infosec_harness.runtime.budgets import (
     MissingBudget,
     RunBudget,
     resolve_declared_budget,
     run_budget,
 )
-from infosec_harness.agents.registry import BINDINGS, load_spec, resolved_agent_configs
-from infosec_harness.resources import agents_dir
+from infosec_harness.runtime.registry import BINDINGS, load_spec, resolved_agent_configs
 
 
 def usage_limits_for(name, metadata, *, source_files=None):
@@ -161,8 +161,8 @@ def test_the_output_ceiling_is_not_below_the_runs_arithmetic_worst_case():
     """
     import yaml
 
-    from infosec_harness.agents.models import load_models_config
-    from infosec_harness.agents.registry import spec_path
+    from infosec_harness.inference.models import load_models_config
+    from infosec_harness.runtime.registry import spec_path
 
     floor = max(b.min_max_tokens for b in load_models_config().backends.values())
     for name in BINDINGS:
@@ -181,7 +181,7 @@ def test_raising_a_backends_token_floor_is_caught_by_the_invariant():
     """The floor and the ceilings are coupled; a change to one must not silently break the other."""
     import yaml
 
-    from infosec_harness.agents.registry import spec_path
+    from infosec_harness.runtime.registry import spec_path
 
     spec = yaml.safe_load(spec_path("verdict").read_text())
     budget = spec["metadata"]["budgets"]
@@ -215,7 +215,7 @@ def test_tool_call_ceilings_scale_with_the_request_budget():
     """
     import yaml
 
-    from infosec_harness.agents.registry import spec_path
+    from infosec_harness.runtime.registry import spec_path
 
     for name in BINDINGS:
         spec = yaml.safe_load(spec_path(name).read_text())
@@ -233,7 +233,7 @@ def test_an_agent_with_no_tools_keeps_a_tight_ceiling():
     """verdict exposes no toolset, so a tool call from it is an anomaly worth braking on."""
     import yaml
 
-    from infosec_harness.agents.registry import spec_path
+    from infosec_harness.runtime.registry import spec_path
 
     for name in BINDINGS:
         spec = yaml.safe_load(spec_path(name).read_text())
@@ -264,7 +264,7 @@ def test_an_agent_that_accumulates_tool_results_bounds_its_history():
     """
     import yaml
 
-    from infosec_harness.agents.registry import DEFAULT_CLEAR_TOOL_TOKENS, spec_path
+    from infosec_harness.runtime.registry import DEFAULT_CLEAR_TOOL_TOKENS, spec_path
 
     for name in BINDINGS:
         spec = yaml.safe_load(spec_path(name).read_text())
@@ -295,7 +295,7 @@ def test_an_agent_that_accumulates_tool_results_bounds_its_history():
 def _recon_budget():
     import yaml
 
-    from infosec_harness.agents.budgets import RunBudget
+    from infosec_harness.runtime.budgets import RunBudget
 
     md = yaml.safe_load((agents_dir() / "recon" / "agent.yaml").read_text())
     return RunBudget.model_validate(md["metadata"]["budgets"])
@@ -304,7 +304,7 @@ def _recon_budget():
 def test_a_fixture_sized_or_unknown_repo_keeps_its_declared_budget_exactly():
     """The seeded corpus must behave exactly as before, and an unmeasured repo gets the
     declared ceiling rather than a guessed one."""
-    from infosec_harness.agents.budgets import size_factor
+    from infosec_harness.runtime.budgets import size_factor
 
     budget = _recon_budget()
     for files in (None, 0, 1, 3, 16):
@@ -314,7 +314,7 @@ def test_a_fixture_sized_or_unknown_repo_keeps_its_declared_budget_exactly():
 
 def test_a_real_repository_gets_past_the_ceiling_that_stopped_it():
     """The measurement that motivated this: 12 requests was not enough for ~500 files."""
-    from infosec_harness.agents.budgets import size_factor
+    from infosec_harness.runtime.budgets import size_factor
 
     scaled = _recon_budget().scaled_for(500)
     assert scaled.max_requests > 12, "still capped at the number the live run exhausted"
@@ -324,7 +324,7 @@ def test_a_real_repository_gets_past_the_ceiling_that_stopped_it():
 def test_growth_is_logarithmic_rather_than_linear():
     """Exploration cost grows with the breadth and depth of the tree, not the file count:
     doubling a repository does not double the directories you have to list."""
-    from infosec_harness.agents.budgets import size_factor
+    from infosec_harness.runtime.budgets import size_factor
 
     f64, f500, f4000 = size_factor(64), size_factor(500), size_factor(4000)
     assert f64 < f500 < f4000
@@ -333,7 +333,7 @@ def test_growth_is_logarithmic_rather_than_linear():
 
 
 def test_the_brake_stays_a_brake_however_large_the_repository():
-    from infosec_harness.agents.budgets import MAX_SIZE_FACTOR, size_factor
+    from infosec_harness.runtime.budgets import MAX_SIZE_FACTOR, size_factor
 
     assert size_factor(10**7) == MAX_SIZE_FACTOR
     capped = _recon_budget().scaled_for(10**7)

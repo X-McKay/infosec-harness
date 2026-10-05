@@ -140,7 +140,7 @@ def test_fixed_variant_keeps_every_public_callable_the_vulnerable_one_exposes():
     What it may not do is drop, rename, or re-sign anything public. Reuses the extractors
     behind the `describe_callables` tool, so this asserts what an agent is actually told.
     """
-    from infosec_harness.agents.symbol_inspection import _EXTRACTORS
+    from infosec_harness.tools.symbols import _EXTRACTORS
 
     def public(sigs):
         return {(n, params) for n, params in sigs if not n.split(".")[-1].startswith("_")}

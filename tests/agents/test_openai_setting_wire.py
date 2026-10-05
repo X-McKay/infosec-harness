@@ -12,7 +12,8 @@ from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
-from infosec_harness.agents import models
+from infosec_harness.inference import models
+from infosec_harness.inference.executor.compat import CompatOpenAIChatModel
 
 
 class Output(BaseModel):
@@ -56,7 +57,7 @@ async def request_payload(model_id: str, settings: dict[str, Any], *, production
         provider = OpenAIProvider(openai_client=client)
         if production_adapter:
             backend = models.load_models_config().backends["gateway"]
-            model = models.CompatOpenAIChatModel(
+            model = CompatOpenAIChatModel(
                 model_id,
                 provider=provider,
                 merge_system=backend.merge_system_messages,

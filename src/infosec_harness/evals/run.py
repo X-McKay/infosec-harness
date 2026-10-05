@@ -31,10 +31,6 @@ from pydantic import BaseModel
 from pydantic_ai import capture_run_messages
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
 
-from infosec_harness.agents import models as model_factory
-from infosec_harness.agents import registry
-from infosec_harness.agents.planning_window import planning_window_diagnostic
-from infosec_harness.agents.render import render_intake_prompt, render_prompt
 from infosec_harness.domain.models import ExperimentStatus
 from infosec_harness.evals.adapters import (
     ADAPTERS,
@@ -52,14 +48,16 @@ from infosec_harness.evals.intake_fields import intake_field_summary
 from infosec_harness.evals.metrics import RunPlan, experiment_metrics
 from infosec_harness.evals.output_retries import output_retry_summary
 from infosec_harness.evals.pricing import PricingStatus, pricing_status
-from infosec_harness.evals.probe_execution import evaluate_probe_execution
 from infosec_harness.evals.provenance import CodeVersion, code_version
 from infosec_harness.evals.release_report import report_provenance, write_release_report
 from infosec_harness.evals.trajectory import summarize_calls
+from infosec_harness.inference import models as model_factory
 from infosec_harness.inference.wire.protocol import BrokerError
 from infosec_harness.inference.worker.invocations import eval_invocation
 from infosec_harness.inference.worker.provenance import runtime_evidence
 from infosec_harness.persistence import db
+from infosec_harness.runtime import registry
+from infosec_harness.runtime.render import render_intake_prompt, render_prompt
 from infosec_harness.settings import get_settings
 
 EVALUATOR_VERSION = "deterministic-agent-output-v13"
@@ -273,13 +271,6 @@ async def _score_output(experiment: _Experiment, case: Mapping[str, Any],
         diagnostic["execution_check"] = execution.as_score()
         if execution.status in {"not_checked", "failed"}:
             outcome = f"execution_{execution.status}"
-    probe = await evaluate_probe_execution(experiment.agent, dict(case), output,
-                                           stub=experiment.stub)
-    if probe is not None:
-        # Same-process tracing is useful diagnostic evidence, but candidate code can tamper
-        # with or forge it. It must not change the structural score or satisfy
-        # release-grade execution gates.
-        diagnostic["probe_observation"] = probe.as_score()
     return predicted, outcome, diagnostic
 
 
@@ -322,7 +313,6 @@ async def _run_case(experiment: _Experiment, case: dict, adapted: AdaptedCase,
     prompt = render(adapted.task, adapted.payload)
     config = registry.resolve_agent_config(agent, experiment.spec,
                                            source_files=adapted.deps.source_files, durable=True)
-    metadata = experiment.spec.metadata or {}
     started = time.monotonic()
     usage: dict[str, object] | None = None
     cost: float | None = 0.0 if experiment.cost_known_zero else None
@@ -357,14 +347,9 @@ async def _run_case(experiment: _Experiment, case: dict, adapted: AdaptedCase,
             case, rep, config, outcome="failed", **_observations(experiment, adapted, messages),
             **failure_diagnostic(exc), latency_s=time.monotonic() - started, usage=None,
             usage_status="unknown",
-            planning_window=planning_window_diagnostic(
-                metadata, config.budget.effective.max_requests, None),
             cost_usd=cost, cost_status="known_zero" if cost == 0.0 else "unknown",
         ))
         raise
-    diagnostic["planning_window"] = planning_window_diagnostic(
-        metadata, config.budget.effective.max_requests,
-        usage["requests"] if usage is not None else None)
     if config.model.broker_contract is not None:
         diagnostic["inference_runtime"] = runtime_evidence(messages)
     diagnostic.update(_observations(experiment, adapted, messages))

@@ -222,7 +222,7 @@ async def test_accepted_agent_configuration_cannot_change_on_worker_restart():
 
 
 def test_temporal_ops_never_loads_configuration_during_workflow_execution(monkeypatch):
-    from infosec_harness.agents import registry
+    from infosec_harness.runtime import registry
     from infosec_harness.workflows.temporal_ops import TemporalOps
     def forbidden():
         raise AssertionError('Workflow attempted configuration I/O')

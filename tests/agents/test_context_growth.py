@@ -30,9 +30,6 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.compaction import estimate_token_count
 
-from infosec_harness.agents.deps import AgentDeps
-from infosec_harness.agents.registry import DEFAULT_CLEAR_TOOL_TOKENS, build_agent
-from infosec_harness.agents.render import prompt_text, render_prompt
 from infosec_harness.domain.models import (
     AgentOutcome,
     DiagnosisKind,
@@ -50,7 +47,10 @@ from infosec_harness.domain.models import (
     RepoSnapshot,
     StackFingerprint,
 )
-from infosec_harness.graph.triage import TRIAGE_GRAPH, PreFilter, TriageDeps, TriageState
+from infosec_harness.graph.triage import TRIAGE_GRAPH, GatherContext, TriageDeps, TriageState
+from infosec_harness.runtime.deps import AgentDeps
+from infosec_harness.runtime.registry import DEFAULT_CLEAR_TOOL_TOKENS, build_agent
+from infosec_harness.runtime.render import prompt_text, render_prompt
 
 # --- 1. The repair loop does not carry earlier iterations forward -------------------------
 
@@ -66,6 +66,11 @@ class _RecordingOps:
         self.repo = repo
         self.prompts: list[tuple[str, str]] = []
         self.repairs = 0
+
+    async def validate_citations(self, repo_path, references):
+        from infosec_harness.repo.access import validate_citations
+
+        return validate_citations(repo_path, references)
 
     async def run_agent(self, name: str, prompt, deps: AgentDeps, *,
                         record: list[AgentOutcome] | None = None) -> AgentOutcome:
@@ -137,7 +142,7 @@ async def _repair_prompts() -> list[str]:
     finding = Finding(fingerprint="f" * 16, title="SQLi", repo_url=repo, revision="HEAD",
                       cwe="CWE-89", source_kind=FindingSourceKind.generic_json)
     state = TriageState(finding=finding, prepared=_prepared(repo))
-    await TRIAGE_GRAPH.run(state=state, deps=TriageDeps(ops=ops), inputs=PreFilter())
+    await TRIAGE_GRAPH.run(state=state, deps=TriageDeps(ops=ops), inputs=GatherContext())
     return [text for name, text in ops.prompts if name == "probe-repair"]
 
 

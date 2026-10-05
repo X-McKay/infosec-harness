@@ -11,8 +11,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from infosec_harness.agents.deps import AgentDeps
-from infosec_harness.agents.render import render_prompt
 from infosec_harness.domain.models import (
     BuildResult,
     EnvironmentSpec,
@@ -25,6 +23,8 @@ from infosec_harness.domain.models import (
 )
 from infosec_harness.graph.ops import AgentOutcome, Ops
 from infosec_harness.repo.components import component_stack, owning_component
+from infosec_harness.runtime.deps import AgentDeps
+from infosec_harness.runtime.render import render_prompt
 from infosec_harness.settings import get_settings
 
 

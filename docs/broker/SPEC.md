@@ -18,8 +18,8 @@ The source review used checkout HEAD `1fdef7d7d20485346cdb9a59d0b49fc38ee196a3` 
 
 Current integration points are:
 
-- `src/infosec_harness/agents/models.py`: backend configuration, effective model identity, provider construction, and transport retries. OpenAI-compatible clients read API keys on the worker; Bedrock uses the AWS credential chain.
-- `src/infosec_harness/agents/registry.py`: model resolution and PydanticAI Temporal model activities. Production and eval transport contracts already distinguish durability from retry selection.
+- `src/infosec_harness/inference/models.py`: backend configuration, effective model identity, provider construction, and transport retries. OpenAI-compatible clients read API keys on the worker; Bedrock uses the AWS credential chain.
+- `src/infosec_harness/runtime/registry.py`: model resolution and PydanticAI Temporal model activities. Production and eval transport contracts already distinguish durability from retry selection.
 - `src/infosec_harness/repo/checkout.py`: Git subprocesses run with a minimal environment (no ambient credentials, SSH agent, askpass, global or system configuration) and HTTPS-only transport. At the original review they inherited the worker environment.
 - `src/infosec_harness/sandbox/docker.py` and `deploy/squid-allowlist.conf`: gVisor execution and build egress through a destination allowlist. Probe execution disables networking.
 - `src/infosec_harness/graph/manifests.py`: environment provenance omits credential values.
@@ -292,7 +292,7 @@ Bedrock adoption requires live SigV4 re-signing, temporary-role scope, credentia
 | Acceptance | Run deterministic, live security, provider, parity, and recovery gates; publish evidence with per-gate status |
 | Extensions | Specify and accept HTTPS checkout, registry builds, and Bedrock individually against their additional boundaries |
 
-Expected code areas include `agents/models.py`, a new inference transport/executor package under `src/infosec_harness/`, activity integration in `agents/registry.py`, model provenance and persistence, setup scripts, and deployment configuration. Exact module names are implementation choices. Build and probe modules MUST not be refactored merely to introduce the model transport.
+Expected code areas include `inference/models.py`, a new inference transport/executor package under `src/infosec_harness/`, activity integration in `runtime/registry.py`, model provenance and persistence, setup scripts, and deployment configuration. Exact module names are implementation choices. Build and probe modules MUST not be refactored merely to introduce the model transport.
 
 ## Acceptance cases and evidence
 

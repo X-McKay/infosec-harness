@@ -1,7 +1,7 @@
 # Tool policy for the repo-read-only toolset (agent-playbook §5): path-confined, read-only
 # access to the repository snapshot under triage (customer source, including the unfixed
-# vulnerability). Implemented in agents/repo_tools.py, symbol_inspection.py and
-# target_context.py; assembled and bounded in agents/capabilities.py.
+# vulnerability). Implemented in tools/repository.py, symbol_inspection.py and
+# target_context.py; assembled and bounded in runtime/capabilities.py.
 #
 # Constraints held in code, not by this file: the snapshot root is the only reachable path
 # (traversal above it is rejected); no tool writes, deletes, moves or changes metadata; snapshot
@@ -14,7 +14,7 @@ effect: read
 retry_safety: safe
 # Applied to every call by the toolset; a call that overruns returns a retry prompt.
 timeout_seconds: 30
-# Every result is clipped to this. Each tool also has its own tighter cap (agents/repo_tools.py:
+# Every result is clipped to this. Each tool also has its own tighter cap (tools/repository.py:
 # MAX_BATCH_BYTES=80000, MAX_TREE_BYTES=40000, MAX_DIGEST_BYTES=110000; symbol_inspection.py:
 # MAX_DESCRIBE_BYTES=100000; target_context.py: 48000); tests/agents/test_tool_policies.py
 # asserts this covers the largest.

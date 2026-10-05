@@ -11,6 +11,7 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserProm
 from pydantic_ai.models import ModelRequestParameters
 from test_openshell_controller import controller_fixture
 
+from infosec_harness.inference.catalog.profiles import ControllerChannel
 from infosec_harness.inference.controller.service import Completion
 from infosec_harness.inference.wire.codec import encode_response
 from infosec_harness.inference.wire.protocol import (
@@ -58,8 +59,8 @@ def setup_boundary(tmp_path, monkeypatch, *, saved, detached=False):
         except BrokerError as error:
             return httpx.Response(409, content=canonical_bytes({'error': error.code}))
     monkeypatch.setenv('BROKER_FAKE_ACK_KEY', 'a' * 32)
-    model = BrokerModel(contract=template.contract, binding=binding, controller_url='https://controller.test',
-        secret_env='BROKER_FAKE_ACK_KEY', ca_file=None, client_cert=None, client_key=None,
+    model = BrokerModel(contract=template.contract, binding=binding, controller=ControllerChannel(url='https://controller.test', hmac_env='BROKER_FAKE_ACK_KEY',
+            ca_file=None, client_cert=None, client_key=None),
         request_identity=lambda: 'stable-model-activity', http_transport=httpx.MockTransport(handler))
     model._qualification_server_tasks = server_tasks
     return core, model, started, release, dispatched, bodies, events, rows

@@ -10,7 +10,7 @@ import re
 from collections.abc import Mapping
 from typing import Any, NamedTuple
 
-from infosec_harness.agents.intake_claims import AtomicFinding
+from infosec_harness.intake.claims import AtomicFinding
 
 INTAKE_EVIDENCE_POLICY_VERSION = "intake-evidence/v1"
 EXTRACTED_FIELDS = frozenset(AtomicFinding.model_fields)

@@ -26,7 +26,6 @@ from typing import Any
 from pydantic import BaseModel
 from pydantic_ai.messages import CachePoint, UserContent
 
-from infosec_harness.agents.intake_claims import report_source_lines
 from infosec_harness.domain.models import (
     BuildResult,
     ProbeExecution,
@@ -34,6 +33,7 @@ from infosec_harness.domain.models import (
     RepoSnapshot,
     StackFingerprint,
 )
+from infosec_harness.intake.claims import report_source_lines
 
 # Per-model fields that must never reach a prompt: they differ between otherwise-identical runs
 # (or would leak the worker's filesystem layout) and carry nothing an agent can reason with.

@@ -12,10 +12,10 @@ from pydantic import ValidationError
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from infosec_harness.agents.deps import AgentDeps
-from infosec_harness.agents.registry import build_agent
 from infosec_harness.domain.models import RepoProfile
 from infosec_harness.evals.adapters import recon_adapter
+from infosec_harness.runtime.deps import AgentDeps
+from infosec_harness.runtime.registry import build_agent
 
 
 def _profile(language: str, framework: str) -> dict[str, Any]:

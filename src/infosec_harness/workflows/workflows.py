@@ -21,8 +21,6 @@ from temporalio import workflow
 from temporalio.exceptions import ApplicationError, is_cancelled_exception
 
 with workflow.unsafe.imports_passed_through():
-    from infosec_harness.agents.durable import AGENT_LIST
-    from infosec_harness.agents.registry import EXECUTION_GENERATION
     from infosec_harness.domain.models import (
         BatchStatus,
         Finding,
@@ -48,6 +46,8 @@ with workflow.unsafe.imports_passed_through():
         warm_then_fan_out,
     )
     from infosec_harness.graph.prepare import PrepareFailed, run_prepare
+    from infosec_harness.runtime.durable import AGENT_LIST
+    from infosec_harness.runtime.registry import EXECUTION_GENERATION
     from infosec_harness.workflows import activities
     from infosec_harness.workflows.activity_options import CHECKOUT, SHORT, TERMINAL
     from infosec_harness.workflows.payloads import (

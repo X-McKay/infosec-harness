@@ -13,7 +13,7 @@ from pydantic_ai.tools import ToolDefinition
 from test_broker_executor import request_fixture
 from test_broker_profiles import _config, backend
 
-from infosec_harness.agents import models
+from infosec_harness.inference import models
 from infosec_harness.inference.catalog.profiles import BrokerConfig, ExecutorProfile
 from infosec_harness.inference.executor.rendering import input_wire
 from infosec_harness.inference.executor.service import OpenAIInference

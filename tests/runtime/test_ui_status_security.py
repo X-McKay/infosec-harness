@@ -9,11 +9,11 @@ import httpx
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from infosec_harness.agents.registry import BINDINGS
 from infosec_harness.api import broker_observation, evidence_io, status
 from infosec_harness.api.evidence_io import read_bytes
 from infosec_harness.persistence import db
 from infosec_harness.persistence.run_telemetry import RunTelemetry
+from infosec_harness.runtime.registry import BINDINGS
 
 
 def safe(value):

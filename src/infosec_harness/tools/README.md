@@ -6,11 +6,10 @@ One directory per toolset, each declaring the contract the tool standard
 `retry_safety`, `timeout_seconds`, `max_output_bytes` and `tools` (each `{name, effect}`).
 Unknown keys are rejected, so a field cannot be declared without an enforcer.
 
-`../agents/capabilities.py` applies the timeout and output bound to every call:
+`../runtime/capabilities.py` applies the timeout and output bound to every call:
 `repo-read-only` has a 30 s timeout and a 120000-byte result bound, and `sandbox-shell` a 180 s
 command deadline and an 8000-byte result. Tool implementations live in
-`../agents/capabilities.py`, `../agents/repo_tools.py`, `../agents/symbol_inspection.py` and
-`../agents/target_context.py`; runner policy enforcement lives in `../sandbox/`.
+`../runtime/capabilities.py`, `repository.py`, `symbols.py` and `target.py`; runner policy enforcement lives in `../sandbox/`.
 
 `tool.yaml` is loaded and checked by `infosec_harness.tools.policies`, and
 `tests/agents/test_tool_policies.py` asserts the declared effects are consistent with each agent's

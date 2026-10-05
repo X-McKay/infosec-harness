@@ -47,10 +47,10 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.compaction import estimate_token_count
 
-from infosec_harness.agents.deps import AgentDeps
-from infosec_harness.agents.registry import build_agent
-from infosec_harness.agents.render import render_prompt
 from infosec_harness.domain.models import StackFingerprint
+from infosec_harness.runtime.deps import AgentDeps
+from infosec_harness.runtime.registry import build_agent
+from infosec_harness.runtime.render import render_prompt
 
 # --- the synthetic repository ---------------------------------------------------------------
 #

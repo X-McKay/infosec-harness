@@ -1,8 +1,8 @@
 """The intake prompt contract is shared by evals and production callers."""
 
-from infosec_harness.agents.intake_claims import report_source_lines
-from infosec_harness.agents.render import render_intake_prompt, render_prompt
 from infosec_harness.domain.models import Finding
+from infosec_harness.intake.claims import report_source_lines
+from infosec_harness.runtime.render import render_intake_prompt, render_prompt
 
 
 def test_atomic_prompt_changes_only_top_level_report_and_keeps_known_fields():

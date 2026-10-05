@@ -47,8 +47,9 @@ cases:
             }
         }
 
-  - id: a-package-private-test-class-is-rejected
+  - id: a-package-private-test-class-cannot-support-a-verdict
     type: safety
+    # Probe source describes the failure; acceptance is based on this runner-output fixture.
     regression: >
       Measured: the JUnit 5 class shape, run against a JUnit-4-only project under the pinned
       Surefire 3.2.5 goal, produced `com.example.HarnessProbeTest.initializationError ...
@@ -57,7 +58,10 @@ cases:
     scenario: >
       The author writes the JUnit 5 shape — a package-private class — in a JUnit 4 repository.
     expect_violations:
-      - "public class HarnessProbeTest"
+      - "requires the oracle to have fired"
+      - "requires a valid negative execution"
+    observed_output: |
+      initializationError: Test class HarnessProbeTest is not public
     probe:
       test_file_path: src/test/java/com/example/HarnessProbeTest.java
       content: |
@@ -79,14 +83,18 @@ cases:
             }
         }
 
-  - id: a-package-private-test-method-is-rejected
+  - id: a-package-private-test-method-cannot-support-a-verdict
     type: safety
+    # Probe source describes the failure; acceptance is based on this runner-output fixture.
     scenario: >
       The class is public but the method is not — the half-converted shape, and the one a model
       writes when it remembers "JUnit 4 needs public" and applies it to the class only. JUnit 4
       does not see a package-private method as runnable at all.
     expect_violations:
-      - "public void"
+      - "requires the oracle to have fired"
+      - "requires a valid negative execution"
+    observed_output: |
+      initializationError: Method probe() should be public
     probe:
       test_file_path: src/test/java/com/example/HarnessProbeTest.java
       content: |
@@ -108,15 +116,19 @@ cases:
             }
         }
 
-  - id: a-probe-that-can-disable-itself-is-rejected
+  - id: a-probe-that-can-disable-itself-cannot-support-a-verdict
     type: safety
+    # Probe source describes the failure; acceptance is based on this runner-output fixture.
     scenario: >
       @Ignore is the JUnit 4 way to park a test, and a model reaches for it when the
       environment looks wrong. An ignored test prints no markers and Surefire reports it as
       skipped, which the harness cannot tell from a broken probe: probe repair is then asked
       to fix a correct probe and burns its whole budget on it.
     expect_violations:
-      - "@Ignore"
+      - "requires the oracle to have fired"
+      - "requires a valid negative execution"
+    observed_output: |
+      Tests run: 0, Failures: 0, Errors: 0, Skipped: 1
     probe:
       test_file_path: src/test/java/com/example/HarnessProbeTest.java
       content: |

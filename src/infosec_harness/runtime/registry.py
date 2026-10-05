@@ -20,7 +20,7 @@ from typing import Any
 from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.agent.spec import AgentSpec, CapabilitySpec
-from pydantic_ai.capabilities import PrepareOutputTools, PrepareTools, ResolveModelId
+from pydantic_ai.capabilities import PrepareOutputTools, ResolveModelId
 from pydantic_ai.durable_exec.temporal import TemporalDurability
 from pydantic_ai_harness.compaction import ClearToolResults
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
@@ -29,47 +29,6 @@ from pydantic_ai_harness.warn_on_cache_busts import WarnOnCacheBusts
 from temporalio.common import RetryPolicy
 from temporalio.workflow import ActivityConfig
 
-from infosec_harness.agents import governance
-from infosec_harness.agents import models as model_factory
-from infosec_harness.agents.budgets import (
-    BudgetResolution,
-    resolve_declared_budget,
-    run_budget,
-)
-from infosec_harness.agents.capabilities import CUSTOM_CAPABILITIES
-from infosec_harness.agents.deps import AgentDeps
-from infosec_harness.agents.governance import GovernanceError, assert_governed
-from infosec_harness.agents.intake_claims import (
-    WIRE_VERSION,
-    AtomicFinding,
-    ReferenceError,
-    reconstruct,
-)
-from infosec_harness.agents.intake_evidence import (
-    INTAKE_EVIDENCE_POLICY_VERSION,
-    LITERAL_LINE_MISSING,
-    LITERAL_LOCATION_MISSING,
-    POSITIVE_SUPPORT_MISSING,
-    evidence_retry_message,
-    extraction_evidence_diagnostics,
-)
-from infosec_harness.agents.outputs import (
-    VERDICT_OUTPUTS,
-    ContextOutput,
-    PartialEnvironmentOutput,
-    PlannedEnvironmentOutput,
-    prepare_verdict_tools,
-    verdict_contract_instructions,
-)
-from infosec_harness.agents.planning_window import PlanningWindow, PlanningWindowTelemetry
-from infosec_harness.agents.validators import (
-    OutputValidator,
-    bind_install_source_validator,
-    validate_environment_spec,
-    validate_partial_build_scope,
-    validate_probe,
-    validate_verdict,
-)
 from infosec_harness.domain.canonical import digest as canonical_digest
 from infosec_harness.domain.models import (
     EnvironmentSpec,
@@ -81,8 +40,49 @@ from infosec_harness.domain.models import (
     RepoProfile,
     Verdict,
 )
+from infosec_harness.inference import models as model_factory
+from infosec_harness.intake.claims import (
+    WIRE_VERSION,
+    AtomicFinding,
+    ReferenceError,
+    reconstruct,
+)
+from infosec_harness.intake.evidence import (
+    INTAKE_EVIDENCE_POLICY_VERSION,
+    LITERAL_LINE_MISSING,
+    LITERAL_LOCATION_MISSING,
+    POSITIVE_SUPPORT_MISSING,
+    evidence_retry_message,
+    extraction_evidence_diagnostics,
+)
 from infosec_harness.resources import package_root
+from infosec_harness.runtime import governance
+from infosec_harness.runtime.budgets import (
+    BudgetResolution,
+    resolve_declared_budget,
+    run_budget,
+)
+from infosec_harness.runtime.capabilities import CUSTOM_CAPABILITIES
+from infosec_harness.runtime.deps import AgentDeps
+from infosec_harness.runtime.governance import GovernanceError, assert_governed
+from infosec_harness.runtime.outputs import (
+    VERDICT_OUTPUTS,
+    ContextOutput,
+    PartialEnvironmentOutput,
+    PlannedEnvironmentOutput,
+    prepare_verdict_tools,
+    verdict_contract_instructions,
+)
+from infosec_harness.runtime.validators import (
+    OutputValidator,
+    bind_environment_spec_validator,
+    bind_install_source_validator,
+    validate_partial_build_scope,
+    validate_probe,
+    validate_verdict,
+)
 from infosec_harness.sandbox.install_sources import install_source_policy
+from infosec_harness.sandbox.profiles import ADAPTER_CONTRACT_VERSION
 from infosec_harness.settings import get_settings
 
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
@@ -308,7 +308,7 @@ def resolve_agent_config(
 ) -> ResolvedAgentConfig:
     """Resolve the same effective settings and limits an invocation will receive."""
     binding = binding_for(name)
-    effective = _apply_backend_token_floor(name, spec)
+    effective = _apply_backend_token_floor(spec)
     model = model_factory.resolve_config(
         name,
         _spec_tier(name, effective),
@@ -364,22 +364,11 @@ def _absolutize_skill_dirs(spec: AgentSpec) -> AgentSpec:
     return spec.model_copy(update={"capabilities": [absolute(c) for c in spec.capabilities]})
 
 
-def _apply_backend_token_floor(name: str, spec: AgentSpec) -> AgentSpec:
-    """Raise the spec's per-call ``max_tokens`` to the serving backend's floor.
-
-    The backend-level half of this lives in ``CompatOpenAIChatModel.prepare_request``, which
-    raises the cap on the outgoing payload. That is not enough on its own: pydantic-ai copies
-    ``model_settings['max_tokens']`` into ``GraphAgentState.last_max_tokens`` when it builds
-    the request, *before* the model's ``prepare_request`` runs, and that copy is the number
-    reported by "Model token limit (N) exceeded before any response was generated". Applying
-    the floor here as well keeps the two in agreement, so a diagnostic names the cap that was
-    actually sent instead of the spec value that was superseded.
-
-    A zero floor (Bedrock, where thinking has its own budget) is a no-op, so this changes
-    nothing for the default backend. See :func:`models.max_tokens_floor`.
-    """
+def _apply_backend_token_floor(spec: AgentSpec) -> AgentSpec:
+    """Keep PydanticAI's recorded cap equal to the provider adapter's output-token floor."""
+    config = model_factory.load_models_config()
     floored = model_factory.apply_max_tokens_floor(
-        dict(spec.model_settings or {}), model_factory.max_tokens_floor(name)
+        dict(spec.model_settings or {}), config.backends[config.selected_backend()].min_max_tokens
     )
     if floored == (spec.model_settings or {}):
         return spec
@@ -469,11 +458,14 @@ def _install_source_validator(config: ResolvedAgentConfig) -> OutputValidator:
     return bind_install_source_validator(tuple(policy["approved_hosts"]))
 
 
-def _planning_window(spec: AgentSpec) -> list[Any]:
-    planning = PlanningWindow.from_metadata(spec.metadata or {})
-    if planning is None:
-        raise ValueError("Build repair requires its frozen planning window")
-    return [PrepareTools(planning.prepare_tools), PlanningWindowTelemetry(planning)]
+def _environment_spec_validator(config: ResolvedAgentConfig) -> OutputValidator:
+    policy = config.effective_spec["metadata"]["output_validation"]
+    return bind_environment_spec_validator(tuple(policy["allowed_base_registries"]))
+
+
+def _environment_policy() -> dict[str, Any]:
+    return {"adapter_contract": ADAPTER_CONTRACT_VERSION,
+            "allowed_base_registries": list(get_settings().allowed_base_registries)}
 
 
 def _intake_output_validation() -> dict[str, str]:
@@ -482,7 +474,8 @@ def _intake_output_validation() -> dict[str, str]:
 
 def _install_source_policy() -> dict[str, Any]:
     # Operator configuration is resolved on the host, never from repository content.
-    return install_source_policy(get_settings().default_registry_allowlist)
+    return {**install_source_policy(get_settings().default_registry_allowlist),
+            **_environment_policy()}
 
 
 @dataclass(frozen=True)
@@ -516,14 +509,17 @@ BINDINGS: dict[str, AgentBinding] = {
     "recon": AgentBinding(RepoProfile),
     "env-planner": AgentBinding(
         EnvironmentSpec, output_type=PlannedEnvironmentOutput,
-        validators=(validate_environment_spec,)),
+        config_validators=(_environment_spec_validator,),
+        output_validation=_environment_policy),
     "build-repair": AgentBinding(
-        EnvironmentSpec, validators=(validate_environment_spec,),
-        config_validators=(_install_source_validator,), capabilities=_planning_window,
+        EnvironmentSpec,
+        config_validators=(_install_source_validator, _environment_spec_validator),
         output_validation=_install_source_policy),
     "partial-build": AgentBinding(
         EnvironmentSpec, output_type=PartialEnvironmentOutput,
-        validators=(validate_environment_spec, validate_partial_build_scope)),
+        validators=(validate_partial_build_scope,),
+        config_validators=(_environment_spec_validator,),
+        output_validation=_environment_policy),
     "context": AgentBinding(FindingContext, output_type=ContextOutput),
     "probe-planner": AgentBinding(ProbePlan),
     "probe-author": AgentBinding(ProbeSource, validators=(validate_probe,)),
@@ -538,7 +534,7 @@ BINDINGS: dict[str, AgentBinding] = {
 # Temporal derives model/tool activity identities from the agent's name. Bumping this retires
 # every recorded activity identity at once: histories from an earlier generation are not
 # replayable by design and must be retried as new workflows.
-EXECUTION_GENERATION = "v7"
+EXECUTION_GENERATION = "v8"
 
 
 def binding_for(name: str) -> AgentBinding:
@@ -639,7 +635,7 @@ def build_agent(
     spec = load_spec(name, overlay)
     _assert_spec_governed(name, spec, binding, overlay=overlay is not None)
     transport = durable if production_transport is None else production_transport
-    runnable = _absolutize_skill_dirs(_apply_backend_token_floor(name, spec))
+    runnable = _absolutize_skill_dirs(_apply_backend_token_floor(spec))
     agent = Agent.from_spec(
         runnable,
         deps_type=AgentDeps,

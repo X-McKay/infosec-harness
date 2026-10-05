@@ -20,12 +20,13 @@ from pydantic_ai.models import Model
 
 from infosec_harness.domain.canonical import canonical_bytes, sha256_hex
 from infosec_harness.inference.executor.compat import (
-    CompatOpenAIChatModel,
     apply_max_tokens_floor,
+    openai_model,
 )
 from infosec_harness.inference.wire.protocol import (
     BrokerError,
     ExecutorContract,
+    ProviderAdaptation,
     ReservationBinding,
     validate_thinking_token_budget,
 )
@@ -33,7 +34,7 @@ from infosec_harness.settings import get_settings
 
 # Imported eagerly, not at resolution time: model resolution runs inside Temporal workflows,
 # where a first import would be re-executed in the sandbox rather than passed through.
-from infosec_harness.agents import stubs  # noqa: E402  isort: skip
+from infosec_harness.runtime import stubs  # noqa: E402  isort: skip
 
 
 class Prices(BaseModel):
@@ -43,12 +44,10 @@ class Prices(BaseModel):
     cache_write_per_mtok: float | None = None
 
 
-class BackendConfig(BaseModel):
+class BackendConfig(ProviderAdaptation):
+    model_config = {"extra": "forbid"}
+
     transport: Literal["direct", "brokered"] = "direct"
-    strict_closed_output_tools: bool = Field(default=False, strict=True, exclude_if=lambda value: value is False)
-    enable_thinking: bool | None = Field(default=None, strict=True, exclude_if=lambda value: value is None)
-    thinking_token_budget: int | None = Field(
-        default=None, gt=0, strict=True, exclude_if=lambda value: value is None)
     kind: Literal["bedrock", "openai_compatible"]
     region: str | None = None
     aws_profile: str | None = None
@@ -58,11 +57,11 @@ class BackendConfig(BaseModel):
     # A self-hosted endpoint can drop requests under load (502 upstream_unreachable). The
     # OpenAI client's default of 2 retries is not enough to ride that out, and without
     # Temporal (e.g. `harness eval corpus`) one 502 kills a whole batch.
-    max_retries: int = 6
+    max_retries: int = Field(default=6, ge=0)
     # Under Temporal the activity layer owns transient infrastructure retries, so provider
     # transport retries are minimized rather than stacked on top of them (agent-playbook
     # §6). See registry.ACTIVITY_RETRY for the combined bound this participates in.
-    max_retries_under_temporal: int = 1
+    max_retries_under_temporal: int = Field(default=1, ge=0)
     # Many self-hosted OpenAI-spec servers (vLLM/TGI with a single-system chat template)
     # reject a request carrying more than one system message. pydantic-ai emits one per
     # instruction block, and the Skills capability adds its own, so every skill-bearing
@@ -75,11 +74,10 @@ class BackendConfig(BaseModel):
     # exhausted by reasoning and the run dies with "token limit exceeded before any
     # response was generated". This raises the floor for one backend without touching the
     # specs — set it to 0 to disable.
-    min_max_tokens: int = 0
+    min_max_tokens: int = Field(default=0, ge=0)
 
     @model_validator(mode="after")
     def broker_has_no_direct_credentials(self):
-        validate_thinking_token_budget(self.thinking_token_budget, self.enable_thinking)
         if (self.enable_thinking is not None or self.thinking_token_budget is not None) and self.kind != "openai_compatible":
             raise ValueError("Thinking control requires an OpenAI-compatible backend")
         if self.strict_closed_output_tools and self.kind != "openai_compatible":
@@ -90,7 +88,7 @@ class BackendConfig(BaseModel):
         return self
 
 
-class CapabilityProfile(BaseModel):
+class CapabilityProfile(ProviderAdaptation):
     """Provider behavior which changes how an otherwise identical agent is invoked."""
 
     model_config = {"frozen": True}
@@ -99,21 +97,11 @@ class CapabilityProfile(BaseModel):
     # both supported backends. Recording "native" here would claim a JSON-schema response
     # format that these agents do not request.
     structured_output: Literal["native", "tool"] = "tool"
-    strict_closed_output_tools: bool = Field(default=False, strict=True, exclude_if=lambda value: value is False)
-    enable_thinking: bool | None = Field(default=None, strict=True, exclude_if=lambda value: value is None)
-    thinking_token_budget: int | None = Field(
-        default=None, gt=0, strict=True, exclude_if=lambda value: value is None)
     tool_calling: bool = True
     message_layout: Literal["native", "single_system"] = "native"
     reasoning_accounting: Literal["separate", "inside_output", "unknown"] = "unknown"
     usage_reporting: Literal["observed", "unavailable"] = "observed"
     prompt_caching: Literal["observed", "provider_managed", "unsupported"] = "provider_managed"
-
-
-    @model_validator(mode="after")
-    def thinking_budget_is_consistent(self):
-        validate_thinking_token_budget(self.thinking_token_budget, self.enable_thinking)
-        return self
 
 
 class ResolvedModelConfig(BaseModel):
@@ -205,46 +193,6 @@ def require_endpoint(backend_name: str, backend: BackendConfig) -> None:
             "give the backend a base_url in the model catalogue (HARNESS_MODELS_CONFIG)")
 
 
-def max_tokens_floor(agent_name: str | None = None) -> int:
-    """The per-call output floor required by the backend that will serve ``agent_name``.
-
-    The floor has to be applied in *two* places, and applying it only in the model is a bug
-    that shows up as an error message naming a cap that was never sent:
-
-    * the outgoing payload, so the endpoint actually gets the larger cap
-      (:meth:`CompatOpenAIChatModel.prepare_request`), and
-    * the agent's own ``model_settings``, because pydantic-ai records
-      ``model_settings['max_tokens']`` into ``GraphAgentState.last_max_tokens`` *before* it
-      calls ``Model.prepare_request`` (``_agent_graph.py``), and that recorded number is what
-      "Model token limit (N) exceeded before any response was generated" reports. With the
-      floor applied only to the payload, a run that burned the real 16000-token cap was
-      reported as having exceeded 6000.
-
-    ``Model.settings`` cannot carry the floor either: pydantic-ai merges it as the *base*
-    under the agent's settings, so a small per-agent ``max_tokens`` overrides it. See
-    ``registry._apply_backend_token_floor`` for the agent-side half.
-    """
-    cfg = load_models_config()
-    return cfg.backends[cfg.selected_backend()].min_max_tokens
-
-
-def _stub_config(agent_name: str, tier: str, requested: dict[str, Any], durable: bool
-                 ) -> ResolvedModelConfig:
-    return ResolvedModelConfig(
-        mode="stub",
-        backend_name="stub",
-        backend_kind="stub",
-        requested_model=tier,
-        resolved_model=f"stub:{agent_name}:{tier}",
-        requested_settings=requested,
-        effective_settings=requested,
-        capability_profile=CapabilityProfile(prompt_caching="unsupported"),
-        durable=durable,
-        pricing_table="stub-known-zero",
-        pricing_status="known_zero",
-    )
-
-
 def resolve_config(
     agent_name: str,
     tier: str,
@@ -256,7 +204,13 @@ def resolve_config(
     """Resolve the secret-free effective model contract without constructing a client."""
     requested = dict(model_settings or {})
     if get_settings().model_mode == "stub":
-        return _stub_config(agent_name, tier, requested, durable)
+        return ResolvedModelConfig(
+            mode="stub", backend_name="stub", backend_kind="stub",
+            requested_model=tier, resolved_model=f"stub:{agent_name}:{tier}",
+            requested_settings=requested, effective_settings=requested,
+            capability_profile=CapabilityProfile(prompt_caching="unsupported"),
+            durable=durable, pricing_table="stub-known-zero", pricing_status="known_zero",
+        )
 
     cfg = load_models_config()
     backend_name = cfg.selected_backend()
@@ -342,21 +296,7 @@ def _build_live(backend_name: str, model_id: str, durable: bool = False,
     retries = backend.max_retries_under_temporal if durable else backend.max_retries
     client = AsyncOpenAI(base_url=backend.base_url, api_key=api_key, max_retries=retries)
     provider = OpenAIProvider(openai_client=client)
-    extra: dict[str, Any] = {}
-    if atomic_intake:
-        from infosec_harness.agents.intake_schema import intake_openai_profile
-
-        extra["profile"] = intake_openai_profile(OpenAIProvider.model_profile(model_id))
-    return CompatOpenAIChatModel(
-        model_id,
-        provider=provider,
-        merge_system=backend.merge_system_messages,
-        min_max_tokens=backend.min_max_tokens,
-        strict_closed_output_tools=backend.strict_closed_output_tools,
-        enable_thinking=backend.enable_thinking,
-        thinking_token_budget=backend.thinking_token_budget,
-        **extra,
-    )
+    return openai_model(model_id, provider, backend, atomic_intake=atomic_intake)
 
 
 def resolve(agent_name: str, tier: str, *, durable: bool = False, atomic_intake: bool = False,
@@ -387,21 +327,6 @@ def _backend_and_bare_model(model_name: str) -> tuple[str, str]:
     if sep and prefix in cfg.backends:
         return prefix, rest
     return cfg.selected_backend(), model_name
-
-
-def strip_backend_prefix(model_name: str) -> str:
-    """Drop a leading ``<backend>:`` from a recorded model name.
-
-    :func:`resolve_config` records ``"gateway:Qwen3.6-35B-A3B-NVFP4"`` so a run is
-    attributable to the backend that served it, but every price table — genai-prices and the
-    configured fallbacks alike — is keyed on the bare model id. Looking a prefixed name up
-    silently found nothing, so *all* configured prices were dead and cost came back None for
-    any model genai-prices does not know, which is precisely the case they exist to cover.
-
-    Only a known backend name is stripped, so a model id that legitimately contains a colon
-    (``qwen3.5:9b``) is left alone.
-    """
-    return _backend_and_bare_model(model_name)[1]
 
 
 def _content_digest(value: bytes) -> str:
@@ -437,7 +362,7 @@ def pricing_table_identity(backend_name: str) -> str:
 def _genai_price_ref(model_name: str) -> tuple[str, str | None]:
     """(model_ref, provider_id) for genai-prices: the bare id, with Bedrock's ``anthropic.`` and
     cross-region (``us.``/``eu.``/``global.``/``apac.``) prefixes mapped to the Anthropic id."""
-    name = strip_backend_prefix(model_name)
+    name = _backend_and_bare_model(model_name)[1]
     for prefix in ("anthropic.", "us.anthropic.", "eu.anthropic.", "global.anthropic.",
                    "apac.anthropic."):
         if name.startswith(prefix):
@@ -484,8 +409,8 @@ def estimate_cost(model_name: str, usage: Any) -> tuple[float | None, bool]:
         uncached = usage.input_tokens - (usage.cache_read_tokens or 0) - (usage.cache_write_tokens or 0)
         cost = (
             max(uncached, 0) * p.input_per_mtok
-            + (usage.cache_read_tokens or 0) * (p.cache_read_per_mtok or p.input_per_mtok * 0.1)
-            + (usage.cache_write_tokens or 0) * (p.cache_write_per_mtok or p.input_per_mtok * 1.25)
+            + (usage.cache_read_tokens or 0) * (p.cache_read_per_mtok if p.cache_read_per_mtok is not None else p.input_per_mtok * 0.1)
+            + (usage.cache_write_tokens or 0) * (p.cache_write_per_mtok if p.cache_write_per_mtok is not None else p.input_per_mtok * 1.25)
             + usage.output_tokens * p.output_per_mtok
         ) / 1_000_000
         return cost, True
@@ -511,8 +436,8 @@ def estimate_cost(model_name: str, usage: Any) -> tuple[float | None, bool]:
 
 @lru_cache
 def broker_catalog():
-    from infosec_harness.agents.registry import BINDINGS
     from infosec_harness.inference.catalog.profiles import load_broker_config
+    from infosec_harness.runtime.registry import BINDINGS
     path = get_settings().broker_config
     if path is None:
         raise BrokerError("policy", "Brokered backend requires HARNESS_BROKER_CONFIG")
@@ -542,6 +467,4 @@ def _broker_model(agent_name, tier, binding, contract, *, atomic_intake=False):
         raise BrokerError("identity", "Invocation contract differs from worker deployment")
     from infosec_harness.inference.worker.identity import current_request_identity
     return BrokerModel(contract=contract, binding=binding, request_identity=current_request_identity,
-                       controller_url=catalog.controller.url,
-                       secret_env=catalog.controller.hmac_env, ca_file=catalog.controller.ca_file,
-                       client_cert=catalog.controller.client_cert, client_key=catalog.controller.client_key)
+                       controller=catalog.controller)

@@ -11,7 +11,7 @@ from typing import Any
 
 from sqlalchemy.exc import IntegrityError
 
-from infosec_harness.agents import models
+from infosec_harness.inference import models
 from infosec_harness.inference.controller.admission import ReservationPolicy, bind_reservation
 from infosec_harness.inference.wire.protocol import (
     BrokerError,
@@ -23,7 +23,7 @@ from infosec_harness.persistence import budgets, db
 
 
 def trusted_config(agent: str, *, durable: bool):
-    from infosec_harness.agents.registry import load_spec, resolve_agent_config
+    from infosec_harness.runtime.registry import load_spec, resolve_agent_config
     return resolve_agent_config(agent, load_spec(agent), durable=durable)
 
 
@@ -64,7 +64,7 @@ def build_reservation_policy(request) -> ReservationPolicy:
 
 async def _open_local_root(request: InvocationRequest, policy: ReservationPolicy) -> None:
     """A local or eval run's bounded root, created once and owned by exactly that run."""
-    from infosec_harness.agents.registry import BINDINGS
+    from infosec_harness.runtime.registry import BINDINGS
 
     if request.root_id != digest({"local_run": request.run_id}):
         raise BrokerError("identity", "Local root identity is not tied to its run")

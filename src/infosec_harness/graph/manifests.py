@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from infosec_harness.agents.ecosystem_contract import ADAPTER_CONTRACT_VERSION
-from infosec_harness.agents.ecosystem_profiles import profile_manifest
 from infosec_harness.domain.canonical import digest, sha256_hex
 from infosec_harness.domain.models import PreparedEnvironment, RepoSnapshot, StackFingerprint
+from infosec_harness.sandbox.profiles import ADAPTER_CONTRACT_VERSION, profile_manifest
 
 
 def source_manifest(snapshot: RepoSnapshot, stack: StackFingerprint | None = None) -> dict:

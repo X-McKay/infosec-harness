@@ -42,12 +42,12 @@ WAIVERS = {
     # tier it establishes is enforced at agent construction; there is no per-agent assessment
     # document for agentctl to open. See docs/architecture/PLAYBOOK_CONFORMANCE.md.
     "AGENT008": "metadata.risk_assessment: the assessment is agents/risk-scenarios.yaml, read "
-                "and enforced at construction (agents/governance.py), not a per-agent file.",
+                "and enforced at construction (runtime/governance.py), not a per-agent file.",
     "AGENT035": "metadata.risk_assessment: see AGENT008.",
     # Tool policies carry only the fields the runtime enforces (name, effect, retry safety,
     # timeout, output bound, tools). owner, authorization_scopes and data_classification were
     # declared and never read, which made them a claim nothing checked.
-    "TOOL003": "tool policies declare only enforced fields (agents/capabilities.py reads them).",
+    "TOOL003": "tool policies declare only enforced fields (runtime/capabilities.py reads them).",
     "TOOL009": "see TOOL003.",
     "TOOL011": "see TOOL003.",
     "TOOL012": "see TOOL003.",
@@ -82,8 +82,6 @@ def build_mirror(destination: Path) -> None:
     for spec in sorted((PACKAGE_DIR / "agents").glob("*/agent.yaml")):
         shutil.copytree(spec.parent, package / "agents" / spec.parent.name.replace("-", "_"),
                         dirs_exist_ok=True, ignore=_IGNORE)
-    for module in sorted(PACKAGE_DIR.glob("agents/*.py")):
-        shutil.copy2(module, package / "agents" / module.name)
     # Two root-level copies, because `agentctl` resolves these from the project root while the
     # runtime resolves them from the package: skills are discovered there, and a spec's
     # `evaluation_policy` is written `agents/<name>/evals/...` -- the path inside the

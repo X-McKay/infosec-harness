@@ -1,4 +1,4 @@
-from infosec_harness.agents.ecosystem_profiles import ECOSYSTEM_PROFILES, profile_manifest
+from infosec_harness.sandbox.profiles import ECOSYSTEM_PROFILES, profile_manifest
 
 
 def test_each_supported_language_maps_to_one_distinct_profile():

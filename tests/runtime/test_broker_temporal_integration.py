@@ -23,7 +23,6 @@ with workflow.unsafe.imports_passed_through():
     from temporalio.worker import Replayer
     from test_broker_service_integration import services  # noqa: F401
 
-    from infosec_harness.agents import registry
     from infosec_harness.persistence import budgets, db
     from infosec_harness.qualification.broker.service import (
         AGENTS,
@@ -31,6 +30,7 @@ with workflow.unsafe.imports_passed_through():
         environment,
         use_service_activity_timeout,
     )
+    from infosec_harness.runtime import registry
 
     if os.environ.get("HARNESS_BROKER_SERVICE_MANIFEST"):
         use_service_activity_timeout()
@@ -64,7 +64,7 @@ async def stop_worker(process):
 
 
 async def seed_root(root_id):
-    from infosec_harness.agents.durable import CONFIGS
+    from infosec_harness.runtime.durable import CONFIGS
 
     state = budgets.initial_state({"requests": 10000, "tokens": 100_000_000, "cost_usd": 1000.0,
         "tool_calls": 10000, "agent_runs": 100, "execution_seconds": 10_000_000}, elapsed_seconds=240)
@@ -190,7 +190,7 @@ async def test_real_direct_stub_history_replays_under_broker_config_without_io(s
 async def test_real_temporal_all_registered_agents_execute_and_replay_without_io(services, monkeypatch):
     from sqlalchemy import select
 
-    from infosec_harness.agents.durable import CONFIGS
+    from infosec_harness.runtime.durable import CONFIGS
 
     assert set(AGENTS) == set(registry.BINDINGS) == set(CONFIGS)
     root_id = "brokerqualification-all-" + uuid.uuid4().hex

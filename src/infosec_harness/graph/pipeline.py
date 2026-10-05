@@ -21,10 +21,6 @@ from pydantic_ai import capture_run_messages
 from pydantic_ai.messages import ModelResponse, UserContent
 from pydantic_ai.usage import RunUsage
 
-from infosec_harness.agents.deps import AgentDeps
-from infosec_harness.agents.models import estimate_cost
-from infosec_harness.agents.render import render_intake_prompt
-from infosec_harness.agents.trajectory import trace_calls
 from infosec_harness.domain.models import (
     AgentOutcome,
     ComponentProfile,
@@ -44,10 +40,14 @@ from infosec_harness.graph.manifests import execution_manifest
 from infosec_harness.graph.ops import Ops
 from infosec_harness.graph.prepare import PrepareFailed, prepare_resolved_component
 from infosec_harness.graph.scoring import priority
-from infosec_harness.graph.triage import TRIAGE_GRAPH, PreFilter, TriageDeps, TriageState
+from infosec_harness.graph.triage import TRIAGE_GRAPH, GatherContext, TriageDeps, TriageState
+from infosec_harness.inference.models import estimate_cost
 from infosec_harness.inference.worker.provenance import runtime_evidence
 from infosec_harness.intake import adapters
 from infosec_harness.repo.components import component_stack, owning_component, preparation_key
+from infosec_harness.runtime.deps import AgentDeps
+from infosec_harness.runtime.render import render_intake_prompt
+from infosec_harness.runtime.trajectory import trace_calls
 
 MIN_CONCURRENCY = 1
 MAX_CONCURRENCY = 32
@@ -281,17 +281,18 @@ async def triage_finding(ops: Ops, inp: FindingInput, prepared: PreparedEnvironm
                 f"The environment could not be prepared: {prepared.reason}.",
                 prepared.status, invocations, execution_manifest(prepared))
         state = TriageState(finding=finding, prepared=prepared)
-        result = await TRIAGE_GRAPH.run(state=state, deps=TriageDeps(ops=ops), inputs=PreFilter())
-        return TriageRunOutput(finding=finding, result=result, prepared_status=prepared.status,
+        result = await TRIAGE_GRAPH.run(state=state, deps=TriageDeps(ops=ops), inputs=GatherContext())
+        return TriageRunOutput(finding=finding, result=result, prepared_status=state.prepared.status,
                                invocations=invocations + state.invocations,
                                context=state.context, executions=state.executions,
-                               manifest=execution_manifest(prepared))
+                               manifest=execution_manifest(state.prepared))
     except Exception as exc:
         if is_cancelled(exc):
             raise
         return inconclusive_output(
             finding, classify_pipeline_failure(exc),
             f"Finding assessment failed: {describe_failure(exc)}", "failed",
-            invocations + (state.invocations if state else []), execution_manifest(prepared),
+            invocations + (state.invocations if state else []),
+            execution_manifest(state.prepared if state else prepared),
             context=state.context if state else None,
             executions=state.executions if state else None)

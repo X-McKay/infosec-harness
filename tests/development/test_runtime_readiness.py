@@ -216,7 +216,7 @@ async def test_database_timeout_remains_independent(monkeypatch, tmp_path):
 
 
 async def test_profile_labels_sanitized(monkeypatch, tmp_path):
-    from infosec_harness.agents import registry
+    from infosec_harness.runtime import registry
 
     config = settings(tmp_path, git_commit_sha="a" * 40, models_config=tmp_path / "models.yaml")
     config.models_config.write_text("profile")
@@ -253,7 +253,8 @@ async def test_current_worker_uses_exact_hostname(monkeypatch, tmp_path):
 
 
 async def test_cached_catalogue_cannot_claim_new_file_identity(monkeypatch, tmp_path):
-    from infosec_harness.agents import models, registry
+    from infosec_harness.inference import models
+    from infosec_harness.runtime import registry
 
     baseline = models.load_models_config()
     changed = baseline.model_copy(deep=True)
@@ -290,7 +291,7 @@ async def test_cached_catalogue_cannot_claim_new_file_identity(monkeypatch, tmp_
 
 
 async def test_file_changed_during_resolution_is_unavailable(monkeypatch, tmp_path):
-    from infosec_harness.agents import registry
+    from infosec_harness.runtime import registry
 
     path = tmp_path / "models.yaml"
     path.write_text("initial")

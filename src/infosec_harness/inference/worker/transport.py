@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import re
 import time
 from collections.abc import Callable
 from typing import Any
@@ -12,12 +11,12 @@ import httpx
 from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestParameters
 
+from infosec_harness.inference.catalog.profiles import ControllerChannel
 from infosec_harness.inference.executor.compat import contract_profile
 from infosec_harness.inference.wire.auth import AUTH_HEADER, sign_request
 from infosec_harness.inference.wire.codec import decode_response, encode_payload
 from infosec_harness.inference.wire.http_service import JsonChannel
 from infosec_harness.inference.wire.protocol import (
-    ENV_NAME_PATTERN,
     INFER_PATH,
     RESULTS_PATH,
     BrokerError,
@@ -27,11 +26,13 @@ from infosec_harness.inference.wire.protocol import (
     ReservationBinding,
     canonical_bytes,
     digest,
-    fixed_https_url,
     logical_request_id,
 )
 from infosec_harness.inference.wire.timing import WORKER_TIMEOUT_S, remaining_timeout
-from infosec_harness.inference.worker.provenance import TrustedBrokerProvenance
+from infosec_harness.inference.worker.provenance import (
+    CompletedBrokerProvenance,
+    TrustedBrokerProvenance,
+)
 
 
 def _durable_request_identity(callback: Callable[[], str] | None) -> str:
@@ -59,6 +60,28 @@ def _durable_request_identity(callback: Callable[[], str] | None) -> str:
     return identity
 
 
+class ControllerClient:
+    """The worker's one signed controller channel, shared by dispatch and lifecycle calls."""
+
+    def __init__(self, configuration: ControllerChannel, *, transport=None):
+        if configuration.url is None or configuration.hmac_env is None:
+            raise BrokerError("policy")
+        self.configuration, self.transport = configuration, transport
+
+    async def post(self, path: str, body: bytes, *, timeout: float = 30,
+                   expires_at: int | None = None) -> dict:
+        config = self.configuration
+        secret = os.environ.get(config.hmac_env, "").encode()
+        expiry = int(time.time()) + 30 if expires_at is None else expires_at
+        signature = sign_request(secret, "POST", path, body, expiry)
+        channel = JsonChannel(
+            ca_file=config.ca_file,
+            cert=(config.client_cert, config.client_key) if config.client_cert else None,
+            transport=self.transport, boundary="worker_controller",
+        )
+        return await channel.post(config.url + path, body, {AUTH_HEADER: signature}, timeout=timeout)
+
+
 class BrokerModel(Model):
     """A static-profile PydanticAI model with no provider client or direct fallback.
 
@@ -71,25 +94,13 @@ class BrokerModel(Model):
         *,
         contract: ExecutorContract,
         binding: ReservationBinding,
-        controller_url: str,
-        secret_env: str,
-        ca_file: str | None,
-        client_cert: str | None,
-        client_key: str | None,
+        controller: ControllerChannel,
         request_identity: Callable[[], str] | None = None,
         http_transport: httpx.AsyncBaseTransport | None = None,
         timeout: float = WORKER_TIMEOUT_S,
     ) -> None:
         if binding.contract_digest != contract.digest:
             raise BrokerError("identity")
-        if not secret_env or not re.fullmatch(ENV_NAME_PATTERN, secret_env):
-            raise BrokerError("auth")
-        if (client_cert is None) != (client_key is None):
-            raise BrokerError("policy")
-        try:
-            controller_url = fixed_https_url(controller_url, require_origin=True)
-        except ValueError:
-            raise BrokerError("policy") from None
         try:
             profile = contract_profile(contract.model, atomic_intake=contract.atomic_intake)
         except Exception:
@@ -98,13 +109,8 @@ class BrokerModel(Model):
         super().__init__(settings=contract.model_settings, profile=profile)
         self.contract = contract
         self.binding = binding
-        self.controller_url = controller_url
-        self.secret_env = secret_env
-        self.ca_file = ca_file
-        self.client_cert = client_cert
-        self.client_key = client_key
+        self.controller = ControllerClient(controller, transport=http_transport)
         self.request_identity = request_identity
-        self.http_transport = http_transport
         self.timeout = timeout
 
     @property
@@ -126,8 +132,8 @@ class BrokerModel(Model):
             or provenance.profile != self.contract.profile
         ):
             raise ValueError("Controller provenance differs from the admitted contract")
-        return {"state": "completed", "request_id": result.request_id,
-                **provenance.model_dump(mode="json")}
+        return CompletedBrokerProvenance(state="completed", request_id=result.request_id,
+                                         **provenance.model_dump()).model_dump(mode="json")
 
     async def request(
         self,
@@ -155,14 +161,9 @@ class BrokerModel(Model):
                 payload_digest=digest(payload.model_dump(mode="json")),
             )
             body = canonical_bytes(request.model_dump(mode="json"))
-            secret_text = os.environ.get(self.secret_env)
-            if secret_text is None:
-                raise BrokerError("auth")
-            secret = secret_text.encode("utf-8")
             expiry = now + 30 if expired else min(now + 60, int(self.binding.expires_at))
             if expiry <= now:
                 raise BrokerError("expired")
-            authorization = sign_request(secret, "POST", request_path, body, expiry)
         except BrokerError:
             raise
         except Exception:
@@ -170,13 +171,7 @@ class BrokerModel(Model):
 
         timeout = (self.timeout if request_path == RESULTS_PATH
                    else remaining_timeout(request.binding.expires_at, self.timeout))
-        channel = JsonChannel(
-            ca_file=self.ca_file,
-            cert=(self.client_cert, self.client_key) if self.client_cert and self.client_key else None,
-            transport=self.http_transport, boundary="worker_controller",
-        )
-        value = await channel.post(self.controller_url + request_path, body,
-                                   {AUTH_HEADER: authorization}, timeout=timeout)
+        value = await self.controller.post(request_path, body, timeout=timeout, expires_at=expiry)
         try:
             result = InferenceResult.model_validate(value)
             if result.request_id != request_id:

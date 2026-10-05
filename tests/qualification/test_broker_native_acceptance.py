@@ -61,9 +61,9 @@ def test_mock_provider_requires_operator_tls_files(tmp_path):
 
 
 def mock_contract(**changes) -> dict:
-    from infosec_harness.agents.models import BackendConfig
-    from infosec_harness.agents.registry import BINDINGS
     from infosec_harness.inference.catalog.profiles import BrokerConfig
+    from infosec_harness.inference.models import BackendConfig
+    from infosec_harness.runtime.registry import BINDINGS
 
     profile = {"backend_name": native.MOCK_BACKEND, "endpoint": MOCK_ENDPOINT, "provider_binding": "mock-canary",
                "provider_env": "MOCK_PROVIDER", "ledger_origin": "https://controller.test",

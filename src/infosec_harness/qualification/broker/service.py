@@ -24,10 +24,10 @@ from contextlib import suppress
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from infosec_harness.agents.registry import BINDINGS
 from infosec_harness.inference.native.openshell import OwnedLeases
 from infosec_harness.qualification.broker.support import private_write
 from infosec_harness.qualification.broker.validators import ROOT
+from infosec_harness.runtime.registry import BINDINGS
 
 AGENTS = tuple(BINDINGS)
 
@@ -46,9 +46,9 @@ def use_service_activity_timeout() -> None:
 
     from temporalio.workflow import ActivityConfig
 
-    from infosec_harness.agents import registry
+    from infosec_harness.runtime import registry
 
-    if "infosec_harness.agents.durable" in sys.modules:
+    if "infosec_harness.runtime.durable" in sys.modules:
         raise RuntimeError("durable agents were built before the qualification timeout was set")
     registry.MODEL_ACTIVITY = ActivityConfig(
         start_to_close_timeout=timedelta(seconds=SERVICE_MODEL_ACTIVITY_TIMEOUT_S),
@@ -148,8 +148,8 @@ class FakeNativeAdapter(OwnedLeases):
         """Fixture executors die with their service run; nothing native is ever left behind."""
 
     def spec(self, contract):
-        from infosec_harness.agents.registry import resolved_agent_configs
         from infosec_harness.inference.wire.protocol import BrokerError
+        from infosec_harness.runtime.registry import resolved_agent_configs
         allowed = [value.model.broker_contract for value in resolved_agent_configs().values()]
         if contract not in allowed:
             raise BrokerError("identity")
@@ -272,7 +272,7 @@ def run_provider(manifest: dict) -> None:
             read = next((tool for tool in tools if tool["name"].endswith("read_file")), None)
             final = next((tool for tool in tools if "summary" in tool.get("parameters", {}).get("properties", {})), None)
             if qualification_agent is not None:
-                from infosec_harness.agents.stubs import _STUBS
+                from infosec_harness.runtime.stubs import _STUBS
                 arguments = _STUBS[qualification_agent](user_text)
                 expected = "final_result_inconclusive" if qualification_agent == "verdict" else "final_result"
                 output = next((tool for tool in tools if tool["name"] == expected), None)

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import shlex
+from collections.abc import Sequence
 from pathlib import PurePosixPath
 
 from infosec_harness.domain.models import EnvironmentSpec
@@ -70,7 +71,7 @@ def _entry(value: str) -> tuple[str, tuple[str, ...]] | None:
     return (parts[0], tuple(parts[1:])) if parts else None
 
 
-def validate_base_image(image: str, allowlist: list[str] | None = None) -> str:
+def validate_base_image(image: str, allowlist: Sequence[str] | None = None) -> str:
     """Return the image if an allowlist entry covers it, else raise DisallowedBaseImage.
 
     An entry is a registry host (``public.ecr.aws``: every repository on it) or a host plus a
@@ -141,9 +142,11 @@ def jvm_class_selector(command: str) -> str | None:
     return selected
 
 
-def validate_environment_spec(spec: EnvironmentSpec) -> EnvironmentSpec:
+def validate_environment_spec(
+    spec: EnvironmentSpec, *, allowed_registries: Sequence[str] | None = None,
+) -> EnvironmentSpec:
     """Validate model-authored fields before rendering a security-sensitive Dockerfile."""
-    validate_base_image(spec.base_image)
+    validate_base_image(spec.base_image, allowed_registries)
     textual = [spec.base_image, spec.test_command, *spec.install_commands,
                *spec.env.keys(), *spec.env.values(), *spec.system_packages]
     if any("\n" in value or "\r" in value or "\0" in value for value in textual):

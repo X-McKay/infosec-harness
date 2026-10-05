@@ -12,10 +12,10 @@ from typing import Any, Protocol
 
 from pydantic_ai.messages import UserContent
 
-from infosec_harness.agents.deps import AgentDeps
 from infosec_harness.domain.models import (
     AgentOutcome,
     BuildResult,
+    CodeRef,
     EnvironmentSpec,
     Finding,
     ProbeExecution,
@@ -24,10 +24,14 @@ from infosec_harness.domain.models import (
     SmokeResult,
     StackFingerprint,
 )
+from infosec_harness.runtime.deps import AgentDeps
 
 
 class Ops(Protocol):
     async def resolve_location(self, finding: Finding, repo_path: str) -> Finding | None: ...
+
+    async def validate_citations(self, repo_path: str,
+                                 references: list[CodeRef | None]) -> list[CodeRef | None]: ...
 
     async def run_agent(
         self, name: str, prompt: Sequence[UserContent], deps: AgentDeps, *,
@@ -64,7 +68,7 @@ class LocalOps:
     def __init__(self, *, sandbox: bool = True, recipe_cache: bool | None = None):
         import uuid
 
-        from infosec_harness.persistence.recipes import get_recipe_store
+        from infosec_harness.persistence.recipes import RecipeStore
 
         self._broker_run_id = str(uuid.uuid4())
         self._broker_sequence = 0
@@ -75,13 +79,17 @@ class LocalOps:
         # it on the first repository of a stack records a recipe that every later repository of
         # that stack then reuses -- so env-planner runs once instead of eighteen times and the
         # stage funnel loses the signal it exists to provide. None follows the settings switch.
-        self._recipes = get_recipe_store(recipe_cache)
+        self._recipes = RecipeStore(enabled=recipe_cache)
         self._agents: dict[str, tuple[Any, Any]] = {}
 
     def _agent(self, name: str):
         """The agent and its base configuration, resolved once per operations instance."""
         if name not in self._agents:
-            from infosec_harness.agents.registry import build_agent, load_spec, resolve_agent_config
+            from infosec_harness.runtime.registry import (
+                build_agent,
+                load_spec,
+                resolve_agent_config,
+            )
 
             self._agents[name] = (build_agent(name, durable=False),
                                   resolve_agent_config(name, load_spec(name), durable=False))
@@ -91,6 +99,12 @@ class LocalOps:
         from infosec_harness.intake.adapters import resolve_location
 
         return resolve_location(finding, repo_path)
+
+    async def validate_citations(self, repo_path: str,
+                                 references: list[CodeRef | None]) -> list[CodeRef | None]:
+        from infosec_harness.repo.access import validate_citations
+
+        return validate_citations(repo_path, references)
 
     async def run_agent(self, name: str, prompt, deps: AgentDeps, *,
                         record: list[AgentOutcome] | None = None) -> AgentOutcome:

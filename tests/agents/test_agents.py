@@ -1,8 +1,8 @@
 """Agent specs load under the capability allowlist and the schema is in sync."""
 import json
 
-from infosec_harness.agents import registry
 from infosec_harness.resources import agents_dir, skills_dir
+from infosec_harness.runtime import registry
 
 
 def test_all_specs_valid():
@@ -38,11 +38,11 @@ def test_committed_schema_is_current():
     assert on_disk == registry.json_schema(), "run `just regenerate`"
 
 
-# --- OpenAI-spec single-system-message compatibility (see agents/models.py) ---
+# --- OpenAI-spec single-system-message compatibility (see inference/models.py) ---
 
 def test_max_tokens_floor_raises_small_budgets_and_leaves_large_ones():
     """A reasoning endpoint spends thinking inside max_tokens; the floor only raises."""
-    from infosec_harness.agents.models import apply_max_tokens_floor
+    from infosec_harness.inference.models import apply_max_tokens_floor
 
     assert apply_max_tokens_floor({"max_tokens": 3000}, 16000) == {"max_tokens": 16000}
     assert apply_max_tokens_floor({"max_tokens": 32000}, 16000) == {"max_tokens": 32000}
@@ -51,7 +51,7 @@ def test_max_tokens_floor_raises_small_budgets_and_leaves_large_ones():
 
 
 def test_max_tokens_floor_preserves_other_settings():
-    from infosec_harness.agents.models import apply_max_tokens_floor
+    from infosec_harness.inference.models import apply_max_tokens_floor
 
     out = apply_max_tokens_floor({"max_tokens": 10, "temperature": 0.0}, 99)
     assert out == {"max_tokens": 99, "temperature": 0.0}
@@ -71,10 +71,9 @@ def test_the_token_floor_reaches_the_setting_pydantic_ai_reports(monkeypatch):
     Applying it in both places also makes them provably agree: once the setting carries the
     floor, the payload-side floor is a no-op.
     """
-    from infosec_harness.agents.models import (
+    from infosec_harness.inference.models import (
         apply_max_tokens_floor,
         load_models_config,
-        max_tokens_floor,
     )
 
     monkeypatch.setenv("HARNESS_MODEL_BACKEND", "gateway")
@@ -82,7 +81,6 @@ def test_the_token_floor_reaches_the_setting_pydantic_ai_reports(monkeypatch):
     monkeypatch.setenv("HARNESS_MODEL_BASE_URL", "https://gateway.invalid/v1")
     floor = load_models_config().backends["gateway"].min_max_tokens
     assert floor, "this test needs a backend that declares a per-call floor"
-    assert max_tokens_floor("probe-planner") == floor
 
     raised = 0
     for name in registry.BINDINGS:
@@ -101,9 +99,10 @@ def test_the_token_floor_reaches_the_setting_pydantic_ai_reports(monkeypatch):
 def test_the_token_floor_is_inert_where_thinking_has_its_own_budget(monkeypatch):
     """Bedrock budgets thinking separately, so the floor must not touch those specs."""
     monkeypatch.setenv("HARNESS_MODEL_BACKEND", "bedrock")
-    from infosec_harness.agents.models import max_tokens_floor
+    from infosec_harness.inference.models import load_models_config
 
-    assert max_tokens_floor("probe-planner") == 0
+    config = load_models_config()
+    assert config.backends[config.selected_backend()].min_max_tokens == 0
     for name in registry.BINDINGS:
         declared = (registry.load_spec(name).model_settings or {}).get("max_tokens")
         assert (registry.build_agent(name, durable=False).model_settings or {}).get(
@@ -146,7 +145,7 @@ def test_merge_does_not_touch_a_later_system_message():
 
 
 def test_openai_backends_are_configured_for_single_system_endpoints():
-    from infosec_harness.agents.models import load_models_config
+    from infosec_harness.inference.models import load_models_config
 
     cfg = load_models_config()
     for name, backend in cfg.backends.items():
@@ -156,7 +155,7 @@ def test_openai_backends_are_configured_for_single_system_endpoints():
 
 def test_gateway_catalog_only_names_ids_the_endpoint_serves():
     """Every tier must resolve to a real id; a typo here fails at the first live call."""
-    from infosec_harness.agents.models import load_models_config
+    from infosec_harness.inference.models import load_models_config
 
     cfg = load_models_config()
     for tier, per_backend in cfg.model_catalog.items():
@@ -165,7 +164,7 @@ def test_gateway_catalog_only_names_ids_the_endpoint_serves():
 
 def test_openai_backends_ride_out_transient_upstream_failures():
     """One 502 from a self-hosted endpoint must not kill a whole batch run."""
-    from infosec_harness.agents.models import load_models_config
+    from infosec_harness.inference.models import load_models_config
 
     cfg = load_models_config()
     for name, backend in cfg.backends.items():
@@ -286,7 +285,7 @@ def test_an_evaluation_policy_nothing_can_see_is_a_violation_not_a_skipped_check
     and None passed, so off a checkout a spec could cite any path. The policy ships in the
     package beside its spec, so it is resolved there or reported missing."""
     from infosec_harness import resources
-    from infosec_harness.agents import governance
+    from infosec_harness.runtime import governance
 
     monkeypatch.setattr(resources, "source_checkout", lambda: None)
     meta = _committed_metadata("verdict")
@@ -299,7 +298,7 @@ def test_an_evaluation_policy_nothing_can_see_is_a_violation_not_a_skipped_check
 
 
 def test_the_model_policy_tier_rule_lives_with_the_other_governance_checks():
-    from infosec_harness.agents import governance
+    from infosec_harness.runtime import governance
 
     meta = _committed_metadata("verdict")
     assert governance.violations("verdict", meta, tier=None) == []
@@ -312,7 +311,7 @@ def test_a_skills_include_naming_an_absent_skill_fails_construction():
     skill that does not exist matched its own enabled_skills and was governed as if it had it."""
     import pytest
 
-    from infosec_harness.agents.governance import GovernanceError
+    from infosec_harness.runtime.governance import GovernanceError
 
     spec = registry.load_spec("recon")
     skills = next(c for c in spec.capabilities if c.name == "Skills")

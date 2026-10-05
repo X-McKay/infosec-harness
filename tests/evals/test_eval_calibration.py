@@ -137,7 +137,8 @@ def test_calibration_schema_rejects_leakage_and_safety_variables():
 
 
 def test_effective_model_and_budget_provenance_records_backend_adjustments(monkeypatch):
-    from infosec_harness.agents import models, registry
+    from infosec_harness.inference import models
+    from infosec_harness.runtime import registry
 
     monkeypatch.setenv("HARNESS_MODEL_MODE", "live")
     monkeypatch.setenv("HARNESS_MODEL_BACKEND", "gateway")
@@ -160,7 +161,8 @@ def test_effective_model_and_budget_provenance_records_backend_adjustments(monke
 
 
 def test_floor_equivalent_candidates_share_effective_not_audit_identity(monkeypatch):
-    from infosec_harness.agents import models, registry
+    from infosec_harness.inference import models
+    from infosec_harness.runtime import registry
 
     monkeypatch.setenv("HARNESS_MODEL_MODE", "live")
     monkeypatch.setenv("HARNESS_MODEL_BACKEND", "gateway")
@@ -181,7 +183,7 @@ def test_floor_equivalent_candidates_share_effective_not_audit_identity(monkeypa
 
 
 def test_root_ceiling_only_tightens_the_scaled_member_budget():
-    from infosec_harness.agents.budgets import RunBudget, resolve_declared_budget
+    from infosec_harness.runtime.budgets import RunBudget, resolve_declared_budget
 
     member = RunBudget(
         max_requests=8,
@@ -239,7 +241,7 @@ async def test_eval_case_records_effective_limits_raw_latency_and_observed_usage
 
 
 async def test_runnable_calibration_executes_candidates_then_grouped_holdout(tmp_path):
-    from infosec_harness.agents import registry
+    from infosec_harness.runtime import registry
 
     spec_path = Path("evals/experiments/calibration/verdict-tool-budget.yaml")
     spec = load_calibration(spec_path)
@@ -272,7 +274,7 @@ async def test_runnable_calibration_executes_candidates_then_grouped_holdout(tmp
 
 
 async def test_live_custom_pricing_cost_cap_is_rejected_before_any_call(monkeypatch, tmp_path):
-    from infosec_harness.agents import models
+    from infosec_harness.inference import models
 
     # A deployment whose gateway serves a model priced only by its own configured table: a
     # tier never names a literal provider id, so the catalogue maps one to it.
@@ -301,8 +303,8 @@ async def test_live_custom_pricing_cost_cap_is_rejected_before_any_call(monkeypa
 
 
 async def test_live_catalog_cost_cap_reserves_worst_case_before_calls(monkeypatch):
-    from infosec_harness.agents import models
     from infosec_harness.evals import calibration
+    from infosec_harness.inference import models
 
     raw = yaml.safe_load(Path("evals/experiments/calibration/verdict-tool-budget.yaml").read_text())
     raw["backend_profile"] = "bedrock"
@@ -339,8 +341,8 @@ async def test_calibration_skips_provider_floor_equivalent_candidate(
 ):
     from types import SimpleNamespace
 
-    from infosec_harness.agents import models
     from infosec_harness.evals import calibration
+    from infosec_harness.inference import models
 
     raw = yaml.safe_load(Path("evals/experiments/calibration/verdict-tool-budget.yaml").read_text())
     raw["variable"] = "model_settings.max_tokens"

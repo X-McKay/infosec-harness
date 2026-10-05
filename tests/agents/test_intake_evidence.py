@@ -4,12 +4,12 @@ from types import SimpleNamespace
 import pytest
 from pydantic_ai import ModelRetry
 
-from infosec_harness.agents.deps import AgentDeps
-from infosec_harness.agents.intake_evidence import EXTRACTED_FIELDS, extraction_evidence_violations
-from infosec_harness.agents.registry import load_spec, resolve_agent_config
-from infosec_harness.agents.validators import validate_intake_evidence
 from infosec_harness.domain.models import AgentOutcome, ExtractedFinding, FindingInput
 from infosec_harness.evals.adapters import intake_adapter
+from infosec_harness.intake.evidence import EXTRACTED_FIELDS, extraction_evidence_violations
+from infosec_harness.runtime.deps import AgentDeps
+from infosec_harness.runtime.registry import load_spec, resolve_agent_config
+from infosec_harness.runtime.validators import validate_intake_evidence
 
 REPORT = "Caller input is interpolated into a shell command; a semicolon runs a second command."
 
@@ -119,7 +119,7 @@ async def test_production_local_intake_receives_the_same_exact_report(tmp_path, 
 
 
 def test_validation_version_is_part_of_both_effective_and_full_config():
-    from infosec_harness.agents.intake_claims import WIRE_VERSION
+    from infosec_harness.intake.claims import WIRE_VERSION
 
     config = resolve_agent_config("intake", load_spec("intake"), durable=True)
     assert config.effective_spec["metadata"]["output_validation"] == {
@@ -133,7 +133,7 @@ def test_validation_version_is_part_of_both_effective_and_full_config():
 def test_the_closed_diagnostics_are_distinct_codes_and_sentences():
     """Retry repair and retry classification branch on the code; the sentence is what the model
     sees. Both must be unique, or two rules would be indistinguishable downstream."""
-    from infosec_harness.agents.intake_evidence import EVIDENCE_DIAGNOSTICS
+    from infosec_harness.intake.evidence import EVIDENCE_DIAGNOSTICS
 
     codes = [d.code for d in EVIDENCE_DIAGNOSTICS]
     messages = [d.message for d in EVIDENCE_DIAGNOSTICS]
@@ -141,7 +141,7 @@ def test_the_closed_diagnostics_are_distinct_codes_and_sentences():
 
 
 def test_every_emitted_violation_is_a_registered_diagnostic():
-    from infosec_harness.agents.intake_evidence import (
+    from infosec_harness.intake.evidence import (
         EVIDENCE_DIAGNOSTICS,
         extraction_evidence_diagnostics,
     )

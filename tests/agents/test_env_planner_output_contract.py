@@ -4,14 +4,14 @@ from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
-from pydantic_ai import Agent, ModelRetry
+from pydantic_ai import Agent
 from pydantic_ai.messages import ModelRequest, ModelResponse, RetryPromptPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
-from infosec_harness.agents import ecosystem_contract as contract
-from infosec_harness.agents import validators
-from infosec_harness.agents.outputs import PlannedEnvironmentOutput
 from infosec_harness.domain.models import EnvironmentSpec
+from infosec_harness.runtime import stubs as contract
+from infosec_harness.runtime import validators
+from infosec_harness.runtime.outputs import PlannedEnvironmentOutput
 
 
 def omitted_maven_plan() -> dict[str, object]:
@@ -61,24 +61,17 @@ def test_explicit_empty_installation_remains_allowed_outside_maven() -> None:
     assert EnvironmentSpec.model_validate(output.model_dump()).install_commands == []
 
 
-def test_explicit_empty_maven_plan_still_fails_the_offline_warmup_guard(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(validators, "repo_jvm_test_framework", lambda _: "junit5")
+def test_explicit_empty_maven_plan_is_left_for_build_and_smoke_execution() -> None:
     output = PlannedEnvironmentOutput.model_validate(
         {**omitted_maven_plan(), "install_commands": []}
     )
-    with pytest.raises(ModelRetry) as error:
-        validators.validate_environment_spec(None, output)
-    assert "install_commands" in error.value.message
-    assert contract.offline_warmup_violations(output, "junit5")
+    assert validators.validate_environment_spec(None, output) is output
 
 
 @pytest.mark.asyncio
 async def test_real_sdk_requests_the_missing_field_then_accepts_a_complete_plan(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(validators, "repo_jvm_test_framework", lambda _: "junit5")
     calls = []
     validated = []
     prerequisites = "mvn -B -Dmaven.repo.local=/opt/home/.m2/repository -DskipTests test-compile"
@@ -115,7 +108,7 @@ async def test_real_sdk_requests_the_missing_field_then_accepts_a_complete_plan(
         for entry in retries[0].content
     )
     assert result.output.install_commands == corrected["install_commands"]
-    assert contract.offline_warmup_violations(result.output, "junit5") == []
+    assert validators.validate_environment_spec(None, result.output) is result.output
     assert (
         EnvironmentSpec.model_validate(result.output.model_dump()).model_dump()
         == result.output.model_dump()

@@ -14,14 +14,10 @@ version: "1"
 # Every case declares a `category` (agent-playbook 07-evaluation) and, where it exercises one,
 # the risk-scenario IDs from agents/risk-scenarios.yaml.
 #
-# The label is coarse on purpose, and the `regression` cases below lean on that being only half
-# the check. `validate_environment_spec` is an output validator on this agent, so a spec that
-# omits the Surefire warm-up, `-Dmaven.repo.local`, `--local-lib`, or the `{test_file}`
-# placeholder is rejected with a ModelRetry and, if the agent keeps producing it, exhausts its
-# output retries and returns nothing at all — which scores as a failed case. So a regression
-# case here does not have to encode the flag in its expected label: it only has to be a repo
-# whose plan must satisfy those checks, and to say which measured defect it is standing guard
-# over. All of them are recorded in docs/evidence/2026-09-25-live-model-validation/LIVE_VALIDATION.md.
+# Labels establish adapter selection only. Structural sandbox policy rejects malformed plans;
+# framework setup and output visibility are guidance in build skills, verified by executed
+# build and positive/negative smoke controls. Recipe regressions below retain the measured
+# cases recorded in docs/evidence/2026-09-25-live-model-validation/LIVE_VALIDATION.md.
 cases:
   - name: python-pip-pytest
     category: smoke
@@ -149,8 +145,8 @@ cases:
     # was the missing `-s`: without it pytest buffers the probe's stdout, so the HARNESS_ markers
     # never reach the runner and a correct probe is recorded as having reached nothing.
     #
-    # Both are now environment_spec_violations(), scoped to path-taking runners since Maven and
-    # Gradle select by class. This case is the python repo with the least to go on — an empty
+    # Policy requires a probe placeholder for path-taking runners; output visibility is tested
+    # by smoke execution. This case is the python repo with the least to go on — an empty
     # tests/ and a one-line requirements.txt — so the plan has to be written rather than copied
     # off a visible test file.
     repo: eval-corpus/python/cmdi/vulnerable

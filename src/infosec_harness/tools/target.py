@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from pydantic_ai import RunContext
 
-from infosec_harness.agents.deps import AgentDeps
-from infosec_harness.agents.repo_tools import _read_capped, clip_bytes, numbered_lines
-from infosec_harness.agents.symbol_inspection import describable_target, describe_text
+from infosec_harness.runtime.deps import AgentDeps
+from infosec_harness.tools.repository import _read_capped, clip_bytes, numbered_lines
+from infosec_harness.tools.symbols import describable_target, describe_text
 
 MAX_TARGET_CONTEXT_BYTES = 48_000
 _SECTION_BYTES = 23_000

@@ -1,21 +1,15 @@
-"""Deterministic pre-filter (F1) and prioritization (F9). No model involved."""
+"""Operational priority from severity, verdict confidence and reachability."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from infosec_harness.domain.models import (
     Finding,
-    InconclusiveReason,
     PriorityBand,
     Reachability,
-    RepoSnapshot,
     Severity,
     Verdict,
     VerdictLabel,
-    inconclusive_verdict,
 )
-from infosec_harness.repo.access import RepositoryAccessError, resolve_confined
 
 SEVERITY_WEIGHT = {
     Severity.critical: 1.0, Severity.high: 0.8, Severity.medium: 0.5,
@@ -35,38 +29,6 @@ REACHABILITY_WEIGHT = {
     Reachability.neutralized: 0.4,
     Reachability.unreachable: 0.2,
 }
-
-
-@dataclass(frozen=True)
-class PreFilterResult:
-    """Either continue triage, or short-circuit with an early verdict."""
-
-    verdict: Verdict | None
-    note: str | None = None
-
-
-def pre_filter(finding: Finding, snapshot: RepoSnapshot) -> PreFilterResult:
-    """Reject a missing location without turning absence or a path name into safety."""
-    loc = finding.location
-    if loc is None:
-        return PreFilterResult(None)  # intake already resolved or parked; nothing cheap to decide
-    try:
-        target = resolve_confined(snapshot.path, loc.file_path, must_exist=True)
-    except (OSError, RepositoryAccessError):
-        return PreFilterResult(
-            inconclusive_verdict(
-                InconclusiveReason.needs_info,
-                f"Reported file {loc.file_path} could not be resolved inside the source "
-                f"snapshot for {finding.revision}. Missing source is not evidence of safety."),
-            note="file_missing",
-        )
-    if not target.is_file():
-        return PreFilterResult(
-            inconclusive_verdict(InconclusiveReason.needs_info,
-                                 f"Reported location {loc.file_path} is not a source file."),
-            note="file_missing",
-        )
-    return PreFilterResult(None)
 
 
 def priority_score(finding: Finding, verdict: Verdict, reachability: Reachability) -> float:

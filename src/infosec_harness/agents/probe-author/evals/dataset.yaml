@@ -1,6 +1,6 @@
-# Version 2 records diagnostic-only runsc traces for selected Python SQLi cases.
-# Scores remain structural; these forgeable observations are not target attestation.
-version: "2"
+# Version 3 retires candidate-forgeable in-process traces. Scores remain structural
+# and do not claim independent target attestation.
+version: "3"
 # Scored structurally: does the probe print the precondition marker, carry an oracle signal,
 # and call the callable it was told to exercise? Whether the oracle *fires* is a question only
 # the sandbox can answer, but a probe missing any of these three cannot answer anything however
@@ -9,12 +9,13 @@ version: "2"
 # One case per corpus ecosystem, because "print a marker and call the target" is the part most
 # sensitive to the framework: the marker has to survive the runner's output capture (pytest -s,
 # `prove -v`, Maven's surefire) and the target has to be reached the way that language exposes
-# it. A target-name substring alone does not establish target invocation. Version 2 adds
-# diagnostic traces only; independent target attestation remains unimplemented.
+# it. A target-name substring alone does not establish target invocation; independent target
+# attestation remains unimplemented.
 #
-# The scorer's four labels are not the whole gate. `agents/validators.py::validate_probe` runs
+# The scorer's four labels are not the whole gate. `runtime/validators.py::validate_probe` runs
 # first and raises ModelRetry for a probe missing HARNESS_PRECONDITION or HARNESS_SINK_RETURNED,
-# for an absent oracle signal, and for a probe that can skip itself. A probe that exhausts the
+# or for an absent oracle signal. Skips and failed discovery are judged from execution evidence.
+# A probe that exhausts the
 # output-retry budget against that validator is scored `invalid_output`, which is a
 # schema_validity_rate failure rather than an accuracy point — so the sink-returned regression
 # below fails hard rather than quietly, and does not depend on the structural check learning

@@ -13,7 +13,6 @@ from pathlib import Path
 
 import pytest
 
-from infosec_harness.agents import models
 from infosec_harness.evals.gates import load_policy, parse_policy
 from infosec_harness.evals.inert_gates import (
     InertReason,
@@ -21,6 +20,7 @@ from infosec_harness.evals.inert_gates import (
     format_inert_notice,
 )
 from infosec_harness.evals.pricing import PricingStatus, pricing_label, pricing_status
+from infosec_harness.inference import models
 
 RAW_POLICY = {
     "schema_version": 1,

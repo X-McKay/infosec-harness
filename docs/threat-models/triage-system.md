@@ -116,7 +116,7 @@ development removes the isolation boundary entirely (CONDITION-002).
 ## Risk assessment
 
 Method: agent-playbook §13. Impact and likelihood are scored 1-4 and mapped to a tier through
-the playbook matrix (`agents/risk.py`). Inherent likelihood assumes the controls are absent;
+the playbook matrix (`runtime/risk.py`). Inherent likelihood assumes the controls are absent;
 residual likelihood counts only controls whose effectiveness is `verified`. An agent's
 governance tier is the highest inherent tier among the scenarios it carries, raised to `high`
 where a scenario means it performs or determines privileged code execution. Governance refuses

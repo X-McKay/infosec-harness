@@ -6,7 +6,7 @@ a `read` toolset is satisfied by `ephemeral`, a `write_reversible` one requires 
 
 A policy carries only what something enforces: the effect (governance), the retry safety the
 effect requires (tests), the tool names an agent may call (governance), and the timeout and
-output bound the toolset applies (agents/capabilities.py). Unknown keys are rejected, so a
+output bound the toolset applies (runtime/capabilities.py). Unknown keys are rejected, so a
 field cannot be declared without an enforcer.
 
 The directories are hyphenated to match the names agent specs use, so they are data rather than
@@ -60,7 +60,7 @@ class ToolPolicy(BaseModel):
     name: str
     effect: ToolEffect
     retry_safety: RetrySafety
-    # Enforced per call by the toolset (agents/capabilities.py).
+    # Enforced per call by the toolset (runtime/capabilities.py).
     timeout_seconds: float = Field(gt=0)
     # Every tool's result is clipped to this, so a large result cannot flood the model's context.
     max_output_bytes: int = Field(gt=0)

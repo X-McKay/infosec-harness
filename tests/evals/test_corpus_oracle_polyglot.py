@@ -151,14 +151,14 @@ def test_a_test2_plan_the_validator_accepts_is_the_one_prove_accepts():
     """The probe above uses `plan 1;` and no `done_testing`, so the validator and prove have to
     agree about it. They did not: `_PERL_PLAN` looked only for `done_testing`, `tests =>` and
     `no_plan`, so a correct Test2 probe was rejected and rewritten."""
-    from infosec_harness.agents.validators import _skipping_probe_violations
     from infosec_harness.domain.models import ProbeSource
+    from infosec_harness.runtime.validators import validate_probe
 
     probe = ProbeSource(test_file_path="t/probe.t",
                         content=_PERL_PROBE.format(nonce=NONCE, payload=PAYLOAD),
                         explanation="reference probe for the Test2::V0 corpus pair")
     assert "done_testing" not in probe.content
-    assert _skipping_probe_violations(probe) == []
+    assert validate_probe(None, probe) is probe
 
 
 def test_the_test2_pair_declares_module_build_and_test2(tmp_path):
@@ -197,8 +197,8 @@ def test_the_reference_probes_satisfy_the_production_probe_contract():
     """A reference probe the validator would reject is not a reference for anything."""
     from types import SimpleNamespace
 
-    from infosec_harness.agents.validators import validate_probe
     from infosec_harness.domain.models import ProbeSource
+    from infosec_harness.runtime.validators import validate_probe
 
     ctx = SimpleNamespace(deps=None)
     for path, content in (("test/probe.mts", _JS_PROBE.format(spec="../src/render.ts",

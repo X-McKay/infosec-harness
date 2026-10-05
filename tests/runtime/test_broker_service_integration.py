@@ -17,6 +17,7 @@ import pytest
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
 
+from infosec_harness.inference.catalog.profiles import ControllerChannel
 from infosec_harness.inference.wire.auth import AUTH_HEADER, sign_request
 from infosec_harness.inference.wire.protocol import (
     BrokerError,
@@ -55,9 +56,9 @@ class Services:
             return await client.post(self.values["controller_url"] + path, content=body, headers=headers)
 
     async def model(self, identity="model:0"):
-        from infosec_harness.agents.registry import load_spec, resolve_agent_config
         from infosec_harness.inference.worker.invocations import request_invocation
         from infosec_harness.inference.worker.transport import BrokerModel
+        from infosec_harness.runtime.registry import load_spec, resolve_agent_config
         config = resolve_agent_config("context", load_spec("context"), durable=False)
         run_id = str(uuid.uuid4())
         binding = await request_invocation(InvocationRequest(mode="local", root_id=digest({"local_run": run_id}),
@@ -65,8 +66,8 @@ class Services:
             agent="context", configuration_digest=config.digest, contract=config.model.broker_contract))
         channel = self.values["pki"]
         return BrokerModel(contract=config.model.broker_contract, binding=binding,
-            controller_url=self.values["controller_url"], secret_env="BROKER_QUALIFICATION_WORKER_KEY",
-            ca_file=channel["ca"], client_cert=channel["client_cert"], client_key=channel["client_key"],
+            controller=ControllerChannel(url=self.values["controller_url"], hmac_env="BROKER_QUALIFICATION_WORKER_KEY",
+            ca_file=channel["ca"], client_cert=channel["client_cert"], client_key=channel["client_key"]),
             request_identity=lambda: identity)
 
     def record(self, name, before, **extra):
@@ -100,8 +101,8 @@ async def test_actual_mutual_tls_and_hmac_denials_have_zero_provider_sends(servi
 
 
 async def test_registered_local_context_round_trips_worker_tool_and_structured_output(services):
-    from infosec_harness.agents.deps import AgentDeps
     from infosec_harness.graph.ops import LocalOps
+    from infosec_harness.runtime.deps import AgentDeps
     before = len(services.events())
     ops = LocalOps(sandbox=False, recipe_cache=False)
     outcome = await ops.run_agent("context", ["Inspect sample.py; return context with unknown reachability."],
@@ -191,9 +192,9 @@ async def test_secret_detector_has_positive_control_and_logs_ledger_are_clean(se
 
 
 async def test_actual_eval_issuance_registered_agent_closes_its_owned_root(services):
-    from infosec_harness.agents.deps import AgentDeps
-    from infosec_harness.agents.registry import build_agent, load_spec, resolve_agent_config
     from infosec_harness.inference.worker.invocations import eval_invocation
+    from infosec_harness.runtime.deps import AgentDeps
+    from infosec_harness.runtime.registry import build_agent, load_spec, resolve_agent_config
     spec = load_spec("context")
     config = resolve_agent_config("context", spec, durable=True)
     agent = build_agent("context", durable=False, production_transport=True)
@@ -224,13 +225,6 @@ async def test_actual_eval_issuance_registered_agent_closes_its_owned_root(servi
 async def test_every_registered_agent_executes_actual_broker_transport(services, agent_name):
     from sqlalchemy import select
 
-    from infosec_harness.agents.deps import AgentDeps
-    from infosec_harness.agents.outputs import (
-        ContextOutput,
-        InconclusiveOutput,
-        PartialEnvironmentOutput,
-    )
-    from infosec_harness.agents.registry import BINDINGS
     from infosec_harness.domain.models import (
         EnvironmentSpec,
         ExtractedFinding,
@@ -241,6 +235,13 @@ async def test_every_registered_agent_executes_actual_broker_transport(services,
     )
     from infosec_harness.graph.ops import LocalOps
     from infosec_harness.inference.wire.protocol import digest
+    from infosec_harness.runtime.deps import AgentDeps
+    from infosec_harness.runtime.outputs import (
+        ContextOutput,
+        InconclusiveOutput,
+        PartialEnvironmentOutput,
+    )
+    from infosec_harness.runtime.registry import BINDINGS
 
     expected_types = {
         "intake": ExtractedFinding, "recon": RepoProfile, "env-planner": EnvironmentSpec,
@@ -306,7 +307,7 @@ async def test_local_prepare_and_triage_graph_uses_actual_broker_for_each_agent(
     from infosec_harness.domain.models import Finding, FindingInput, ProbeExecution, RepoSnapshot
     from infosec_harness.graph.ops import LocalOps
     from infosec_harness.graph.prepare import run_prepare
-    from infosec_harness.graph.triage import TRIAGE_GRAPH, PreFilter, TriageDeps, TriageState
+    from infosec_harness.graph.triage import TRIAGE_GRAPH, GatherContext, TriageDeps, TriageState
     from infosec_harness.repo.detect import detect_stack
 
     class QualificationOps(LocalOps):
@@ -334,7 +335,7 @@ async def test_local_prepare_and_triage_graph_uses_actual_broker_for_each_agent(
         finding = Finding.from_input(FindingInput(title="SQLi", repo_url=repo, file_path="app.py",
             start_line=2, cwe="CWE-89", severity="high"))
         state = TriageState(finding=finding, prepared=prepared.prepared)
-        result = await TRIAGE_GRAPH.run(state=state, deps=TriageDeps(ops=ops), inputs=PreFilter())
+        result = await TRIAGE_GRAPH.run(state=state, deps=TriageDeps(ops=ops), inputs=GatherContext())
         outcomes = [*prepared.invocations, *state.invocations]
         assert [outcome.agent for outcome in outcomes] == expected
         assert all(outcome.requests == 1 for outcome in outcomes)

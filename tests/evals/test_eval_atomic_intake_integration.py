@@ -9,9 +9,9 @@ from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 from sqlalchemy import select
 
-from infosec_harness.agents import registry
 from infosec_harness.evals import run
 from infosec_harness.persistence import db
+from infosec_harness.runtime import registry
 
 REPORT = "Caller input is interpolated into a shell command."
 

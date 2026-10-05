@@ -11,10 +11,10 @@ from pathlib import Path
 from temporalio import workflow
 
 with workflow.unsafe.imports_passed_through():
-    from infosec_harness.agents.deps import AgentDeps
-    from infosec_harness.agents.durable import AGENT_LIST
     from infosec_harness.qualification.broker.service import AGENTS
     from infosec_harness.qualification.broker.support import serve_worker as serve
+    from infosec_harness.runtime.deps import AgentDeps
+    from infosec_harness.runtime.durable import AGENT_LIST
     from infosec_harness.workflows.activities import ALL_ACTIVITIES
     from infosec_harness.workflows.temporal_ops import TemporalOps
 

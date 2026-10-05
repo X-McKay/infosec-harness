@@ -17,7 +17,7 @@ import re
 from collections.abc import Collection, Iterable
 from typing import Any
 
-from infosec_harness.agents.risk import TIER_ORDER as RISK_TIERS
+from infosec_harness.runtime.risk import TIER_ORDER as RISK_TIERS
 from infosec_harness.tools.policies import EXECUTION_CLASS_ORDER as EXECUTION_CLASSES
 
 DATA_CLASSIFICATIONS = ("public", "internal", "confidential", "restricted")
@@ -80,7 +80,7 @@ def risk_violations(agent_name: str, meta: dict[str, Any]) -> list[str]:
     An agent absent from the scenario library has no assessed risk at all, which is the
     strongest reason not to construct it.
     """
-    from infosec_harness.agents.risk import library
+    from infosec_harness.runtime.risk import library
 
     lib = library()
     if agent_name not in lib.agents:
@@ -93,7 +93,7 @@ def risk_violations(agent_name: str, meta: dict[str, Any]) -> list[str]:
 
 
 def _budget_violations(agent_name: str, meta: dict[str, Any]) -> list[str]:
-    from infosec_harness.agents.budgets import MissingBudget, run_budget
+    from infosec_harness.runtime.budgets import MissingBudget, run_budget
 
     try:
         run_budget(agent_name, meta)
@@ -106,7 +106,7 @@ def _budget_violations(agent_name: str, meta: dict[str, Any]) -> list[str]:
 
 def _policy_violations(meta: dict[str, Any], tier: str | None) -> list[str]:
     """The named model policy must exist and, for a committed spec, resolve to its tier."""
-    from infosec_harness.agents.models import load_models_config
+    from infosec_harness.inference.models import load_models_config
 
     policies = load_models_config().model_policies
     policy = meta["model_policy"]
@@ -195,7 +195,7 @@ def assert_tools_are_declared(name: str, selections: Iterable[Collection[str] | 
     (None: the default surface); an unknown name fails in ``selected_repo_tools``, the one
     place the selection is validated.
     """
-    from infosec_harness.agents.capabilities import selected_repo_tools
+    from infosec_harness.runtime.capabilities import selected_repo_tools
     from infosec_harness.tools.policies import load_policies
 
     declared = {t.name for t in load_policies()["repo-read-only"].tools}

@@ -13,19 +13,19 @@ import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from infosec_harness._io import write_json
-from infosec_harness.agents import models as model_factory
-from infosec_harness.agents.budgets import MAX_SIZE_FACTOR, run_budget
-from infosec_harness.agents.registry import (
-    config_hash,
-    deep_merge,
-    load_spec,
-    resolve_agent_config,
-)
 from infosec_harness.evals.coverage import scenario_coverage
 from infosec_harness.evals.dataset import Case, case_group, load_dataset
 from infosec_harness.evals.gates import ReleasePolicy, load_policy
 from infosec_harness.evals.provenance import CodeVersion, code_version
 from infosec_harness.evals.run import load_experiment, run_experiment, run_with_timeout
+from infosec_harness.inference import models as model_factory
+from infosec_harness.runtime.budgets import MAX_SIZE_FACTOR, run_budget
+from infosec_harness.runtime.registry import (
+    config_hash,
+    deep_merge,
+    load_spec,
+    resolve_agent_config,
+)
 
 _SAFE_VARIABLE_PREFIXES = (
     "model",

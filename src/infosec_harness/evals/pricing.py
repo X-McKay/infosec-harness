@@ -10,7 +10,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any
 
-from infosec_harness.agents import models
+from infosec_harness.inference import models
 
 
 class PricingStatus(StrEnum):
@@ -44,7 +44,7 @@ _BY_SOURCE: dict[str, PricingStatus] = {
 def pricing_status(model_name: str) -> PricingStatus:
     """Classify ``model_name`` by the price source :func:`models.estimate_cost` would use.
 
-    :func:`infosec_harness.agents.models.pricing_source` answers which table prices a model --
+    :func:`infosec_harness.inference.models.pricing_source` answers which table prices a model --
     the same lookup order the cost estimator follows -- so this cannot drift from what a run
     measures.
     """

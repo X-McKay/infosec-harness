@@ -6,7 +6,6 @@ import re
 from datetime import UTC, datetime
 from typing import Literal, TypedDict
 
-from infosec_harness.agents.registry import BINDINGS
 from infosec_harness.api.contracts import ModelConnectivity
 from infosec_harness.api.evidence_io import (
     STRICT,
@@ -18,6 +17,7 @@ from infosec_harness.api.evidence_io import (
     read_evidence,
     validated,
 )
+from infosec_harness.runtime.registry import BINDINGS
 from infosec_harness.settings import get_settings
 
 RECEIPT_LIFETIME_SECONDS = 3600
@@ -39,8 +39,8 @@ class ModelConnectionReceipt(TypedDict):
 
 def model_runtime() -> tuple[list[str], ModelConnectivity]:
     """Configuration plus an optional operator-recorded check, never a live inference probe."""
-    from infosec_harness.agents import models
-    from infosec_harness.agents.registry import load_spec
+    from infosec_harness.inference import models
+    from infosec_harness.runtime.registry import load_spec
 
     settings = get_settings()
     observation = ModelConnectivity()

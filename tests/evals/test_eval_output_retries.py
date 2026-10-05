@@ -18,11 +18,11 @@ from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.usage import UsageLimits
 from sqlalchemy import select
 
-from infosec_harness.agents.deps import AgentDeps
-from infosec_harness.agents.registry import build_agent
-from infosec_harness.agents.validators import validate_intake_evidence
 from infosec_harness.domain.models import ExtractedFinding
 from infosec_harness.evals.output_retries import output_retry_summary
+from infosec_harness.runtime.deps import AgentDeps
+from infosec_harness.runtime.registry import build_agent
+from infosec_harness.runtime.validators import validate_intake_evidence
 
 PREFIX = "Extraction violates its evidence contract:\n- "
 REPORT = "Caller input is interpolated into a shell command."
@@ -143,9 +143,9 @@ async def test_real_sdk_guard_retry_then_valid_or_four_response_exhaustion(exhau
 async def test_eval_persists_observations_for_accepted_and_protocol_failed_output(
     tmp_path, monkeypatch, protocol_failure,
 ):
-    from infosec_harness.agents import registry
     from infosec_harness.evals import run
     from infosec_harness.persistence import db
+    from infosec_harness.runtime import registry
 
     path = tmp_path / "dataset.yaml"
     path.write_text(yaml.safe_dump({"version": "synthetic-retry-regression", "cases": [
@@ -186,8 +186,8 @@ def test_retry_categories_are_the_evidence_guards_own_codes():
     """Classification is derived from the guard's (code, message) pairs, never restated."""
     from typing import get_args
 
-    from infosec_harness.agents.intake_evidence import EVIDENCE_DIAGNOSTICS
     from infosec_harness.evals.output_retries import INTAKE_RULE_CATEGORIES, RetryCategory
+    from infosec_harness.intake.evidence import EVIDENCE_DIAGNOSTICS
 
     assert {d.message: d.code for d in EVIDENCE_DIAGNOSTICS} == INTAKE_RULE_CATEGORIES
     assert set(INTAKE_RULE_CATEGORIES.values()) == set(get_args(RetryCategory))

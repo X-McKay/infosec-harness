@@ -37,7 +37,7 @@ async def _rows(exp_id):
 async def test_unavailable_agent_output_preserves_primary_failure_and_execution_gap(
     monkeypatch, error, primary_category, reason
 ):
-    from infosec_harness.agents import registry
+    from infosec_harness.runtime import registry
 
     class NoOutputAgent:
         async def run(self, *args, **kwargs):
@@ -67,7 +67,7 @@ async def test_unavailable_agent_output_preserves_primary_failure_and_execution_
 
 
 async def test_truncation_reports_all_unreached_declared_checks(monkeypatch):
-    from infosec_harness.agents import registry
+    from infosec_harness.runtime import registry
 
     class TransportFailure:
         async def run(self, *args, **kwargs):
@@ -91,7 +91,7 @@ async def test_truncation_reports_all_unreached_declared_checks(monkeypatch):
 async def test_provider_failure_details_do_not_enter_cli_or_persisted_metrics(monkeypatch, capsys):
     import json
 
-    from infosec_harness.agents import registry
+    from infosec_harness.runtime import registry
 
     sentinel = "SENTINEL_SECRET_PROVIDER_BODY"
 

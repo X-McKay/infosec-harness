@@ -12,10 +12,10 @@ from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 from pydantic_ai.tools import ToolDefinition
 from test_broker_executor import request_fixture
 
-from infosec_harness.agents.intake_claims import AtomicFinding
 from infosec_harness.domain.models import EnvironmentSpec
 from infosec_harness.inference.executor.rendering import input_wire
 from infosec_harness.inference.wire.codec import decode_payload, encode_payload
+from infosec_harness.intake.claims import AtomicFinding
 
 
 @pytest.mark.parametrize('strict', [None, False, True])
@@ -132,8 +132,8 @@ async def test_opt_in_changes_only_closed_output_tools_and_preserves_original_pa
 def test_flag_off_keeps_historical_contract_profile_and_capability_identity():
     from test_broker_profiles import _config, backend
 
-    from infosec_harness.agents.models import BackendConfig, CapabilityProfile
     from infosec_harness.inference.catalog.profiles import BrokerConfig
+    from infosec_harness.inference.models import BackendConfig, CapabilityProfile
     from infosec_harness.inference.wire.protocol import digest
 
     request, _ = request_fixture()
@@ -199,9 +199,9 @@ async def test_mock_sdk_strict_output_keeps_bounded_local_validation_repair_and_
     from pydantic_ai.exceptions import UnexpectedModelBehavior
     from pydantic_ai.providers.openai import OpenAIProvider
 
-    from infosec_harness.agents.intake_claims import reconstruct
-    from infosec_harness.agents.intake_schema import intake_openai_profile
     from infosec_harness.inference.executor.compat import CompatOpenAIChatModel
+    from infosec_harness.intake.claims import reconstruct
+    from infosec_harness.intake.schema import intake_openai_profile
 
     calls = []
     def respond(native_request):
@@ -260,7 +260,7 @@ def test_opt_in_rejects_unqualified_sdk_profile_and_bounded_schema_expansion():
 
 
 def test_default_off_resolved_capability_identity_is_exactly_historical():
-    from infosec_harness.agents.models import CapabilityProfile, ResolvedModelConfig
+    from infosec_harness.inference.models import CapabilityProfile, ResolvedModelConfig
 
     profile = CapabilityProfile()
     resolved = ResolvedModelConfig(mode='live', backend_name='gateway', backend_kind='openai_compatible',
@@ -280,7 +280,7 @@ async def test_direct_model_factory_matches_executor_admission_strict_wire(monke
     import httpx2
     import openai
 
-    from infosec_harness.agents import models
+    from infosec_harness.inference import models
 
     request, _ = request_fixture()
     contract = request.contract.model_copy(update={'atomic_intake': True, 'strict_closed_output_tools': True})

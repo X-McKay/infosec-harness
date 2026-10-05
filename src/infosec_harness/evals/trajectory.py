@@ -18,9 +18,9 @@ from functools import cache
 
 from pydantic_ai.messages import ModelMessage
 
-from infosec_harness.agents.capabilities import REPO_RO_TOOLS
-from infosec_harness.agents.trajectory import trace_calls
 from infosec_harness.evals.messages import MAX_NAME_CHARS, MAX_RECORDED_CALLS
+from infosec_harness.runtime.capabilities import REPO_RO_TOOLS
+from infosec_harness.runtime.trajectory import trace_calls
 from infosec_harness.settings import get_settings
 
 

@@ -7,7 +7,8 @@ Paths below are relative to `src/infosec_harness/` unless they start at the repo
 | Module | Responsibility |
 | --- | --- |
 | `domain/models.py`, `domain/canonical.py` | Typed findings, plans, verdicts and shared contracts; canonical JSON bytes and SHA-256 digests |
-| `agents/` | Agent specs, eval datasets and release policies (`agents/<name>/`), the risk scenario library, the registry (agent bindings and `EXECUTION_GENERATION`), model factory, capabilities (which enforce the tool policies), prompt renderer (`render.py`), repository read tools (`repo_tools.py`), `trajectory.py` (`trace_calls`: the one pass over tool calls; malformed arguments count as none), budgets, stubs and validators |
+| `agents/` | Agent specs, eval datasets and release policies (`agents/<name>/`), the risk scenario library and editor schema; no shared runtime implementation |
+| `runtime/` | PydanticAI construction and bindings (`registry.py`, including `EXECUTION_GENERATION`), execution dependencies, budgets, capabilities, governance, prompt rendering, output contracts and validators, trajectories and stub models |
 | `graph/triage.py`, `graph/prepare.py`, `graph/local.py` | The per-finding triage graph, component preparation, and in-process discovery and preparation |
 | `graph/pipeline.py`, `graph/workloads.py`, `graph/failures.py` | Grouping, scheduling and per-finding orchestration, the build/smoke/probe workloads, and failure classification, shared by the in-process and durable paths |
 | `graph/ops.py`, `graph/manifests.py`, `graph/scoring.py` | The execution interface, secret-free reproduction manifests, prioritization |
@@ -17,17 +18,17 @@ Paths below are relative to `src/infosec_harness/` unless they start at the repo
 | `workflows/accounting.py` | Root budget reservations |
 | `sandbox/docker.py` | The runtime gate and probe/shell/build execution; re-exports the sandbox's public names |
 | `sandbox/{errors,markers,output,image,engine,boundary}.py` | Failure classes; stdout markers; parsing untrusted runner output; Dockerfile and image identity; the Docker CLI; egress network and builder verification |
-| `sandbox/controls.py`, `sandbox/evidence.py`, `sandbox/policy.py`, `sandbox/process.py` | Positive and negative control tests; the controller's execution record; base-image allowlist and build-spec validation; the one owned subprocess runner for Docker, Git and native CLIs |
+| `sandbox/controls.py`, `sandbox/evidence.py`, `sandbox/policy.py`, `sandbox/process.py`, `sandbox/profiles.py` | Positive and negative control tests; the controller's execution record; base-image allowlist and build-spec validation; the one owned subprocess runner for Docker, Git and native CLIs; execution adapter identity and support profiles |
 | `repo/` | Hardened Git checkout under `local_repo_roots`, access checks, component and stack detection |
 | `persistence/` | Run store (`store.py`, `db.py`), migrations, artifacts, `budgets.py` (the root ledger, the one compare-and-set retry and the closed-accounting validation), recipe cache, reconciliation; `run_telemetry.py` (the one typed `RunTelemetry`, schema 2; migration `0006` rewrote earlier records), `batch_progress.py` (read-only batch progress), `identity.py` (worker-host provenance and manifest `schema_version`), `paths.py` (workspace layout), `population.py` (operational/demo populations) |
-| `inference/` | Opt-in credential broker, one subpackage per role (below) |
-| `evals/` | `run.py` (eval runs, overlays and `--model`), `adapters.py` (per-agent scoring adapters), `dataset.py` (the one dataset loader), `gates.py` (the one release-gate evaluator), `release_report.py`, `inert_gates.py` (the audit every report gets), `metrics.py`, `messages.py` (captured-message walker), `pricing.py`, `baselines.py`, `corpus_run.py`, `calibration.py`, `execution_checks.py` and `probe_execution.py` (opt-in sandbox checks) |
+| `inference/` | `models.py` constructs OpenAI-compatible and Bedrock providers; opt-in credential broker roles listed below |
+| `evals/` | `run.py` (eval runs, overlays and `--model`), `adapters.py` (per-agent scoring adapters), `dataset.py` (the one dataset loader), `gates.py` (the one release-gate evaluator), `release_report.py`, `inert_gates.py` (the audit every report gets), `metrics.py`, `messages.py` (captured-message walker), `pricing.py`, `baselines.py`, `corpus_run.py`, `calibration.py`, `execution_checks.py` (declared sandbox checks) |
 | `operations/` | Read-only `harness ops readiness` and `harness ops model-connectivity` checks |
 | `qualification/broker/` | Operator broker qualification runners (`python -m infosec_harness.qualification.broker.<module>`); never imported by serving code |
 | `api/`, `cli.py` | FastAPI service and contracts; the Typer CLI |
 | `_io.py` | The one atomic file writer (temp file, fsync, replace; exclusive mode via link) used by artifacts, the native adapter, the qualification runners and eval reports |
-| `intake/`, `integrations/` | Input adapters and Azure DevOps integration |
-| `config/`, `skills/`, `tools/` | Packaged model catalogue and reference broker catalog, runtime skills, tool policies |
+| `intake/`, `integrations/` | Input adapters, extraction claim/evidence/schema contracts, and Azure DevOps integration |
+| `config/`, `skills/`, `tools/` | Packaged model catalogue and broker catalog, runtime skills, tool policies and path-confined repository readers (`repository.py`, `symbols.py`, `target.py`) |
 
 | `inference/` subpackage | Modules |
 | --- | --- |

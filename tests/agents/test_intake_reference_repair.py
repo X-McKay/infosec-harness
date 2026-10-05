@@ -4,8 +4,8 @@ from types import SimpleNamespace
 import pytest
 from pydantic_ai import ModelRetry
 
-from infosec_harness.agents import registry
-from infosec_harness.agents.intake_claims import AtomicFinding, ReferenceError, reconstruct
+from infosec_harness.intake.claims import AtomicFinding, ReferenceError, reconstruct
+from infosec_harness.runtime import registry
 
 
 def claims(field='vulnerability_class', *, start='S000002', end='S000001', value='SQL injection'):

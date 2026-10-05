@@ -25,6 +25,8 @@ from pathlib import Path
 from pydantic import Field
 from temporalio import workflow
 
+from infosec_harness.inference.catalog.profiles import ControllerChannel
+
 with workflow.unsafe.imports_passed_through():
     from datetime import timedelta
 
@@ -35,7 +37,6 @@ with workflow.unsafe.imports_passed_through():
     from temporalio.worker import Replayer
     from temporalio.workflow import ActivityConfig
 
-    from infosec_harness.agents.registry import ACTIVITY_RETRY
     from infosec_harness.inference.wire.protocol import (
         ExecutorContract,
         ReservationBinding,
@@ -50,6 +51,7 @@ with workflow.unsafe.imports_passed_through():
         read_private_key,
         serve_worker,
     )
+    from infosec_harness.runtime.registry import ACTIVITY_RETRY
 
 
 class NativeOperatorConfig(StrictModel):
@@ -74,8 +76,8 @@ def read_config(path: Path) -> NativeOperatorConfig:
 
 def make_agent(config: NativeOperatorConfig | None):
     model = (BrokerModel(contract=config.contract, binding=config.binding,
-        controller_url=config.controller_url, secret_env=config.secret_env,
-        ca_file=config.ca_file, client_cert=config.client_cert, client_key=config.client_key,
+        controller=ControllerChannel(url=config.controller_url, hmac_env=config.secret_env,
+            ca_file=config.ca_file, client_cert=config.client_cert, client_key=config.client_key),
         timeout=90) if config else UnboundBrokerModel("native-qualification", atomic_intake=False))
     return Agent(model, output_type=str, name="native-temporal-qualification", retries=0,
         model_settings=config.contract.model_settings if config else {},

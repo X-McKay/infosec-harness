@@ -50,7 +50,7 @@ def test_an_overlay_without_a_base_version_is_refused(tmp_path):
 
 
 def test_a_current_overlay_loads_without_its_pin(tmp_path):
-    from infosec_harness.agents.registry import load_spec
+    from infosec_harness.runtime.registry import load_spec
 
     current = load_spec("probe-planner").metadata["version"]
     loaded = load_overlay(_overlay(tmp_path, {"base_version": current, "model": "haiku"}))

@@ -24,10 +24,10 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from infosec_harness.agents.deps import AgentDeps
 from infosec_harness.domain.models import EnvironmentSpec, VerdictFacts
 from infosec_harness.evals.messages import MAX_NAME_CHARS
 from infosec_harness.repo.detect import detect_stack
+from infosec_harness.runtime.deps import AgentDeps
 from infosec_harness.sandbox.markers import (
     FILE_ORACLE_NAME_PREFIX,
     FILE_ORACLE_PREFIX,

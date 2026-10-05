@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from infosec_harness.agents.governance import GovernanceError
-from infosec_harness.agents.registry import BINDINGS, build_agent, load_spec
+from infosec_harness.runtime.governance import GovernanceError
+from infosec_harness.runtime.registry import BINDINGS, build_agent, load_spec
 from infosec_harness.tools.policies import (
     EXECUTION_CLASS_ORDER,
     ToolEffect,
@@ -53,7 +53,7 @@ def test_the_policy_declares_exactly_the_tools_the_code_exposes():
     `execution_class` a label before this file existed. Both directions are checked: a stale
     entry for a tool that no longer exists is also a lie about the surface.
     """
-    from infosec_harness.agents.capabilities import REPO_RO_TOOLS
+    from infosec_harness.runtime.capabilities import REPO_RO_TOOLS
 
     declared = {t.name for t in load_policies()["repo-read-only"].tools}
     assert declared == set(REPO_RO_TOOLS), {
@@ -69,7 +69,9 @@ def test_the_declared_output_bound_covers_every_tools_own_cap():
     `describe_callables`. A tool whose own cap exceeded it would make the declaration false
     without anything failing.
     """
-    from infosec_harness.agents import repo_tools, symbol_inspection, target_context
+    from infosec_harness.tools import repository as repo_tools
+    from infosec_harness.tools import symbols as symbol_inspection
+    from infosec_harness.tools import target as target_context
 
     declared = load_policies()["repo-read-only"].max_output_bytes
     for name, limit in (("describe_callables", symbol_inspection.MAX_DESCRIBE_BYTES),
@@ -150,7 +152,7 @@ def test_enabled_skills_must_be_the_skills_the_agent_can_load():
 
 @pytest.mark.parametrize("name", sorted(BINDINGS))
 def test_each_committed_spec_runs_the_tier_its_model_policy_names(name):
-    from infosec_harness.agents.models import load_models_config
+    from infosec_harness.inference.models import load_models_config
 
     spec = load_spec(name)
     assert load_models_config().model_policies[spec.metadata["model_policy"]] == spec.model
@@ -159,7 +161,7 @@ def test_each_committed_spec_runs_the_tier_its_model_policy_names(name):
 def test_a_committed_spec_whose_policy_disagrees_with_its_tier_is_refused(monkeypatch):
     """No silent fallback: a policy that resolves to a different tier than the spec runs is a
     governance error, not a choice made quietly by whichever field is read."""
-    from infosec_harness.agents import registry
+    from infosec_harness.runtime import registry
 
     real = registry.load_spec
 
@@ -188,7 +190,7 @@ def test_a_policy_field_with_no_enforcer_is_rejected():
 
 
 def test_the_repo_toolset_applies_its_declared_timeout():
-    from infosec_harness.agents.capabilities import DEFAULT_REPO_RO_TOOLS, repo_ro_toolset
+    from infosec_harness.runtime.capabilities import DEFAULT_REPO_RO_TOOLS, repo_ro_toolset
 
     declared = load_policies()["repo-read-only"].timeout_seconds
     assert repo_ro_toolset(DEFAULT_REPO_RO_TOOLS).timeout == declared
@@ -197,7 +199,7 @@ def test_the_repo_toolset_applies_its_declared_timeout():
 def test_every_repo_tool_result_is_held_to_the_declared_output_bound(monkeypatch):
     """list_files and search_code are capped by entry count, not bytes: long paths could exceed
     the declared bound, so the bound is applied to every result, not merely asserted."""
-    from infosec_harness.agents import capabilities
+    from infosec_harness.runtime import capabilities
 
     declared = load_policies()["repo-read-only"].max_output_bytes
     assert capabilities._bounded(lambda: "x" * declared, declared)() == "x" * declared
@@ -209,7 +211,7 @@ def test_every_repo_tool_result_is_held_to_the_declared_output_bound(monkeypatch
 async def test_the_sandbox_shell_uses_the_declared_timeout_and_output_bound(monkeypatch):
     from types import SimpleNamespace
 
-    from infosec_harness.agents.capabilities import run_in_sandbox
+    from infosec_harness.runtime.capabilities import run_in_sandbox
     from infosec_harness.sandbox import docker
 
     policy = load_policies()["sandbox-shell"]

@@ -15,10 +15,10 @@ from pydantic import BaseModel, ConfigDict
 from pydantic_ai import Agent
 from pydantic_ai.usage import UsageLimits
 
-from infosec_harness.agents import models
-from infosec_harness.agents.registry import load_spec
 from infosec_harness.api.evidence_io import COMMIT, read_bytes
 from infosec_harness.api.model_observation import ModelConnectionReceipt
+from infosec_harness.inference import models
+from infosec_harness.runtime.registry import load_spec
 from infosec_harness.settings import get_settings
 
 

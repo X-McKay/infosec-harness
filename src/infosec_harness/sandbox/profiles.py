@@ -1,7 +1,7 @@
 """The adapter profile each detected language maps to, recorded in the execution manifest.
 
 Every profile is ``experimental``: detection and the adapter contract
-(``ecosystem_contract.ADAPTER_CONTRACT_VERSION``) do not by themselves establish tested support.
+(``ADAPTER_CONTRACT_VERSION``) do not by themselves establish tested support.
 """
 
 from __future__ import annotations
@@ -9,6 +9,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from infosec_harness.domain.models import SupportStatus
+
+# v3: admissibility comes only from sandbox policy; executed controls establish viability.
+ADAPTER_CONTRACT_VERSION = "unit-probe-adapters/v3"
 
 # language -> adapter profile id.
 ECOSYSTEM_PROFILES: Mapping[str, str] = {

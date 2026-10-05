@@ -14,7 +14,7 @@ from pathlib import Path
 from packaging.markers import Marker, default_environment
 
 EXECUTOR_PACKAGES = ("inference/wire", "inference/executor")
-EXECUTOR_MODULES = ("agents/intake_schema.py", "domain/canonical.py")
+EXECUTOR_MODULES = ("intake/schema.py", "domain/canonical.py")
 
 
 def build_context(root: Path, output: Path, *, machine: str = "aarch64") -> None:

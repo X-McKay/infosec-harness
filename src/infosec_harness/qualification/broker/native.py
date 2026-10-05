@@ -28,6 +28,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from infosec_harness.inference.catalog.profiles import ControllerChannel
+
 CONFIGURATION = "native-fixture-config"
 AGENT = "context"
 WORKER_KEY = b"native-test-only-worker-key-000000000000"
@@ -293,7 +295,6 @@ async def worker() -> None:
     from pydantic_ai import Agent
     from pydantic_ai.messages import CachePoint
 
-    from infosec_harness.agents.render import render_prompt
     from infosec_harness.domain.models import StackFingerprint
     from infosec_harness.inference.wire.http_service import JsonChannel
     from infosec_harness.inference.wire.protocol import (
@@ -302,6 +303,7 @@ async def worker() -> None:
         canonical_bytes,
     )
     from infosec_harness.inference.worker.transport import BrokerModel
+    from infosec_harness.runtime.render import render_prompt
 
     value = configuration()
     channel = JsonChannel(ca_file=value["controller_ca"])
@@ -309,8 +311,8 @@ async def worker() -> None:
         INVOCATIONS_PATH, canonical_bytes(reference(value).model_dump(mode="json"))))
     os.environ["IH_NATIVE_WORKER_KEY"] = WORKER_KEY.decode()
     model = BrokerModel(contract=reference(value).contract, binding=binding,
-        controller_url=value["controller_origin"], secret_env="IH_NATIVE_WORKER_KEY",
-        ca_file=value["controller_ca"], client_cert=None, client_key=None,
+        controller=ControllerChannel(url=value["controller_origin"], hmac_env="IH_NATIVE_WORKER_KEY",
+            ca_file=value["controller_ca"], client_cert=None, client_key=None),
         request_identity=lambda: "native-fixture-step")
     prompt = "native fixture"
     if value["scope"] == "cachepoint":

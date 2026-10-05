@@ -6,7 +6,8 @@ import json
 
 import pytest
 
-from infosec_harness.agents.intake_claims import (
+from infosec_harness.domain.models import ExtractedFinding
+from infosec_harness.intake.claims import (
     SOURCE_INDEX_VERSION,
     WIRE_VERSION,
     AtomicFinding,
@@ -14,8 +15,7 @@ from infosec_harness.agents.intake_claims import (
     reconstruct,
     report_source_lines,
 )
-from infosec_harness.agents.intake_evidence import extraction_evidence_violations
-from infosec_harness.domain.models import ExtractedFinding
+from infosec_harness.intake.evidence import extraction_evidence_violations
 
 
 def reference(line: int, end: int | None = None) -> dict[str, str]:

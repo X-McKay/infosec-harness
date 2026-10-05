@@ -14,8 +14,10 @@ from functools import cache
 from pydantic_ai import FunctionToolset, ModelRetry, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 
-from infosec_harness.agents.deps import AgentDeps
-from infosec_harness.agents.repo_tools import (
+from infosec_harness.runtime.deps import AgentDeps
+from infosec_harness.sandbox.output import tail
+from infosec_harness.tools.policies import load_policies
+from infosec_harness.tools.repository import (
     clip_bytes,
     list_files,
     list_tree,
@@ -24,10 +26,8 @@ from infosec_harness.agents.repo_tools import (
     repo_digest,
     search_code,
 )
-from infosec_harness.agents.symbol_inspection import describe_callables
-from infosec_harness.agents.target_context import inspect_target
-from infosec_harness.sandbox.output import tail
-from infosec_harness.tools.policies import load_policies
+from infosec_harness.tools.symbols import describe_callables
+from infosec_harness.tools.target import inspect_target
 
 # The toolset's tools, in the order they are declared to the model. The order is part of the
 # cacheable prompt prefix, so it is fixed here rather than derived from a set.

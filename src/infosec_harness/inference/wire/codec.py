@@ -165,11 +165,18 @@ def _cache_point(value: Any) -> bool:
 
 def _messages(messages: list[dict]) -> None:
     for message in messages:
+        if not isinstance(message, dict):
+            raise BrokerError("policy", "Message must be a typed object")
         kind = message.get("kind")
         if kind not in {"request", "response"}:
             raise BrokerError("policy", "Unsupported message kind")
         _keys(message, m.ModelRequest if kind == "request" else m.ModelResponse)
-        for part in message.get("parts", []):
+        parts = message.get("parts", [])
+        if not isinstance(parts, list):
+            raise BrokerError("policy", "Message parts must be a list")
+        for part in parts:
+            if not isinstance(part, dict):
+                raise BrokerError("policy", "Message part must be a typed object")
             part_kind = part.get("part_kind")
             if part_kind not in _PARTS:
                 raise BrokerError("policy", "Unsupported message part")
@@ -205,7 +212,10 @@ def decode_payload(payload: InferencePayload) -> tuple[list[m.ModelMessage], dic
     if params.get("native_tools") or params.get("allow_image_output"):
         raise BrokerError("policy", "Native tools and image output are unsupported")
     for key in ("function_tools", "output_tools"):
-        for tool in params.get(key, []):
+        tools = params.get(key, [])
+        if not isinstance(tools, list):
+            raise BrokerError("policy", "Tool definitions must be a list")
+        for tool in tools:
             _keys(tool, ToolDefinition)
     try:
         messages = m.ModelMessagesTypeAdapter.validate_python(payload.messages)

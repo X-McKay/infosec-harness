@@ -4,7 +4,7 @@ description: Recipe for building a Gradle Java test environment in the sandbox. 
   or repairing a build for a Gradle project.
 metadata:
   owner: appsec
-  version: 1.0.0
+  version: 1.0.1
 ---
 
 # Building Gradle targets
@@ -44,8 +44,8 @@ metadata:
   includes`, and a JUnit-4 probe in a project that *does* declare it fails the same way. You may
   not edit `build.gradle`, so read that line and write the probe the build can run — see
   test-junit4 / test-junit5.
-- **test_command:** `./gradlew --no-daemon --offline --rerun-tasks -i test --tests '<fqcn>'`
-  targeting the probe's fully-qualified class.
+- **test_command:** `./gradlew --no-daemon --offline --rerun-tasks -i test --tests '*<ProbeClassName>'`
+  targeting the probe's simple class name across packages.
   - **`-i` (`--info`) is load-bearing.** Gradle's `Test` task forwards a test's standard streams
     only from the INFO log level up; at the default level `System.out.println` from a test is
     dropped, so the probe's `HARNESS_` markers never reach the harness and a correct probe is
@@ -62,7 +62,7 @@ metadata:
     unconditional rather than hoping the inputs differ. `cleanTest test` says the same thing.
 - **Registries:** honor `settings.gradle`/`init.gradle` repositories the project declares;
   supply credentials via BuildKit secrets.
-- **Partial builds:** target a subproject: `./gradlew --rerun-tasks -i :<subproject>:test --tests '<fqcn>'`.
+- **Partial builds:** target a subproject: `./gradlew --rerun-tasks -i :<subproject>:test --tests '*<ProbeClassName>'`.
 
 ## Safety constraints
 
@@ -80,4 +80,3 @@ metadata:
 - `test_command` runs at the INFO log level (`-i`): Gradle's `Test` task forwards a test's standard streams only from INFO up, so at the default level the probe's markers are dropped and a correct probe is recorded as having reached nothing.
 - `test_command` makes the run unconditional (`--rerun-tasks`, or `cleanTest test`). Gradle's `test` task is incremental, so with unchanged inputs it is reported `UP-TO-DATE`: no test runs, no marker is printed, and the build still exits 0. Measured on Gradle 8.14.3, where the first run printed all three markers and the next two printed none.
 - The probe is written in the framework `build.gradle` declares, not the one on the classpath: Gradle runs JUnit 4 unless the build says `test { useJUnitPlatform() }`, and a mismatch fails with `No tests found for given includes` (measured). Unlike Surefire, Gradle does not auto-detect, and you may not edit the build file.
-

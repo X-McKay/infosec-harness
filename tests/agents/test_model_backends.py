@@ -15,7 +15,8 @@ import pytest
 from pydantic import BaseModel
 from pydantic_ai import Agent
 
-from infosec_harness.agents import models
+from infosec_harness.inference import models
+from infosec_harness.inference.executor.compat import CompatOpenAIChatModel
 
 
 def test_openai_compatible_construction_applies_the_production_transport_contract(monkeypatch):
@@ -39,7 +40,8 @@ def test_openai_compatible_construction_applies_the_production_transport_contrac
 
     monkeypatch.setattr(openai, "AsyncOpenAI", Client)
     monkeypatch.setattr(pydantic_ai.providers.openai, "OpenAIProvider", Provider)
-    monkeypatch.setattr(models, "CompatOpenAIChatModel", ChatModel)
+    from infosec_harness.inference.executor import compat
+    monkeypatch.setattr(compat, "CompatOpenAIChatModel", ChatModel)
     from infosec_harness.settings import get_settings
 
     monkeypatch.setenv("HARNESS_MODEL_BASE_URL", "https://gateway.invalid/v1")
@@ -103,9 +105,9 @@ def test_bedrock_construction_uses_region_and_profile_without_a_live_aws_call(mo
 
 def test_backend_capabilities_preserve_typed_output_and_tool_calling(monkeypatch):
     """Both backends advertise the capabilities required by governed agent specs."""
-    from infosec_harness.agents.outputs import VERDICT_OUTPUTS
-    from infosec_harness.agents.registry import BINDINGS, build_agent
     from infosec_harness.domain.models import ProbeSource
+    from infosec_harness.runtime.outputs import VERDICT_OUTPUTS
+    from infosec_harness.runtime.registry import BINDINGS, build_agent
     from infosec_harness.settings import get_settings
 
     monkeypatch.setenv("HARNESS_MODEL_MODE", "live")
@@ -206,7 +208,7 @@ async def test_openai_compatible_mock_transport_round_trips_tool_and_typed_outpu
         client = AsyncOpenAI(
             base_url="https://provider.invalid/v1", api_key="test", http_client=http_client
         )
-        model = models.CompatOpenAIChatModel(
+        model = CompatOpenAIChatModel(
             "test-model", provider=OpenAIProvider(openai_client=client)
         )
         result = await Agent(model, output_type=_TypedReply, tools=[_echo]).run("go")
@@ -306,7 +308,7 @@ def test_the_intake_stub_emits_the_atomic_wire_with_no_claims():
     from pydantic_ai.models.function import AgentInfo
     from pydantic_ai.tools import ToolDefinition
 
-    from infosec_harness.agents import stubs
+    from infosec_harness.runtime import stubs
 
     info = AgentInfo(function_tools=[], allow_text_output=False, model_settings=None,
                      model_request_parameters=None, instructions=None,
@@ -314,3 +316,24 @@ def test_the_intake_stub_emits_the_atomic_wire_with_no_claims():
     response = stubs.stub_model("intake", "sonnet").function(
         [ModelRequest(parts=[UserPromptPart("x")])], info)
     assert response.parts[0].args == {}
+
+
+@pytest.mark.parametrize("cache_field", ["cache_read_per_mtok", "cache_write_per_mtok"])
+def test_explicit_zero_cache_price_remains_free(monkeypatch, cache_field):
+    price = models.Prices(input_per_mtok=10, output_per_mtok=20, **{cache_field: 0})
+    monkeypatch.setattr(models, "custom_prices", lambda _name: price)
+    usage = SimpleNamespace(input_tokens=1000, output_tokens=0, cache_read_tokens=0,
+                            cache_write_tokens=0)
+    setattr(usage, cache_field.replace("per_mtok", "tokens"), 1000)
+    assert models.estimate_cost("gateway:model", usage) == (0, True)
+
+
+@pytest.mark.parametrize("field", ["max_retries", "max_retries_under_temporal", "min_max_tokens"])
+def test_backend_rejects_negative_provider_limits(field):
+    with pytest.raises(ValueError):
+        models.BackendConfig(kind="openai_compatible", **{field: -1})
+
+
+def test_backend_rejects_unknown_provider_options():
+    with pytest.raises(ValueError):
+        models.BackendConfig.model_validate({"kind": "openai_compatible", "max_retry": 0})

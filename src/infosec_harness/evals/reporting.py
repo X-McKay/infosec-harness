@@ -472,7 +472,7 @@ async def latest_live_experiment(agent: str, tier: str | None = None):
     because neither can ever be a baseline; a dirty-tree run is *not* skipped, so the baseline
     refusal says so instead of an older commit's result being picked silently.
     """
-    from infosec_harness.agents import registry
+    from infosec_harness.runtime import registry
 
     tier = tier or registry.load_spec(agent).model or "sonnet"
     for row in await _stored_experiments(agent=agent, commit=None):

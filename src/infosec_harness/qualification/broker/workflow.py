@@ -6,9 +6,9 @@ from temporalio import workflow
 with workflow.unsafe.imports_passed_through():
     from pydantic_ai.messages import CachePoint
 
-    from infosec_harness.agents.deps import AgentDeps
-    from infosec_harness.agents.durable import AGENT_LIST
     from infosec_harness.qualification.broker.validators import ROOT_PREFIX, WORKFLOW_NAME
+    from infosec_harness.runtime.deps import AgentDeps
+    from infosec_harness.runtime.durable import AGENT_LIST
     from infosec_harness.workflows.temporal_ops import TemporalOps
 
 

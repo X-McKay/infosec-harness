@@ -10,14 +10,20 @@ from typing import Any
 import yaml
 from pydantic_ai import ModelRetry
 
-from infosec_harness.agents.ecosystem_contract import (
-    PYTEST_TEST_COMMAND,
-    environment_spec_violations,
-    install_path_violations,
-    offline_warmup_violations,
+from infosec_harness.domain.models import (
+    DiagnosisKind,
+    EnvironmentSpec,
+    ProbeSource,
+    Verdict,
+    VerdictFacts,
+    VerdictLabel,
 )
-from infosec_harness.agents.validators import validate_probe
-from infosec_harness.domain.models import EnvironmentSpec, ProbeSource
+from infosec_harness.runtime.validators import (
+    validate_environment_spec,
+    validate_probe,
+    verdict_violations,
+)
+from infosec_harness.sandbox.output import oracle_signals, sink_returned
 
 from .documents import SkillDoc
 
@@ -200,52 +206,24 @@ def resolve_placeholders(text: str) -> str:
 
 
 def spec_violations(spec: EnvironmentSpec) -> list[str]:
-    """Every deterministic objection the harness would raise to this spec.
-
-    The three production validators, in the order ``validate_environment_spec`` applies them,
-    so a spec this function calls clean is one a live agent could have emitted without being
-    told to retry.
-    """
-    return (
-        environment_spec_violations(spec)
-        + install_path_violations(spec)
-        + offline_warmup_violations(spec)
-    )
-
-
-# A benign counterpart for judging one command on its own. The PERL5LIB entry is present
-# because `install_path_violations` couples a cpanm install to it: judging a lone install
-# command without it would report the *spec's* incoherence as a fault of the command. Spec
-# coherence is judged instead by `extract_exemplar_specs`, where a whole spec is actually shown.
-# The canonical command, not a copy of it: a new pytest rule must not make every *install*
-# command in every skill fail because this filler went stale. That is what happened when
-# `-o addopts=` was added.
-_FILLER_TEST_COMMAND = PYTEST_TEST_COMMAND
-_FILLER_ENV = {"PERL5LIB": "/work/home/perl5/lib/perl5"}
+    """Check the sandbox's structural contract; executing the recipe is a separate gate."""
+    try:
+        validate_environment_spec(None, spec)
+    except ModelRetry as error:
+        return [error.message]
+    return []
 
 
 def command_violations(command: ShellCommand) -> list[str]:
-    """The harness's objections to a single command the skill shows, judged on its own.
-
-    ``offline_warmup_violations`` is deliberately not applied: it asks whether the *install*
-    commands warmed what the *test* command needs, which is a property of a whole spec and not
-    of any one line. Applying it here would report every Maven test command as defective for a
-    reason belonging to a different command.
-    """
-    if command.kind is CommandKind.TEST:
-        spec = EnvironmentSpec(
-            base_image="scratch",
-            test_command=resolve_placeholders(command.text),
-            env=dict(_FILLER_ENV),
-        )
-    else:
-        spec = EnvironmentSpec(
-            base_image="scratch",
-            test_command=_FILLER_TEST_COMMAND,
-            install_commands=[resolve_placeholders(command.text)],
-            env=dict(_FILLER_ENV),
-        )
-    return environment_spec_violations(spec) + install_path_violations(spec)
+    """Validate command structure without guessing which framework flags it requires."""
+    spec = EnvironmentSpec(
+        base_image="python:3.12-slim",
+        test_command=(resolve_placeholders(command.text) if command.kind is CommandKind.TEST
+                      else "python -m pytest -s {test_file}"),
+        install_commands=([resolve_placeholders(command.text)]
+                          if command.kind is CommandKind.INSTALL else []),
+    )
+    return spec_violations(spec)
 
 
 def probe_exemplar_violations(test_file_path: str, content: str) -> list[str]:
@@ -284,6 +262,8 @@ class SkillCase:
     regression: str = ""
     environment_spec: dict[str, Any] | None = None
     probe: dict[str, Any] | None = None
+    observed_output: str | None = None
+    """Runner-output fixture judged by the production evidence contract, never by source shape."""
     expect_violations: tuple[str, ...] = ()
     """Substrings, each of which must appear in some violation. Empty means "expect clean"."""
 
@@ -339,6 +319,7 @@ def load_skill_cases(skill: SkillDoc) -> list[SkillCase]:
                 regression=raw.get("regression", ""),
                 environment_spec=raw.get("environment_spec"),
                 probe=raw.get("probe"),
+                observed_output=raw.get("observed_output"),
                 expect_violations=tuple(raw.get("expect_violations") or ()),
                 shown_in_skill=tuple(raw.get("shown_in_skill") or ()),
             )
@@ -364,7 +345,21 @@ def run_case(case: SkillCase, skill: SkillDoc) -> list[str]:
             )
 
     violations: list[str] | None = None
-    if case.environment_spec is not None:
+    if case.observed_output is not None:
+        fired, reached = oracle_signals(case.observed_output, "abc123")
+        facts = VerdictFacts(
+            environment_ready=True, oracle_fired=fired, precondition_reached=reached,
+            sink_returned=sink_returned(case.observed_output, "abc123"),
+            last_diagnosis=DiagnosisKind.valid_negative,
+        )
+        violations = [
+            problem
+            for label in (VerdictLabel.potentially_exploitable, VerdictLabel.likely_not_exploitable)
+            for problem in verdict_violations(
+                Verdict(label=label, confidence=1, rationale="Uncorroborated model claim"), facts
+            )
+        ]
+    elif case.environment_spec is not None:
         raw = {k: v for k, v in case.environment_spec.items()}
         raw["test_command"] = resolve_placeholders(raw.get("test_command", ""))
         raw["install_commands"] = [resolve_placeholders(c) for c in raw.get("install_commands", [])]

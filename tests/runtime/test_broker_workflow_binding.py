@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from infosec_harness.agents.deps import AgentDeps
 from infosec_harness.inference.wire.protocol import ExecutorContract, ReservationBinding
+from infosec_harness.runtime.deps import AgentDeps
 from infosec_harness.workflows import accounting, temporal_ops
 from infosec_harness.workflows.payloads import CloseBrokerRunArgs, ReserveArgs
 

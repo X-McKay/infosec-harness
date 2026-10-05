@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import pytest
 
-from infosec_harness.agents import governance
-from infosec_harness.agents.registry import BINDINGS, load_spec
-from infosec_harness.agents.risk import MATRIX, TIER_ORDER, library, max_tier, parse, tier_for
+from infosec_harness.runtime import governance
+from infosec_harness.runtime.registry import BINDINGS, load_spec
+from infosec_harness.runtime.risk import MATRIX, TIER_ORDER, library, max_tier, parse, tier_for
 
 LIB = library()
 

@@ -19,7 +19,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from test_broker_profiles import backend
 
-from infosec_harness.inference.catalog.profiles import BrokerConfig
+from infosec_harness.inference.catalog.profiles import BrokerConfig, ControllerChannel
 from infosec_harness.inference.wire.auth import AUTH_HEADER, sign_request
 from infosec_harness.inference.wire.codec import encode_response
 from infosec_harness.inference.wire.protocol import (
@@ -111,11 +111,8 @@ def _model(contract, binding, handler, *, identity=lambda: "step:7"):
     return BrokerModel(
         contract=contract,
         binding=binding,
-        controller_url="https://broker.example",
-        secret_env="BROKER_TEST_KEY",
-        ca_file=None,
-        client_cert=None,
-        client_key=None,
+        controller=ControllerChannel(url="https://broker.example", hmac_env="BROKER_TEST_KEY",
+            ca_file=None, client_cert=None, client_key=None),
         request_identity=identity,
         http_transport=httpx.MockTransport(handler),
     )
@@ -347,7 +344,7 @@ def test_binding_mismatch_rejects_and_valid_model_never_constructs_provider(monk
 
 
 def test_atomic_intake_uses_fresh_openai_schema_profile() -> None:
-    from infosec_harness.agents.intake_schema import InlineOpenAIJsonSchemaTransformer
+    from infosec_harness.intake.schema import InlineOpenAIJsonSchemaTransformer
 
     contract = _contract("intake")
     model = _model(contract, _binding(contract), lambda request: httpx.Response(200))
@@ -463,7 +460,7 @@ def test_controller_provenance_is_mandatory_and_must_match_the_contract(change) 
 def test_terminal_dispositions_cannot_be_transient_retries(code):
     from infosec_harness.inference.wire.http_service import response_error
     from infosec_harness.inference.wire.protocol import TransientBrokerError
-    error = response_error(409, canonical_bytes({"error": code}))
+    error = response_error(canonical_bytes({"error": code}))
     assert type(error) is BrokerError
     with pytest.raises(ValueError):
         TransientBrokerError(code)
@@ -471,10 +468,10 @@ def test_terminal_dispositions_cannot_be_transient_retries(code):
 
 @pytest.mark.parametrize("code", ["unavailable", "pending"])
 def test_transient_activity_errors_have_distinct_retryable_type(code):
-    from infosec_harness.agents.registry import ACTIVITY_RETRY
     from infosec_harness.inference.wire.http_service import response_error
     from infosec_harness.inference.wire.protocol import TransientBrokerError
-    error = response_error(409, canonical_bytes({"error": code}))
+    from infosec_harness.runtime.registry import ACTIVITY_RETRY
+    error = response_error(canonical_bytes({"error": code}))
     assert type(error) is TransientBrokerError and error.code == code
     assert type(error).__name__ not in ACTIVITY_RETRY.non_retryable_error_types
     assert ACTIVITY_RETRY.maximum_attempts == 3
@@ -504,20 +501,20 @@ def test_remote_error_diagnostics_are_sanitized_and_transient_type_is_preserved(
     from infosec_harness.inference.wire.protocol import TransientBrokerError
 
     diagnostic = {"boundary": "provider_request", "category": "wall_timeout"}
-    error = _response_error(409, canonical_bytes({"error": "completion_unknown", "diagnostic": diagnostic}))
+    error = _response_error(canonical_bytes({"error": "completion_unknown", "diagnostic": diagnostic}))
     assert type(error) is BrokerError and error.diagnostic == diagnostic
     assert "provider_request" in caplog.text and "wall_timeout" in caplog.text
 
     caplog.clear()
     secret = "https://secret.invalid/path?token=do-not-log"
     malformed = {**diagnostic, "detail": secret}
-    error = _response_error(503, canonical_bytes({"error": "unavailable", "diagnostic": malformed,
+    error = _response_error(canonical_bytes({"error": "unavailable", "diagnostic": malformed,
                                                  "message": secret}))
     assert type(error) is TransientBrokerError
     assert error.code == "unavailable" and error.diagnostic is None
     assert secret not in caplog.text
 
-    error = _response_error(503, canonical_bytes({"error": "unavailable", "diagnostic": diagnostic}))
+    error = _response_error(canonical_bytes({"error": "unavailable", "diagnostic": diagnostic}))
     assert type(error) is TransientBrokerError and error.diagnostic == diagnostic
 
 
@@ -606,3 +603,76 @@ def test_error_codes_are_the_closed_literal():
     from infosec_harness.inference.wire.protocol import ERROR_CODES, ErrorCode
 
     assert frozenset(get_args(ErrorCode)) == ERROR_CODES and "unavailable" in ERROR_CODES
+
+
+@pytest.mark.parametrize("length", ["", "abc", "+2", "2_0", "２", "9" * 5000])
+def test_invalid_http_body_length_is_terminal_identity(length):
+    from email.message import Message
+    from io import BytesIO
+    from types import SimpleNamespace
+
+    from infosec_harness.inference.wire.http_service import _BrokerHandler
+
+    headers = Message()
+    headers["Content-Length"] = length
+    request = SimpleNamespace(headers=headers, rfile=BytesIO(b"{}"))
+    with pytest.raises(BrokerError) as error:
+        _BrokerHandler._read_body(request)
+    assert error.value.code == "identity"
+
+
+@pytest.mark.parametrize("failure", ["startup", "bind"])
+def test_failed_service_setup_closes_its_event_loop(monkeypatch, failure):
+    import asyncio
+    import threading
+
+    from infosec_harness.inference.wire import http_service
+
+    loop = asyncio.new_event_loop()
+    before = set(threading.enumerate())
+    monkeypatch.setattr(http_service.asyncio, "new_event_loop", lambda: loop)
+
+    async def startup():
+        if failure == "startup":
+            raise RuntimeError("setup failed")
+
+    def bind(*args, **kwargs):
+        raise RuntimeError("bind failed")
+
+    monkeypatch.setattr(http_service, "_BoundedServer", bind)
+    with pytest.raises(RuntimeError):
+        http_service.serve(object(), host="127.0.0.1", port=0, tls=None,
+                           loopback_executor=True, startup=startup)
+    assert loop.is_closed()
+    assert set(threading.enumerate()) <= before
+
+
+@pytest.mark.parametrize("change", ["partial", "missing_request", "invalid_state", "invalid_id", "boolean"])
+def test_recorded_broker_evidence_requires_complete_typed_observations(change):
+    from infosec_harness.inference.worker.provenance import runtime_evidence
+
+    value = {"state": "completed", "request_id": "a" * 64, **_verified(_contract())}
+    if change == "partial":
+        value = {"state": "completed"}
+    elif change == "missing_request":
+        del value["request_id"]
+    elif change == "invalid_state":
+        value["state"] = "accepted"
+    elif change == "invalid_id":
+        value["request_id"] = "not-a-request-digest"
+    else:
+        value["native_id"] = True
+    response = _response()
+    response.metadata = {"harness_broker": value}
+    with pytest.raises(BrokerError) as error:
+        runtime_evidence([response])
+    assert error.value.code == "invalid_response"
+
+
+def test_recorded_broker_evidence_preserves_complete_observations():
+    from infosec_harness.inference.worker.provenance import runtime_evidence
+
+    value = {"state": "completed", "request_id": "a" * 64, **_verified(_contract())}
+    response = _response()
+    response.metadata = {"harness_broker": value}
+    assert runtime_evidence([response]) == [value]

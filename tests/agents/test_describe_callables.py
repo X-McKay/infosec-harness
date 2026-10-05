@@ -15,9 +15,9 @@ from types import SimpleNamespace
 import pytest
 from pydantic_ai import ModelRetry
 
-from infosec_harness.agents import capabilities as caps
-from infosec_harness.agents import symbol_inspection
-from infosec_harness.agents.deps import AgentDeps
+from infosec_harness.runtime import capabilities as caps
+from infosec_harness.runtime.deps import AgentDeps
+from infosec_harness.tools import symbols as symbol_inspection
 
 CORPUS = Path(__file__).resolve().parents[2] / "eval-corpus"
 
@@ -390,7 +390,7 @@ def test_the_tool_policy_declares_the_new_tool_as_a_read():
 @pytest.mark.parametrize("agent", ["context", "probe-author", "probe-repair"])
 def test_the_agents_that_need_it_are_told_to_use_it_imperatively(agent):
     """A descriptive mention gets ignored; the instruction has to be an order."""
-    from infosec_harness.agents.registry import load_spec
+    from infosec_harness.runtime.registry import load_spec
 
     text = "\n".join(load_spec(agent).instructions or [])
     tool = "describe_callables" if agent == "context" else "inspect_target"
@@ -402,7 +402,7 @@ def test_a_file_larger_than_the_read_cap_is_described_from_its_first_bytes_only(
         tmp_path, monkeypatch):
     """Regression: describe_callables read the whole file with `read_text()`, bypassing
     MAX_FILE_BYTES, so a multi-gigabyte file was loaded into the worker to describe it."""
-    from infosec_harness.agents import repo_tools
+    from infosec_harness.tools import repository as repo_tools
 
     monkeypatch.setattr(repo_tools, "MAX_FILE_BYTES", 64)
     monkeypatch.setattr(symbol_inspection, "MAX_FILE_BYTES", 64)

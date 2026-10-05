@@ -171,9 +171,9 @@ def _same_endpoint(left: str | None, right: str) -> bool:
 
 def verify_configuration(manifest: RealProviderManifest) -> dict[str, dict[str, str]]:
     """Resolve every case's direct and native route from the frozen files; no client is built."""
-    from infosec_harness.agents.models import ModelsConfig
-    from infosec_harness.agents.registry import BINDINGS, load_spec
     from infosec_harness.inference.catalog.profiles import BrokerConfig
+    from infosec_harness.inference.models import ModelsConfig
+    from infosec_harness.runtime.registry import BINDINGS, load_spec
 
     configs = {"direct": ModelsConfig.model_validate(_load_yaml(manifest.direct_models_config)),
                "native": ModelsConfig.model_validate(_load_yaml(manifest.broker_models_config))}

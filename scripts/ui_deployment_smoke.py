@@ -12,7 +12,6 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 from pydantic import TypeAdapter
 
-from infosec_harness.agents.registry import BINDINGS
 from infosec_harness.api.contracts import (
     BatchSummary,
     ConfigResponse,
@@ -21,6 +20,7 @@ from infosec_harness.api.contracts import (
     RuntimeStatus,
 )
 from infosec_harness.persistence.metrics import MetricsResponse
+from infosec_harness.runtime.registry import BINDINGS
 
 # A finite transport ceiling independent of semantic contract validation. Every list read is
 # paged or bounded server-side, so a contract-valid response is far below it.

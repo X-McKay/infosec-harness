@@ -2,12 +2,6 @@ import json
 
 from pydantic_ai.messages import CachePoint
 
-from infosec_harness.agents.render import (
-    VOLATILE_FIELDS,
-    prompt_text,
-    render_prompt,
-    repo_context_block,
-)
 from infosec_harness.domain.models import (
     BuildResult,
     CodeRef,
@@ -19,6 +13,12 @@ from infosec_harness.domain.models import (
     RepoProfile,
     RepoSnapshot,
     StackFingerprint,
+)
+from infosec_harness.runtime.render import (
+    VOLATILE_FIELDS,
+    prompt_text,
+    render_prompt,
+    repo_context_block,
 )
 
 

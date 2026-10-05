@@ -1,6 +1,6 @@
-# Version 2 records diagnostic-only runsc traces for selected Python SQLi cases.
-# Scores remain structural; these forgeable observations are not target attestation.
-version: "2"
+# Version 3 retires candidate-forgeable in-process traces. Scores remain structural
+# and do not claim independent target attestation.
+version: "3"
 # Each case hands the agent a probe with one specific defect diagnosed, and expects a repair
 # that still satisfies the protocol. The defects are the ones seen in real runs: a probe that
 # asserts before reaching the sink, and a probe that instruments an object the target never
@@ -22,10 +22,10 @@ version: "2"
 # `p95_model_requests: {max: 12}` in the release policy turns into a live gate: the recorded
 # failure was 14 of 16 requests spent re-reading a manifest, in every single run.
 #
-# The scorer's labels are also not the whole gate. `agents/validators.py::validate_probe` runs
+# The scorer's labels are also not the whole gate. `runtime/validators.py::validate_probe` runs
 # first and rejects a probe missing HARNESS_PRECONDITION or HARNESS_SINK_RETURNED, missing an
-# oracle signal, or able to skip itself (a Test::More script with no plan, a @Disabled JUnit
-# test). A repair that will not satisfy it exhausts the output-retry budget and scores
+# oracle signal, or an escaping output path. Skips and failed discovery are judged from
+# execution evidence. A repair that will not satisfy the contract exhausts the output-retry budget and scores
 # `invalid_output`, a schema_validity_rate breach rather than a lost accuracy point.
 cases:
   - name: asserts-before-reaching-the-sink
@@ -374,8 +374,8 @@ cases:
     # one thing missing: Test::More has no plan, so prove runs nothing. The diagnosis now names
     # the zero-test run, and the correction is `done_testing()` (or `tests => 1`), one line at
     # the end. A repair that instead restructures the imports reproduces the original loop.
-    # `_skipping_probe_violations` backs this up deterministically: a Perl probe returned with
-    # no plan is rejected, so the lazy rewrite cannot even be emitted.
+    # The sandbox runner records the observed zero-test result; source heuristics do not
+    # establish whether a rewritten probe actually executed.
     repo: eval-corpus/perl/cmdi/vulnerable
     target_callable: "Runner::run"
     payload:

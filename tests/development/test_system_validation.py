@@ -16,11 +16,6 @@ import pytest
 from pydantic_ai import ModelRetry
 from pydantic_ai.models.test import TestModel
 
-from infosec_harness.agents import repo_tools
-from infosec_harness.agents.deps import AgentDeps
-from infosec_harness.agents.registry import BINDINGS, build_agent, load_spec
-from infosec_harness.agents.render import render_prompt
-from infosec_harness.agents.validators import validate_probe, verdict_violations
 from infosec_harness.domain.models import (
     DiagnosisKind,
     ProbeExecution,
@@ -31,7 +26,12 @@ from infosec_harness.domain.models import (
     VerdictFacts,
     VerdictLabel,
 )
+from infosec_harness.runtime.deps import AgentDeps
+from infosec_harness.runtime.registry import BINDINGS, build_agent, load_spec
+from infosec_harness.runtime.render import render_prompt
+from infosec_harness.runtime.validators import validate_probe, verdict_violations
 from infosec_harness.settings import get_settings
+from infosec_harness.tools import repository as repo_tools
 
 # The tools each agent must expose to the model (design contract).
 #
@@ -142,7 +142,7 @@ def test_skills_load_with_real_content():
 
 
 @pytest.mark.parametrize("name", list(BINDINGS))
-async def test_agent_emits_typed_contract(name):
+async def test_agent_emits_typed_contract(name, tmp_path):
     stack = StackFingerprint(
         languages={"python": 3}, test_frameworks=["pytest"], manifests=["requirements.txt"]
     )
@@ -168,7 +168,7 @@ async def test_agent_emits_typed_contract(name):
     result = await agent.run(
         render_prompt("do the task", payload, stack=stack),
         deps=AgentDeps(
-            repo_path="/tmp", sandbox_image="img", facts=facts,
+            repo_path=str(tmp_path), sandbox_image="img", facts=facts,
             report_text=payload.get("report"),
         ),
     )

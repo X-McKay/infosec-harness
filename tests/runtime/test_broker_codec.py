@@ -113,8 +113,8 @@ def test_set_valued_tool_visibility_is_canonical_without_losing_membership():
 def test_actual_rendered_graph_prompt_preserves_cache_boundary():
     from pydantic_ai.messages import CachePoint
 
-    from infosec_harness.agents.render import render_prompt
     from infosec_harness.domain.models import StackFingerprint
+    from infosec_harness.runtime.render import render_prompt
     content = render_prompt("Inspect the fixture", {"finding": "controlled input"},
                             stack=StackFingerprint(languages={"python": 1}))
     assert any(type(item) is CachePoint for item in content)
@@ -198,3 +198,30 @@ def test_unknown_dynamic_usage_fields_remain_denied():
     wire["usage"]["unreviewed_usage_counter"] = 3
     with pytest.raises(BrokerError, match="invalid_response"):
         decode_response(wire)
+
+
+@pytest.mark.parametrize("parts", [[1], [None], {"part_kind": "text"}, "text"])
+def test_malformed_part_containers_are_terminal_codec_failures(parts):
+    from infosec_harness.inference.wire.codec import decode_payload, decode_response
+    from infosec_harness.inference.wire.protocol import BrokerError, InferencePayload
+
+    payload = InferencePayload(messages=[{"kind": "request", "parts": parts}],
+                               parameters={}, model_settings={})
+    with pytest.raises(BrokerError) as error:
+        decode_payload(payload)
+    assert error.value.code == "policy"
+    with pytest.raises(BrokerError) as error:
+        decode_response({"kind": "response", "parts": parts})
+    assert error.value.code == "invalid_response"
+
+
+@pytest.mark.parametrize("tools", [None, 1, {}, "tool"])
+def test_malformed_tool_definition_container_is_terminal_policy(tools):
+    from infosec_harness.inference.wire.codec import decode_payload
+    from infosec_harness.inference.wire.protocol import BrokerError, InferencePayload
+
+    payload = InferencePayload(messages=[{"kind": "request", "parts": []}],
+                               parameters={"function_tools": tools}, model_settings={})
+    with pytest.raises(BrokerError) as error:
+        decode_payload(payload)
+    assert error.value.code == "policy"

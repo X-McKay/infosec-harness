@@ -1,14 +1,5 @@
-# Behavioural cases for partial-build.
-#
-# This skill writes its per-ecosystem guidance as *fragments* — ":<subproject>:test --tests
-# '<fqcn>'", "then `-pl <module>` on the test command" — rather than as whole commands. That
-# is readable, and it is also how a fragment that would be rejected as a command escapes the
-# static check, which only judges complete invocations. These cases close that gap by composing
-# the command an agent actually builds from each fragment and judging that.
-#
-# KNOWN DEFECT, not fixed here: the Maven fragment this skill shows omits
-# -Dmaven.repo.local=/opt/home/.m2/repository, which install_path_violations rejects. See
-# tests/agents/test_skill_evals.py::KNOWN_DEFECTS.
+# Structural recipe cases use sandbox policy. Framework flag recommendations live
+# in the skill; build and smoke execution determine whether they work.
 skill: partial-build
 
 cases:
@@ -35,47 +26,6 @@ cases:
         org.apache.maven.plugins:maven-surefire-plugin:3.2.5:test -Dtest=HarnessProbeTest
         -Dmaven.repo.local=/work/home/.m2/repository
         -Dmaven.test.redirectTestOutputToFile=false
-
-  - id: the-partial-maven-install-fragment-as-written-is-rejected
-    type: procedure_adherence
-    regression: >
-      The fragment this skill shows — `mvn -q -B -pl <module> -am -DskipTests test-compile` —
-      carries no -Dmaven.repo.local. Maven takes its local repository from the JVM's user.home,
-      which is /root for the sandbox user's unmapped uid, so the build fails with "cannot create
-      directory '/root'" before it resolves anything. build-maven's first rule says to set it on
-      *every* install command; this fragment is the exception the rule did not reach.
-    scenario: >
-      An agent copies the fragment verbatim into install_commands.
-    expect_violations:
-      - "-Dmaven.repo.local=/opt/home/.m2/repository"
-    environment_spec:
-      base_image: maven:3.9-eclipse-temurin-21
-      scope: partial
-      module_path: service
-      install_commands:
-        - mvn -q -B -pl service -am -DskipTests test-compile
-      test_command: >-
-        mvn -B -o -pl service test-compile
-        org.apache.maven.plugins:maven-surefire-plugin:3.2.5:test -Dtest=HarnessProbeTest
-        -Dmaven.repo.local=/work/home/.m2/repository
-        -Dmaven.test.redirectTestOutputToFile=false
-
-  - id: the-partial-gradle-test-fragment-needs-i-once-composed
-    type: procedure_adherence
-    scenario: >
-      The Gradle fragment is ":<subproject>:test --tests '<fqcn>'". Prefixed with ./gradlew, as
-      an agent must, it is missing -i — so the subproject's probe runs and its markers are
-      dropped below the INFO threshold. build-gradle's own parallel line carries -i; this one
-      does not, and the fragment form is what hides the difference.
-    expect_violations:
-      - "Add -i"
-    environment_spec:
-      base_image: gradle:8-jdk21
-      scope: partial
-      module_path: service
-      install_commands:
-        - ./gradlew --no-daemon :service:testClasses
-      test_command: ./gradlew --no-daemon --offline --rerun-tasks :service:test --tests '*HarnessProbeTest'
 
   - id: a-composed-partial-gradle-spec-with-i-is-accepted
     type: procedure_adherence

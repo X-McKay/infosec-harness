@@ -182,7 +182,7 @@ def migrate(
 @agents_app.command("validate")
 def agents_validate():
     """Validate every agent spec against its bindings, capabilities and cache rules."""
-    from infosec_harness.agents.registry import validate_all
+    from infosec_harness.runtime.registry import validate_all
 
     problems = validate_all()
     if problems:
@@ -195,7 +195,7 @@ def agents_validate():
 @agents_app.command("schema")
 def agents_schema():
     """Regenerate agents/agent_schema.json from the capability allowlist."""
-    from infosec_harness.agents.registry import get_settings, json_schema
+    from infosec_harness.runtime.registry import get_settings, json_schema
 
     path = get_settings().agents_dir / "agent_schema.json"
     path.write_text(json.dumps(json_schema(), indent=2) + "\n")

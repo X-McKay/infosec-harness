@@ -11,8 +11,8 @@ from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
-from infosec_harness.agents.intake_evidence import extraction_evidence_violations
 from infosec_harness.domain.models import ExtractedFinding
+from infosec_harness.intake.evidence import extraction_evidence_violations
 
 REPORT = 'alpha\n\tbeta says "quoted" and path \\tmp'
 

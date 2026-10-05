@@ -18,3 +18,4 @@ in [release evidence](../evaluation/RELEASE_EVIDENCE.md#writing-an-evidence-fold
 | [2026-10-02-broker-full-eval](2026-10-02-broker-full-eval/README.md) | Full brokered evaluation and follow-up candidates |
 | [2026-10-04-broker-qualification-checkpoint](2026-10-04-broker-qualification-checkpoint/README.md) | Latest assembled broker qualification measurements |
 | [2026-10-04-ui-qualification-dashboard](2026-10-04-ui-qualification-dashboard/README.md) | Qualification dashboard validation |
+| [2026-10-05-astra-simplification](2026-10-05-astra-simplification/README.md) | Simplification review, behavioral changes, recovery and deterministic validation |

@@ -10,10 +10,10 @@ from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from sqlalchemy import select
 
-from infosec_harness.agents.budgets import resolve_declared_budget, run_budget
-from infosec_harness.agents.registry import load_spec
 from infosec_harness.evals.budget_stop import _binding_limit, budget_stop_diagnostic
 from infosec_harness.evals.run import run_experiment
+from infosec_harness.runtime.budgets import resolve_declared_budget, run_budget
+from infosec_harness.runtime.registry import load_spec
 
 
 @pytest.mark.parametrize("field,check,usage_field,bound", [
@@ -113,8 +113,8 @@ def test_unavailable_or_invalid_token_counts_stay_unknown(usage):
 
 
 async def test_budget_diagnostic_is_persisted_without_fabricating_final_usage(monkeypatch):
-    from infosec_harness.agents import registry
     from infosec_harness.persistence import db
+    from infosec_harness.runtime import registry
 
     class NoOutputAgent:
         async def run(self, *args, **kwargs):
@@ -140,8 +140,8 @@ async def test_budget_diagnostic_is_persisted_without_fabricating_final_usage(mo
 
 
 async def test_failed_sdk_run_captures_partial_tokens_without_changing_final_usage(monkeypatch):
-    from infosec_harness.agents import registry
     from infosec_harness.persistence import db
+    from infosec_harness.runtime import registry
 
     def model(messages, info):
         return ModelResponse(parts=[ToolCallPart("again", {})],

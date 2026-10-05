@@ -13,19 +13,6 @@ from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from infosec_harness.agents import models
-from infosec_harness.agents.deps import AgentDeps
-from infosec_harness.agents.outputs import (
-    VERDICT_OUTPUTS,
-    ContextOutput,
-    InconclusiveOutput,
-    NegativeOutput,
-    PartialEnvironmentOutput,
-    PositiveOutput,
-    allowed_verdict_labels,
-    prepare_verdict_tools,
-)
-from infosec_harness.agents.registry import build_agent
 from infosec_harness.domain.models import (
     DiagnosisKind,
     EnvironmentSpec,
@@ -35,6 +22,19 @@ from infosec_harness.domain.models import (
     VerdictFacts,
     VerdictLabel,
 )
+from infosec_harness.inference.executor.compat import CompatOpenAIChatModel
+from infosec_harness.runtime.deps import AgentDeps
+from infosec_harness.runtime.outputs import (
+    VERDICT_OUTPUTS,
+    ContextOutput,
+    InconclusiveOutput,
+    NegativeOutput,
+    PartialEnvironmentOutput,
+    PositiveOutput,
+    allowed_verdict_labels,
+    prepare_verdict_tools,
+)
+from infosec_harness.runtime.registry import build_agent
 
 
 def _partial_payload(**changes: object) -> dict[str, object]:
@@ -383,7 +383,7 @@ async def test_openai_verdict_tools_round_trip_through_real_provider_mapping(
         client = AsyncOpenAI(
             base_url="https://provider.invalid/v1", api_key="test", http_client=http_client,
         )
-        model = models.CompatOpenAIChatModel(
+        model = CompatOpenAIChatModel(
             "test-model", provider=OpenAIProvider(openai_client=client),
         )
         agent = build_agent("verdict", durable=False)

@@ -20,7 +20,7 @@ class AgentDeps(BaseModel):
     report_text: str | None = None
     """Exact untrusted report supplied by the host, solely for extraction grounding.
 
-    Optional for historical serialized deps; current intake validation fails closed if absent.
+    Only intake requires this field; its validation fails closed if the report is absent.
     It is not an instruction, repository path, or permission grant.
     """
     sandbox_image: str | None = None
@@ -30,7 +30,7 @@ class AgentDeps(BaseModel):
     source_files: int | None = None
     """Source files in the repository, from the stack fingerprint.
 
-    Widens this run's budget for a large repository (see agents.budgets.size_factor). None
+    Widens this run's budget for a large repository (see runtime.budgets.size_factor). None
     means unknown, and an unknown repository gets its declared ceiling unchanged rather than a
     guessed one.
     """

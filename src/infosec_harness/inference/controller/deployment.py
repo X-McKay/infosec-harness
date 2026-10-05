@@ -11,7 +11,7 @@ from pathlib import Path
 
 import yaml
 
-from infosec_harness.agents import models
+from infosec_harness.inference import models
 from infosec_harness.inference.catalog.policy import canonical_policy
 from infosec_harness.inference.controller.admission import ReservationPolicy
 from infosec_harness.inference.controller.issuance import (
@@ -27,7 +27,7 @@ from infosec_harness.inference.wire.protocol import BrokerError, InvocationReque
 
 def contracts() -> dict:
     """Every registered agent's durable effective configuration, as the controller admits it."""
-    from infosec_harness.agents.registry import BINDINGS
+    from infosec_harness.runtime.registry import BINDINGS
 
     return {name: trusted_config(name, durable=True) for name in BINDINGS}
 

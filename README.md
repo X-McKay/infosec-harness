@@ -132,17 +132,17 @@ reviewers and CI read about the system stays at the repository root.
 src/infosec_harness/
   agents/<name>/        # the 11 agent specs, eval datasets and release policies
   agents/risk-scenarios.yaml  # scored harm scenarios, their controls, and which agents carry each
-  agents/*.py           # loader, registry, model factory, capabilities, renderer, validators
+  runtime/              # agent construction, execution, budgets and validators
   skills/               # runtime SKILL.md files: probe-oracle-protocol, cwe-*, lang-*, build-*, test-*
   config/               # model catalogue and the disabled reference broker catalog
-  tools/                # per-toolset policy (effect, retry safety, timeout, output bound)
+  tools/                # bounded repository readers and per-toolset policy
   domain/               # typed contracts (Finding, EnvironmentSpec, ProbePlan, Verdict, ...)
   graph/                # triage graph, preparation, shared pipeline and workloads, scoring
   workflows/            # Temporal workflows, activities, submission, local runs, worker
   sandbox/              # gVisor Docker runner, isolation policy, bounded subprocesses
   repo/                 # hardened checkout, access checks, component and stack detection
   persistence/          # run store, artifacts, accounting, recipe cache, alembic migrations
-  inference/            # opt-in credential broker: wire, catalog, worker, controller, executor, native
+  inference/            # OpenAI-compatible/Bedrock models and opt-in credential broker
   evals/                # datasets, adapters, gates, reports, baselines, corpus and calibration
   operations/           # read-only readiness and model-connectivity checks
   qualification/broker/ # operator broker qualification runners (not imported by serving code)

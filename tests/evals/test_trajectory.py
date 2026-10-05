@@ -14,10 +14,6 @@ from pathlib import Path
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from infosec_harness.agents.deps import AgentDeps
-from infosec_harness.agents.registry import build_agent
-from infosec_harness.agents.render import render_prompt
-from infosec_harness.agents.trajectory import trace_calls
 from infosec_harness.domain.models import StackFingerprint
 from infosec_harness.evals.trajectory import (
     AGENT_EXPECTATIONS,
@@ -25,6 +21,10 @@ from infosec_harness.evals.trajectory import (
     check_expectations,
     cwe_skill_prefix,
 )
+from infosec_harness.runtime.deps import AgentDeps
+from infosec_harness.runtime.registry import build_agent
+from infosec_harness.runtime.render import render_prompt
+from infosec_harness.runtime.trajectory import trace_calls
 
 
 def test_cwe_skill_prefix():

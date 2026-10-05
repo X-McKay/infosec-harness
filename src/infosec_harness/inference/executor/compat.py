@@ -8,9 +8,13 @@ from pydantic_ai.models.openai import OpenAIChatModel as OpenAIChatModelBase
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.providers.openai import OpenAIProvider
 
-from infosec_harness.agents.intake_schema import intake_openai_profile
 from infosec_harness.inference.wire.codec import check_schemas
-from infosec_harness.inference.wire.protocol import BrokerError, validate_thinking_token_budget
+from infosec_harness.inference.wire.protocol import (
+    BrokerError,
+    ProviderAdaptation,
+    validate_thinking_token_budget,
+)
+from infosec_harness.intake.schema import intake_openai_profile
 
 
 def merge_leading_system_messages(messages: list[Any]) -> list[Any]:
@@ -99,25 +103,27 @@ def contract_profile(model: str, *, atomic_intake: bool) -> ModelProfile:
     return intake_openai_profile(profile) if atomic_intake else profile
 
 
-def model_for_contract(contract: Any, provider: Any) -> CompatOpenAIChatModel:
-    """The one construction of a contract's provider model.
-
-    Admission sizing (:func:`rendering.input_wire`) and executor dispatch both call this, so the request
-    that is measured is the request that is sent.
-    """
+def openai_model(model: str, provider: Any, adaptation: ProviderAdaptation, *,
+                 atomic_intake: bool = False) -> CompatOpenAIChatModel:
+    """One request-shaping factory for direct dispatch, broker rendering and execution."""
     extra: dict[str, Any] = {}
-    if contract.atomic_intake:
-        extra["profile"] = contract_profile(contract.model, atomic_intake=True)
+    if atomic_intake:
+        extra["profile"] = contract_profile(model, atomic_intake=True)
     return CompatOpenAIChatModel(
-        contract.model,
+        model,
         provider=provider,
-        merge_system=contract.merge_system_messages,
-        min_max_tokens=contract.min_max_tokens,
-        strict_closed_output_tools=contract.strict_closed_output_tools,
-        enable_thinking=contract.enable_thinking,
-        thinking_token_budget=contract.thinking_token_budget,
+        merge_system=adaptation.merge_system_messages,
+        min_max_tokens=adaptation.min_max_tokens,
+        strict_closed_output_tools=adaptation.strict_closed_output_tools,
+        enable_thinking=adaptation.enable_thinking,
+        thinking_token_budget=adaptation.thinking_token_budget,
         **extra,
     )
+
+
+def model_for_contract(contract: Any, provider: Any) -> CompatOpenAIChatModel:
+    """Admission measures the same model and adaptations the executor sends."""
+    return openai_model(contract.model, provider, contract, atomic_intake=contract.atomic_intake)
 
 
 def _closed_output_schema(schema: Any) -> bool:

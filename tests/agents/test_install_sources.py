@@ -4,9 +4,9 @@ from types import SimpleNamespace
 import pytest
 from pydantic_ai import ModelRetry
 
-from infosec_harness.agents import registry
-from infosec_harness.agents.validators import bind_install_source_validator
 from infosec_harness.domain.models import EnvironmentSpec
+from infosec_harness.runtime import registry
+from infosec_harness.runtime.validators import bind_install_source_validator
 from infosec_harness.sandbox.install_sources import (
     INVALID_SOURCE,
     install_source_policy,
@@ -88,7 +88,8 @@ def test_bound_tuple_matches_resolved_policy_and_does_not_follow_settings_mutati
     monkeypatch.setattr(get_settings(), "default_registry_allowlist", ["pypi.org"])
     resolved = registry.resolve_agent_config("build-repair", registry.load_spec("build-repair"))
     policy = resolved.effective_spec["metadata"]["output_validation"]
-    assert policy == install_source_policy(["pypi.org"])
+    assert policy == {**install_source_policy(["pypi.org"]),
+                      **registry._environment_policy()}
     assert resolved.for_source_files(200).effective_spec["metadata"]["output_validation"] == policy
     agent = registry.build_agent("build-repair", durable=False)
     validate = agent._output_validators[0].function

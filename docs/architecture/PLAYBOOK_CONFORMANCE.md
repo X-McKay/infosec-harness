@@ -33,7 +33,7 @@ ships in the wheel; everything reviewers read *about* the system stays at the re
 
 Every artifact above is edited directly. What the runtime needs from the risk assessment --
 each agent's scenarios and the tier they establish -- it reads from the library at construction
-(`src/infosec_harness/agents/governance.py`, `src/infosec_harness/agents/risk.py`), and the
+(`src/infosec_harness/runtime/governance.py`, `src/infosec_harness/runtime/risk.py`), and the
 release gate on scenario coverage reads the same file
 (`src/infosec_harness/evals/coverage.py`). The playbook rules a per-agent assessment document
 would encode are held by tests: `tests/agents/test_risk_scenarios.py`,
@@ -87,7 +87,7 @@ document a validator opens and nothing enforces. The narrative assessment is in 
 **Tool policies carry only enforced fields** (waived, `TOOL003`/`TOOL009`/`TOOL011`/`TOOL012`).
 `owner`, `authorization_scopes` and `data_classification` were declared in every `tool.yaml`
 and read by nothing, which made them claims no check could fail. The remaining fields (effect,
-retry safety, timeout, output bound, tools) are read and enforced by `agents/capabilities.py`.
+retry safety, timeout, output bound, tools) are read and enforced by `runtime/capabilities.py`.
 
 **A shared threat model.** Each agent's spec points at
 `docs/threat-models/triage-system.md` rather than a per-agent document, because the trust
@@ -170,10 +170,10 @@ can run against the wheel), evaluators in `src/infosec_harness/evals/`, fixtures
 checks use shared root fixtures. The directory conventions are recorded in
 [REPOSITORY_GUIDE.md](../development/REPOSITORY_GUIDE.md#directory-conventions).
 
-**No `activities/`, `runtime/`, `observability/` or `policy/` packages.** Activities are two
+**No `activities/`, `observability/` or `policy/` packages.** Activities are two
 modules (`workflows/activities.py` and the durable-record writes in
 `workflows/persistence_activities.py`), observability is `telemetry.py`, and policy is split
-between `tools/policies.py` and `agents/governance.py`. Each is currently a file's worth of
+between `tools/policies.py` and `runtime/governance.py`. Each is currently a file's worth of
 code; promoting a file to a package before it needs to be one adds a directory, not structure.
 
 ## Implemented development and provenance structure

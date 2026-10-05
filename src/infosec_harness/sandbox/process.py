@@ -23,11 +23,6 @@ _CHUNK = 16_384
 _DRAIN_GRACE_S = 5.0
 
 
-def minimal_env(**values: str) -> dict[str, str]:
-    """A fixed PATH plus explicitly named values; nothing is inherited from the worker."""
-    return {"PATH": MINIMAL_PATH, "LC_ALL": "C", **values}
-
-
 @dataclass(frozen=True)
 class ProcessResult:
     """The one result shape for every owned child (Docker, Git, native CLIs).

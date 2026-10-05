@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from infosec_harness.agents import capabilities
+from infosec_harness.runtime import capabilities
 from infosec_harness.sandbox import docker, engine
 from infosec_harness.sandbox.policy import SandboxUnavailable
 

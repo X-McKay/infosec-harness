@@ -13,6 +13,7 @@ from temporalio import activity
 
 from infosec_harness.domain.models import (
     BuildResult,
+    CodeRef,
     EnvironmentSpec,
     Finding,
     ProbeExecution,
@@ -30,6 +31,7 @@ from infosec_harness.inference.wire.protocol import (
 )
 from infosec_harness.intake.adapters import resolve_location
 from infosec_harness.persistence import recipes
+from infosec_harness.repo.access import validate_citations
 from infosec_harness.repo.checkout import checkout
 from infosec_harness.repo.detect import detect_stack
 from infosec_harness.workflows.heartbeat import with_heartbeat
@@ -40,6 +42,7 @@ from infosec_harness.workflows.payloads import (
     RecordRecipeArgs,
     ResolveLocationArgs,
     SmokeArgs,
+    ValidateCitationsArgs,
 )
 from infosec_harness.workflows.persistence_activities import ACTIVITIES as PERSISTENCE_ACTIVITIES
 
@@ -85,6 +88,12 @@ async def resolve_location_activity(args: ResolveLocationArgs) -> Finding | None
 
 
 @activity.defn
+async def validate_citations_activity(args: ValidateCitationsArgs) -> list[CodeRef | None]:
+    """Read snapshot bytes in an activity; replay consumes its recorded result."""
+    return validate_citations(args.repo_path, args.references)
+
+
+@activity.defn
 async def new_nonce_activity() -> str:
     return secrets.token_hex(8)
 
@@ -109,6 +118,7 @@ ALL_ACTIVITIES = [
     smoke_test_activity,
     execute_probe_activity,
     resolve_location_activity,
+    validate_citations_activity,
     new_nonce_activity,
     lookup_recipe_activity,
     record_recipe_activity,

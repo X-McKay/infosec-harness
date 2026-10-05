@@ -16,7 +16,8 @@ from pydantic_ai import messages as m
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.models import ModelRequestParameters
 
-from infosec_harness.agents import models
+from infosec_harness.inference import models
+from infosec_harness.inference.catalog.profiles import ControllerChannel
 from infosec_harness.inference.controller import issuance as issuer
 from infosec_harness.inference.wire import codec
 from infosec_harness.inference.wire.protocol import (
@@ -226,8 +227,8 @@ async def test_saved_result_can_be_retrieved_after_binding_deadline(issuance, mo
                         "lease_id": "lease"})
         return httpx.Response(200, content=canonical_bytes(result.model_dump(mode="json")))
     model = BrokerModel(contract=request.contract, binding=binding,
-        controller_url="https://controller.test", secret_env="BROKER_RECOVERY_TEST_KEY",
-        ca_file=None, client_cert=None, client_key=None, request_identity=lambda: "model:0",
+        controller=ControllerChannel(url="https://controller.test", hmac_env="BROKER_RECOVERY_TEST_KEY",
+            ca_file=None, client_cert=None, client_key=None), request_identity=lambda: "model:0",
         http_transport=httpx.MockTransport(saved_result))
     response = await model.request([m.ModelRequest(parts=[m.UserPromptPart("same")])],
         request.contract.model_settings, ModelRequestParameters())

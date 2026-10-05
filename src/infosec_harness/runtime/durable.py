@@ -8,7 +8,7 @@ configuration is read as workflow I/O.
 
 from __future__ import annotations
 
-from infosec_harness.agents.registry import durable_agents, resolved_agent_configs
+from infosec_harness.runtime.registry import durable_agents, resolved_agent_configs
 
 AGENTS = durable_agents()
 # Registered once on the worker by the PydanticAI plugin (TriageBatchWorkflow carries them).

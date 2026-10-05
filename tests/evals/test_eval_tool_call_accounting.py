@@ -7,9 +7,9 @@ from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 from sqlalchemy import select
 
-from infosec_harness.agents.deps import AgentDeps
-from infosec_harness.agents.outputs import PartialEnvironmentOutput
 from infosec_harness.evals.run import run_experiment
+from infosec_harness.runtime.deps import AgentDeps
+from infosec_harness.runtime.outputs import PartialEnvironmentOutput
 
 
 async def _experiment_and_rows(exp_id):
@@ -50,7 +50,7 @@ def _tool_agent(*, finish: bool):
 
 
 async def test_budget_stops_contribute_observed_partial_tool_calls(monkeypatch):
-    from infosec_harness.agents import registry
+    from infosec_harness.runtime import registry
 
     monkeypatch.setattr(registry, "build_agent", lambda *args, **kwargs: _tool_agent(finish=False))
     experiment, rows = await _experiment_and_rows(await run_experiment("partial-build"))
@@ -63,7 +63,7 @@ async def test_budget_stops_contribute_observed_partial_tool_calls(monkeypatch):
 
 
 async def test_successful_tool_calls_are_not_double_counted(monkeypatch):
-    from infosec_harness.agents import registry
+    from infosec_harness.runtime import registry
 
     monkeypatch.setattr(registry, "build_agent", lambda *args, **kwargs: _tool_agent(finish=True))
     experiment, rows = await _experiment_and_rows(await run_experiment("partial-build"))

@@ -6,9 +6,9 @@ from typing import Any
 
 
 def test_atomic_intake_uses_bedrock_converse_with_existing_retry_and_region_contract(monkeypatch):
-    from infosec_harness.agents import models
-    from infosec_harness.agents.intake_claims import AtomicFinding
-    from infosec_harness.agents.registry import build_agent, load_spec, resolve_agent_config
+    from infosec_harness.inference import models
+    from infosec_harness.intake.claims import AtomicFinding
+    from infosec_harness.runtime.registry import build_agent, load_spec, resolve_agent_config
     from infosec_harness.settings import get_settings
 
     captured: dict[str, Any] = {}
@@ -60,7 +60,7 @@ def test_atomic_intake_uses_bedrock_converse_with_existing_retry_and_region_cont
 
 
 def test_bedrock_factory_mock_restores_provider_settings_for_later_tests(monkeypatch):
-    from infosec_harness.agents import models
+    from infosec_harness.inference import models
     from infosec_harness.settings import get_settings
 
     get_settings.cache_clear()

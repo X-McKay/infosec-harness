@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
 
 from infosec_harness.domain.models import EnvironmentSpec, ProbeSource
-from infosec_harness.evals import execution_checks, probe_execution
+from infosec_harness.evals import execution_checks
 from infosec_harness.evals.execution_checks import (
     ExecutionCheckResult,
     builder_infrastructure_failure,
@@ -120,6 +119,32 @@ async def test_cases_without_an_execution_contract_keep_structural_scoring():
     ) is None
 
 
+@pytest.mark.parametrize(("agent", "name"), [
+    ("probe-author", "sqli-marker-oracle"),
+    ("probe-repair", "asserts-before-reaching-the-sink"),
+    ("probe-repair", "instruments-an-object-the-target-never-uses"),
+])
+async def test_probe_scoring_never_dispatches_undeclared_sandbox_checks(monkeypatch, agent, name):
+    from infosec_harness.evals.adapters import ADAPTERS
+    from infosec_harness.evals.dataset import load_dataset
+    from infosec_harness.evals.run import _score_output
+
+    async def unexpected_execution(*args, **kwargs):
+        raise AssertionError("structural scoring must not dispatch sandbox execution")
+
+    monkeypatch.setattr(docker, "ensure_runtime_available", unexpected_execution)
+    monkeypatch.setattr(docker, "run_probe", unexpected_execution)
+    case = next(case for case in load_dataset(agent).cases if case["name"] == name)
+    probe = ProbeSource(test_file_path="tests/test_probe.py", content=(
+        f"{case['target_callable']}\nHARNESS_PRECONDITION::n\nHARNESS_ORACLE::n\n"))
+    predicted, outcome, diagnostic = await _score_output(
+        SimpleNamespace(agent=agent, stub=False), case, ADAPTERS[agent](case), probe)
+    assert (predicted, outcome) == (case["expected"], "answered")
+    assert diagnostic == {"typed_output": {
+        "type": "ProbeSource", "value": probe.model_dump(mode="json"), "truncated": False,
+    }}
+
+
 def test_a_lima_host_tempfile_failure_is_infrastructure_not_model_quality():
     assert builder_infrastructure_failure(
         "ERROR: failed to build: resolve : lstat /var/folders: no such file or directory"
@@ -129,20 +154,10 @@ def test_a_lima_host_tempfile_failure_is_infrastructure_not_model_quality():
     )
 
 
-# --- Both execution engines share one set of sandbox preconditions -------------------------
-
-_PROBE = ProbeSource(test_file_path="tests/test_probe.py", content="def test_probe():\n    pass\n")
-_DECLARED = probe_execution.DECLARED_CHECKS[("probe-author", "sqli-marker-oracle")]
-
-
-async def _both_engines(repo: str | None = None) -> tuple[str, str, str, str]:
-    """Run the dependency-check engine and the probe engine on the same fixture conditions."""
+async def _secure_check(repo: str | None = None) -> ExecutionCheckResult:
     case = {**_case(), **({"repo": repo} if repo is not None else {})}
-    declaration = _DECLARED if repo is None else replace(_DECLARED, repo=repo)
-    dependency = await execution_checks._secure_engine(case, _spec("cpanm DBD::SQLite"),
-                                                        "perl_dbd_sqlite_v1")
-    probe = await probe_execution._secure_engine(declaration, _PROBE, "controller-nonce")
-    return dependency.status, dependency.reason, probe.status, probe.reason
+    return await execution_checks._secure_engine(case, _spec("cpanm DBD::SQLite"),
+                                                 "perl_dbd_sqlite_v1")
 
 
 @pytest.fixture
@@ -158,8 +173,9 @@ def no_build(monkeypatch):
     ("../outside-the-checkout", "execution fixture escapes the repository root"),
     ("eval-corpus/no-such-fixture", "execution fixture is missing"),
 ])
-async def test_both_engines_refuse_an_unsafe_fixture_identically(no_build, repo, reason):
-    assert await _both_engines(repo) == ("not_checked", reason, "not_checked", reason)
+async def test_execution_check_refuses_an_unsafe_fixture(no_build, repo, reason):
+    result = await _secure_check(repo)
+    assert (result.status, result.reason) == ("not_checked", reason)
 
 
 @pytest.mark.parametrize("settings", [
@@ -167,17 +183,16 @@ async def test_both_engines_refuse_an_unsafe_fixture_identically(no_build, repo,
     SimpleNamespace(allow_insecure_runtime=True, sandbox_runtime="runc"),
     SimpleNamespace(allow_insecure_runtime=False, sandbox_runtime="runc"),
 ])
-async def test_both_engines_refuse_anything_but_enforced_runsc_identically(
+async def test_execution_check_requires_enforced_runsc(
     monkeypatch, no_build, settings,
 ):
     monkeypatch.setattr(execution_checks, "get_settings", lambda: settings)
     reason = "execution checks require enforced runsc; the insecure fallback is disabled"
-    dependency_status, dependency, probe_status, probe = await _both_engines()
-    assert (dependency_status, probe_status) == ("not_checked", "not_checked")
-    assert dependency == probe == reason
+    result = await _secure_check()
+    assert (result.status, result.reason) == ("not_checked", reason)
 
 
-async def test_both_engines_require_runsc_to_be_registered_and_the_daemon_default(
+async def test_execution_check_requires_runsc_to_be_registered_and_the_daemon_default(
     monkeypatch, no_build,
 ):
     """The configured name is not evidence: the daemon must advertise and select runsc."""
@@ -185,7 +200,6 @@ async def test_both_engines_require_runsc_to_be_registered_and_the_daemon_defaul
         return False
 
     monkeypatch.setattr(docker, "runtime_available", unavailable)
-    dependency_status, dependency, probe_status, probe = await _both_engines()
-    assert (dependency_status, probe_status) == ("not_checked", "not_checked")
-    assert "is not available on this host" in dependency
-    assert "is not available on this host" in probe
+    result = await _secure_check()
+    assert result.status == "not_checked"
+    assert "is not available on this host" in result.reason

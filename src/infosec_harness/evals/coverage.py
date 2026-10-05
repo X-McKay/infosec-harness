@@ -19,7 +19,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from infosec_harness.agents.risk import Scenario, library
+from infosec_harness.runtime.risk import Scenario, library
 
 __all__ = ["ScenarioCoverage", "scenario_coverage", "scenarios_for"]
 

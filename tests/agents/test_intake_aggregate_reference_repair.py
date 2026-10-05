@@ -6,8 +6,8 @@ import pytest
 from pydantic import ValidationError
 from pydantic_ai import ModelRetry
 
-from infosec_harness.agents import registry
-from infosec_harness.agents.intake_claims import AtomicFinding, ReferenceError, reconstruct
+from infosec_harness.intake.claims import AtomicFinding, ReferenceError, reconstruct
+from infosec_harness.runtime import registry
 
 REPORT = "CWE-89\nSQL injection\n"
 
@@ -109,7 +109,7 @@ def test_blank_or_unsupported_symbol_is_not_accepted():
     output = claims()
     output.cwe.source.end_id = "S000002"
     output.vulnerability_class.source.end_id = "S000002"
-    from infosec_harness.agents.intake_claims import Claim
+    from infosec_harness.intake.claims import Claim
 
     output.symbol = Claim[str](value="not_present", source={"start_id": "S000001"}, confidence=0.8)
     with pytest.raises(ModelRetry, match="literal location"):

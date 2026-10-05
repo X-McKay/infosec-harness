@@ -181,9 +181,8 @@ cases:
     # It is recorded here as well as in build-repair because narrowing is the step most likely
     # to lose it: this agent rewrites install_commands to add `-pl <module> -am`, and a rewrite
     # from memory drops whatever the previous command carried. The failed spec below already has
-    # both flags and a correct warm-up, so the only work left is the narrowing — and
-    # install_path_violations()/offline_warmup_violations() reject the spec if the rewrite
-    # arrives without them, which costs the agent its output retries and fails the case.
+    # both flags and a correct warm-up, so the only work left is the narrowing. Build and
+    # smoke feedback verify whether the rewritten plan still works offline.
     repo: eval-corpus/java/sqli/vulnerable
     payload:
       failed_spec: {base_image: "maven:3.9-eclipse-temurin-21", system_packages: [],

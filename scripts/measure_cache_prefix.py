@@ -33,9 +33,6 @@ from exploration import (
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo
 
-from infosec_harness.agents.deps import AgentDeps
-from infosec_harness.agents.registry import DEFAULT_CLEAR_TOOL_TOKENS, build_agent
-from infosec_harness.agents.render import render_prompt
 from infosec_harness.domain.models import (
     Finding,
     FindingSourceKind,
@@ -44,6 +41,9 @@ from infosec_harness.domain.models import (
     RepoProfile,
     StackFingerprint,
 )
+from infosec_harness.runtime.deps import AgentDeps
+from infosec_harness.runtime.registry import DEFAULT_CLEAR_TOOL_TOKENS, build_agent
+from infosec_harness.runtime.render import render_prompt
 
 _STACK = StackFingerprint(languages={"java": 500}, manifests=["pom.xml"],
                           test_frameworks=["junit5"])

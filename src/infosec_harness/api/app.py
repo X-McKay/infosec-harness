@@ -163,7 +163,7 @@ async def review(run_id: str, req: ReviewRequest) -> ReviewSaved:
 
 @app.get("/api/config", response_model=ConfigResponse)
 async def config() -> ConfigResponse:
-    from infosec_harness.agents.registry import resolved_agent_configs
+    from infosec_harness.runtime.registry import resolved_agent_configs
 
     agents = [{"name": name, "model_tier": cfg.model.requested_model,
                "config_hash": cfg.digest, "resolved_model": cfg.model.resolved_model}

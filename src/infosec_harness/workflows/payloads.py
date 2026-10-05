@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from infosec_harness.domain.models import (
     BatchStatus,
+    CodeRef,
     EnvironmentSpec,
     Finding,
     FindingInput,
@@ -54,6 +55,11 @@ class FindingTriageArgs(_Payload):
 class ResolveLocationArgs(_Payload):
     finding: Finding
     repo_path: str
+
+
+class ValidateCitationsArgs(_Payload):
+    repo_path: str
+    references: list[CodeRef | None]
 
 
 class BuildArgs(_Payload):

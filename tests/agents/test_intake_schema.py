@@ -10,13 +10,13 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
-from infosec_harness.agents.deps import AgentDeps
-from infosec_harness.agents.intake_claims import AtomicFinding, reconstruct
-from infosec_harness.agents.intake_schema import (
+from infosec_harness.domain.models import ExtractedFinding
+from infosec_harness.intake.claims import AtomicFinding, reconstruct
+from infosec_harness.intake.schema import (
     InlineOpenAIJsonSchemaTransformer,
     intake_openai_profile,
 )
-from infosec_harness.domain.models import ExtractedFinding
+from infosec_harness.runtime.deps import AgentDeps
 
 
 def test_profile_builder_copies_base_and_overrides_only_schema_transformer():
@@ -152,9 +152,9 @@ async def test_canonical_registry_resolves_current_atomic_spec_through_mock_open
     """Exercise the actual registry resolver, model factory profile, settings, and SDK codec."""
     import openai
 
-    from infosec_harness.agents import models as model_factory
-    from infosec_harness.agents.registry import build_agent
-    from infosec_harness.agents.render import render_intake_prompt
+    from infosec_harness.inference import models as model_factory
+    from infosec_harness.runtime.registry import build_agent
+    from infosec_harness.runtime.render import render_intake_prompt
     from infosec_harness.settings import get_settings
 
     report = 'file: "src\\app.py"\n'

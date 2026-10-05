@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
-from infosec_harness.agents import models
+from infosec_harness.inference import models
 from infosec_harness.inference.catalog.profiles import ExecutorProfile
 from infosec_harness.inference.controller import issuance
 from infosec_harness.inference.wire.protocol import digest

@@ -5,15 +5,15 @@ from copy import deepcopy
 import pytest
 import yaml
 
-from infosec_harness.agents.models import BackendConfig
-from infosec_harness.agents.registry import BINDINGS
 from infosec_harness.inference.catalog.profiles import (
     BrokerConfig,
     ExecutorProfile,
     InvocationBounds,
     load_broker_config,
 )
+from infosec_harness.inference.models import BackendConfig
 from infosec_harness.resources import package_root
+from infosec_harness.runtime.registry import BINDINGS
 
 AGENTS = tuple(BINDINGS)
 
@@ -275,3 +275,20 @@ def test_catalog_must_cover_exactly_the_registered_agents(tmp_path, change) -> N
     path.write_text(yaml.safe_dump(value), encoding="utf-8")
     with pytest.raises(ValueError, match="invalid"):
         load_broker_config(path, agents=AGENTS)
+
+
+@pytest.mark.parametrize("value", [[{}], (None,), ["inspection"], {"implementation": "inspect"}])
+def test_inspection_is_exactly_empty_in_contract_and_profile(value):
+    from infosec_harness.inference.catalog.profiles import ExecutorProfile
+    from infosec_harness.inference.wire.protocol import ExecutorContract
+
+    catalog = BrokerConfig.model_validate(_config())
+    contract = catalog.resolve_contract("recon", "gateway", "model-v1", {"max_tokens": 2048},
+                                        backend=backend())
+    for cls, fields in ((ExecutorProfile, {}),
+                        (ExecutorContract, contract.model_dump(mode="python"))):
+        with pytest.raises(ValueError):
+            cls.model_validate({**fields, "inspection": value})
+        schema = cls.model_json_schema()["properties"]["inspection"]
+        assert schema["type"] == "array" and schema["maxItems"] == schema["minItems"] == 0
+    assert ExecutorContract.model_validate_json(contract.model_dump_json()).digest == contract.digest

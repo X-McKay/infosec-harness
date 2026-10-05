@@ -1285,8 +1285,8 @@ def test_production_controller_factory_imports_and_fails_closed_without_operator
 def test_contract_inventory_covers_every_registered_agent(monkeypatch, capsys):
     import sys
 
-    from infosec_harness.agents.registry import BINDINGS
     from infosec_harness.inference.controller import deployment
+    from infosec_harness.runtime.registry import BINDINGS
 
     monkeypatch.setattr(sys, "argv", ["deployment", "--print-contracts"])
     deployment.main()

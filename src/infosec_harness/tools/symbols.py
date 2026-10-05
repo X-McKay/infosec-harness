@@ -9,8 +9,8 @@ from pathlib import Path
 
 from pydantic_ai import ModelRetry, RunContext
 
-from infosec_harness.agents.deps import AgentDeps
-from infosec_harness.agents.repo_tools import (
+from infosec_harness.runtime.deps import AgentDeps
+from infosec_harness.tools.repository import (
     MAX_FILE_BYTES,
     _read_capped,
     _resolve,
@@ -558,7 +558,7 @@ _EXTRACTORS = {
 # whole finding with "exceeded max retries count of 2" — measured on java-sqli-vulnerable, where
 # the model called this tool with something that is not a repo-relative file path. So every
 # retry below names the path to call INSTEAD, the same contract the deterministic validators in
-# agents/validators.py hold themselves to. The candidate search goes through `list_files`, which
+# runtime/validators.py hold themselves to. The candidate search goes through `list_files`, which
 # is already confined to the snapshot root: nothing here walks or stats outside it.
 
 _SUPPORTED_EXTS = ", ".join(sorted(_LANG_BY_SUFFIX))

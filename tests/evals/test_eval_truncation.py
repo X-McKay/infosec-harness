@@ -51,7 +51,7 @@ class _FlakyAgent:
 
 
 def _break_endpoint_after(monkeypatch, fail_after: int) -> None:
-    from infosec_harness.agents import registry
+    from infosec_harness.runtime import registry
 
     real_build = registry.build_agent
 
@@ -130,8 +130,8 @@ async def test_transport_failure_keeps_the_scored_cases_and_fails_the_run(monkey
 async def test_agent_deadline_is_a_failed_budget_gate_and_remaining_cases_run(monkeypatch):
     from types import SimpleNamespace
 
-    from infosec_harness.agents import registry
     from infosec_harness.evals import run
+    from infosec_harness.runtime import registry
 
     real_build = registry.build_agent
     deadlines = []
@@ -188,7 +188,7 @@ async def test_agent_deadline_is_a_failed_budget_gate_and_remaining_cases_run(mo
 
 
 async def test_inner_timeout_is_not_mislabeled_as_agent_budget_exhaustion(monkeypatch):
-    from infosec_harness.agents import registry
+    from infosec_harness.runtime import registry
 
     class InnerTimeoutAgent:
         async def run(self, *args, **kwargs):
@@ -249,7 +249,7 @@ def test_typed_output_is_bounded_and_sensitive_keys_are_redacted():
 
 
 async def test_invalid_output_retains_category_but_not_exception_text(monkeypatch, capsys):
-    from infosec_harness.agents import registry
+    from infosec_harness.runtime import registry
 
     class InvalidOutputAgent:
         async def run(self, *args, **kwargs):
@@ -278,7 +278,7 @@ async def test_invalid_output_retains_category_but_not_exception_text(monkeypatc
 
 
 async def test_answered_and_invalid_attempts_do_not_publish_partial_usage(monkeypatch):
-    from infosec_harness.agents import registry
+    from infosec_harness.runtime import registry
 
     real_build = registry.build_agent
 
@@ -333,7 +333,7 @@ async def test_compare_flags_a_truncated_side(monkeypatch, capsys):
 
 
 async def test_truncated_run_never_creates_a_report_in_its_report_dir(tmp_path, monkeypatch):
-    from infosec_harness.agents import registry
+    from infosec_harness.runtime import registry
 
     original = registry.build_agent
     monkeypatch.setattr(registry, "build_agent",
@@ -347,8 +347,8 @@ async def test_broker_budget_is_a_failed_gate_and_next_cases_run_without_sdk_ret
     from pydantic_ai import Agent
     from pydantic_ai.models.function import FunctionModel
 
-    from infosec_harness.agents import registry
     from infosec_harness.inference.wire.protocol import BrokerError
+    from infosec_harness.runtime import registry
 
     real_build = registry.build_agent
     invocations, sdk_calls = [], []
@@ -389,8 +389,8 @@ async def test_broker_budget_is_a_failed_gate_and_next_cases_run_without_sdk_ret
 @pytest.mark.parametrize('code', ['auth', 'policy', 'unavailable', 'completion_unknown', 'SECRET_CODE',
     type('SpoofedCode', (str,), {})('budget')])
 async def test_other_broker_failures_remain_truncated_with_redacted_diagnostics(monkeypatch, tmp_path, code):
-    from infosec_harness.agents import registry
     from infosec_harness.inference.wire.protocol import BrokerError
+    from infosec_harness.runtime import registry
 
     calls = []
     class FailedBroker:

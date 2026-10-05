@@ -10,8 +10,6 @@ from pydantic_ai import Agent, ModelRetry
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
-from infosec_harness.agents.intake_claims import AtomicFinding, ReferenceError, reconstruct
-from infosec_harness.agents.intake_evidence import extraction_evidence_violations
 from infosec_harness.domain.models import ExtractedFinding
 from infosec_harness.evals.intake_fields import (
     ATOMIC_RULES as RULES,
@@ -26,6 +24,8 @@ from infosec_harness.evals.intake_fields import (
     atomic_summary,
     intake_field_summary,
 )
+from infosec_harness.intake.claims import AtomicFinding, ReferenceError, reconstruct
+from infosec_harness.intake.evidence import extraction_evidence_violations
 
 REPORT = "fixture.py line 12\r\nCaller input reaches a shell.\nImpact is described.\n"
 

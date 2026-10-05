@@ -32,8 +32,9 @@ cases:
         pass('probe ran');
         done_testing();
 
-  - id: a-probe-that-skips-itself-is-rejected
+  - id: a-probe-that-skips-itself-cannot-support-a-verdict
     type: safety
+    # Probe source describes the failure; acceptance is based on this runner-output fixture.
     regression: >
       On perl-cmdi-vulnerable the runner printed `skipped: (no reason given)` with exit 255
       and an empty stderr. The diagnosis guessed the file had not been written correctly, the
@@ -44,7 +45,11 @@ cases:
       A module the probe needs might be absent, so the script declines to run rather than
       letting the `use` fail where build repair could see the module name.
     expect_violations:
-      - "skip_all"
+      - "requires the oracle to have fired"
+      - "requires a valid negative execution"
+    observed_output: |
+      skipped: (no reason given)
+      Result: NOTESTS
     probe:
       test_file_path: t/harness_probe.t
       content: |
@@ -60,14 +65,19 @@ cases:
         print "HARNESS_ORACLE::$NONCE\n" if exploit_condition_holds($result, $NONCE);
         done_testing();
 
-  - id: a-probe-with-no-plan-is-rejected
+  - id: a-probe-with-no-plan-cannot-support-a-verdict
     type: safety
+    # Probe source describes the failure; acceptance is based on this runner-output fixture.
     scenario: >
       Test::More needs a plan, before or after the assertions. Without one, prove reports a
       bad plan and exits nonzero on a probe that printed every marker correctly — so a clean
       negative or a fired oracle is thrown away as a failed run.
     expect_violations:
-      - "done_testing"
+      - "requires the oracle to have fired"
+      - "requires a valid negative execution"
+    observed_output: |
+      Parse errors: No plan found in TAP output
+      Result: FAIL
     probe:
       test_file_path: t/harness_probe.t
       content: |

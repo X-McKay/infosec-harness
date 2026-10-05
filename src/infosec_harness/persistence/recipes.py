@@ -21,8 +21,8 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Protocol
 
+from infosec_harness._io import write_json
 from infosec_harness.domain.models import EnvironmentSpec, StackFingerprint
 from infosec_harness.persistence.paths import workspace_dir
 from infosec_harness.settings import get_settings
@@ -51,43 +51,20 @@ def stack_key(stack: StackFingerprint) -> str:
     return hashlib.sha256("|".join(parts).encode()).hexdigest()[:16]
 
 
-class RecipeStore(Protocol):
-    def lookup(self, key: str) -> EnvironmentSpec | None: ...
+class RecipeStore:
+    """One atomically published recipe per stack shape; disabled stores perform no I/O."""
 
-    def record(self, key: str, spec: EnvironmentSpec) -> None: ...
-
-    def forget(self, key: str) -> None: ...
-
-
-class NullRecipeStore:
-    """Used when the cache is disabled. Every lookup misses, so behaviour is exactly as before."""
-
-    def lookup(self, key: str) -> EnvironmentSpec | None:
-        return None
-
-    def record(self, key: str, spec: EnvironmentSpec) -> None:
-        return None
-
-    def forget(self, key: str) -> None:
-        return None
-
-
-class FilesystemRecipeStore:
-    """One JSON file per stack shape under the workspace.
-
-    A file per key rather than one shared index: concurrent prepares for different stacks then
-    never contend, and a corrupt entry costs one recipe instead of all of them.
-    """
-
-    def __init__(self, root: Path | None = None) -> None:
-        # `settings.recipe_cache_dir` exists so a caller can isolate the cache; see Settings.
-        self.root = root or get_settings().recipe_cache_dir or workspace_dir() / "recipes"
-        self.root.mkdir(parents=True, exist_ok=True)
+    def __init__(self, root: Path | None = None, *, enabled: bool | None = None) -> None:
+        settings = get_settings()
+        self.enabled = settings.recipe_cache_enabled if enabled is None else enabled
+        self.root = root or settings.recipe_cache_dir or workspace_dir() / "recipes"
 
     def _path(self, key: str) -> Path:
         return self.root / f"{key}.json"
 
     def lookup(self, key: str) -> EnvironmentSpec | None:
+        if not self.enabled:
+            return None
         path = self._path(key)
         if not path.is_file():
             return None
@@ -99,25 +76,12 @@ class FilesystemRecipeStore:
             return None
 
     def record(self, key: str, spec: EnvironmentSpec) -> None:
-        path = self._path(key)
-        successes = 0
-        if path.is_file():
-            try:
-                successes = int(json.loads(path.read_text()).get("successes", 0))
-            except Exception:
-                successes = 0
-        path.write_text(json.dumps(
-            {"spec": spec.model_dump(mode="json"), "successes": successes + 1}, indent=2))
+        if self.enabled:
+            write_json(self._path(key), {"spec": spec.model_dump(mode="json")})
 
     def forget(self, key: str) -> None:
-        self._path(key).unlink(missing_ok=True)
-
-
-def get_recipe_store(enabled: bool | None = None) -> RecipeStore:
-    """The one recipe-cache switch: ``enabled`` overrides ``settings.recipe_cache_enabled``."""
-    if not (get_settings().recipe_cache_enabled if enabled is None else enabled):
-        return NullRecipeStore()
-    return FilesystemRecipeStore()
+        if self.enabled:
+            self._path(key).unlink(missing_ok=True)
 
 
 def is_cacheable(spec: EnvironmentSpec) -> bool:
@@ -130,7 +94,7 @@ def is_cacheable(spec: EnvironmentSpec) -> bool:
 
 
 def lookup_recipe(stack: StackFingerprint, store: RecipeStore | None = None) -> EnvironmentSpec | None:
-    return (store or get_recipe_store()).lookup(stack_key(stack))
+    return (store or RecipeStore()).lookup(stack_key(stack))
 
 
 def record_recipe_outcome(stack: StackFingerprint, spec: EnvironmentSpec, *, worked: bool,
@@ -141,7 +105,7 @@ def record_recipe_outcome(stack: StackFingerprint, spec: EnvironmentSpec, *, wor
     attempt, once, and then stops existing. A spec that worked but cannot generalise to another
     repository (a partial build) is neither kept nor evicted.
     """
-    store, key = store or get_recipe_store(), stack_key(stack)
+    store, key = store or RecipeStore(), stack_key(stack)
     if worked and is_cacheable(spec):
         store.record(key, spec)
     elif not worked:

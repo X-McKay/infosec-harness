@@ -57,7 +57,7 @@ metadata:
 - Never weaken expected outcomes, thresholds, isolation, or validation to make a candidate pass.
 - Agent specs, skills, release policies and the risk scenario library are hand-maintained package data: edit them in place and let their tests hold the invariants.
 - Do not claim a real runner, provider, or sandbox was verified from a configured name alone.
-- Durable changes require an explicit retry, idempotency, cancellation, and replay assessment. A change that breaks replay of current histories bumps `EXECUTION_GENERATION` (in `agents/registry.py`); earlier generations are not replayable, so in-flight batches must drain before deployment.
+- Durable changes require an explicit retry, idempotency, cancellation, and replay assessment. A change that breaks replay of current histories bumps `EXECUTION_GENERATION` (in `runtime/registry.py`); earlier generations are not replayable, so in-flight batches must drain before deployment.
 
 ## Completion criteria
 

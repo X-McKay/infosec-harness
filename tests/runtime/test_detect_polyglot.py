@@ -13,12 +13,12 @@ import json
 
 import pytest
 
-from infosec_harness.agents.stubs import _env_plan
 from infosec_harness.domain.models import RepoSnapshot
 from infosec_harness.graph.ops import LocalOps
 from infosec_harness.graph.prepare import run_prepare
 from infosec_harness.repo.components import component_stack, owning_component, preparation_key
 from infosec_harness.repo.detect import detect_stack, js_test_runners
+from infosec_harness.runtime.stubs import _env_plan
 
 CJS = "function renderComment(t) { return '<div>' + t + '</div>'; }\nmodule.exports = { renderComment };\n"
 ESM = "export function renderComment(t) { return '<div>' + t + '</div>'; }\n"
@@ -324,7 +324,7 @@ def test_the_node_failures_that_only_build_repair_can_fix_are_named_as_environme
     naming `testEnvironment: 'jsdom'` does when jest-environment-jsdom (removed from jest core in
     28) was not installed.
     """
-    from infosec_harness.agents.stubs import _diagnosis
+    from infosec_harness.runtime.stubs import _diagnosis
 
     for stderr in ('npm error npx canceled due to missing packages and no YES option: '
                    '["jest@30.5.2"]',
@@ -342,7 +342,7 @@ def test_the_node_failures_that_only_build_repair_can_fix_are_named_as_environme
 def test_a_fired_oracle_is_a_positive_even_when_the_runner_counted_no_tests():
     """Mirrors graph.triage._ground_zero_test_diagnosis. Measured: a prove-run script that prints
     all three markers and declares no plan reports `Tests: 0` with exit 1 and a fired oracle."""
-    from infosec_harness.agents.stubs import _diagnosis
+    from infosec_harness.runtime.stubs import _diagnosis
 
     text = ("<probe_execution>\n"
             + json.dumps({"attempt": 1, "exit_code": 1, "oracle_fired": True,

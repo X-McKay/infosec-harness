@@ -188,12 +188,6 @@ def test_semantic_failure_keeps_original_expected_and_typed_output(tmp_path):
 
 @pytest.mark.parametrize("agent", tuple(CASES))
 def test_output_matcher_covers_all_current_agent_contracts(agent):
-    from infosec_harness.agents.outputs import (
-        ContextOutput,
-        InconclusiveOutput,
-        PartialEnvironmentOutput,
-        PlannedEnvironmentOutput,
-    )
     from infosec_harness.domain.models import (
         EnvironmentSpec,
         ExtractedFinding,
@@ -201,6 +195,12 @@ def test_output_matcher_covers_all_current_agent_contracts(agent):
         ProbePlan,
         ProbeSource,
         RepoProfile,
+    )
+    from infosec_harness.runtime.outputs import (
+        ContextOutput,
+        InconclusiveOutput,
+        PartialEnvironmentOutput,
+        PlannedEnvironmentOutput,
     )
     expected = {
         "intake": ExtractedFinding, "recon": RepoProfile,
@@ -215,8 +215,8 @@ def test_output_matcher_covers_all_current_agent_contracts(agent):
 
 
 def test_env_planner_accepts_current_required_install_output():
-    from infosec_harness.agents.outputs import PlannedEnvironmentOutput
     from infosec_harness.evals.adapters import _ecosystem_label
+    from infosec_harness.runtime.outputs import PlannedEnvironmentOutput
 
     output = PlannedEnvironmentOutput(base_image="python:3.12-slim", install_commands=[],
                                       test_command="python -m pytest {test_file}")
@@ -237,7 +237,7 @@ def test_env_planner_rejects_domain_type_despite_equal_fields():
 
 
 def test_temporal_env_planner_reconstruction_preserves_required_install_contract():
-    from infosec_harness.agents.outputs import PlannedEnvironmentOutput
+    from infosec_harness.runtime.outputs import PlannedEnvironmentOutput
 
     serialized = {"base_image": "python:3.12-slim", "install_commands": [],
                   "test_command": "python -m pytest {test_file}"}
@@ -519,8 +519,8 @@ def test_native_comparison_requires_a_baseline_covering_every_case(tmp_path, mon
 
 
 def test_temporal_case_config_keeps_full_source_size_budget_comparison(tmp_path, monkeypatch):
-    from infosec_harness.agents.budgets import BASELINE_SOURCE_FILES
-    from infosec_harness.agents.durable import CONFIGS
+    from infosec_harness.runtime.budgets import BASELINE_SOURCE_FILES
+    from infosec_harness.runtime.durable import CONFIGS
 
     inputs, _, _, case_digest = prepare_case("recon", manifest(tmp_path))
     scoped = runner.temporal_case_config("recon", inputs)
@@ -576,9 +576,9 @@ async def test_local_failure_retains_closed_output_observations_without_response
     from pydantic_ai.exceptions import UnexpectedModelBehavior
     from pydantic_ai.messages import ModelRequest, ModelResponse, RetryPromptPart, ToolCallPart
 
-    from infosec_harness.agents import registry
-    from infosec_harness.agents.deps import AgentDeps
     from infosec_harness.graph import ops
+    from infosec_harness.runtime import registry
+    from infosec_harness.runtime.deps import AgentDeps
 
     deps = AgentDeps(repo_path="/snapshot", report_text="SECRET_FINDING")
     selected = {"effective_spec": {"metadata": {"intake_output": {"protocol": "intake-atomic-claims/v2"}}}}
@@ -618,9 +618,9 @@ async def test_local_failure_retains_closed_output_observations_without_response
 
 
 async def test_local_case_refuses_a_foreign_route_before_running_the_agent(monkeypatch):
-    from infosec_harness.agents import registry
-    from infosec_harness.agents.deps import AgentDeps
     from infosec_harness.graph import ops
+    from infosec_harness.runtime import registry
+    from infosec_harness.runtime.deps import AgentDeps
 
     config = SimpleNamespace(model=_resolved(endpoint="https://other.test/v1", broker_contract=None),
                              model_dump=lambda **_kwargs: {})
@@ -649,9 +649,9 @@ def native_configs(monkeypatch, configuration):
     """Patch the accepted durable configs so they resolve to the manifest's brokered route."""
     # Bind the workflow's module-level config references before the patch, never to it.
     import infosec_harness.qualification.broker.workflow  # noqa: F401
-    from infosec_harness.agents import durable
-    from infosec_harness.agents.models import BackendConfig
     from infosec_harness.inference.catalog.profiles import BrokerConfig
+    from infosec_harness.inference.models import BackendConfig
+    from infosec_harness.runtime import durable
 
     contract = BrokerConfig.model_validate(broker_catalog()).resolve_contract(
         "context", "gateway", MODEL, {"max_tokens": 1024},
@@ -840,8 +840,8 @@ async def test_submission_recovery_uses_actual_registered_workflow_name(class_na
 
 
 async def test_qualification_workflow_runs_the_current_production_intake_config(monkeypatch):
-    from infosec_harness.agents.durable import CONFIGS
     from infosec_harness.qualification.broker.workflow import RealProviderWorkflow
+    from infosec_harness.runtime.durable import CONFIGS
     from infosec_harness.workflows.accounting import RootAccounting
 
     class AccountingObserved(Exception):

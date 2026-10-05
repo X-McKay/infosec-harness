@@ -5,8 +5,8 @@ import pytest
 from pydantic import ValidationError
 from pydantic_ai import ModelRetry
 
-from infosec_harness.agents import registry
-from infosec_harness.agents.intake_claims import AtomicFinding, Claim
+from infosec_harness.intake.claims import AtomicFinding, Claim
+from infosec_harness.runtime import registry
 
 REPORT = 'The function read_request handles input.\nA SQL injection issue is reported.\n'
 OLD_LITERAL = ('Extraction violates its evidence contract:\n- '

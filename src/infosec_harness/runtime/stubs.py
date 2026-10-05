@@ -17,21 +17,46 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, User
 from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-# The commands, paths, warm-ups and image table the validators enforce: a stub plan the
-# validators would reject would make every offline test a lie.
-from infosec_harness.agents.ecosystem_contract import (
-    CPANM_INSTALL_COMMAND,
-    JS_TEST_COMMANDS,
-    MAVEN_INSTALL_COMMAND,
-    MAVEN_TEST_COMMAND,
-    MAVEN_WARMUP_COMMANDS,
-    PERL5LIB_PATH,
-    PROVE_TEST_COMMAND,
-    PYTEST_TEST_COMMAND,
-    RUNTIME_HOME,
-    maven_image_for_release,
-)
 from infosec_harness.domain.models import StackFingerprint
+from infosec_harness.sandbox.image import HOME_STAGE as BUILD_HOME
+from infosec_harness.sandbox.image import WORK_HOME as RUNTIME_HOME
+
+# Deterministic offline recipes. Live planners read skills and observe builds; these
+# baseline commands never constrain their output.
+PYTEST_TEST_COMMAND = "python -m pytest -q -s -o addopts= {test_file}"
+PROVE_TEST_COMMAND = "prove -v -Ilib {test_file}"
+PERL5LIB_PATH = f"{BUILD_HOME}/perl5/lib/perl5"
+CPANM_INSTALL_COMMAND = f"cpanm --notest --local-lib={BUILD_HOME}/perl5 --installdeps ."
+MAVEN_INSTALL_COMMAND = f"mvn -B -Dmaven.repo.local={BUILD_HOME}/.m2/repository -DskipTests test-compile"
+MAVEN_TEST_COMMAND = (
+    "mvn -B -o test-compile org.apache.maven.plugins:maven-surefire-plugin:3.2.5:test "
+    f"-Dtest=HarnessProbeTest -Dmaven.repo.local={RUNTIME_HOME}/.m2/repository "
+    "-Dmaven.test.redirectTestOutputToFile=false"
+)
+JS_TEST_COMMANDS = {
+    "jest": "npx jest --silent=false --runTestsByPath {test_file}",
+    "vitest": "npx vitest run --silent=false {test_file}",
+    "mocha": "npx mocha {test_file}",
+    "node:test": "node --test {test_file}",
+    "jasmine": "npx jasmine {test_file}",
+}
+
+
+def _warmup(import_line: str, declaration: str) -> str:
+    return (
+        f"mkdir -p src/test/java && echo '{import_line} {declaration}' > "
+        "src/test/java/HarnessWarmupTest.java && "
+        f"mvn -B -Dmaven.repo.local={BUILD_HOME}/.m2/repository test-compile "
+        "org.apache.maven.plugins:maven-surefire-plugin:3.2.5:test -Dtest=HarnessWarmupTest && "
+        "rm -f src/test/java/HarnessWarmupTest.java target/test-classes/HarnessWarmupTest.class"
+    )
+
+
+MAVEN_WARMUP_COMMANDS = {
+    "junit4": _warmup("import org.junit.Test;", "public class HarnessWarmupTest { @Test public void warm() {} }"),
+    "junit5": _warmup("import org.junit.jupiter.api.Test;", "class HarnessWarmupTest { @Test void warm() {} }"),
+    "testng": _warmup("import org.testng.annotations.Test;", "public class HarnessWarmupTest { @Test public void warm() {} }"),
+}
 
 
 def _prompt_text(messages: list[ModelMessage]) -> str:
@@ -99,10 +124,10 @@ def _jvm_framework(stack: StackFingerprint) -> str:
 
 
 def _maven_image(stack: StackFingerprint) -> str:
-    """A base image whose javac still accepts the level the project declares."""
-    if stack.java_release is None:
-        return "maven:3.9-eclipse-temurin-17"
-    return maven_image_for_release(stack.java_release)
+    # Fixed offline baseline for legacy Java fixtures; live planners choose from observations.
+    release = stack.java_release or 17
+    jdk = 8 if release < 7 else 17 if release <= 17 else 21
+    return f"maven:3.9-eclipse-temurin-{jdk}"
 
 
 def _env_plan(raw_stack: dict | None) -> dict:
@@ -124,7 +149,7 @@ def _env_plan(raw_stack: dict | None) -> dict:
     if lang in {"javascript", "typescript"}:
         return _node_plan(stack, typescript=lang == "typescript")
     if lang == "java":
-        # The recipe the validators enforce: test-compile plus a pinned Surefire goal, and a
+        # A deterministic offline baseline: test-compile plus a pinned Surefire goal, and a
         # warm-up that runs a throwaway test in the project's own framework so the offline probe
         # finds its provider. Framework and base image are read from the fingerprint.
         framework = _jvm_framework(stack)
@@ -317,4 +342,3 @@ def stub_model(agent_name: str, tier: str) -> Model:
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args)])
 
     return FunctionModel(respond, model_name=f"stub-{agent_name}-{tier}")
-

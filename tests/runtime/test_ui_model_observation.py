@@ -7,8 +7,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from infosec_harness.agents import models, registry
 from infosec_harness.api import model_observation as status
+from infosec_harness.inference import models
+from infosec_harness.runtime import registry
 
 
 @pytest.fixture

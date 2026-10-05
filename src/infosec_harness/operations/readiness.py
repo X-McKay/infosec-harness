@@ -150,8 +150,8 @@ async def check_runtime(timeout: float = 15, worker_hostname: str | None = None)
     try:
         import yaml
 
-        from infosec_harness.agents import models
-        from infosec_harness.agents.registry import resolved_model_names
+        from infosec_harness.inference import models
+        from infosec_harness.runtime.registry import resolved_model_names
 
         # Reused Python callers can retain a cached catalogue after the file changes.
         # Do not attach a fresh file hash to names resolved through an older cache.

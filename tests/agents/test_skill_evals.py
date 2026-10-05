@@ -76,26 +76,8 @@ SKILL_NAMES = frozenset(s.name for s in SKILLS)
 IDS = [s.name for s in SKILLS]
 
 
-# --- Known defects ---------------------------------------------------------------------------
-#
-# Real findings this suite made that could not be fixed from here: the fix belongs in
-# skills/*/SKILL.md, outside this change's boundary. They are recorded
-# as strict xfails rather than skipped, quietly allowlisted, or softened into a warning: strict
-# means that the moment somebody applies the fix, the xfail itself fails and forces its own
-# removal. A defect parked this way cannot rot into a permanent exemption.
-KNOWN_DEFECTS: dict[tuple[str, str], str] = {
-    # Empty, and that is the point. Six defects were parked here when this suite was written --
-    # two probe exemplars that omitted HARNESS_SINK_RETURNED (jest's awaited the sink, so a
-    # rejected promise reported the precondition and nothing else: the exact false negative the
-    # marker was introduced to prevent), two Maven command exemplars missing
-    # -Dmaven.repo.local, and two test skills with no anti-skip guidance for idioms
-    # `_skipping_probe_violations` also could not see. All six are fixed, in the skills and in
-    # validators.py, so the entries are gone rather than left as permanent exemptions.
-    #
-    # The xfails are strict on purpose: a fix makes the xfail itself fail and forces its own
-    # removal, so nothing can rot here quietly. Add an entry only to park a defect you intend
-    # to fix, with the exact fix in the reason.
-}
+# Strict xfails are reserved for documented, independently justified defects.
+KNOWN_DEFECTS: dict[tuple[str, str], str] = {}
 
 
 def _mark(kind: str, name: str):
@@ -450,7 +432,7 @@ def test_every_test_skill_tells_the_author_not_to_let_the_probe_skip_itself(name
 def test_the_build_and_test_skills_agree_about_the_maven_test_command():
     """Two skills describing the same command is how they drift apart. Both must show the flags
     that the other's prose calls load-bearing, and both must satisfy the validator."""
-    from infosec_harness.agents.ecosystem_contract import MAVEN_TEST_COMMAND
+    from infosec_harness.runtime.stubs import MAVEN_TEST_COMMAND
 
     required = ["-Dmaven.repo.local=/work/home/.m2/repository",
                 "-Dmaven.test.redirectTestOutputToFile=false",

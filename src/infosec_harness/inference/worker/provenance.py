@@ -1,6 +1,8 @@
 """Controller-corroborated request observations, separated from behavior identity."""
 from __future__ import annotations
 
+from typing import Literal
+
 from infosec_harness.inference.wire.protocol import (
     BrokerError,
     ImageDigest,
@@ -24,8 +26,11 @@ class TrustedBrokerProvenance(StrictModel):
     lease_id: NativeName
 
 
-# The worker adds the request disposition to the corroborated observations.
-_ALLOWED = frozenset(TrustedBrokerProvenance.model_fields) | {"state", "request_id"}
+class CompletedBrokerProvenance(TrustedBrokerProvenance):
+    """The complete observation record that the worker stores in response metadata."""
+
+    state: Literal["completed"]
+    request_id: Sha256
 
 
 def runtime_evidence(messages) -> list[dict]:
@@ -35,9 +40,8 @@ def runtime_evidence(messages) -> list[dict]:
         value = metadata.get("harness_broker") if isinstance(metadata, dict) else None
         if value is None:
             continue
-        if not isinstance(value, dict) or set(value) - _ALLOWED:
-            raise BrokerError("invalid_response", "Unexpected broker provenance fields")
-        if any(not isinstance(v, (str, int)) for v in value.values()):
-            raise BrokerError("invalid_response", "Invalid broker provenance")
-        records.append(dict(value))
+        try:
+            records.append(CompletedBrokerProvenance.model_validate(value).model_dump(mode="json"))
+        except ValueError:
+            raise BrokerError("invalid_response", "Invalid broker provenance") from None
     return records

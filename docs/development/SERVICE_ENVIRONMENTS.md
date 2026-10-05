@@ -89,10 +89,11 @@ cases.
 ## Deploying a new execution generation
 
 Temporal workflow types and durable agent identities carry the execution generation from
-`EXECUTION_GENERATION` in `src/infosec_harness/agents/registry.py` (currently `v7`:
-`TriageBatch-v7`, `ComponentPreparation-v7`, `FindingTriage-v7`, and agent identities such as
-`verdict-v7`). Workers register only the current generation, and histories recorded by an
-earlier generation are not replayable by design. `v7` changed what histories record: workflow
+`EXECUTION_GENERATION` in `src/infosec_harness/runtime/registry.py` (currently `v8`:
+`TriageBatch-v8`, `ComponentPreparation-v8`, `FindingTriage-v8`, and agent identities such as
+`verdict-v8`). Workers register only the current generation, and histories recorded by an
+earlier generation are not replayable by design. `v8` changes evidence validation and agent
+tool availability. `v7` changed what histories record: workflow
 and activity arguments are the typed models in `src/infosec_harness/workflows/payloads.py`, and
 every activity's timeout and retry policy comes from
 `src/infosec_harness/workflows/activity_options.py`. Before deploying a worker with a new

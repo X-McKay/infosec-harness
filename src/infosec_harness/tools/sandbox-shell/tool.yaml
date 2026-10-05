@@ -1,6 +1,6 @@
 # Tool policy for the sandbox-shell toolset (agent-playbook §5): run a shell command inside a
 # fresh, isolated container of the candidate base image so an environment plan can be checked
-# before the real build. Implemented in agents/capabilities.py (run_in_sandbox).
+# before the real build. Implemented in runtime/capabilities.py (run_in_sandbox).
 #
 # Constraints held in code, not by this file: commands never run on the worker host; the
 # repository is not mounted; the container has no external network; it is discarded after the

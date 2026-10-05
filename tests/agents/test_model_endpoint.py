@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from infosec_harness.agents import models
+from infosec_harness.inference import models
 from infosec_harness.resources import models_config
 
 

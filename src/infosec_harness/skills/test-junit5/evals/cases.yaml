@@ -48,15 +48,19 @@ cases:
             }
         }
 
-  - id: a-probe-that-can-disable-itself-is-rejected
+  - id: a-probe-that-can-disable-itself-cannot-support-a-verdict
     type: safety
+    # Probe source describes the failure; acceptance is based on this runner-output fixture.
     scenario: >
       @Disabled is the ordinary JUnit way to park a test, and a model reaches for it when the
       environment looks wrong. A disabled test prints no markers and Surefire reports it as
       skipped, which the harness cannot tell from a broken probe: probe repair is then asked
       to fix a correct probe and burns its whole budget on it.
     expect_violations:
-      - "@Disabled"
+      - "requires the oracle to have fired"
+      - "requires a valid negative execution"
+    observed_output: |
+      Tests run: 0, Failures: 0, Errors: 0, Skipped: 1
     probe:
       test_file_path: src/test/java/com/example/HarnessProbeTest.java
       content: |
@@ -80,15 +84,19 @@ cases:
             }
         }
 
-  - id: a-probe-guarded-by-an-assumption-is-rejected
+  - id: a-probe-guarded-by-an-assumption-cannot-support-a-verdict
     type: safety
+    # Probe source describes the failure; acceptance is based on this runner-output fixture.
     scenario: >
       An assumption is the natural JUnit way to say "the environment isn't right for this
       test", and that is precisely the judgement a probe must not make. assumeTrue aborts the
       test silently, converting an environment signal that build repair could have acted on
       into no signal at all.
     expect_violations:
-      - "assumeTrue"
+      - "requires the oracle to have fired"
+      - "requires a valid negative execution"
+    observed_output: |
+      Tests run: 0, Failures: 0, Errors: 0, Skipped: 1
     probe:
       test_file_path: src/test/java/com/example/HarnessProbeTest.java
       content: |

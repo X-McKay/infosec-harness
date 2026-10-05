@@ -1,4 +1,4 @@
-"""Model-facing contracts; persisted domain models remain backward compatible.
+"""Model-facing contracts backed by independent execution evidence.
 
 Output tools describe valid decisions before inference. Independent validators still reject
 fabricated or contradictory outputs, including a model calling a tool it was not offered.
@@ -13,8 +13,6 @@ from pydantic_ai import RunContext
 from pydantic_ai.output import ToolOutput
 from pydantic_ai.tools import ToolDefinition
 
-from infosec_harness.agents.deps import AgentDeps
-from infosec_harness.agents.validators import verdict_violations
 from infosec_harness.domain.models import (
     CodeRef,
     EnvironmentSpec,
@@ -24,6 +22,8 @@ from infosec_harness.domain.models import (
     VerdictFacts,
     VerdictLabel,
 )
+from infosec_harness.runtime.deps import AgentDeps
+from infosec_harness.runtime.validators import verdict_violations
 
 
 class PlannedEnvironmentOutput(EnvironmentSpec):
@@ -31,10 +31,8 @@ class PlannedEnvironmentOutput(EnvironmentSpec):
 
     install_commands: list[str] = Field(
         description="Required build-time dependency installation and preparation commands. "
-        "Use [] only when no installation or preparation is needed. Maven must create, "
-        "run and remove a temporary test in the repository's declared framework to warm "
-        "the offline Surefire provider; an empty test directory does not remove this need. "
-        "Preserve prerequisites and the build skill's cache paths.",
+        "Use [] when the selected image already has the prerequisites. "
+        "Build and smoke execution verify whether this plan can run the probe.",
     )
 
 

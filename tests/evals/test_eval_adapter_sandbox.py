@@ -6,8 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from infosec_harness.agents.capabilities import run_in_sandbox
 from infosec_harness.evals.adapters import build_repair_adapter, partial_build_adapter
+from infosec_harness.runtime.capabilities import run_in_sandbox
 from infosec_harness.sandbox import docker
 from infosec_harness.sandbox.process import ProcessResult
 

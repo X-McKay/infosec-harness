@@ -6,9 +6,9 @@ from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.usage import RequestUsage
 
-from infosec_harness.agents.deps import AgentDeps
-from infosec_harness.agents.registry import build_agent, load_spec, resolve_agent_config
 from infosec_harness.domain.models import VerdictFacts
+from infosec_harness.runtime.deps import AgentDeps
+from infosec_harness.runtime.registry import build_agent, load_spec, resolve_agent_config
 
 
 @pytest.mark.parametrize("ceiling,stopped", [(4096, True), (128000, False)])

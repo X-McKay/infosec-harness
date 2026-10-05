@@ -4,14 +4,14 @@
 # five of them influence what code the sandbox executes.
 #
 # This file is hand-maintained and read directly by the runtime:
-#   * agents/governance.py derives each agent's governance tier from the scenarios listed
+#   * runtime/governance.py derives each agent's governance tier from the scenarios listed
 #     under `agents:` and refuses to construct an agent whose spec declares a different
 #     `metadata.risk_tier`;
 #   * evals/coverage.py crosses each agent's eval dataset tags with the same list, so an
 #     uncovered high- or critical-tier scenario fails the release gate.
 #
 # Scoring follows agent-playbook §13. Impact and likelihood are 1-4; the tier is derived in
-# code from the playbook matrix (agents/risk.py) and is deliberately not written here.
+# code from the playbook matrix (runtime/risk.py) and is deliberately not written here.
 # Inherent likelihood assumes the controls are absent; residual likelihood counts only
 # controls whose `effectiveness` is `verified`. A control marked `implemented` earns no
 # residual reduction. `capability_floor` raises an agent's governance tier when the scenario
@@ -66,7 +66,7 @@ controls:
     owner: appsec
     evidence:
     - tests/agents/test_agents.py
-    - src/infosec_harness/agents/registry.py
+    - src/infosec_harness/runtime/registry.py
     effectiveness: verified
   CTRL-FN-001:
     type: preventive

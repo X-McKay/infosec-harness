@@ -12,10 +12,9 @@ from dataclasses import dataclass, field
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_graph import BaseNode, End, GraphBuilder, GraphRunContext
 
-from infosec_harness.agents.deps import AgentDeps
-from infosec_harness.agents.render import render_prompt
 from infosec_harness.domain.models import (
     AgentOutcome,
+    CodeRef,
     DiagnosisKind,
     EnvironmentSpec,
     Finding,
@@ -37,8 +36,9 @@ from infosec_harness.domain.models import (
 )
 from infosec_harness.graph.ops import Ops
 from infosec_harness.graph.prepare import revise_environment, smoke_test
-from infosec_harness.graph.scoring import PreFilterResult, pre_filter, priority_band, priority_score
-from infosec_harness.repo.access import RepositoryAccessError, validate_code_ref
+from infosec_harness.graph.scoring import priority
+from infosec_harness.runtime.deps import AgentDeps
+from infosec_harness.runtime.render import render_prompt
 from infosec_harness.sandbox.controls import parse_control_result
 from infosec_harness.settings import get_settings
 
@@ -99,27 +99,26 @@ class TriageState:
                          facts=facts, source_files=self.source_files)
 
 
-def _validate_context_citations(state: TriageState, context: FindingContext) -> FindingContext:
-    """Ground model-produced references in the immutable snapshot before routing on them."""
-    invalid: list[str] = []
+def _invalid_citations(references: list[CodeRef | None],
+                       checked: list[CodeRef | None]) -> list[str]:
+    return [f"{ref.file_path}:{ref.start_line}-{ref.end_line}"
+            for ref, grounded in zip(references, checked, strict=True)
+            if ref is not None and grounded is None]
 
-    def one(reference):
-        if reference is None:
-            return None
-        try:
-            return validate_code_ref(state.prepared.snapshot.path, reference)
-        except (OSError, RepositoryAccessError) as exc:
-            invalid.append(f"{reference.file_path}:{reference.start_line}-{reference.end_line}: {exc}")
-            return None
 
-    source = one(context.source)
-    sink = one(context.sink)
-    path = [validated for reference in context.path if (validated := one(reference)) is not None]
-    sanitizers = [validated for reference in context.sanitizers
-                  if (validated := one(reference)) is not None]
-    update = {"source": source, "sink": sink, "path": path, "sanitizers": sanitizers}
+async def _validate_context_citations(ops: Ops, state: TriageState,
+                                      context: FindingContext) -> FindingContext:
+    """Ground citations through Ops so workflow replay never reads snapshot files."""
+    references = [context.source, context.sink, *context.path, *context.sanitizers]
+    checked = await ops.validate_citations(state.prepared.snapshot.path, references)
+    invalid = _invalid_citations(references, checked)
+    boundary = 2 + len(context.path)
+    update = {
+        "source": checked[0], "sink": checked[1],
+        "path": [ref for ref in checked[2:boundary] if ref is not None],
+        "sanitizers": [ref for ref in checked[boundary:] if ref is not None],
+    }
     if invalid:
-        # A fabricated or stale citation cannot support either a path claim or a control claim.
         update.update({
             "reachability": Reachability.unknown,
             "reachability_rationale": (
@@ -131,43 +130,26 @@ def _validate_context_citations(state: TriageState, context: FindingContext) -> 
     return context.model_copy(update=update)
 
 
-def _validate_verdict_citations(state: TriageState, verdict: Verdict) -> Verdict:
-    valid = []
-    invalid = []
-    for reference in verdict.evidence:
-        try:
-            valid.append(validate_code_ref(state.prepared.snapshot.path, reference))
-        except (OSError, RepositoryAccessError) as exc:
-            invalid.append(f"{reference.file_path}:{reference.start_line}-{reference.end_line}: {exc}")
-    if not invalid:
-        return verdict.model_copy(update={"evidence": valid})
-    return verdict.model_copy(update={
-        "evidence": valid,
-        "rationale": verdict.rationale + " Invalid code references were discarded: "
-        + "; ".join(invalid[:5]),
-    })
+async def _validate_verdict_citations(ops: Ops, state: TriageState, verdict: Verdict) -> Verdict:
+    checked = await ops.validate_citations(state.prepared.snapshot.path, verdict.evidence)
+    invalid = _invalid_citations(verdict.evidence, checked)
+    update = {"evidence": [ref for ref in checked if ref is not None]}
+    if invalid:
+        update["rationale"] = (verdict.rationale + " Invalid code references were discarded: "
+                               + "; ".join(invalid[:5]))
+    return verdict.model_copy(update=update)
 
 
 def _finalize(state: TriageState, verdict: Verdict, reachability: Reachability) -> TriageResult:
-    score = priority_score(state.finding, verdict, reachability)
+    score, band = priority(state.finding, verdict, reachability)
     return TriageResult(
         fingerprint=state.finding.fingerprint,
         verdict=verdict,
         priority_score=score,
-        priority=priority_band(score),
+        priority=band,
         environment_scope=state.spec.scope if state.prepared.status == "ready" else "none",
         early_exit=state.early_exit,
     )
-
-
-@dataclass
-class PreFilter(BaseNode[TriageState, TriageDeps, TriageResult]):
-    async def run(self, ctx: GraphRunContext[TriageState, TriageDeps]) -> GatherContext | End[TriageResult]:
-        result: PreFilterResult = pre_filter(ctx.state.finding, ctx.state.prepared.snapshot)
-        if result.verdict is not None:
-            ctx.state.early_exit = result.note
-            return End(_finalize(ctx.state, result.verdict, Reachability.unknown))
-        return GatherContext()
 
 
 @dataclass
@@ -180,7 +162,7 @@ class GatherContext(BaseNode[TriageState, TriageDeps, TriageResult]):
             {"finding": s.finding}, stack=s.stack, profile=s.profile,
         )
         outcome = await ctx.deps.ops.run_agent("context", prompt, s.deps(), record=s.invocations)
-        s.context = _validate_context_citations(s, outcome.output)
+        s.context = await _validate_context_citations(ctx.deps.ops, s, outcome.output)
         return PlanProbe()
 
 
@@ -262,46 +244,20 @@ def _correct_unsupported_negative(diagnosis: ProbeDiagnosis,
 
 def _ground_zero_test_diagnosis(diagnosis: ProbeDiagnosis,
                                 execution: ProbeExecution) -> ProbeDiagnosis:
-    """When the runner said it ran no tests, make that the recorded cause.
+    """Reject unsupported positive/negative readings without choosing the repair cause.
 
-    `_correct_unsupported_negative` above already stops a zero-test run being called a negative,
-    because nothing printed the sink-returned marker. What it cannot fix is a diagnosis that
-    reaches the right *kind* for the wrong *reason* — and the reason is what the repair agent
-    acts on. Measured on perl-cmdi-vulnerable: prove printed `skipped: (no reason given)` with
-    exit 255 and an empty stderr, the diagnosis correctly said probe_defect but explained it as
-    "the file was either not written correctly, or crashed without producing output", the repair
-    rewrote the file that was never the problem, and three attempts later a genuinely
-    exploitable finding was reported `inconclusive`.
-
-    So the runner's own words are promoted ahead of the model's reading, and the fix_hint is
-    replaced rather than defaulted: an existing hint here is precisely the speculative one that
-    sent the repair loop the wrong way. Deterministic for the same reason as above — it is a
-    recorded fact, and the model was not being unreasonable about the evidence it could see.
+    Zero tests can result from a defective probe or an environment failure. Diagnosis owns
+    that distinction and its repair hint; recorded runner evidence remains in the prompt.
+    A fired oracle is stronger evidence than a runner's test-count summary.
     """
-    # A fired oracle outranks the runner's bookkeeping. The exploit condition was *observed*;
-    # whether the runner counted a test while observing it is beside the point, and rewriting that
-    # reading to probe_defect loses a true positive to a repair loop — the same cost as the false
-    # negative this function was written to prevent, in the other direction. Not hypothetical: a
-    # prove-run script that emits its markers and then reports `Tests: 0` is exactly this shape,
-    # measured on perl 5.34, and every new runner signature widens the surface for it.
-    if not execution.runner_reported_no_tests or execution.oracle_fired:
+    if (not execution.runner_reported_no_tests or execution.oracle_fired
+            or diagnosis.kind in {DiagnosisKind.probe_defect, DiagnosisKind.environment_issue}):
         return diagnosis
     return diagnosis.model_copy(update={
         "kind": DiagnosisKind.probe_defect,
         "explanation": (
             f"The test runner reported that it executed no tests: "
-            f"{execution.runner_reported_no_tests} Repair what stopped the test from running, "
-            f"not the probe's logic. Original reading: {diagnosis.explanation}"
-        ),
-        "fix_hint": (
-            "A run that executed zero tests has a short list of causes; check them in order. "
-            "(1) The file is not where the runner looks — confirm the path and that the runner "
-            "was pointed at it. (2) The selector matches no test — a class/function name "
-            "filter that does not match runs nothing and can still exit 0. (3) The plan or "
-            "assertion count was emitted before the assertions ran. (4) The module under test "
-            "failed to load, so the file aborted before its first assertion; if the runner "
-            "buffers the child's stderr this leaves no message at all, so print a marker as "
-            "the very first statement to distinguish 'never started' from 'started and died'."
+            f"{execution.runner_reported_no_tests} Original reading: {diagnosis.explanation}"
         ),
     })
 
@@ -314,7 +270,8 @@ class DiagnoseProbe(BaseNode[TriageState, TriageDeps, TriageResult]):
         execution = s.executions[-1]
         prompt = render_prompt(
             "Classify this probe execution: probe_defect, valid_negative, valid_positive, or "
-            "environment_issue.",
+            "environment_issue. Treat runner-reported zero tests as evidence of failed "
+            "execution; identify whether the cause belongs to the probe or its environment.",
             {"probe_plan": s.plan, "probe_source": s.probe, "probe_execution": execution},
             stack=s.stack, profile=s.profile,
         )
@@ -449,7 +406,7 @@ class Decide(BaseNode[TriageState, TriageDeps, TriageResult]):
                 f"The verdict agent could not satisfy the evidence contract: {e}")
             s.early_exit = "verdict_contract_unsatisfied"
             return End(_finalize(s, verdict, reachability))
-        verdict = _validate_verdict_citations(s, outcome.output)
+        verdict = await _validate_verdict_citations(ctx.deps.ops, s, outcome.output)
         # Fail closed: a missing or unparseable control record is not a passed control.
         controls = parse_control_result(s.prepared.smoke.output_excerpt) if s.prepared.smoke else None
         controls_passed = controls is not None and controls.passed
@@ -469,8 +426,7 @@ class Decide(BaseNode[TriageState, TriageDeps, TriageResult]):
 def build_triage_graph():
     g = GraphBuilder(state_type=TriageState, deps_type=TriageDeps, output_type=TriageResult)
     g.add(
-        g.edge_from(g.start_node).to(PreFilter),
-        g.node(PreFilter),
+        g.edge_from(g.start_node).to(GatherContext),
         g.node(GatherContext),
         g.node(PlanProbe),
         g.node(AuthorProbe),

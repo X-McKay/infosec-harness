@@ -40,7 +40,7 @@ async def run_worker() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     logger = logging.getLogger(__name__)
     s = get_settings()
-    from infosec_harness.agents import models
+    from infosec_harness.inference import models
     if (s.model_mode == "live" and s.task_queue == "triage"
             and any(b.transport == "brokered" for b in models.load_models_config().backends.values())):
         raise RuntimeError("Brokered deployment requires a new explicit task queue; drain legacy direct workers separately")

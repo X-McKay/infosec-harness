@@ -13,7 +13,6 @@ from typing import Annotated, Literal, TypedDict
 import httpx
 from pydantic import ConfigDict
 
-from infosec_harness.agents.registry import BINDINGS
 from infosec_harness.api.contracts import BrokerStatus
 from infosec_harness.api.evidence_io import (
     STRICT,
@@ -33,6 +32,7 @@ from infosec_harness.api.evidence_io import (
 from infosec_harness.domain.canonical import sha256_hex
 from infosec_harness.persistence import store
 from infosec_harness.resources import source_checkout
+from infosec_harness.runtime.registry import BINDINGS
 from infosec_harness.settings import get_settings
 
 # Modules outside `inference/` that the controller loads: the canonical digest encoding and the

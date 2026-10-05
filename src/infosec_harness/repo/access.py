@@ -112,3 +112,14 @@ def validate_code_ref(root: str | Path, reference: CodeRef) -> CodeRef:
         )
     return reference.model_copy(update={"file_path": target.relative_to(Path(root).resolve()).as_posix(),
                                         "source_digest": digest})
+
+
+def validate_citations(root: str | Path, references: list[CodeRef | None]) -> list[CodeRef | None]:
+    """Ground each citation independently, preserving its position and rejecting invalid refs."""
+    checked: list[CodeRef | None] = []
+    for reference in references:
+        try:
+            checked.append(validate_code_ref(root, reference) if reference is not None else None)
+        except (OSError, RepositoryAccessError):
+            checked.append(None)
+    return checked

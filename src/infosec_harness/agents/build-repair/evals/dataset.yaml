@@ -217,8 +217,8 @@ cases:
     # which the failed spec has nowhere in its install commands: no amount of extra downloading
     # substitutes for it (dependency:get leaves junit-platform-launcher absent at a version
     # Surefire derives from the project; dependency:resolve-plugins resolves the effective pom's
-    # Surefire 2.12.4). offline_warmup_violations() now rejects this spec deterministically, so
-    # a regressed repair also burns its output retries rather than returning quietly.
+    # Surefire 2.12.4). Build-maven teaches this provider selection step; execution verifies
+    # whether the repaired environment can run the probe offline.
     repo: eval-corpus/java/sqli/vulnerable
     expect_mentions: "-Dtest="
     payload:
@@ -248,7 +248,7 @@ cases:
     # writable /work/home tmpfs, so an install writes under /opt/home/.m2/repository and the
     # probe reads /work/home/.m2/repository. This spec has the runtime path on its test command
     # and nothing on its install — the half that fails loudly. (The mirror image, a test command
-    # with no flag, fails quietly at probe time; install_path_violations() rejects both.)
+    # with no flag, fails quietly at probe time; smoke output makes that failure observable.)
     repo: eval-corpus/java/cmdi/vulnerable
     expect_mentions: "-Dmaven.repo.local"
     payload:
@@ -272,7 +272,8 @@ cases:
     # the same two-path trap as Maven: install into /opt/home/perl5 at build time, point
     # env.PERL5LIB at /work/home/perl5/lib/perl5, which is where the tmpfs copy lands. A
     # PERL5LIB left unset, or left pointing at the build-time path, fails exactly as the
-    # missing flag does. The needle is the flag; install_path_violations() checks the rest.
+    # missing flag does. This case checks that the repair selects the documented local-lib
+    # recipe; build and smoke execution establish whether the environment actually works.
     repo: eval-corpus/perl/sqli/vulnerable
     expect_mentions: "--local-lib"
     payload:

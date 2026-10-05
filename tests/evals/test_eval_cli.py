@@ -256,7 +256,7 @@ async def test_latest_picks_the_newest_complete_live_full_run_of_that_tier():
 
 
 async def test_latest_defaults_to_the_agents_own_tier():
-    from infosec_harness.agents import registry
+    from infosec_harness.runtime import registry
 
     tier = registry.load_spec("verdict").model or "sonnet"
     await _store("exp-latest-verdict", "verdict", tier=tier, year=2200)

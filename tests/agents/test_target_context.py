@@ -6,9 +6,9 @@ from types import SimpleNamespace
 import pytest
 from pydantic_ai import ModelRetry
 
-from infosec_harness.agents.capabilities import DEFAULT_REPO_RO_TOOLS, REPO_RO_TOOLS
-from infosec_harness.agents.deps import AgentDeps
-from infosec_harness.agents.target_context import MAX_TARGET_CONTEXT_BYTES, inspect_target
+from infosec_harness.runtime.capabilities import DEFAULT_REPO_RO_TOOLS, REPO_RO_TOOLS
+from infosec_harness.runtime.deps import AgentDeps
+from infosec_harness.tools.target import MAX_TARGET_CONTEXT_BYTES, inspect_target
 
 
 def context(root: Path) -> SimpleNamespace:
@@ -54,7 +54,8 @@ def test_target_context_is_opt_in_and_does_not_expand_default_tools():
 
 def test_target_inspection_reads_the_file_once(tmp_path, monkeypatch):
     """Both sections come from one bounded read, so they describe the same bytes."""
-    from infosec_harness.agents import repo_tools, target_context
+    from infosec_harness.tools import repository as repo_tools
+    from infosec_harness.tools import target as target_context
 
     (tmp_path / "target.py").write_text("def lookup(value):\n    return value + 1\n")
     reads = []
@@ -70,7 +71,7 @@ def test_target_inspection_reads_the_file_once(tmp_path, monkeypatch):
 
 
 def test_each_section_is_clipped_with_its_own_marker(tmp_path):
-    from infosec_harness.agents.target_context import _SECTION_BYTES
+    from infosec_harness.tools.target import _SECTION_BYTES
 
     (tmp_path / "wide.py").write_text("".join(f"x{i} = '{'y' * 200}'\n" for i in range(300)))
     result = inspect_target(context(tmp_path), "wide.py")

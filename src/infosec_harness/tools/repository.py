@@ -14,13 +14,13 @@ from pathlib import Path
 
 from pydantic_ai import ModelRetry, RunContext
 
-from infosec_harness.agents.deps import AgentDeps
 from infosec_harness.repo.access import (
     NON_SOURCE_DIRS,
     RepositoryAccessError,
     resolve_confined,
     walk_files,
 )
+from infosec_harness.runtime.deps import AgentDeps
 
 MAX_READ_LINES = 400
 MAX_LIST = 300

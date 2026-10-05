@@ -32,7 +32,7 @@ def workflow_id(batch_id: str) -> str:
 
 def accepted_agent_config_digests() -> dict[str, str]:
     """The agent configurations a batch accepted now must be run with, by digest."""
-    from infosec_harness.agents.registry import resolved_agent_configs
+    from infosec_harness.runtime.registry import resolved_agent_configs
 
     return {name: config.digest for name, config in resolved_agent_configs().items()}
 

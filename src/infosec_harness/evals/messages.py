@@ -25,7 +25,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
 )
 
-from infosec_harness.agents.trajectory import OUTPUT_TOOL
+from infosec_harness.runtime.trajectory import OUTPUT_TOOL
 
 # How much of a captured history one diagnostic scans.
 MAX_MESSAGES = 128
