@@ -1,6 +1,7 @@
 # Next session: native capacity and full qualification
 
-Saved October 5, 2026. Start with this file, `README.md`, `AGENTS.md`,
+Saved October 5, 2026; updated the same evening after `fd4cbb7` (see
+[the simplification and tooling record](SIMPLIFICATION_AND_EVAL_TOOLING.md)). Start with this file, `README.md`, `AGENTS.md`,
 `dev-skills/harness-change/SKILL.md` and `dev-skills/harness-eval-experiment/SKILL.md`.
 This is a continuation plan, not evidence that the planned gateway change is qualified.
 
@@ -66,7 +67,25 @@ Historical receipt projection: five completed cases and one failed case used at 
 qualification. Unknown dispatches, legacy undercount and unsampled cases prevent treating
 it as a guaranteed capacity budget.
 
-## Planned OpenShell change — not implemented or deployed
+## OpenShell change — patch tracked, artifact not built or deployed
+
+The quota patch is implemented and committed as
+`deploy/openshell/patches/0001-configurable-mutation-admission-quota.patch` (config key
+`openshell.gateway.max_mutation_admissions_per_caller`, default 1000, range 1..=1,000,000;
+upstream unit tests passed on Rust 1.97.1). Steps 1 and 2 below are done; steps 3 to 5 remain.
+The intended reproducible build: a two-stage Dockerfile on the pinned `rust:1.95.0-bookworm`
+image, `cmake` from Debian, the vendored crates and the clone already under
+`.harness/openshell/gateway-build/`, `git apply` of the tracked patches, the upstream
+`version = "0.0.0"` → `0.1.2` substitution, `GIT_DIR=/nonexistent`, and
+`cargo build --release --offline -p openshell-gateway --bin openshell-gateway --features bundled-z3`
+through the qualified build-egress builder, publishing the binary and its SHA-256 plus a
+provenance record (upstream commit, patch hashes, image digest). Deployment: copy the binary
+beside the current one under `/var/lib/ih-openshell/<id>/bin/` (retain the old file), add the
+quota key to the guest `gateway-conf/gateway.toml`, run the binary's `config` preflight, stop
+the current gateway only after verifying its exe path and command line, start the new one
+with the identical arguments and log, then verify `--version`, health and read-only
+occupancy. This session was not permitted to author that Dockerfile and build script; the
+operator must do or authorise that step.
 
 Increasing a finite quota preserves existing claims and replay protection, unlike deleting
 claims. The recommended starting capacity is **10,000 per caller**, to be validated against
@@ -96,6 +115,11 @@ until an upstream release includes it; never silently modify an installed binary
    evidence; do not invent a harness-side substitute.
 
 ## Qualification sequence
+
+Operator commands now exist for each step: `./dev qualify`, `./dev eval --case <name>`,
+`./dev eval` (owned worker on a fresh queue, `--keep-going` optional) and `./dev replay <id>`;
+`--settings FILE` freezes one configuration. Historical evidence under
+`live-eval-v11-*` and the five-history offline replay remain the recovery baseline.
 
 1. Freeze and commit a clean candidate; capture worker, runtime, images, model, corpus and
    budget identities. Use a new owned worker queue/configuration for the frozen candidate.
