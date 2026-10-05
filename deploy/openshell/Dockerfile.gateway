@@ -3,7 +3,9 @@
 # Rust toolchain. Context layout (prepared by build_gateway.sh): src/ vendor/ patches/.
 # The upstream release links a static Z3 from Nix; bundled-z3 is the equivalent static link
 # from the vendored z3-src crate. No network is used after the base image and apt packages.
-ARG RUST_IMAGE=docker.io/library/rust:1.95.0-bookworm@sha256:6258907abe69656e41cd992e0b705cdcfabcbbe3db374f92ed2d47121282d4a1
+# Z3 5.1.0 is C++20 and includes <format>, which needs GCC 13+: Debian trixie (GCC 14), not
+# bookworm (GCC 12). The resulting binary links trixie's glibc, which the Ubuntu guest exceeds.
+ARG RUST_IMAGE=docker.io/library/rust:1.95.0-trixie@sha256:f49565f188ee00bc2a18dd418183f2c5f23ef7d6e691890517ed341a598f67c3
 FROM ${RUST_IMAGE} AS build
 RUN apt-get update && apt-get install -y --no-install-recommends cmake \
     && rm -rf /var/lib/apt/lists/*
