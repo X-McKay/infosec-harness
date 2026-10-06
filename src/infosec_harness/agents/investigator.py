@@ -140,12 +140,9 @@ def build_agent(openshell: OpenShell, model: Model) -> Agent[InvestigationDeps, 
 
     tools = build_toolset(openshell)
 
+    # Model activities inherit this config (the library merges model_activity_config on top).
     durability = TemporalDurability(
         activity_config={
-            "start_to_close_timeout": timedelta(minutes=10),
-            "retry_policy": RetryPolicy(maximum_attempts=1),
-        },
-        model_activity_config={
             "start_to_close_timeout": timedelta(minutes=10),
             "retry_policy": RetryPolicy(maximum_attempts=1),
         },

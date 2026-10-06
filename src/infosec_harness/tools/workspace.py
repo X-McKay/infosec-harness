@@ -132,6 +132,6 @@ def register(tools: FunctionToolset[InvestigationDeps], openshell: OpenShell) ->
     @tools.tool
     async def write(ctx: RunContext[InvestigationDeps], path: str, content: str) -> str:
         """Write a fixture, regression test, or probe inside the sandbox repository."""
-        if len(content.encode()) > 2_000_000:
-            raise ValueError("Write exceeds two megabytes")
+        # Content is bounded before this body runs: DurablePayloadLimit.before_tool_execute
+        # rejects any tool call whose arguments exceed the 1 MB durable payload budget.
         return await file_tool(openshell, ctx, "write", path=path, content=content)

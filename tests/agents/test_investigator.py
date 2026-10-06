@@ -513,3 +513,50 @@ async def test_blocked_target_feedback_requires_new_complete_probe():
     assert len(shell.executions) == 2
     assert calls == 4
     assert shell.executions[0][2] != shell.executions[1][2]
+
+
+def test_model_and_tool_activities_share_one_ten_minute_single_attempt_config():
+    """build_agent passes only activity_config; the library merges it into the model
+    activity config, so model requests keep the 10-minute single-attempt schedule."""
+    from datetime import timedelta
+
+    from pydantic_ai.durable_exec.temporal import TemporalDurability
+
+    agent = build_agent(FakeOpenShell(), FunctionModel(final_response))
+    # Private attributes: the library exposes no public view of the merged configs.
+    (durability,) = [
+        capability
+        for capability in agent._root_capability.capabilities
+        if isinstance(capability, TemporalDurability)
+    ]
+    for config in (durability.activity_config, durability._model_activity_config):
+        assert config["start_to_close_timeout"] == timedelta(minutes=10)
+        assert config["retry_policy"].maximum_attempts == 1
+
+
+async def test_oversized_write_is_refused_before_the_tool_runs():
+    """The write tool has no size check of its own: the durable payload guard rejects
+    arguments over MAX_INVOCATION_BYTES before the tool body (or any sandbox exec) runs."""
+    from pydantic_ai.exceptions import UsageLimitExceeded
+
+    from infosec_harness.sandbox.executor import MAX_INVOCATION_BYTES
+
+    shell = FakeOpenShell()
+
+    def respond(messages, info):
+        content = "x" * MAX_INVOCATION_BYTES
+        return ModelResponse(
+            parts=[ToolCallPart("write", {"path": "big", "content": content}, tool_call_id="w")]
+        )
+
+    request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
+    deps = InvestigationDeps(
+        run_id="run",
+        sandbox=await shell.create("run"),
+        source_digest="digest",
+        snapshot_path="/fixture",
+        request=request,
+    )
+    with pytest.raises(UsageLimitExceeded, match="durable payload budget"):
+        await build_agent(shell, FunctionModel(respond)).run("Write", deps=deps)
+    assert shell.executions == []

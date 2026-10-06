@@ -227,8 +227,6 @@ def register(tools: FunctionToolset[InvestigationDeps], openshell: OpenShell) ->
                     operation_id=operation_id(ctx, "verify"),
                 )
             except UnsafeSnapshotMetadata:
-                if evidence.exit_code is None:
-                    raise
                 evidence.observations["source_verified"] = False
                 evidence.observations["integrity_feedback"] = (
                     "Post-execution archive metadata was rejected, so this completed run is not "
