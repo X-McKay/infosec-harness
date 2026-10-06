@@ -71,5 +71,11 @@ showed 6,385 retained claims; run 8 added 1,670, keeping the session near 7,100 
 | Reliable clean-cache Maven build | not_checked | Java cases pass when the endpoint is responsive; the Maven recipe is in the environment skill |
 | Bedrock native provider | not_checked | Out of scope |
 
-Next: rerun the four 502 cases once the inference backend is stable, and address the two budget
-exhaustions (Java environment recipe adherence; Perl boolean encoding, now in the probe skill).
+A diagnostic rerun of the four 502 cases on `5656793` (`rerun-502.json`; diagnostics never
+qualify) completed all four correctly: `deserialization-fixed` 18 requests, `javascript-cmdi-fixed`
+6, `perl-xss-vulnerable` 13, `perl-xss-fixed` 12, between 134 and 188 seconds each. Across run 8
+and this rerun, 34 of the 36 corpus cases have a correct verdict on this candidate family; the
+two remaining failures were budget exhaustions whose causes (Java recipe adherence, Perl boolean
+encoding) are now addressed in skills and tool feedback but not yet observed live.
+
+Next: one more full cohort to obtain a complete 36-case report with the gates evaluated.
