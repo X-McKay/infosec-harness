@@ -1964,7 +1964,7 @@
         "expected_verdict": "likely_not_exploitable",
         "reachability": "neutralized",
         "sink_file": "app.py",
-        "sink_line": 10,
+        "sink_line": 12,
         "source": "payload parameter",
         "target_callable": "user_city"
       },
