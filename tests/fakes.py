@@ -1,10 +1,8 @@
 """Shared test doubles. A fake adapter or model is never isolation or quality evidence."""
 
-from types import SimpleNamespace
-
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 
-from infosec_harness.sandbox import CommandResult, Sandbox
+from infosec_harness.sandbox import CommandResult, ExecutionReceipt, Sandbox
 
 
 class FakeOpenShell:
@@ -30,12 +28,7 @@ class FakeOpenShell:
         self.executions.append((sandbox, command, operation_id, stdin))
         result = CommandResult(0, "attacker-controlled value reached target\n", "")
         self._receipts.append(
-            SimpleNamespace(
-                sandbox=sandbox,
-                command=command,
-                operation_id=operation_id,
-                result=result,
-            )
+            ExecutionReceipt(sandbox, operation_id, "fake-request", command, result)
         )
         return result
 

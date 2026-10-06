@@ -111,9 +111,9 @@ class InvestigationActivities:
                 if receipt.sandbox.profile == "probe"
                 else {}
             )
-            if digest := getattr(receipt, "workspace_digest", None):
-                observations["workspace_digest"] = digest
-                observations["source_verified"] = getattr(receipt, "source_verified", False)
+            if receipt.workspace_digest:
+                observations["workspace_digest"] = receipt.workspace_digest
+                observations["source_verified"] = receipt.source_verified
             evidence.append(
                 Evidence(
                     id=identity,
