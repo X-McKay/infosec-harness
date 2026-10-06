@@ -31,6 +31,9 @@ or execution evidence is absent. A configured name is not execution evidence.
 ./dev --profile offline       # deterministic component and real local Temporal tests
 ./dev worker                  # trusted worker using explicit native OpenShell configuration
 ./dev doctor | status | logs | smoke | stop
+./dev qualify                 # native boundaries; no model calls
+./dev eval [--case NAME]      # live corpus, owned worker on a fresh queue; --case never qualifies
+./dev replay RUN_ID           # zero-dispatch history replay
 just check                    # lint and compile
 just test                     # deterministic tests; no model network calls
 just test-network             # installed-package checks using package downloads
@@ -43,6 +46,9 @@ Full setup requires the explicit OpenShell configuration described in
 The managed Lima VM and runsc builder provision trusted workload images; agent execution
 always uses OpenShell. Never weaken a boundary to get setup or qualification to pass.
 Offline mode leaves native OpenShell and live inference `not_checked`.
+`--settings FILE` on `./dev qualify|eval|replay|worker` freezes one configuration (no `HARNESS_*`).
+Never edit `src/infosec_harness/` (code, YAML or skill Markdown) while an owned evaluation
+worker runs: the worker identity covers those files and its guard ends the cohort.
 
 Pins live in `.mise.toml`, `.dev-tools/versions.env` and `.dev-tools/openshell.json`.
 Managed tools stay under `.harness/`; VM state uses a short checkout-specific directory

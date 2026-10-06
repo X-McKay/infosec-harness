@@ -14,7 +14,9 @@ relevant runtime modules first. Runtime source and packaged agent skills live un
    Assess retries, cancellation, idempotency, replay and worker restart.
 4. Add regression tests for confirmed defects using independently justified expectations.
    Run focused tests, then `just check`, `just test`, `just generated-check` and affected UI checks.
-5. Record behavior/generation changes, evidence and limitations in the review artifact.
+   When a contract changes, run `just regenerate` and commit the OpenAPI and UI client types.
+5. Record behavior/generation changes, evidence and limitations in the review artifact. For
+   the replay assessment, `./dev replay RUN_ID` replays a preserved history with zero dispatch.
    Workflow-breaking changes use a new task queue; old in-flight work must drain before deployment.
 
 Never weaken thresholds, golden outcomes or isolation to make a change pass. Do not
