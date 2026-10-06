@@ -167,12 +167,13 @@ class Execution:
                 await self._corroborate(sandbox, "native workload identity changed")
                 result, _ = await asyncio.to_thread(self._stream, sandbox, args, timeout, stdin,
                     _request_id(key), self.config.max_output_bytes)
-            except asyncio.CancelledError:
-                await self._close_owned(sandbox)
+            except asyncio.CancelledError as cancelled:
+                await self._close_owned(sandbox, cancelled)
                 raise
             except Exception as exc:
-                await self._close_owned(sandbox)
-                raise ExecutionUnknown("native execution outcome unknown; sandbox closed") from exc
+                unknown = ExecutionUnknown("native execution outcome unknown; sandbox closed")
+                await self._close_owned(sandbox, unknown)
+                raise unknown from exc
             self._save(path, {**receipt, "result": asdict(result)})
             return result
 

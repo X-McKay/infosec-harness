@@ -148,8 +148,8 @@ class Transfer:
                     atomic_write_bytes(archive, raw, sync_directory=True)
                     self._save(record, {**intent, "sha256": hashlib.sha256(raw).hexdigest(),
                                         "size": len(raw)})
-                except BaseException:
-                    await self._close_owned(source)
+                except BaseException as error:
+                    await self._close_owned(source, error)
                     raise
             # Parse metadata only. No archive member is ever extracted on the
             # worker; hardlinks, symlinks, devices and traversal are refused.

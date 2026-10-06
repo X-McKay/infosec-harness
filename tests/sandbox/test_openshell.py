@@ -1202,3 +1202,51 @@ async def test_close_treats_only_not_found_as_absent(adapter, monkeypatch):
     await boundary.close(sandbox)
     saved = json.loads(next((boundary.config.state_dir / "sandboxes").glob("*.json")).read_bytes())
     assert saved["closed"]
+
+
+def failing_close(boundary, monkeypatch):
+    async def close(sandbox):
+        raise OpenShellError("dedicated container inspection unavailable")
+
+    monkeypatch.setattr(boundary, "close", close)
+
+
+async def test_failed_close_never_replaces_unknown_execution(adapter, monkeypatch):
+    boundary, native = adapter
+    sandbox = await boundary.create("run")
+    native.next_code = None
+    failing_close(boundary, monkeypatch)
+    with pytest.raises(ExecutionUnknown, match="outcome unknown") as caught:
+        await boundary.execute(sandbox, "true", operation_id="activity", timeout=3)
+    assert caught.value.__notes__ == ["owned sandbox close failed: OpenShellError"]
+
+
+async def test_failed_close_never_replaces_cancellation(adapter, monkeypatch):
+    boundary, native = adapter
+    sandbox = await boundary.create("run")
+    entered, release = threading.Event(), threading.Event()
+    original = native.ExecSandbox
+
+    def blocked(request, timeout):
+        entered.set()
+        assert release.wait(3)
+        return original(request, timeout)
+
+    monkeypatch.setattr(native, "ExecSandbox", blocked)
+    failing_close(boundary, monkeypatch)
+    task = asyncio.create_task(boundary.execute(sandbox, "true", operation_id="activity", timeout=3))
+    assert await asyncio.to_thread(entered.wait, 3)
+    task.cancel()
+    release.set()
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await task
+    assert caught.value.__notes__ == ["owned sandbox close failed: OpenShellError"]
+
+
+async def test_failed_close_keeps_the_admission_failure(adapter, monkeypatch):
+    boundary, native = adapter
+    native.proof["uid"] = 0
+    failing_close(boundary, monkeypatch)
+    with pytest.raises(OpenShellError, match="confinement") as caught:
+        await boundary.create("run")
+    assert caught.value.__notes__ == ["owned sandbox close failed: OpenShellError"]

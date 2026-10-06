@@ -16,7 +16,6 @@ import json
 import os
 import uuid
 from collections.abc import Callable
-from contextlib import suppress
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -383,11 +382,11 @@ class OpenShell(Execution, Transfer):
             initial = not path.exists()
             try:
                 spec = self._spec(profile)
-            except BaseException:
+            except BaseException as error:
                 if not initial:
                     saved = json.loads(path.read_bytes())
                     if not saved.get("closed"):
-                        await self._close_owned(Sandbox(**saved["sandbox"]))
+                        await self._close_owned(Sandbox(**saved["sandbox"]), error)
                 raise
             if path.exists():
                 saved = json.loads(path.read_bytes())
@@ -423,13 +422,16 @@ class OpenShell(Execution, Transfer):
                 task = asyncio.create_task(provision())
                 try:
                     sandbox = await asyncio.shield(task)
-                except asyncio.CancelledError:
+                except asyncio.CancelledError as cancelled:
                     # CreateSandbox may already have crossed the native boundary. Let it
                     # finish, even under repeated cancellation, then close whatever the
                     # ownership record names (a pending record reconciles by labels).
-                    with suppress(Exception):
+                    try:
                         await finish(task)
-                    await self._close_owned(Sandbox(**json.loads(path.read_bytes())["sandbox"]))
+                    except Exception as error:
+                        cancelled.add_note(f"cancelled native create failed: {type(error).__name__}")
+                    await self._close_owned(Sandbox(**json.loads(path.read_bytes())["sandbox"]),
+                                            cancelled)
                     raise
             try:
                 if self._fenced(run_id):
@@ -439,8 +441,8 @@ class OpenShell(Execution, Transfer):
                 await self._verify(sandbox, spec, labels, initial=initial)
                 if self._fenced(run_id):
                     raise OpenShellError("investigation closed during qualification")
-            except BaseException:
-                await self._close_owned(sandbox)
+            except BaseException as error:
+                await self._close_owned(sandbox, error)
                 raise
             return sandbox
 
@@ -688,9 +690,17 @@ class OpenShell(Execution, Transfer):
         except (ValueError, KeyError, TypeError, AttributeError, ZeroDivisionError):
             raise OpenShellError("container inspection was incomplete") from None
 
-    async def _close_owned(self, sandbox: Sandbox) -> None:
-        """Close an owned sandbox to completion, even while further cancellations arrive."""
-        await finish(asyncio.ensure_future(self.close(sandbox)))
+    async def _close_owned(self, sandbox: Sandbox, cause: BaseException) -> None:
+        """Close an owned sandbox to completion while ``cause`` propagates.
+
+        Further cancellations do not interrupt the close. A close failure never replaces
+        ``cause`` (an unknown execution must stay unknown, a cancellation must stay one): it
+        is attached as a note, and the run's cleanup activity closes the sandbox again.
+        """
+        try:
+            await finish(asyncio.ensure_future(self.close(sandbox)))
+        except Exception as error:
+            cause.add_note(f"owned sandbox close failed: {type(error).__name__}")
 
     async def close(self, sandbox: Sandbox) -> None:
         key = self._key(sandbox)
