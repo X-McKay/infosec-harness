@@ -36,27 +36,44 @@ class DurablePayloadLimit(AbstractCapability[InvestigationDeps]):
 
     @staticmethod
     def check_history() -> None:
-        if (
-            workflow.in_workflow()
-            and workflow.info().get_current_history_size() >= MAX_HISTORY_BYTES
-        ):
-            raise UsageLimitExceeded("Investigation exceeds the durable history budget")
+        if not workflow.in_workflow():
+            return
+        size = workflow.info().get_current_history_size()
+        if size >= MAX_HISTORY_BYTES:
+            raise UsageLimitExceeded(
+                f"Investigation exceeds the durable history budget "
+                f"({size} >= {MAX_HISTORY_BYTES} bytes)"
+            )
 
-    async def before_model_request(
-        self, ctx: RunContext[InvestigationDeps], request_context: ModelRequestContext
-    ) -> ModelRequestContext:
-        self.check_history()
+    @classmethod
+    def check_payload(
+        cls, subject: str, ctx: RunContext[InvestigationDeps], **parts: object
+    ) -> None:
+        """Refuse a native activity whose serialized input would exceed the payload budget."""
+        cls.check_history()
         encoded = to_json(
             {
-                "messages": request_context.messages,
-                "settings": request_context.model_settings,
-                "parameters": request_context.model_request_parameters,
+                **parts,
                 "deps": ctx.deps,
                 "context": TemporalRunContext.serialize_run_context(ctx),
             }
         )
         if len(encoded) > MAX_INVOCATION_BYTES:
-            raise UsageLimitExceeded("Investigation exceeds the durable payload budget")
+            raise UsageLimitExceeded(
+                f"{subject} exceeds the durable payload budget "
+                f"({len(encoded)} > {MAX_INVOCATION_BYTES} bytes)"
+            )
+
+    async def before_model_request(
+        self, ctx: RunContext[InvestigationDeps], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        self.check_payload(
+            "Investigation",
+            ctx,
+            messages=request_context.messages,
+            settings=request_context.model_settings,
+            parameters=request_context.model_request_parameters,
+        )
         return request_context
 
     async def before_tool_execute(
@@ -67,16 +84,7 @@ class DurablePayloadLimit(AbstractCapability[InvestigationDeps]):
         tool_def: ToolDefinition,
         args: ValidatedToolArgs,
     ) -> ValidatedToolArgs:
-        self.check_history()
-        encoded = to_json(
-            {
-                "args": args,
-                "deps": ctx.deps,
-                "context": TemporalRunContext.serialize_run_context(ctx),
-            }
-        )
-        if len(encoded) > MAX_INVOCATION_BYTES:
-            raise UsageLimitExceeded("Tool call exceeds the durable payload budget")
+        self.check_payload("Tool call", ctx, args=args)
         return args
 
 

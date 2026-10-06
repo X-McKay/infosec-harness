@@ -72,7 +72,10 @@ class OpenShellModel(Model):
         )
         encoded = invocation.model_dump_json().encode()
         if len(encoded) > MAX_INVOCATION_BYTES:
-            raise ValueError("Model invocation exceeds the durable payload budget")
+            raise ValueError(
+                f"Model invocation exceeds the durable payload budget "
+                f"({len(encoded)} > {MAX_INVOCATION_BYTES} bytes)"
+            )
         sandbox = await self.openshell.create(info.workflow_id, profile="model")
         result = await self.openshell.execute(
             sandbox,
@@ -90,6 +93,10 @@ class OpenShellModel(Model):
                 f"OpenShell model executor returned no complete response "
                 f"(exit {result.exit_code}, truncated={result.output_truncated}): {detail}"
             )
-        if len(result.stdout.encode()) > MAX_RESPONSE_BYTES:
-            raise ValueError("Model response exceeds the durable payload budget")
+        size = len(result.stdout.encode())
+        if size > MAX_RESPONSE_BYTES:
+            raise ValueError(
+                f"Model response exceeds the durable payload budget "
+                f"({size} > {MAX_RESPONSE_BYTES} bytes)"
+            )
         return RESPONSE.validate_json(result.stdout)

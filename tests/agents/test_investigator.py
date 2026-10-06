@@ -557,6 +557,9 @@ async def test_oversized_write_is_refused_before_the_tool_runs():
         snapshot_path="/fixture",
         request=request,
     )
-    with pytest.raises(UsageLimitExceeded, match="durable payload budget"):
+    with pytest.raises(
+        UsageLimitExceeded,
+        match=rf"Tool call exceeds the durable payload budget \(\d+ > {MAX_INVOCATION_BYTES} bytes\)",
+    ):
         await build_agent(shell, FunctionModel(respond)).run("Write", deps=deps)
     assert shell.executions == []
