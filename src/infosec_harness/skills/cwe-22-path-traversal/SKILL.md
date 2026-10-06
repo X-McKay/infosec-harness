@@ -1,10 +1,9 @@
 ---
 name: cwe-22-path-traversal
-description: Recognize path traversal sources, sinks, and containment checks, and define a deterministic
-  oracle. Use this when the finding is CWE-22 or untrusted input becomes part of a filesystem path.
+description: Untrusted input in a filesystem path and the containment checks around it. Use this when the finding is CWE-22 or path traversal.
 metadata:
   owner: appsec
-  version: 2.0.0
+  version: 2.0.1
 ---
 
 # CWE-22: Path traversal
@@ -45,6 +44,7 @@ Map the result onto `HARNESS_PROBE` (see `probe`):
   (`../outside.txt`, an absolute path, an encoded variant). Returning content, returning
   nothing, or raising its own containment error all count; a confining (fixed) target is
   `target_reached: true`, `vulnerability_observed: false`.
+- `oracle_valid`: `outside.txt` holds the nonce beside the base the callable was pointed at.
 - `vulnerability_observed`: the bytes the callable returned or opened contain the nonce.
 - `positive_control`: the same check detects the nonce in `outside.txt` read by its direct path.
 - `negative_control`: the callable given `inside.txt` returns its contents and the check stays silent.
