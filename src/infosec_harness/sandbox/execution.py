@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import uuid
 from collections.abc import Awaitable, Callable, Iterator, Sequence
 from dataclasses import asdict, dataclass
@@ -20,6 +21,8 @@ from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypedDict
 
 if TYPE_CHECKING:
     from .openshell import OpenShellConfig
+
+log = logging.getLogger(__name__)
 
 ProfileName = Literal["workspace", "probe", "model"]
 _PYTHON = "/usr/local/bin/python"
@@ -141,6 +144,24 @@ class OwnershipRecord(TypedDict):
 
     sandbox: SandboxRecord
     closed: bool
+
+
+def _event(logger: logging.Logger, level: int, event: str, **fields: object) -> None:
+    """One boundary event as ``event=<name> key=value ...``.
+
+    Callers pass identifiers, sizes, codes and type names only: never commands, stdin,
+    workload or model output, provider details or private paths. A value that is not a plain
+    token is JSON-quoted, so an identifier cannot forge another line or field.
+    """
+    if logger.isEnabledFor(level):
+        logger.log(level, " ".join([f"event={event}",
+                                    *(f"{key}={_token(value)}" for key, value in fields.items())]))
+
+
+def _token(value: object) -> str:
+    text = str(value)
+    plain = text and len(text) <= 256 and text.isprintable() and not any(c in text for c in ' "=')
+    return text if plain else json.dumps(text[:256])
 
 
 def _load(path: Path) -> Any:
@@ -296,11 +317,16 @@ class Execution(Native):
                 await self._close_owned(sandbox, cancelled)
                 raise
             except Exception as exc:
+                _event(log, logging.INFO, "execution_unknown", run_id=sandbox.run_id,
+                       operation_id=operation_id, sandbox_id=sandbox.id, cause=type(exc).__name__)
                 unknown = ExecutionUnknown(
                     f"native execution outcome unknown; sandbox closed: operation {operation_id}")
                 await self._close_owned(sandbox, unknown)
                 raise unknown from exc
             self._save(path, {**receipt, "result": _result_record(result)})
+            _event(log, logging.INFO, "receipt_written", run_id=sandbox.run_id,
+                   operation_id=operation_id, sandbox_id=sandbox.id, exit_code=result.exit_code,
+                   stdout_bytes=len(result.stdout.encode()), stderr_bytes=len(result.stderr.encode()))
             return result
 
     def receipts(self, run_id: str) -> list[ExecutionReceipt]:

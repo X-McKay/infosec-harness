@@ -1336,3 +1336,42 @@ def test_fake_adapter_keeps_the_real_signatures(name):
         return [(p.name, p.kind, p.default) for p in inspect.signature(method).parameters.values()]
 
     assert shape(getattr(FakeOpenShell, name)) == shape(getattr(OpenShell, name))
+
+
+async def test_boundary_events_carry_ids_but_never_commands_or_output(adapter, caplog):
+    import logging
+
+    boundary, native = adapter
+    caplog.set_level(logging.INFO, logger="infosec_harness.sandbox")
+    sandbox = await boundary.create("run")
+    native.next_output = "SECRET-workload-output"
+    await boundary.execute(sandbox, ["printf", "SECRET-command"], operation_id="execute:1:call",
+                           timeout=3)
+    native.next_code = None
+    with pytest.raises(ExecutionUnknown):
+        await boundary.execute(sandbox, "true", operation_id='probe:2:"x y"\nforged', timeout=3)
+    lines = [record.getMessage() for record in caplog.records]
+    assert lines[0] == (f"event=sandbox_created run_id=run sandbox_id={sandbox.id} "
+                        'profile=workspace slot=""')
+    assert (f"event=receipt_written run_id=run operation_id=execute:1:call sandbox_id={sandbox.id} "
+            "exit_code=0 stdout_bytes=22 stderr_bytes=0") in lines
+    unknown = next(line for line in lines if line.startswith("event=execution_unknown"))
+    assert 'operation_id="probe:2:\\"x y\\"\\nforged"' in unknown and "\n" not in unknown
+    assert f"event=sandbox_closed run_id=run sandbox_id={sandbox.id}" in lines[-1]
+    assert not any("SECRET" in line for line in lines)
+
+
+async def test_refusal_and_cleanup_failure_are_logged(adapter, monkeypatch, caplog):
+    import logging
+
+    boundary, native = adapter
+    caplog.set_level(logging.INFO, logger="infosec_harness.sandbox")
+    native.proof["uid"] = 0
+    failing_close(boundary, monkeypatch)
+    with pytest.raises(OpenShellError):
+        await boundary.create("run")
+    refused, failed = [r for r in caplog.records if "refused" in r.getMessage() or "cleanup" in r.getMessage()]
+    assert refused.levelno == logging.WARNING
+    assert 'reason="actual workload confinement was not established: uid"' in refused.getMessage()
+    assert failed.getMessage().startswith("event=cleanup_failed run_id=run sandbox_id=")
+    assert failed.getMessage().endswith("error_type=OpenShellError")

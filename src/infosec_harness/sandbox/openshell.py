@@ -13,6 +13,7 @@ import asyncio
 import hashlib
 import ipaddress
 import json
+import logging
 import os
 import uuid
 from collections.abc import Callable
@@ -34,6 +35,7 @@ from .execution import (
     ProfileName,
     Sandbox,
     _digest,
+    _event,
     _load,
     _records,
     _request_id,
@@ -46,6 +48,7 @@ from .transfer import Transfer
 # The native ownership label, independent of the workflow generation: live sandboxes and saved
 # records carry it, so changing it would orphan them.
 _OWNER = "infosec-harness.v3"
+log = logging.getLogger(__name__)
 # The dedicated-daemon inspector: bounded time and output for one ps/inspect call.
 _INSPECTION_TIMEOUT_S = 20
 _INSPECTION_BYTES = 2_097_152
@@ -225,6 +228,19 @@ def _proof_checks(proof: Any, profile: Profile) -> dict[str, bool]:
 
 def _ownership(sandbox: Sandbox, *, closed: bool = False) -> OwnershipRecord:
     return {"sandbox": _sandbox_record(sandbox), "closed": closed}
+
+
+def _refused(sandbox: Sandbox, error: BaseException) -> None:
+    # Adapter refusal messages name checks and limits, never workload output or paths.
+    reason = str(error)[:300] if isinstance(error, OpenShellError) else ""
+    _event(log, logging.WARNING, "sandbox_refused", run_id=sandbox.run_id, sandbox_id=sandbox.id,
+           profile=sandbox.profile, slot=sandbox.slot, error_type=type(error).__name__,
+           reason=reason)
+
+
+def _cleanup_failed(sandbox: Sandbox, error: BaseException) -> None:
+    _event(log, logging.INFO, "cleanup_failed", run_id=sandbox.run_id, sandbox_id=sandbox.id,
+           profile=sandbox.profile, slot=sandbox.slot, error_type=type(error).__name__)
 
 
 def _valid_timestamp(value: Any) -> bool:
@@ -505,8 +521,12 @@ class OpenShell(Transfer):
                 if self._fenced(run_id):
                     raise OpenShellError("investigation closed during qualification")
             except BaseException as error:
+                if not isinstance(error, asyncio.CancelledError):
+                    _refused(sandbox, error)
                 await self._close_owned(sandbox, error)
                 raise
+            _event(log, logging.INFO, "sandbox_created" if initial else "sandbox_reused",
+                   run_id=run_id, sandbox_id=sandbox.id, profile=profile, slot=slot)
             return sandbox
 
     async def _verify(self, sandbox: Sandbox, spec: Any, labels: dict[str, str],
@@ -761,6 +781,7 @@ class OpenShell(Transfer):
         try:
             await finish(asyncio.ensure_future(self.close(sandbox)))
         except Exception as error:
+            _cleanup_failed(sandbox, error)
             cause.add_note(f"owned sandbox close failed: {type(error).__name__}")
 
     async def close(self, sandbox: Sandbox) -> None:
@@ -795,6 +816,8 @@ class OpenShell(Transfer):
             raise ExecutionUnknown("pending native create cannot yet be confirmed absent")
         await self._inspect(sandbox, deleted=True)
         self._save(path, _ownership(sandbox, closed=True))
+        _event(log, logging.INFO, "sandbox_closed", run_id=sandbox.run_id, sandbox_id=sandbox.id,
+               profile=sandbox.profile, slot=sandbox.slot)
 
     async def close_run(self, run_id: str) -> None:
         self._save(self._record("closed-runs", run_id), {"run_id": run_id})
@@ -804,9 +827,11 @@ class OpenShell(Transfer):
         saved: OwnershipRecord
         for saved in _records(self.config.state_dir, "sandboxes"):
             if saved["sandbox"]["run_id"] == run_id and not saved["closed"]:
+                sandbox = Sandbox(**saved["sandbox"])
                 try:
-                    await self.close(Sandbox(**saved["sandbox"]))
+                    await self.close(sandbox)
                 except Exception as exc:
+                    _cleanup_failed(sandbox, exc)
                     failures.append(exc)
         if failures:
             failures[0].add_note(f"{len(failures)} owned sandbox cleanup operation(s) failed")

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import io
+import logging
 import tarfile
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -27,12 +28,15 @@ from .execution import (
     SourceRejected,
     TransferRecord,
     _digest,
+    _event,
     _load,
     _operation_id,
     _records,
     _request_id,
     _sandbox_record,
 )
+
+log = logging.getLogger(__name__)
 
 # The pinned gateway decodes at most 1 MiB per gRPC message; archives travel in parts.
 _PART_BYTES = 900_000
@@ -161,6 +165,9 @@ class Transfer(Execution):
                     atomic_write_bytes(archive, raw, sync_directory=True)
                     self._save(record, {**intent, "sha256": hashlib.sha256(raw).hexdigest(),
                                         "size": len(raw)})
+                    _event(log, logging.INFO, "receipt_written", run_id=source.run_id,
+                           operation_id=operation_id, sandbox_id=source.id, kind="capture",
+                           archive_bytes=len(raw))
                 except BaseException as error:
                     await self._close_owned(source, error)
                     raise
