@@ -54,3 +54,9 @@ redirects, alternate encodings, DNS changes or other destinations are safe. Trac
 conditions in the source and scope the conclusion accordingly. If the sandbox cannot
 support the required observation, report the limitation. A fake transport can diagnose
 which URL the target attempted, but cannot substitute for an execution claim.
+
+Patching the resolver (`socket.getaddrinfo`), the HTTP transport or the URL parser inside the
+probe replaces the sink's real behaviour: it is a stand-in and can support the positive control
+only, never `vulnerability_observed`. A threat model that needs the attacker to control the
+allowlisted hosts themselves (their DNS, certificates or servers) is outside the finding's scope
+unless the finding states it; record it as a limitation in the summary, not as exploitability.
