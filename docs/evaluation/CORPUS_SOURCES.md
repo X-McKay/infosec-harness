@@ -1,6 +1,6 @@
 # Corpus sources
 
-The active qualification dataset is the unchanged 36-case seeded paired corpus described
+The active qualification dataset is the 82-case seeded paired corpus described
 in [eval-corpus](../../eval-corpus/README.md). It is small, synthetic and known to developers;
 it cannot establish independently held-out or production-scale generalization.
 

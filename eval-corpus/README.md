@@ -1,12 +1,23 @@
 # Independent paired corpus
 
-The unchanged starter corpus contains 36 small Python, Java, JavaScript and Perl cases.
-`manifest.json` pairs findings with scoring truth. Only the finding and repository snapshot
-are submitted to the investigator; expected verdicts stay outside its sandbox.
+The seeded corpus contains 82 small Python, Java, JavaScript, Perl and C cases: the 36-case
+starter set followed by 46 cases for the skill-coverage CWE classes. `manifest.json` pairs
+findings with scoring truth. Only the finding and repository snapshot are submitted to the
+investigator; expected verdicts stay outside its sandbox.
 
-## Cases (36 total)
+## Cases (82 total)
 
 Each case name is `[<lang>-]<cwe>-<variant>` (Python cases are unprefixed). The manifest is checked by `tests/evals/test_cohort.py`.
+
+| Language | Cases |
+|---|---|
+| python | 42 |
+| java | 6 |
+| javascript | 18 |
+| perl | 12 |
+| c | 4 |
+
+Starter set (36):
 
 | Cases | Language | CWE | Toolchain |
 |---|---|---|---|
@@ -29,6 +40,38 @@ Each case name is `[<lang>-]<cwe>-<variant>` (Python cases are unprefixed). The 
 | `perl-sqli-vulnerable`, `perl-sqli-fixed` | perl | CWE-89 | cpanm / Test::More |
 | `perl-cmdi-vulnerable`, `perl-cmdi-fixed` | perl | CWE-78 | cpanm / Test::More |
 | `perl-xss-vulnerable`, `perl-xss-fixed` | perl | CWE-79 | Module::Build / Test2::V0 |
+
+Skill-coverage additions (46), in manifest order:
+
+| Cases | Language | CWE | Toolchain |
+|---|---|---|---|
+| `javascript-prototypepollution-vulnerable`, `-fixed` | javascript | CWE-1321 | npm / jest, CommonJS |
+| `massassignment-vulnerable`, `massassignment-fixed` | python | CWE-915 | pip / pytest |
+| `errorexposure-vulnerable`, `errorexposure-fixed` | python | CWE-209 | pip / pytest |
+| `insecuretemp-vulnerable`, `insecuretemp-fixed` | python | CWE-377 | pip / pytest |
+| `javascript-cors-vulnerable`, `javascript-cors-fixed` | javascript | CWE-942 | npm / jest, CommonJS |
+| `perl-permissions-vulnerable`, `perl-permissions-fixed` | perl | CWE-732 | cpanm / Test::More |
+| `openredirect-vulnerable`, `openredirect-fixed` | python | CWE-601 | pip / pytest |
+| `formulainjection-vulnerable`, `formulainjection-fixed` | python | CWE-1236 | pip / pytest |
+| `fileinclusion-vulnerable`, `fileinclusion-fixed` | python | CWE-98 | pip / pytest |
+| `perl-responsesplitting-vulnerable`, `-fixed` | perl | CWE-113 | cpanm / Test::More |
+| `javascript-arginjection-vulnerable`, `-fixed` | javascript | CWE-77 | npm / jest, CommonJS |
+| `idor-vulnerable`, `idor-fixed` | python | CWE-862 | pip / pytest |
+| `jwtnone-vulnerable`, `jwtnone-fixed` | python | CWE-347 | pip / pytest |
+| `pwhash-vulnerable`, `pwhash-fixed` | python | CWE-327 | pip / pytest |
+| `javascript-sessionrandom-vulnerable`, `-fixed` | javascript | CWE-330 | npm / built-in `node --test`, CommonJS |
+| `javascript-sessionfix-vulnerable`, `-fixed` | javascript | CWE-384 | npm / built-in `node --test`, CommonJS |
+| `perl-adminpw-vulnerable`, `perl-adminpw-fixed` | perl | CWE-798 | cpanm / Test::More |
+| `c-stackoverflow-vulnerable`, `c-stackoverflow-fixed` | c | CWE-787 | make / gcc, AddressSanitizer test binary |
+| `c-intoverflow-vulnerable`, `c-intoverflow-fixed` | c | CWE-190 | make / gcc, AddressSanitizer test binary |
+| `redos-vulnerable`, `redos-fixed` | python | CWE-1333 | pip / pytest |
+| `javascript-zipbomb-vulnerable`, `-fixed` | javascript | CWE-400 | npm / built-in `node --test`, CommonJS |
+| `toctou-vulnerable`, `toctou-fixed` | python | CWE-362 | pip / pytest |
+| `nullderef-vulnerable`, `nullderef-fixed` | python | CWE-476 | pip / pytest |
+
+The C fixtures ship a `make test` target whose binary runs the same in-bounds and bounded
+boundary inputs against both variants: the vulnerable build aborts under AddressSanitizer
+and the fixed build exits 0. The `node --test` fixtures need no installed packages.
 
 
 ## Run
@@ -53,8 +96,9 @@ correct negative. Native runtime and live model evidence must be qualified indep
 The two unpaired Python cases (`unreachable`, `testonly`) exercise claims whose context
 should prevent exploitation. The SSRF and XXE cases can be tested offline with local
 listeners and files. Java includes JUnit 4/5 and old source levels; JavaScript includes
-CommonJS and ESM/TypeScript; Perl includes Test::More and Test2::V0. The agent must inspect
-and handle the actual build configuration through skills and tools.
+CommonJS, ESM/TypeScript and the built-in `node --test` runner; Perl includes Test::More and
+Test2::V0; C uses make and gcc. The agent must inspect and handle the actual build
+configuration through skills and tools.
 
 `external/` retains historical harvested datasets and attribution. They are not accepted
 by this evaluator: they require remote-source and test-masking controls before use. The
