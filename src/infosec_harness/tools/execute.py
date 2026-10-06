@@ -3,12 +3,13 @@
 import re
 from dataclasses import replace
 from pathlib import Path
+from typing import Literal
 
 from pydantic_ai import RunContext
 from pydantic_ai.toolsets import FunctionToolset
 
+from infosec_harness.agents.deps import InvestigationDeps
 from infosec_harness.agents.evidence import final_probe_line, parse_probe_observations
-from infosec_harness.agents.investigator import InvestigationDeps
 from infosec_harness.contracts import Evidence
 from infosec_harness.sandbox import (
     CommandResult,
@@ -30,13 +31,62 @@ def command_budget(timeout: int) -> int:
     return max(timeout - TIMEOUT_MARGIN_SECONDS, 1)
 
 
+# A program name as a command word: bare, wrapper-relative (`./gradlew`) or a full path
+# (`/usr/bin/javac`), but not a directory or file that merely shares the name
+# (`node_modules/npm/`, `gradle.properties`).
+_PROGRAM_START = r"(?<![\w.-])(?:\S*/)?"
+_PROGRAM_END = r"(?![\w./-])"
 # Commands whose failure usually means missing environment setup, not a target behaviour.
-BUILD_TOOLS = re.compile(r"(?<![\w./-])(mvn|gradle|gradlew|npm|npx|yarn|pnpm|cpanm|cpan|javac|pip3?)(?![\w-])")
+BUILD_TOOLS = re.compile(
+    _PROGRAM_START
+    + r"(mvnw?|gradlew?|npm|npx|yarn|pnpm|cpanm|cpan|javac|pip3?)"
+    + _PROGRAM_END
+)
+# Maven specifically: its test phase and its log volume waste the token budget on probes.
+MVN = re.compile(_PROGRAM_START + r"mvnw?" + _PROGRAM_END)
+MVN_TEST = re.compile(_PROGRAM_START + r"mvnw?" + _PROGRAM_END + r"(?:(?!\||&&|;).)*\btest\b")
+LOCAL_REPO = re.compile(r"-Dmaven\.repo\.local")
+
+_MVN_FEEDBACK = (
+    "Maven is unnecessary for a probe and its output floods the token budget. Compile the "
+    "target classes directly with the Java skill's javac recipe (javac -d /tmp/probe_classes "
+    "... then java -cp) and skip JUnit; do not rerun mvn test. Only use Maven when the code "
+    "needs dependencies, and then with the environment skill's offline recipe "
+    "(JAVA_TOOL_OPTIONS, -Dmaven.repo.local=/workspace/repo/.m2, dependency:go-offline, -q)."
+)
+_BUILD_FEEDBACK = (
+    "Build or package tool failed. Follow the language skill's build recipe and the "
+    "environment skill before retrying: resolve dependencies once in the workspace "
+    "with the documented options, then run tests offline. Do not search the "
+    "filesystem for artifacts, use pip/curl for JVM or Perl dependencies, or rerun "
+    "the same failing command."
+)
+
+
+def environment_feedback(command: str, exit_code: int | None, output_truncated: bool) -> str | None:
+    """A bounded pointer to the build recipe when a build/package command misbehaves.
+
+    Maven on a probe is called out specifically: ``mvn test`` or ``mvn ... test`` (however it
+    exits), any ``mvn`` whose output overflowed the stdout limit, and a failed ``mvn`` run
+    without ``-Dmaven.repo.local`` all point at the direct-javac recipe. Other build tools
+    point at the recipe only when they fail. ``None`` means no feedback.
+    """
+    failed = bool(exit_code)
+    if MVN.search(command) and (
+        MVN_TEST.search(command)
+        or output_truncated
+        or (failed and not LOCAL_REPO.search(command))
+    ):
+        return _MVN_FEEDBACK
+    if failed and BUILD_TOOLS.search(command):
+        return _BUILD_FEEDBACK
+    return None
 
 
 def bounded(argv: list[str], timeout: int) -> list[str]:
-    """Kill ``argv`` inside the sandbox before the native timeout; shared by every exec."""
-    return ["/usr/bin/timeout", "--preserve-status", "-s", "KILL", str(command_budget(timeout)), *argv]
+    """Kill ``argv`` inside the sandbox before the native timeout; every non-shell exec."""
+    budget = str(command_budget(timeout))
+    return ["/usr/bin/timeout", "--preserve-status", "-s", "KILL", budget, *argv]
 
 
 # Shell commands spawn children (npm, Maven, test runners). A killed child that still holds
@@ -46,18 +96,23 @@ def bounded(argv: list[str], timeout: int) -> list[str]:
 # Printed output is cut at these sizes (together below the native output bound); a cut is
 # reported by one fixed marker line appended to stderr, which `unwrap_output` turns into
 # ``output_truncated``. A forged marker can only mark output truncated, never hide a cut.
+# The closing parenthesis sits on its own line after the command, so a command that ends
+# in a ``#`` comment or a heredoc terminator still parses.
 STDOUT_LIMIT = 200_000
 STDERR_LIMIT = 60_000
 TRUNCATION_MARKER = "[ih-wrapper] output exceeded the in-sandbox capture limit and was cut"
 _SHELL_WRAPPER = (
     'out=$(mktemp /tmp/ih-out.XXXXXX) && err=$(mktemp /tmp/ih-err.XXXXXX) || exit 125; '
     '/usr/bin/timeout --preserve-status -s KILL "$1" /bin/bash -lc '
-    '"cd /workspace/repo && ( $2 ) >\"$out\" 2>\"$err\" </dev/null"; code=$?; '
+    '"cd /workspace/repo && ( $2\n) >\"$out\" 2>\"$err\" </dev/null"; code=$?; '
     f'head -c {STDOUT_LIMIT} "$out"; head -c {STDERR_LIMIT} "$err" >&2; '
     f'if (( $(wc -c <"$out") > {STDOUT_LIMIT} || $(wc -c <"$err") > {STDERR_LIMIT} )); '
     f"then printf '\\n%s\\n' '{TRUNCATION_MARKER}' >&2; fi; "
     'rm -f "$out" "$err"; exit "$code"'
 )
+# The most the wrapper ever prints (both streams cut, plus the marker line). The native
+# `max_output_bytes` must be at least this, or a large command becomes an unknown execution.
+WRAPPER_OUTPUT_BYTES = STDOUT_LIMIT + STDERR_LIMIT + len(f"\n{TRUNCATION_MARKER}\n".encode())
 
 
 def unwrap_output(result: CommandResult) -> CommandResult:
@@ -68,7 +123,34 @@ def unwrap_output(result: CommandResult) -> CommandResult:
     return replace(result, stderr=result.stderr[: -len(suffix)], output_truncated=True)
 
 
+def evidence_from_result(
+    identity: str,
+    *,
+    kind: Literal["probe", "command"],
+    command: str,
+    result: CommandResult,
+    sandbox_id: str,
+    source_digest: str,
+    observations: dict[str, bool | str | int | None],
+) -> Evidence:
+    """Full (unexcerpted) evidence for one completed command, already passed through
+    ``unwrap_output``. The tool return and finalization's receipt rebuild must agree."""
+    return Evidence(
+        id=identity,
+        kind=kind,
+        command=command,
+        exit_code=result.exit_code,
+        stdout=result.stdout,
+        stderr=result.stderr,
+        output_truncated=result.output_truncated,
+        sandbox_id=sandbox_id,
+        source_digest=source_digest,
+        observations=observations,
+    )
+
+
 def bounded_shell(command: str, timeout: int) -> list[str]:
+    """Run ``command`` under the shell wrapper: its own in-sandbox kill and file-backed capture."""
     return ["/bin/bash", "-c", _SHELL_WRAPPER, "ih-wrapper", str(command_budget(timeout)), command]
 
 
@@ -84,7 +166,7 @@ async def command_tool(
     ctx: RunContext[InvestigationDeps],
     command: str,
     sandbox: Sandbox,
-    kind: str,
+    kind: Literal["execute", "probe"],
 ) -> Evidence:
     identity = operation_id(ctx, kind)
     timeout = ctx.deps.request.limits.command_timeout_seconds
@@ -100,32 +182,26 @@ async def command_tool(
     if kind == "probe" and not observations and final_probe_line(result.stdout):
         # Feedback only: tool returns are excerpted, so record what the full stdout showed.
         observations["probe_line_rejected"] = True
-    if kind == "execute" and result.exit_code and BUILD_TOOLS.search(command):
-        # Live cohorts 7 and 8: after one failed build the agent searched the filesystem
-        # for jars and looped on javac. Point at the recipe before it improvises.
-        observations["environment_feedback"] = (
-            "Build or package tool failed. Follow the language skill's build recipe and the "
-            "environment skill before retrying: resolve dependencies once in the workspace "
-            "with the documented options, then run tests offline. Do not search the "
-            "filesystem for artifacts, use pip/curl for JVM or Perl dependencies, or rerun "
-            "the same failing command."
-        )
+    if kind == "execute":
+        # Live cohorts 7, 8 and 10: after a failed build the agent searched the filesystem for
+        # jars and looped on javac, and `mvn test` runs flooded the budget. Point at the recipe
+        # before it improvises (see environment_feedback for the exact triggers).
+        feedback = environment_feedback(command, result.exit_code, result.output_truncated)
+        if feedback:
+            observations["environment_feedback"] = feedback
     if result.exit_code == KILLED_EXIT:
         observations["timeout_feedback"] = (
-            f"Killed (exit {KILLED_EXIT}) at the {command_budget(timeout)}s command "
+            # An out-of-memory kill also exits 137, so the budget is the usual cause, not proof.
+            f"Killed (exit {KILLED_EXIT}), normally at the {command_budget(timeout)}s command "
             "budget; it was not retried. Narrow the command, cache dependencies in the "
             "workspace, or split the work."
         )
     # Tool returns enter durable history; return bounded excerpts only.
-    return Evidence(
-        id=identity,
+    return evidence_from_result(
+        identity,
         kind="probe" if kind == "probe" else "command",
         command=command,
-        exit_code=result.exit_code,
-        stdout=result.stdout,
-        stderr=result.stderr,
-        timed_out=False,
-        output_truncated=result.output_truncated,
+        result=result,
         sandbox_id=sandbox.id,
         source_digest=ctx.deps.source_digest,
         observations=observations,
@@ -189,8 +265,6 @@ def register(tools: FunctionToolset[InvestigationDeps], openshell: OpenShell) ->
                     operation_id=operation_id(ctx, "verify"),
                 )
             except UnsafeSnapshotMetadata:
-                if evidence.exit_code is None:
-                    raise
                 evidence.observations["source_verified"] = False
                 evidence.observations["integrity_feedback"] = (
                     "Post-execution archive metadata was rejected, so this completed run is not "

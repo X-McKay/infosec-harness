@@ -57,3 +57,48 @@ def final_response(info, *, evidence_ids=None):
             )
         ]
     )
+
+
+# Agent and tool test helpers. Imports stay local so this block only appends to the module.
+
+
+def tool_returns(messages, name=None):
+    """Contents of the tool returns in ``messages`` (one tool's when ``name`` is given)."""
+    from pydantic_ai.messages import ModelRequest, ToolReturnPart
+
+    return [
+        part.content
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and name in (None, part.tool_name)
+    ]
+
+
+def retry_feedback(messages):
+    """Contents of the retry prompts (validator feedback) in ``messages``."""
+    from pydantic_ai.messages import ModelRequest, RetryPromptPart
+
+    return [
+        part.content
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, RetryPromptPart)
+    ]
+
+
+async def make_deps(shell, **overrides):
+    """Investigation deps for run "run" on ``shell``'s workspace sandbox; override any field."""
+    from infosec_harness.agents.deps import InvestigationDeps
+    from infosec_harness.contracts import Finding, InvestigationRequest
+
+    if "sandbox" not in overrides:
+        overrides["sandbox"] = await shell.create("run")
+    defaults = dict(
+        run_id="run",
+        source_digest="digest",
+        snapshot_path="/fixture",
+        request=InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture")),
+    )
+    return InvestigationDeps(**{**defaults, **overrides})
