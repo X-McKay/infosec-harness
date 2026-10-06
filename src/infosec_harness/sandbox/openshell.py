@@ -732,7 +732,7 @@ class OpenShell(Transfer):
         if deleted:
             if ids:
                 raise OpenShellError("native deletion left workload resources behind")
-            return
+            return None
         if len(ids) != 2 or any(not all(c in "0123456789abcdef" for c in i) for i in ids):
             raise OpenShellError("exact native workload and supervisor were not observed")
         try:
