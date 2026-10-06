@@ -33,6 +33,7 @@ from infosec_harness.workflows.investigation import (
     InvestigationActivities,
     InvestigationWorkflow,
     PreparedInvestigation,
+    WorkerIdentityMismatch,
     bind_investigator,
 )
 from infosec_harness.workflows.worker import workflow_runner
@@ -859,12 +860,14 @@ async def test_prepare_refuses_mismatched_candidate_before_any_side_effect():
         raise AssertionError("mismatch must refuse before source capture")
 
     activities = InvestigationActivities(shell, snapshot, "fixture", identity=lambda: identity)
-    with pytest.raises(ValueError, match="does not match"):
+    with pytest.raises(WorkerIdentityMismatch, match="does not match") as error:
         await activities.prepare(
             InvestigationRequest(
                 finding=Finding(title="case", repo_url="fixture"), expected_worker_identity="d" * 64
             )
         )
+    assert "expected=dddddddddddd bound=aaaaaaaaaaaa" in str(error.value)
+    assert error.value.non_retryable
     assert shell.executions == []
 
 
@@ -877,8 +880,10 @@ def test_worker_refuses_configuration_drift():
         FakeOpenShell(), None, "fixture", identity=lambda: current[0]
     )
     current[0] = first.model_copy(update={"config_sha256": "d" * 64})
-    with pytest.raises(ValueError, match="changed; restart"):
+    with pytest.raises(WorkerIdentityMismatch, match="changed; restart") as error:
         activities.check_identity()
+    assert error.value.non_retryable
+    assert "bound=aaaaaaaaaaaa current=aaaaaaaaaaaa" in str(error.value)
 
 
 @pytest.mark.parametrize("mode", ["different", "drift", "unknown"])

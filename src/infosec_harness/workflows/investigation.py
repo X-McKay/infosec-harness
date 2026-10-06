@@ -2,6 +2,7 @@
 
 import asyncio
 import shlex
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 from datetime import timedelta
 from pathlib import Path
@@ -22,17 +23,19 @@ with workflow.unsafe.imports_passed_through():
     from infosec_harness.agents.investigator import InvestigationDeps
     from infosec_harness.contracts import (
         Evidence,
+        Finding,
         InvestigationRequest,
         InvestigationResult,
         RunState,
         Verdict,
+        WorkerIdentity,
         definitive_support,
     )
     from infosec_harness.sandbox import OpenShell
     from infosec_harness.sandbox.process import finish
     from infosec_harness.tools.execute import unwrap_output
 
-    from .snapshot import validate_citation
+    from .snapshot import Snapshot, validate_citation
 
 # The terminal failure message embeds at most this many cause links, each message cut to
 # FAILURE_LINK_CHARS. Clients classify failures from it, so these values are a v11 contract.
@@ -86,17 +89,59 @@ class CleanupInvestigation(BaseModel):
     expected_worker_identity: str | None = None
 
 
+class WorkerIdentityMismatch(ApplicationError):
+    """A worker identity check refused an activity before any side effect.
+
+    Non-retryable: another attempt on the same worker meets the same identity. Never in a
+    cohort's agent-level set, so it always stops a cohort. Exported from ``worker``.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, type="WorkerIdentityMismatch", non_retryable=True)
+
+
+def short(fingerprint: str | WorkerIdentity | None) -> str:
+    """A fingerprint prefix for messages; fingerprints are content digests, not secrets."""
+    if isinstance(fingerprint, WorkerIdentity):
+        fingerprint = fingerprint.fingerprint
+    return fingerprint[:12] if fingerprint else "none"
+
+
+def require_unchanged(
+    identity: Callable[[], WorkerIdentity], bound: WorkerIdentity | None
+) -> None:
+    """Refuse when the worker's current content identity differs from the one it bound."""
+    current = identity()
+    if current != bound:
+        raise WorkerIdentityMismatch(
+            "Worker code or isolation configuration changed; restart the worker "
+            f"(bound={short(bound)} current={short(current)})"
+        )
+
+
 class InvestigationActivities:
-    def __init__(self, openshell: OpenShell, snapshot, model_name: str, *, identity=None):
+    def __init__(
+        self,
+        openshell: OpenShell,
+        snapshot: Callable[[Finding, str], Awaitable[Snapshot]],
+        model_name: str,
+        *,
+        identity: Callable[[], WorkerIdentity] | None = None,
+        bound_identity: WorkerIdentity | None = None,
+    ):
+        """``identity`` recomputes the worker identity for drift checks; ``bound_identity`` is
+        the one captured at worker start (computed from ``identity`` when not given)."""
         self.openshell = openshell
         self.snapshot = snapshot
         self.model_name = model_name
         self.identity = identity
-        self.bound_identity = identity() if identity else None
+        if bound_identity is None and identity is not None:
+            bound_identity = identity()
+        self.bound_identity = bound_identity
 
-    def check_identity(self):
-        if self.identity and self.identity() != self.bound_identity:
-            raise ValueError("Worker code or isolation configuration changed; restart the worker")
+    def check_identity(self) -> None:
+        if self.identity is not None:
+            require_unchanged(self.identity, self.bound_identity)
 
     @activity.defn(name="prepare_investigation")
     async def prepare(self, request: InvestigationRequest) -> PreparedInvestigation:
@@ -105,7 +150,11 @@ class InvestigationActivities:
             self.bound_identity is None
             or request.expected_worker_identity != self.bound_identity.fingerprint
         ):
-            raise ValueError("Requested candidate does not match this worker identity")
+            raise WorkerIdentityMismatch(
+                "Requested candidate does not match this worker identity "
+                f"(expected={short(request.expected_worker_identity)} "
+                f"bound={short(self.bound_identity)})"
+            )
         run_id = activity.info().workflow_id
         snapshot = await self.snapshot(request.finding, run_id)
         try:
@@ -132,7 +181,10 @@ class InvestigationActivities:
         self.check_identity()
         deps = payload.prepared.deps
         if deps.worker_identity != self.bound_identity:
-            raise ValueError("Investigation changed worker identity before finalization")
+            raise WorkerIdentityMismatch(
+                "Investigation changed worker identity before finalization "
+                f"(prepared={short(deps.worker_identity)} bound={short(self.bound_identity)})"
+            )
         evidence = []
         for receipt in self.openshell.receipts(deps.run_id):
             identity = receipt.operation_id
@@ -252,8 +304,9 @@ class InvestigationActivities:
         if expected is not None and (
             self.bound_identity is None or expected != self.bound_identity.fingerprint
         ):
-            raise ApplicationError(
-                "Owned sandbox cleanup reached a different worker identity", non_retryable=True
+            raise WorkerIdentityMismatch(
+                "Owned sandbox cleanup reached a different worker identity "
+                f"(expected={short(expected)} bound={short(self.bound_identity)})"
             )
         # Current code/policy drift must not prevent the original bound adapter
         # from closing its own sandboxes.

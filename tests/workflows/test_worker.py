@@ -3,6 +3,7 @@
 import asyncio
 import uuid
 from datetime import timedelta
+from importlib.metadata import version
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -34,7 +35,11 @@ from infosec_harness.workflows.investigation import (
     InvestigationWorkflow,
     PreparedInvestigation,
 )
-from infosec_harness.workflows.worker import WorkerIdentityInterceptor, worker_identity
+from infosec_harness.workflows.worker import (
+    WorkerIdentityInterceptor,
+    WorkerIdentityMismatch,
+    worker_identity,
+)
 
 
 def identity(value="a"):
@@ -74,8 +79,11 @@ async def test_guard_checks_prepared_and_current_identity_before_handler(monkeyp
         assert await guarded.execute_activity(payload) == "executed"
         downstream.execute_activity.assert_awaited_once()
     else:
-        with pytest.raises(ValueError, match="identity|changed; restart"):
+        with pytest.raises(WorkerIdentityMismatch, match="identity|changed; restart") as error:
             await guarded.execute_activity(payload)
+        assert error.value.non_retryable and error.value.type == "WorkerIdentityMismatch"
+        # Both fingerprints are named so an operator can see which candidate is running.
+        assert "bound=aaaaaaaaaaaa" in str(error.value)
         downstream.execute_activity.assert_not_awaited()
 
 
@@ -247,7 +255,7 @@ def test_identity_binds_policy_contents_dependencies_and_configuration(tmp_path)
     settings = Settings(openshell_config=config, temporal_api_key="do-not-report")
     first = worker_identity(settings)
     assert "do-not-report" not in first.model_dump_json()
-    assert first.dependencies["openshell"] == "0.1.2"
+    assert first.dependencies["openshell"] == version("openshell")
     settings.temporal_api_key = "another-secret"
     assert worker_identity(settings) == first
     policy.write_text("network: allow")
@@ -262,8 +270,6 @@ def test_identity_binds_policy_contents_dependencies_and_configuration(tmp_path)
 def test_worker_refuses_command_budget_above_runtime_maximum(tmp_path, monkeypatch, budget):
     """Above the runtime bound every execute is refused mid-investigation; the worker must
     refuse to start instead of silently capping only the model timeout."""
-    import temporalio.worker
-
     from infosec_harness.config import get_settings
     from infosec_harness.workflows import worker
 
@@ -276,7 +282,7 @@ def test_worker_refuses_command_budget_above_runtime_maximum(tmp_path, monkeypat
     monkeypatch.setattr(worker, "OpenShellConfig", SimpleNamespace(
         load=lambda path: SimpleNamespace(max_timeout_seconds=300)))
     monkeypatch.setattr(worker, "OpenShell", lambda config: SimpleNamespace(config=config))
-    monkeypatch.setattr(temporalio.worker, "Worker", lambda client, **kwargs: kwargs)
+    monkeypatch.setattr(worker, "Worker", lambda client, **kwargs: kwargs)
     monkeypatch.setattr(InvestigationWorkflow, "agent", None)
     monkeypatch.setattr(InvestigationWorkflow, "__pydantic_ai_agents__", [])
     if budget > 300:
@@ -284,5 +290,13 @@ def test_worker_refuses_command_budget_above_runtime_maximum(tmp_path, monkeypat
             worker.create_worker(None, settings)
         assert InvestigationWorkflow.agent is None
         return
-    assert worker.create_worker(None, settings)["task_queue"] == settings.task_queue
+    captures = []
+    monkeypatch.setattr(worker, "worker_identity",
+                        lambda settings: captures.append(settings) or identity())
+    created = worker.create_worker(None, settings)
+    assert created["task_queue"] == settings.task_queue
     assert InvestigationWorkflow.agent.model.timeout == 300
+    # One capture at startup, shared by the lifecycle activities and the native guard.
+    assert len(captures) == 1
+    activities = created["activities"][0].__self__
+    assert activities.bound_identity is created["interceptors"][0].bound_identity
