@@ -1,6 +1,6 @@
 # Evaluation evidence
 
-The active end-to-end evaluator is `src/infosec_harness/evaluation.py`; its policy is the
+The active end-to-end evaluator is `src/infosec_harness/evals/cohort.py`; its policy is the
 packaged `release-policy.yaml` and its unchanged paired inputs live in `eval-corpus/`.
 Run it with `./dev eval` against a clean commit (see
 [qualification and evaluation](../deploy/openshell/README.md#qualification-and-evaluation)).
