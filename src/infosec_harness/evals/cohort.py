@@ -23,6 +23,8 @@ from temporalio.exceptions import ApplicationError, TerminatedError
 from temporalio.exceptions import TimeoutError as TemporalTimeoutError
 
 from infosec_harness._io import write_json
+
+# TODO(merge): import GENERATION from contracts.py once the toplevel owner adds it there.
 from infosec_harness.api import (
     GENERATION,
     PREFIX,

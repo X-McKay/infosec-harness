@@ -44,6 +44,11 @@ FAILURE_LINK_CHARS = 400
 # Temporal wrapper types; the outermost other type names a terminal failure.
 FAILURE_WRAPPERS = frozenset({"ActivityError", "ChildWorkflowError", "WorkflowFailureError"})
 
+# Report bounds of Verdict.evidence_ids and Verdict.summary.
+# TODO(merge): import MAX_EVIDENCE_IDS and MAX_SUMMARY_CHARS from contracts.py once added.
+MAX_EVIDENCE_IDS = 10
+MAX_SUMMARY_CHARS = 12_000
+
 # Lifecycle activity bounds (v11 values; replay does not compare them, but keep them stable).
 PREPARE_TIMEOUT = timedelta(minutes=10)
 FINALIZE_TIMEOUT = timedelta(minutes=2)
@@ -250,7 +255,7 @@ class InvestigationActivities:
                     + ". Their excerpts are retained; the summary states the claimed flaw."
                 )
                 for identity in superseded:
-                    if len(report_ids) >= 10:
+                    if len(report_ids) >= MAX_EVIDENCE_IDS:
                         break
                     report_ids.add(identity)
             if contrary:
@@ -262,7 +267,7 @@ class InvestigationActivities:
                 # Retain contrary excerpts within the existing ten-receipt report bound;
                 # every contrary ID remains named above even when excerpts do not fit.
                 for item in contrary:
-                    if len(report_ids) >= 10:
+                    if len(report_ids) >= MAX_EVIDENCE_IDS:
                         break
                     report_ids.add(item.id)
             if not corroborated or contrary:
@@ -278,7 +283,7 @@ class InvestigationActivities:
                 verdict = verdict.model_copy(
                     update={
                         "label": "inconclusive",
-                        "summary": (explanation + verdict.summary)[:12000],
+                        "summary": (explanation + verdict.summary)[:MAX_SUMMARY_CHARS],
                     }
                 )
         # Native receipts retain full bounded output. Reports contain cited and contrary excerpts.
