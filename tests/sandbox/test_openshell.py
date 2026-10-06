@@ -23,6 +23,7 @@ from infosec_harness.sandbox import (
     OpenShellConfig,
     OpenShellError,
     Profile,
+    Sandbox,
     SourceChanged,
     SourceRejected,
     UnsafeSnapshotMetadata,
@@ -1375,3 +1376,125 @@ async def test_refusal_and_cleanup_failure_are_logged(adapter, monkeypatch, capl
     assert 'reason="actual workload confinement was not established: uid"' in refused.getMessage()
     assert failed.getMessage().startswith("event=cleanup_failed run_id=run sandbox_id=")
     assert failed.getMessage().endswith("error_type=OpenShellError")
+
+
+def pending_record(boundary, run_id="run", profile="workspace"):
+    """The ownership record a worker leaves when it stops after CreateSandbox was sent."""
+    key = boundary._key(Sandbox("", run_id, "", profile, ""))
+    name = "ih-" + hashlib.sha256(key.encode()).hexdigest()[:16]
+    path = boundary._record("sandboxes", key)
+    boundary._save(path, {"sandbox": {"id": "", "run_id": run_id, "name": name,
+                                      "profile": profile, "slot": ""}, "closed": False})
+    return name, path
+
+
+def native_create(boundary, native, name, labels):
+    spec = boundary._spec("workspace")
+    native.CreateSandbox(pb.CreateSandboxRequest(name=name, spec=spec, labels=labels,
+                                                 request_id=str(uuid.uuid4())), 30)
+    native.creates.clear()
+    return native.resources[name].metadata.id
+
+
+async def test_pending_create_is_reconciled_by_owned_labels_and_never_resent(adapter):
+    boundary, native = adapter
+    name, path = pending_record(boundary)
+    native_id = native_create(boundary, native, name, boundary._labels("run", "workspace"))
+    # The reconciled sandbox has no qualification proof, so it is closed, never used.
+    with pytest.raises(OpenShellError, match="qualification proof is missing"):
+        await boundary.create("run")
+    assert not native.creates and native.deleted == [name]
+    saved = json.loads(path.read_bytes())
+    assert saved["sandbox"]["id"] == native_id and saved["closed"]
+
+
+async def test_pending_create_with_foreign_labels_is_not_adopted_or_deleted(adapter):
+    boundary, native = adapter
+    name, path = pending_record(boundary)
+    native_create(boundary, native, name, {**boundary._labels("run", "workspace"), "ih.run": "other"})
+    with pytest.raises(OpenShellError, match="pending create cannot be reconciled"):
+        await boundary.create("run")
+    with pytest.raises(OpenShellError, match="pending creation ownership mismatch"):
+        await boundary.close(Sandbox(**json.loads(path.read_bytes())["sandbox"]))
+    assert not native.creates and not native.deleted
+    assert json.loads(path.read_bytes())["sandbox"]["id"] == ""
+
+
+async def test_absent_pending_create_cannot_be_confirmed_closed(adapter, monkeypatch):
+    """NOT_FOUND by name does not prove that a create sent earlier will not still land."""
+    boundary, native = adapter
+    name, path = pending_record(boundary)
+
+    def missing(request, timeout):
+        raise rpc_failure("NOT_FOUND")
+
+    monkeypatch.setattr(native, "GetSandbox", missing)
+    with pytest.raises(ExecutionUnknown, match="pending native create cannot yet be confirmed absent"):
+        await boundary.close(Sandbox(**json.loads(path.read_bytes())["sandbox"]))
+    assert not json.loads(path.read_bytes())["closed"]
+
+
+@pytest.mark.parametrize("change,message", [
+    ({"endpoint": "10.0.0.5:7777"}, "explicit loopback endpoint"),
+    ({"endpoint": "localhost"}, "explicit loopback endpoint"),
+    ({"tls_cert": "/tmp/cert.pem"}, "certificate and key must be paired"),
+    ({"state_dir": "state"}, "absolute state_dir"),
+    ({"inspection_socket": "unix:///var/run/docker.sock",
+      "inspection_command": ("/usr/bin/docker", "--host", "unix:///var/run/docker.sock")},
+     "dedicated Docker socket"),
+    ({"inspection_socket": "tcp://127.0.0.1:2375"}, "dedicated Docker socket"),
+    ({"inspection_command": ("/usr/bin/docker", "--host", "unix:///other.sock")},
+     "dedicated Docker socket"),
+    ({"inspection_command": ("/usr/bin/podman", "--host", "unix:///dedicated/docker.sock")},
+     "dedicated Docker socket"),
+])
+def test_runtime_config_rejects_weakened_boundaries(adapter, change, message):
+    boundary, _ = adapter
+    values = {**boundary.config.model_dump(), **change}
+    with pytest.raises(ValueError, match=message):
+        OpenShellConfig.model_validate(values)
+
+
+def test_runtime_config_requires_absolute_policy_paths(adapter):
+    boundary, _ = adapter
+    values = boundary.config.model_dump()
+    values["profiles"] = copy.deepcopy(values["profiles"])
+    values["profiles"]["probe"]["policy"] = "policy.yaml"
+    with pytest.raises(ValueError, match="policy paths must be absolute"):
+        OpenShellConfig.model_validate(values)
+
+
+@pytest.mark.parametrize("call,message", [
+    (dict(operation_id="", timeout=3), "operation_id of 1..1024 characters is required .got 0."),
+    (dict(operation_id="x" * 1025, timeout=3), r"required \(got 1025\)"),
+    (dict(operation_id="op", timeout=0), r"timeout 0 is outside 1..300 seconds"),
+    (dict(operation_id="op", timeout=301), r"timeout 301 is outside 1..300 seconds"),
+    (dict(operation_id="op", timeout=True), r"timeout True is outside"),
+    (dict(operation_id="op", timeout=3, command=["a"] * 257),
+     r"257 arguments and 257 bytes \(max 256 and 65536\)"),
+    (dict(operation_id="op", timeout=3, command=["x" * 65537]),
+     r"1 arguments and 65537 bytes \(max 256 and 65536\)"),
+    (dict(operation_id="op", timeout=3, command=["a\x00b"]), "without NUL bytes"),
+    (dict(operation_id="op", timeout=3, command=[]), "non-empty list"),
+    (dict(operation_id="op", timeout=3, stdin=b"x" * 16777217),
+     r"stdin exceeds the transfer bound: 16777217 bytes \(max_transfer_bytes 16777216\)"),
+])
+async def test_exec_input_bounds_name_the_value_and_limit_before_any_intent(adapter, call, message):
+    boundary, native = adapter
+    sandbox = await boundary.create("run")
+    command = call.pop("command", ["true"])
+    with pytest.raises(OpenShellError, match=message):
+        await boundary.execute(sandbox, command, **call)
+    assert not native.execs and not (boundary.config.state_dir / "operations").exists()
+
+
+async def test_upload_over_the_transfer_bound_names_the_setting(adapter, tmp_path):
+    boundary, native = adapter
+    boundary.config = boundary.config.model_copy(update={"max_transfer_bytes": 1024})
+    sandbox = await boundary.create("run")
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "big.bin").write_bytes(b"x" * 1025)
+    with pytest.raises(SourceRejected, match=r"more than 1024 bytes \(max_transfer_bytes"):
+        await boundary.upload(sandbox, source, "/workspace/repo")
+    assert not native.execs

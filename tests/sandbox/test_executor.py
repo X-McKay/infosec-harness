@@ -128,3 +128,28 @@ def test_bedrock_client_is_bounded_by_the_invocation_budget(monkeypatch):
     config = provider_model(ModelInvocation(**invocation_fields())).client.meta.config
     assert (config.connect_timeout, config.read_timeout) == (37, 37)
     assert config.retries["total_max_attempts"] == 1
+
+
+@pytest.mark.parametrize("endpoint", [
+    "https://user:password@model.example/v1",
+    "https://model.example/v1#fragment",
+    "ftp://model.example/v1",
+    "https:///v1",
+])
+def test_executor_refuses_endpoints_with_credentials_or_without_a_host(endpoint):
+    invocation = ModelInvocation(**invocation_fields(provider="openai", base_url=endpoint))
+    with pytest.raises(ValueError, match="endpoint without credentials is required"):
+        provider_model(invocation)
+
+
+def test_executor_refuses_an_oversized_invocation_before_parsing(monkeypatch):
+    import io
+    import sys
+
+    from infosec_harness.sandbox import executor
+
+    stdin = io.BytesIO(b"{" + b" " * executor.MAX_INVOCATION_BYTES)
+    monkeypatch.setattr(sys, "stdin", type("Stdin", (), {"buffer": stdin})())
+    with pytest.raises(ValueError, match=f"more than {executor.MAX_INVOCATION_BYTES} bytes"):
+        executor.main()
+    assert stdin.tell() == executor.MAX_INVOCATION_BYTES + 1
