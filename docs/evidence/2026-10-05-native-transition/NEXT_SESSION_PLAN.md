@@ -114,6 +114,17 @@ until an upstream release includes it; never silently modify an installed binary
    An upstream reconciliation API is a separate future change requiring native execution
    evidence; do not invent a harness-side substitute.
 
+## State after the live runs of 2026-10-06
+
+The patched gateway is deployed and seven live cohorts ran; see
+[the live cohort record](LIVE_COHORTS_ON_PATCHED_GATEWAY.md). 116 investigations completed with
+112 correct verdicts and no unsafe negatives, but no cohort finished all 36 cases. Remaining
+work before a complete run: load the rebuilt workspace (Perl DBI) and executor (request
+timeout) images into the native configuration, requalify, run `./dev eval` as cohort 8, and
+record the result. Never edit `src/infosec_harness/` while an owned worker runs: the identity
+guard ends the cohort. Open items afterwards: Maven reliability evidence, the review's
+native-dependent simplifications (`_inspection_call` on `run_bounded`), Bedrock.
+
 ## Qualification sequence
 
 Operator commands now exist for each step: `./dev qualify`, `./dev eval --case <name>`,
