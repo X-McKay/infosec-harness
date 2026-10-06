@@ -5,7 +5,7 @@
       "name": "sqli-vulnerable",
       "finding": {
         "title": "SQL injection in get_user",
-        "repo_url": "eval-corpus/python/sqli/vulnerable",
+        "repo_url": "eval-corpus/python/sqli/a",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 13,
@@ -29,7 +29,7 @@
       "name": "sqli-fixed",
       "finding": {
         "title": "SQL injection in get_user",
-        "repo_url": "eval-corpus/python/sqli/fixed",
+        "repo_url": "eval-corpus/python/sqli/b",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 13,
@@ -53,7 +53,7 @@
       "name": "cmdi-vulnerable",
       "finding": {
         "title": "OS command injection in count_lines",
-        "repo_url": "eval-corpus/python/cmdi/vulnerable",
+        "repo_url": "eval-corpus/python/cmdi/b",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 4,
@@ -77,7 +77,7 @@
       "name": "cmdi-fixed",
       "finding": {
         "title": "OS command injection in count_lines",
-        "repo_url": "eval-corpus/python/cmdi/fixed",
+        "repo_url": "eval-corpus/python/cmdi/a",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 4,
@@ -101,7 +101,7 @@
       "name": "pathtraversal-vulnerable",
       "finding": {
         "title": "Path traversal in read_doc",
-        "repo_url": "eval-corpus/python/pathtraversal/vulnerable",
+        "repo_url": "eval-corpus/python/pathtraversal/a",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 6,
@@ -125,7 +125,7 @@
       "name": "pathtraversal-fixed",
       "finding": {
         "title": "Path traversal in read_doc",
-        "repo_url": "eval-corpus/python/pathtraversal/fixed",
+        "repo_url": "eval-corpus/python/pathtraversal/b",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 6,
@@ -149,7 +149,7 @@
       "name": "xss-vulnerable",
       "finding": {
         "title": "Reflected XSS in render_comment",
-        "repo_url": "eval-corpus/python/xss/vulnerable",
+        "repo_url": "eval-corpus/python/xss/b",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 1,
@@ -173,7 +173,7 @@
       "name": "xss-fixed",
       "finding": {
         "title": "Reflected XSS in render_comment",
-        "repo_url": "eval-corpus/python/xss/fixed",
+        "repo_url": "eval-corpus/python/xss/a",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 4,
@@ -197,7 +197,7 @@
       "name": "codeinjection-vulnerable",
       "finding": {
         "title": "Code injection in compute_setting",
-        "repo_url": "eval-corpus/python/codeinjection/vulnerable",
+        "repo_url": "eval-corpus/python/codeinjection/b",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 1,
@@ -221,7 +221,7 @@
       "name": "codeinjection-fixed",
       "finding": {
         "title": "Code injection in compute_setting",
-        "repo_url": "eval-corpus/python/codeinjection/fixed",
+        "repo_url": "eval-corpus/python/codeinjection/a",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 4,
@@ -245,7 +245,7 @@
       "name": "deserialization-vulnerable",
       "finding": {
         "title": "Unsafe deserialization in load_profile",
-        "repo_url": "eval-corpus/python/deserialization/vulnerable",
+        "repo_url": "eval-corpus/python/deserialization/a",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 4,
@@ -269,7 +269,7 @@
       "name": "deserialization-fixed",
       "finding": {
         "title": "Unsafe deserialization in load_profile",
-        "repo_url": "eval-corpus/python/deserialization/fixed",
+        "repo_url": "eval-corpus/python/deserialization/b",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 15,
@@ -293,7 +293,7 @@
       "name": "xxe-vulnerable",
       "finding": {
         "title": "XML external entity expansion in parse_note",
-        "repo_url": "eval-corpus/python/xxe/vulnerable",
+        "repo_url": "eval-corpus/python/xxe/b",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 21,
@@ -317,7 +317,7 @@
       "name": "xxe-fixed",
       "finding": {
         "title": "XML external entity expansion in parse_note",
-        "repo_url": "eval-corpus/python/xxe/fixed",
+        "repo_url": "eval-corpus/python/xxe/a",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 21,
@@ -341,7 +341,7 @@
       "name": "ssrf-vulnerable",
       "finding": {
         "title": "Server-side request forgery in fetch_preview",
-        "repo_url": "eval-corpus/python/ssrf/vulnerable",
+        "repo_url": "eval-corpus/python/ssrf/a",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 4,
@@ -365,7 +365,7 @@
       "name": "ssrf-fixed",
       "finding": {
         "title": "Server-side request forgery in fetch_preview",
-        "repo_url": "eval-corpus/python/ssrf/fixed",
+        "repo_url": "eval-corpus/python/ssrf/b",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 8,
@@ -389,7 +389,7 @@
       "name": "unreachable",
       "finding": {
         "title": "SQL execution in healthcheck",
-        "repo_url": "eval-corpus/python/unreachable/vulnerable",
+        "repo_url": "eval-corpus/python/healthcheck/a",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 15,
@@ -413,7 +413,7 @@
       "name": "testonly",
       "finding": {
         "title": "SQL string built in test helper",
-        "repo_url": "eval-corpus/python/testonly/vulnerable",
+        "repo_url": "eval-corpus/python/queryhelper/a",
         "revision": "HEAD",
         "file_path": "tests/test_helpers.py",
         "start_line": 4,
@@ -439,7 +439,7 @@
       "language": "java",
       "finding": {
         "title": "SQL injection in getUser",
-        "repo_url": "eval-corpus/java/sqli/vulnerable",
+        "repo_url": "eval-corpus/java/sqli/b",
         "revision": "HEAD",
         "file_path": "src/main/java/com/example/UserDao.java",
         "start_line": 10,
@@ -463,7 +463,7 @@
       "language": "java",
       "finding": {
         "title": "SQL injection in getUser",
-        "repo_url": "eval-corpus/java/sqli/fixed",
+        "repo_url": "eval-corpus/java/sqli/a",
         "revision": "HEAD",
         "file_path": "src/main/java/com/example/UserDao.java",
         "start_line": 10,
@@ -487,7 +487,7 @@
       "language": "java",
       "finding": {
         "title": "OS command injection in run",
-        "repo_url": "eval-corpus/java/cmdi/vulnerable",
+        "repo_url": "eval-corpus/java/cmdi/b",
         "revision": "HEAD",
         "file_path": "src/main/java/com/example/Runner.java",
         "start_line": 5,
@@ -511,7 +511,7 @@
       "language": "java",
       "finding": {
         "title": "OS command injection in run",
-        "repo_url": "eval-corpus/java/cmdi/fixed",
+        "repo_url": "eval-corpus/java/cmdi/a",
         "revision": "HEAD",
         "file_path": "src/main/java/com/example/Runner.java",
         "start_line": 5,
@@ -535,7 +535,7 @@
       "language": "java",
       "finding": {
         "title": "XML external entity expansion in loadTitle",
-        "repo_url": "eval-corpus/java/xxe/vulnerable",
+        "repo_url": "eval-corpus/java/xxe/b",
         "revision": "HEAD",
         "file_path": "src/main/java/com/example/XmlLoader.java",
         "start_line": 10,
@@ -559,7 +559,7 @@
       "language": "java",
       "finding": {
         "title": "XML external entity expansion in loadTitle",
-        "repo_url": "eval-corpus/java/xxe/fixed",
+        "repo_url": "eval-corpus/java/xxe/a",
         "revision": "HEAD",
         "file_path": "src/main/java/com/example/XmlLoader.java",
         "start_line": 13,
@@ -583,7 +583,7 @@
       "language": "javascript",
       "finding": {
         "title": "OS command injection in countLines",
-        "repo_url": "eval-corpus/javascript/cmdi/vulnerable",
+        "repo_url": "eval-corpus/javascript/cmdi/b",
         "revision": "HEAD",
         "file_path": "src/cmd.js",
         "start_line": 4,
@@ -607,7 +607,7 @@
       "language": "javascript",
       "finding": {
         "title": "OS command injection in countLines",
-        "repo_url": "eval-corpus/javascript/cmdi/fixed",
+        "repo_url": "eval-corpus/javascript/cmdi/a",
         "revision": "HEAD",
         "file_path": "src/cmd.js",
         "start_line": 4,
@@ -631,7 +631,7 @@
       "language": "javascript",
       "finding": {
         "title": "Cross-site scripting in renderComment",
-        "repo_url": "eval-corpus/javascript/xss/vulnerable",
+        "repo_url": "eval-corpus/javascript/xss/a",
         "revision": "HEAD",
         "file_path": "src/render.js",
         "start_line": 2,
@@ -655,7 +655,7 @@
       "language": "javascript",
       "finding": {
         "title": "Cross-site scripting in renderComment",
-        "repo_url": "eval-corpus/javascript/xss/fixed",
+        "repo_url": "eval-corpus/javascript/xss/b",
         "revision": "HEAD",
         "file_path": "src/render.js",
         "start_line": 6,
@@ -679,7 +679,7 @@
       "language": "perl",
       "finding": {
         "title": "SQL injection in get_user",
-        "repo_url": "eval-corpus/perl/sqli/vulnerable",
+        "repo_url": "eval-corpus/perl/sqli/a",
         "revision": "HEAD",
         "file_path": "lib/UserDao.pm",
         "start_line": 6,
@@ -703,7 +703,7 @@
       "language": "perl",
       "finding": {
         "title": "SQL injection in get_user",
-        "repo_url": "eval-corpus/perl/sqli/fixed",
+        "repo_url": "eval-corpus/perl/sqli/b",
         "revision": "HEAD",
         "file_path": "lib/UserDao.pm",
         "start_line": 6,
@@ -727,7 +727,7 @@
       "language": "perl",
       "finding": {
         "title": "OS command injection in run",
-        "repo_url": "eval-corpus/perl/cmdi/vulnerable",
+        "repo_url": "eval-corpus/perl/cmdi/b",
         "revision": "HEAD",
         "file_path": "lib/Runner.pm",
         "start_line": 6,
@@ -751,7 +751,7 @@
       "language": "perl",
       "finding": {
         "title": "OS command injection in run",
-        "repo_url": "eval-corpus/perl/cmdi/fixed",
+        "repo_url": "eval-corpus/perl/cmdi/a",
         "revision": "HEAD",
         "file_path": "lib/Runner.pm",
         "start_line": 6,
@@ -775,7 +775,7 @@
       "language": "javascript",
       "finding": {
         "title": "Cross-site scripting in renderComment",
-        "repo_url": "eval-corpus/javascript/xssesm/vulnerable",
+        "repo_url": "eval-corpus/javascript/xssesm/a",
         "revision": "HEAD",
         "file_path": "src/render.ts",
         "start_line": 2,
@@ -799,7 +799,7 @@
       "language": "javascript",
       "finding": {
         "title": "Cross-site scripting in renderComment",
-        "repo_url": "eval-corpus/javascript/xssesm/fixed",
+        "repo_url": "eval-corpus/javascript/xssesm/b",
         "revision": "HEAD",
         "file_path": "src/render.ts",
         "start_line": 11,
@@ -823,7 +823,7 @@
       "language": "perl",
       "finding": {
         "title": "Cross-site scripting in render",
-        "repo_url": "eval-corpus/perl/xss/vulnerable",
+        "repo_url": "eval-corpus/perl/xss/b",
         "revision": "HEAD",
         "file_path": "lib/Renderer.pm",
         "start_line": 8,
@@ -847,7 +847,7 @@
       "language": "perl",
       "finding": {
         "title": "Cross-site scripting in render",
-        "repo_url": "eval-corpus/perl/xss/fixed",
+        "repo_url": "eval-corpus/perl/xss/a",
         "revision": "HEAD",
         "file_path": "lib/Renderer.pm",
         "start_line": 10,
@@ -870,7 +870,7 @@
       "name": "javascript-prototypepollution-vulnerable",
       "finding": {
         "title": "Prototype pollution in mergePreferences",
-        "repo_url": "eval-corpus/javascript/prototypepollution/vulnerable",
+        "repo_url": "eval-corpus/javascript/prototypepollution/a",
         "revision": "HEAD",
         "file_path": "src/merge.js",
         "start_line": 3,
@@ -894,7 +894,7 @@
       "name": "javascript-prototypepollution-fixed",
       "finding": {
         "title": "Prototype pollution in mergePreferences",
-        "repo_url": "eval-corpus/javascript/prototypepollution/fixed",
+        "repo_url": "eval-corpus/javascript/prototypepollution/b",
         "revision": "HEAD",
         "file_path": "src/merge.js",
         "start_line": 5,
@@ -918,7 +918,7 @@
       "name": "massassignment-vulnerable",
       "finding": {
         "title": "Mass assignment in update_profile",
-        "repo_url": "eval-corpus/python/massassignment/vulnerable",
+        "repo_url": "eval-corpus/python/massassignment/b",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 15,
@@ -942,7 +942,7 @@
       "name": "massassignment-fixed",
       "finding": {
         "title": "Mass assignment in update_profile",
-        "repo_url": "eval-corpus/python/massassignment/fixed",
+        "repo_url": "eval-corpus/python/massassignment/a",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 18,
@@ -966,7 +966,7 @@
       "name": "errorexposure-vulnerable",
       "finding": {
         "title": "Information exposure through an error message in ReportHandler.do_GET",
-        "repo_url": "eval-corpus/python/errorexposure/vulnerable",
+        "repo_url": "eval-corpus/python/errorexposure/a",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 18,
@@ -990,7 +990,7 @@
       "name": "errorexposure-fixed",
       "finding": {
         "title": "Information exposure through an error message in ReportHandler.do_GET",
-        "repo_url": "eval-corpus/python/errorexposure/fixed",
+        "repo_url": "eval-corpus/python/errorexposure/b",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 20,
@@ -1014,7 +1014,7 @@
       "name": "insecuretemp-vulnerable",
       "finding": {
         "title": "Insecure temporary file in export_report",
-        "repo_url": "eval-corpus/python/insecuretemp/vulnerable",
+        "repo_url": "eval-corpus/python/tempfile/b",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 5,
@@ -1038,7 +1038,7 @@
       "name": "insecuretemp-fixed",
       "finding": {
         "title": "Insecure temporary file in export_report",
-        "repo_url": "eval-corpus/python/insecuretemp/fixed",
+        "repo_url": "eval-corpus/python/tempfile/a",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 5,
@@ -1062,7 +1062,7 @@
       "name": "javascript-cors-vulnerable",
       "finding": {
         "title": "Permissive CORS policy in handleProfile",
-        "repo_url": "eval-corpus/javascript/cors/vulnerable",
+        "repo_url": "eval-corpus/javascript/cors/b",
         "revision": "HEAD",
         "file_path": "src/server.js",
         "start_line": 6,
@@ -1086,7 +1086,7 @@
       "name": "javascript-cors-fixed",
       "finding": {
         "title": "Permissive CORS policy in handleProfile",
-        "repo_url": "eval-corpus/javascript/cors/fixed",
+        "repo_url": "eval-corpus/javascript/cors/a",
         "revision": "HEAD",
         "file_path": "src/server.js",
         "start_line": 8,
@@ -1110,7 +1110,7 @@
       "name": "perl-permissions-vulnerable",
       "finding": {
         "title": "Incorrect permission assignment in save_token",
-        "repo_url": "eval-corpus/perl/permissions/vulnerable",
+        "repo_url": "eval-corpus/perl/permissions/a",
         "revision": "HEAD",
         "file_path": "lib/TokenStore.pm",
         "start_line": 8,
@@ -1134,7 +1134,7 @@
       "name": "perl-permissions-fixed",
       "finding": {
         "title": "Incorrect permission assignment in save_token",
-        "repo_url": "eval-corpus/perl/permissions/fixed",
+        "repo_url": "eval-corpus/perl/permissions/b",
         "revision": "HEAD",
         "file_path": "lib/TokenStore.pm",
         "start_line": 9,
@@ -1158,7 +1158,7 @@
       "name": "openredirect-vulnerable",
       "finding": {
         "title": "Open redirect in redirect_target",
-        "repo_url": "eval-corpus/python/openredirect/vulnerable",
+        "repo_url": "eval-corpus/python/openredirect/a",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 5,
@@ -1182,7 +1182,7 @@
       "name": "openredirect-fixed",
       "finding": {
         "title": "Open redirect in redirect_target",
-        "repo_url": "eval-corpus/python/openredirect/fixed",
+        "repo_url": "eval-corpus/python/openredirect/b",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 8,
@@ -1206,7 +1206,7 @@
       "name": "formulainjection-vulnerable",
       "finding": {
         "title": "CSV formula injection in export_csv",
-        "repo_url": "eval-corpus/python/formulainjection/vulnerable",
+        "repo_url": "eval-corpus/python/formulainjection/a",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 5,
@@ -1230,7 +1230,7 @@
       "name": "formulainjection-fixed",
       "finding": {
         "title": "CSV formula injection in export_csv",
-        "repo_url": "eval-corpus/python/formulainjection/fixed",
+        "repo_url": "eval-corpus/python/formulainjection/b",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 15,
@@ -1254,7 +1254,7 @@
       "name": "fileinclusion-vulnerable",
       "finding": {
         "title": "File inclusion in load_plugin",
-        "repo_url": "eval-corpus/python/fileinclusion/vulnerable",
+        "repo_url": "eval-corpus/python/fileinclusion/b",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 4,
@@ -1278,7 +1278,7 @@
       "name": "fileinclusion-fixed",
       "finding": {
         "title": "File inclusion in load_plugin",
-        "repo_url": "eval-corpus/python/fileinclusion/fixed",
+        "repo_url": "eval-corpus/python/fileinclusion/a",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 10,
@@ -1302,7 +1302,7 @@
       "name": "perl-responsesplitting-vulnerable",
       "finding": {
         "title": "HTTP response splitting in redirect_headers",
-        "repo_url": "eval-corpus/perl/responsesplitting/vulnerable",
+        "repo_url": "eval-corpus/perl/responsesplitting/a",
         "revision": "HEAD",
         "file_path": "lib/Responder.pm",
         "start_line": 8,
@@ -1326,7 +1326,7 @@
       "name": "perl-responsesplitting-fixed",
       "finding": {
         "title": "HTTP response splitting in redirect_headers",
-        "repo_url": "eval-corpus/perl/responsesplitting/fixed",
+        "repo_url": "eval-corpus/perl/responsesplitting/b",
         "revision": "HEAD",
         "file_path": "lib/Responder.pm",
         "start_line": 8,
@@ -1350,7 +1350,7 @@
       "name": "javascript-arginjection-vulnerable",
       "finding": {
         "title": "Argument injection in search",
-        "repo_url": "eval-corpus/javascript/arginjection/vulnerable",
+        "repo_url": "eval-corpus/javascript/arginjection/a",
         "revision": "HEAD",
         "file_path": "src/search.js",
         "start_line": 6,
@@ -1374,7 +1374,7 @@
       "name": "javascript-arginjection-fixed",
       "finding": {
         "title": "Argument injection in search",
-        "repo_url": "eval-corpus/javascript/arginjection/fixed",
+        "repo_url": "eval-corpus/javascript/arginjection/b",
         "revision": "HEAD",
         "file_path": "src/search.js",
         "start_line": 6,
@@ -1398,7 +1398,7 @@
       "name": "idor-vulnerable",
       "finding": {
         "title": "Insecure direct object reference in get_note",
-        "repo_url": "eval-corpus/python/idor/vulnerable",
+        "repo_url": "eval-corpus/python/idor/b",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 21,
@@ -1422,7 +1422,7 @@
       "name": "idor-fixed",
       "finding": {
         "title": "Insecure direct object reference in get_note",
-        "repo_url": "eval-corpus/python/idor/fixed",
+        "repo_url": "eval-corpus/python/idor/a",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 20,
@@ -1446,7 +1446,7 @@
       "name": "jwtnone-vulnerable",
       "finding": {
         "title": "JWT alg:none accepted in verify_token",
-        "repo_url": "eval-corpus/python/jwtnone/vulnerable",
+        "repo_url": "eval-corpus/python/jwtnone/a",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 33,
@@ -1470,7 +1470,7 @@
       "name": "jwtnone-fixed",
       "finding": {
         "title": "JWT alg:none accepted in verify_token",
-        "repo_url": "eval-corpus/python/jwtnone/fixed",
+        "repo_url": "eval-corpus/python/jwtnone/b",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 33,
@@ -1494,7 +1494,7 @@
       "name": "pwhash-vulnerable",
       "finding": {
         "title": "Unsalted MD5 password hashing in hash_password",
-        "repo_url": "eval-corpus/python/pwhash/vulnerable",
+        "repo_url": "eval-corpus/python/pwhash/a",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 10,
@@ -1518,7 +1518,7 @@
       "name": "pwhash-fixed",
       "finding": {
         "title": "Unsalted MD5 password hashing in hash_password",
-        "repo_url": "eval-corpus/python/pwhash/fixed",
+        "repo_url": "eval-corpus/python/pwhash/b",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 15,
@@ -1542,7 +1542,7 @@
       "name": "javascript-sessionrandom-vulnerable",
       "finding": {
         "title": "Predictable session token in generateToken",
-        "repo_url": "eval-corpus/javascript/sessionrandom/vulnerable",
+        "repo_url": "eval-corpus/javascript/sessionrandom/a",
         "revision": "HEAD",
         "file_path": "src/token.js",
         "start_line": 6,
@@ -1566,7 +1566,7 @@
       "name": "javascript-sessionrandom-fixed",
       "finding": {
         "title": "Predictable session token in generateToken",
-        "repo_url": "eval-corpus/javascript/sessionrandom/fixed",
+        "repo_url": "eval-corpus/javascript/sessionrandom/b",
         "revision": "HEAD",
         "file_path": "src/token.js",
         "start_line": 8,
@@ -1590,7 +1590,7 @@
       "name": "javascript-sessionfix-vulnerable",
       "finding": {
         "title": "Session fixation in SessionManager.login",
-        "repo_url": "eval-corpus/javascript/sessionfix/vulnerable",
+        "repo_url": "eval-corpus/javascript/sessionfix/a",
         "revision": "HEAD",
         "file_path": "src/session.js",
         "start_line": 24,
@@ -1614,7 +1614,7 @@
       "name": "javascript-sessionfix-fixed",
       "finding": {
         "title": "Session fixation in SessionManager.login",
-        "repo_url": "eval-corpus/javascript/sessionfix/fixed",
+        "repo_url": "eval-corpus/javascript/sessionfix/b",
         "revision": "HEAD",
         "file_path": "src/session.js",
         "start_line": 23,
@@ -1638,7 +1638,7 @@
       "name": "perl-adminpw-vulnerable",
       "finding": {
         "title": "Hard-coded admin password in authenticate",
-        "repo_url": "eval-corpus/perl/adminpw/vulnerable",
+        "repo_url": "eval-corpus/perl/adminpw/b",
         "revision": "HEAD",
         "file_path": "lib/Auth.pm",
         "start_line": 12,
@@ -1662,7 +1662,7 @@
       "name": "perl-adminpw-fixed",
       "finding": {
         "title": "Hard-coded admin password in authenticate",
-        "repo_url": "eval-corpus/perl/adminpw/fixed",
+        "repo_url": "eval-corpus/perl/adminpw/a",
         "revision": "HEAD",
         "file_path": "lib/Auth.pm",
         "start_line": 8,
@@ -1686,7 +1686,7 @@
       "name": "c-stackoverflow-vulnerable",
       "finding": {
         "title": "Stack buffer overflow in format_greeting",
-        "repo_url": "eval-corpus/c/stackoverflow/vulnerable",
+        "repo_url": "eval-corpus/c/stackoverflow/a",
         "revision": "HEAD",
         "file_path": "greet.c",
         "start_line": 7,
@@ -1710,7 +1710,7 @@
       "name": "c-stackoverflow-fixed",
       "finding": {
         "title": "Stack buffer overflow in format_greeting",
-        "repo_url": "eval-corpus/c/stackoverflow/fixed",
+        "repo_url": "eval-corpus/c/stackoverflow/b",
         "revision": "HEAD",
         "file_path": "greet.c",
         "start_line": 7,
@@ -1734,7 +1734,7 @@
       "name": "c-intoverflow-vulnerable",
       "finding": {
         "title": "Integer overflow in dup_n length calculation",
-        "repo_url": "eval-corpus/c/intoverflow/vulnerable",
+        "repo_url": "eval-corpus/c/intoverflow/a",
         "revision": "HEAD",
         "file_path": "dup.c",
         "start_line": 8,
@@ -1758,7 +1758,7 @@
       "name": "c-intoverflow-fixed",
       "finding": {
         "title": "Integer overflow in dup_n length calculation",
-        "repo_url": "eval-corpus/c/intoverflow/fixed",
+        "repo_url": "eval-corpus/c/intoverflow/b",
         "revision": "HEAD",
         "file_path": "dup.c",
         "start_line": 8,
@@ -1782,7 +1782,7 @@
       "name": "redos-vulnerable",
       "finding": {
         "title": "Catastrophic backtracking in is_valid_email",
-        "repo_url": "eval-corpus/python/redos/vulnerable",
+        "repo_url": "eval-corpus/python/redos/b",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 9,
@@ -1806,7 +1806,7 @@
       "name": "redos-fixed",
       "finding": {
         "title": "Catastrophic backtracking in is_valid_email",
-        "repo_url": "eval-corpus/python/redos/fixed",
+        "repo_url": "eval-corpus/python/redos/a",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 8,
@@ -1830,7 +1830,7 @@
       "name": "javascript-zipbomb-vulnerable",
       "finding": {
         "title": "Unbounded decompression in inflate",
-        "repo_url": "eval-corpus/javascript/zipbomb/vulnerable",
+        "repo_url": "eval-corpus/javascript/zipbomb/b",
         "revision": "HEAD",
         "file_path": "src/inflate.js",
         "start_line": 6,
@@ -1854,7 +1854,7 @@
       "name": "javascript-zipbomb-fixed",
       "finding": {
         "title": "Unbounded decompression in inflate",
-        "repo_url": "eval-corpus/javascript/zipbomb/fixed",
+        "repo_url": "eval-corpus/javascript/zipbomb/a",
         "revision": "HEAD",
         "file_path": "src/inflate.js",
         "start_line": 8,
@@ -1878,7 +1878,7 @@
       "name": "toctou-vulnerable",
       "finding": {
         "title": "TOCTOU in read_config",
-        "repo_url": "eval-corpus/python/toctou/vulnerable",
+        "repo_url": "eval-corpus/python/toctou/b",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 4,
@@ -1902,7 +1902,7 @@
       "name": "toctou-fixed",
       "finding": {
         "title": "TOCTOU in read_config",
-        "repo_url": "eval-corpus/python/toctou/fixed",
+        "repo_url": "eval-corpus/python/toctou/a",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 4,
@@ -1926,7 +1926,7 @@
       "name": "nullderef-vulnerable",
       "finding": {
         "title": "None dereference in user_city",
-        "repo_url": "eval-corpus/python/nullderef/vulnerable",
+        "repo_url": "eval-corpus/python/nullderef/a",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 4,
@@ -1950,7 +1950,7 @@
       "name": "nullderef-fixed",
       "finding": {
         "title": "None dereference in user_city",
-        "repo_url": "eval-corpus/python/nullderef/fixed",
+        "repo_url": "eval-corpus/python/nullderef/b",
         "revision": "HEAD",
         "file_path": "app.py",
         "start_line": 4,
