@@ -3,7 +3,7 @@ name: cwe-89-sql-injection
 description: Untrusted input built into SQL text. Use this when the finding is CWE-89 or SQL injection.
 metadata:
   owner: appsec
-  version: 2.0.1
+  version: 2.1.0
 ---
 
 # CWE-89: SQL injection
@@ -64,3 +64,10 @@ Map the result onto `HARNESS_PROBE`:
   connection with the payload, returns the excluded row (or shows the token as syntax).
 - `negative_control`: a benign value through the target returns only the intended row, or
   the token stays bound.
+
+## Pitfalls
+
+- Perl DBI: `selectall_arrayref` returns one array reference. Count rows with
+  `my $rows = $dbh->selectall_arrayref($sql); scalar @$rows`; `my @rows = ...` always holds
+  one element, so the widening payload seems to change nothing. Print the result once with
+  `Data::Dumper` before rewriting the probe.

@@ -3,7 +3,7 @@ name: cwe-77-command-injection-generic
 description: Argument or option injection into a program started without a shell. Use this when the finding is CWE-77/88 and no shell parses the value.
 metadata:
   owner: appsec
-  version: 1.0.0
+  version: 1.1.0
 ---
 
 # CWE-77 / CWE-88: Command and argument injection (no shell)
@@ -79,6 +79,13 @@ different program.
 - A file literally named `-x` existing in the working directory is a valid benign negative only
   if the target passes it through unchanged.
 - Do not count a usage error as `vulnerability_observed`; it shows parsing, not the option's effect.
+- An injected option can swallow the next argument: `grep -v data.txt` takes the file name as
+  its pattern and reads stdin, which a child's open pipe never closes, so the probe hangs until
+  the 290 s budget kills it. Prefer options that exit (`--version`, `--help`); launch direct
+  controls with stdin closed and a timeout (`spawn(cmd, args, {stdio: ['ignore', 'pipe',
+  'pipe'], timeout: 5000})`, `subprocess.run(..., stdin=subprocess.DEVNULL, timeout=5)`); wrap
+  each target call in a timer that prints the final line and exits. Never debug a hang with
+  one `execute` per variant.
 
 ## Verdict guidance
 

@@ -3,10 +3,23 @@ name: lang-c-cpp
 description: 'C and C++ repositories: Make/CMake, linking a probe with gcc, memory-safety oracles. Use this when the repository is primarily C or C++.'
 metadata:
   owner: appsec
-  version: 1.0.0
+  version: 1.1.0
 ---
 
 # C and C++ repositories
+
+## First: check the headers
+
+Before reading build files or writing a probe, run one compile in the workspace:
+`echo '#include <stdio.h>' | gcc -x c -fsyntax-only -`. If it prints
+`fatal error: stdio.h: No such file or directory`, nothing in this repository can be built
+here. Never try `apt-get`, `dpkg`, `pip` or another installer to fetch headers: the sandbox
+has no package route. Do not fall back to a stand-in either: a Python reimplementation of
+the function, or `-nostdlib`/`-nostartfiles` with hand-written libc stubs, does not run the
+target as built (see `probe`, "Real target, real inputs"). Return `inconclusive` with this
+limitation in the summary: `Limitation: the workspace has no C standard library headers
+(gcc reported "stdio.h: No such file or directory"), so the target could not be compiled
+and no probe executed it.` Then state what you established by reading.
 
 ## Use this skill when
 
@@ -36,7 +49,8 @@ each header exists before planning a build: `echo '#include <zlib.h>' | gcc -x c
 
 ## Compile and run a probe
 
-The image declares `gcc` and `make` only: no `g++`, `clang`, `cmake`, `gdb` or `valgrind`.
+The image declares `gcc`, `make` and the C library headers only: no `g++`, `clang`, `cmake`,
+`gdb` or `valgrind`.
 Do not run `./configure` or `make` in the source tree: they can rewrite tracked files. Compile
 just the translation units the target needs, into `.harness-build/`, inside `run_probe`:
 
@@ -53,8 +67,8 @@ mkdir -p .harness-build && gcc -std=gnu11 -g -O0 -Iinclude -o .harness-build/pro
 
 ## Memory-safety oracles
 
-- `-fsanitize=address` needs the `libasan` runtime and a large shadow mapping; whether either
-  works under the sandbox's runtime and memory limits is unverified, so **do not rely on it**.
+- `-fsanitize=address`: the image ships the `libasan` runtime, but whether its large shadow
+  mapping works under the sandbox's memory limits is unverified, so **do not rely on it**.
   If you try it, set `ASAN_OPTIONS=detect_leaks=0:abort_on_error=0:exitcode=86` and include a
   positive control (an overflow of a buffer the probe owns) that must report before a silent
   target run means anything.
