@@ -9,12 +9,11 @@ from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
-from fakes import FakeOpenShell, final_response, runner
+from fakes import FakeOpenShell, final_response
 from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 from temporalio.client import WorkflowFailureError
-from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Replayer, Worker
 
 from infosec_harness.agents.investigator import InvestigationDeps, build_agent
@@ -33,8 +32,10 @@ from infosec_harness.workflows.investigation import (
     InvestigationActivities,
     InvestigationWorkflow,
     PreparedInvestigation,
+    WorkerIdentityMismatch,
     bind_investigator,
 )
+from infosec_harness.workflows.worker import workflow_runner
 
 
 def test_prepared_investigation_decodes_v11_payload_with_duplicated_fields(tmp_path):
@@ -81,7 +82,7 @@ async def test_finalize_rejects_invented_receipt_and_source_lines(tmp_path):
 
 
 @pytest.mark.requires_temporal
-async def test_real_temporal_replay_and_restart(temporal_cli, tmp_path):
+async def test_real_temporal_replay_and_restart(temporal_env, tmp_path):
     from pydantic_ai.messages import ModelRequest, RetryPromptPart
 
     shell = FakeOpenShell()
@@ -123,55 +124,53 @@ async def test_real_temporal_replay_and_restart(temporal_cli, tmp_path):
 
     activities = InvestigationActivities(shell, snapshot, "fixture")
     queue = f"investigate-{uuid.uuid4()}"
-    async with await WorkflowEnvironment.start_local(  # noqa: SIM117
-        dev_server_existing_path=temporal_cli, plugins=[PydanticAIPlugin()]
-    ) as env:
-        worker_args = dict(
-            task_queue=queue,
-            workflows=[InvestigationWorkflow],
-            activities=[activities.prepare, activities.finalize, activities.cleanup],
-            workflow_runner=runner(),
-            graceful_shutdown_timeout=timedelta(seconds=30),
-        )
-        worker = Worker(env.client, **worker_args)
-        task = asyncio.create_task(worker.run())
-        handle = await env.client.start_workflow(
-            InvestigationWorkflow.run,
-            InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture")),
-            id=queue,
-            task_queue=queue,
-        )
-        await asyncio.wait_for(command_done.wait(), 30)
-        assert (await handle.query(InvestigationWorkflow.state)).phase == "investigating"
-        # Stop polling before the command completes, then record the in-flight completion.
-        shutdown = asyncio.create_task(worker.shutdown())
-        await asyncio.sleep(0.1)
-        release_command.set()
-        await shutdown
-        await task
-        assert len(model_calls) == 1
-        assert (await handle.describe()).status.name == "RUNNING"
-        async with Worker(env.client, **worker_args):
-            result = await asyncio.wait_for(handle.result(), 30)
-            assert result.verdict.evidence_ids == ["execute:1:cmd"]
-            assert shell.closed == [queue]
-        calls_before = list(model_calls)
-        commands_before = list(shell.executions)
-        history = await handle.fetch_history()
-        await Replayer(
-            workflows=[InvestigationWorkflow],
-            plugins=[PydanticAIPlugin()],
-            workflow_runner=runner(),
-        ).replay_workflow(history)
-        assert model_calls == calls_before
-        assert shell.executions == commands_before
-        assert len(shell.executions) == 1
-        assert len(model_calls) == 3
+    env = temporal_env
+    worker_args = dict(
+        task_queue=queue,
+        workflows=[InvestigationWorkflow],
+        activities=[activities.prepare, activities.finalize, activities.cleanup],
+        workflow_runner=workflow_runner(),
+        graceful_shutdown_timeout=timedelta(seconds=30),
+    )
+    worker = Worker(env.client, **worker_args)
+    task = asyncio.create_task(worker.run())
+    handle = await env.client.start_workflow(
+        InvestigationWorkflow.run,
+        InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture")),
+        id=queue,
+        task_queue=queue,
+    )
+    await asyncio.wait_for(command_done.wait(), 30)
+    assert (await handle.query(InvestigationWorkflow.state)).phase == "investigating"
+    # Stop polling before the command completes, then record the in-flight completion.
+    shutdown = asyncio.create_task(worker.shutdown())
+    await asyncio.sleep(0.1)
+    release_command.set()
+    await shutdown
+    await task
+    assert len(model_calls) == 1
+    assert (await handle.describe()).status.name == "RUNNING"
+    async with Worker(env.client, **worker_args):
+        result = await asyncio.wait_for(handle.result(), 30)
+        assert result.verdict.evidence_ids == ["execute:1:cmd"]
+        assert shell.closed == [queue]
+    calls_before = list(model_calls)
+    commands_before = list(shell.executions)
+    history = await handle.fetch_history()
+    await Replayer(
+        workflows=[InvestigationWorkflow],
+        plugins=[PydanticAIPlugin()],
+        workflow_runner=workflow_runner(),
+    ).replay_workflow(history)
+    assert model_calls == calls_before
+    assert shell.executions == commands_before
+    assert len(shell.executions) == 1
+    assert len(model_calls) == 3
 
 
 @pytest.mark.requires_temporal
 @pytest.mark.parametrize("mode", ["caller", "deadline"])
-async def test_real_temporal_cancel_cleans_owned_sandboxes(temporal_cli, tmp_path, mode):
+async def test_real_temporal_cancel_cleans_owned_sandboxes(temporal_env, tmp_path, mode):
     shell = FakeOpenShell()
     entered = asyncio.Event()
     cancelled = asyncio.Event()
@@ -190,40 +189,38 @@ async def test_real_temporal_cancel_cleans_owned_sandboxes(temporal_cli, tmp_pat
 
     activities = InvestigationActivities(shell, snapshot, "fixture")
     queue = f"cancel-{uuid.uuid4()}"
-    async with await WorkflowEnvironment.start_local(  # noqa: SIM117
-        dev_server_existing_path=temporal_cli, plugins=[PydanticAIPlugin()]
-    ) as env:
-        async with Worker(
-            env.client,
+    env = temporal_env
+    async with Worker(
+        env.client,
+        task_queue=queue,
+        workflows=[InvestigationWorkflow],
+        activities=[activities.prepare, activities.finalize, activities.cleanup],
+        workflow_runner=workflow_runner(),
+    ):
+        handle = await env.client.start_workflow(
+            InvestigationWorkflow.run,
+            InvestigationRequest(
+                finding=Finding(title="Sink", repo_url="fixture"),
+                limits=Limits(timeout_seconds=1 if mode == "deadline" else 1800),
+            ),
+            id=queue,
             task_queue=queue,
-            workflows=[InvestigationWorkflow],
-            activities=[activities.prepare, activities.finalize, activities.cleanup],
-            workflow_runner=runner(),
-        ):
-            handle = await env.client.start_workflow(
-                InvestigationWorkflow.run,
-                InvestigationRequest(
-                    finding=Finding(title="Sink", repo_url="fixture"),
-                    limits=Limits(timeout_seconds=1 if mode == "deadline" else 1800),
-                ),
-                id=queue,
-                task_queue=queue,
-            )
-            await asyncio.wait_for(entered.wait(), 30)
-            if mode == "caller":
-                await handle.cancel()
-            with pytest.raises(WorkflowFailureError):
-                await asyncio.wait_for(handle.result(), 30)
-            assert shell.closed == [queue]
-            assert (await handle.query(InvestigationWorkflow.state)).status == (
-                "cancelled" if mode == "caller" else "failed"
-            )
-            await asyncio.wait_for(cancelled.wait(), 30)
+        )
+        await asyncio.wait_for(entered.wait(), 30)
+        if mode == "caller":
+            await handle.cancel()
+        with pytest.raises(WorkflowFailureError):
+            await asyncio.wait_for(handle.result(), 30)
+        assert shell.closed == [queue]
+        assert (await handle.query(InvestigationWorkflow.state)).status == (
+            "cancelled" if mode == "caller" else "failed"
+        )
+        await asyncio.wait_for(cancelled.wait(), 30)
 
 
 @pytest.mark.requires_temporal
 @pytest.mark.parametrize("stage", ["model", "tool"])
-async def test_real_temporal_unknown_side_effect_is_never_retried(temporal_cli, tmp_path, stage):
+async def test_real_temporal_unknown_side_effect_is_never_retried(temporal_env, tmp_path, stage):
     shell = FakeOpenShell()
     model_calls = []
 
@@ -248,27 +245,98 @@ async def test_real_temporal_unknown_side_effect_is_never_retried(temporal_cli, 
 
     activities = InvestigationActivities(shell, snapshot, "fixture")
     queue = f"failure-{uuid.uuid4()}"
-    async with await WorkflowEnvironment.start_local(  # noqa: SIM117
-        dev_server_existing_path=temporal_cli, plugins=[PydanticAIPlugin()]
-    ) as env:
-        async with Worker(
-            env.client,
+    env = temporal_env
+    async with Worker(
+        env.client,
+        task_queue=queue,
+        workflows=[InvestigationWorkflow],
+        activities=[activities.prepare, activities.finalize, activities.cleanup],
+        workflow_runner=workflow_runner(),
+    ):
+        handle = await env.client.start_workflow(
+            InvestigationWorkflow.run,
+            InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture")),
+            id=queue,
             task_queue=queue,
-            workflows=[InvestigationWorkflow],
-            activities=[activities.prepare, activities.finalize, activities.cleanup],
-            workflow_runner=runner(),
-        ):
-            handle = await env.client.start_workflow(
-                InvestigationWorkflow.run,
-                InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture")),
-                id=queue,
-                task_queue=queue,
-            )
-            with pytest.raises(WorkflowFailureError):
-                await asyncio.wait_for(handle.result(), 30)
-            assert len(model_calls) == 1
-            assert len(shell.executions) == (1 if stage == "tool" else 0)
-            assert shell.closed == [queue]
+        )
+        with pytest.raises(WorkflowFailureError):
+            await asyncio.wait_for(handle.result(), 30)
+        assert len(model_calls) == 1
+        assert len(shell.executions) == (1 if stage == "tool" else 0)
+        assert shell.closed == [queue]
+
+
+@pytest.mark.requires_temporal
+async def test_real_temporal_cleanup_failure_fails_the_run_non_retryably_and_replays(
+    temporal_env, tmp_path
+):
+    from temporalio.exceptions import ApplicationError
+
+    from infosec_harness.workflows.investigation import CLEANUP_ATTEMPTS
+
+    shell = FakeOpenShell()
+    attempts = []
+
+    async def close_run(run_id):
+        attempts.append(run_id)
+        raise RuntimeError("native delete refused")
+
+    shell.close_run = close_run
+    bind_investigator(build_agent(shell, FunctionModel(lambda messages, info: final_response(info))))
+
+    async def snapshot(finding, run_id):
+        return SimpleNamespace(path=str(tmp_path), digest="digest")
+
+    activities = InvestigationActivities(shell, snapshot, "fixture")
+    queue = f"cleanup-{uuid.uuid4()}"
+    env = temporal_env
+    async with Worker(
+        env.client,
+        task_queue=queue,
+        workflows=[InvestigationWorkflow],
+        activities=[activities.prepare, activities.finalize, activities.cleanup],
+        workflow_runner=workflow_runner(),
+    ):
+        handle = await env.client.start_workflow(
+            InvestigationWorkflow.run,
+            InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture")),
+            id=queue,
+            task_queue=queue,
+        )
+        with pytest.raises(WorkflowFailureError) as failed:
+            await asyncio.wait_for(handle.result(), 30)
+        # Every bounded cleanup attempt ran; the run then fails without a retry.
+        assert attempts == [queue] * CLEANUP_ATTEMPTS
+        cause = failed.value.cause
+        assert isinstance(cause, ApplicationError) and cause.non_retryable
+        assert str(cause).startswith("Owned sandbox cleanup failed: ")
+        state = await handle.query(InvestigationWorkflow.state)
+        assert (state.status, state.phase) == ("failed", "failed")
+        assert state.result is None
+    history = await handle.fetch_history()
+    await Replayer(
+        workflows=[InvestigationWorkflow],
+        plugins=[PydanticAIPlugin()],
+        workflow_runner=workflow_runner(),
+    ).replay_workflow(history)
+    assert attempts == [queue] * CLEANUP_ATTEMPTS
+
+
+def test_cleanup_reserve_covers_waited_prepare_and_every_cleanup_attempt():
+    from temporalio.common import RetryPolicy
+
+    from infosec_harness.workflows import investigation as module
+
+    prepare, cleanup, retry = module.PREPARE_TIMEOUT, module.CLEANUP_TIMEOUT, module.CLEANUP_RETRY
+    # The v11 activity options are unchanged by naming them.
+    assert prepare == timedelta(minutes=10)
+    assert cleanup == timedelta(minutes=5)
+    assert retry == RetryPolicy(maximum_attempts=3)
+    # Temporal's default backoff: 1 s, then 2 s, between the three attempts.
+    backoff = module.CLEANUP_BACKOFF
+    assert backoff == timedelta(seconds=3)
+    reserve = module.CLEANUP_RESERVE
+    assert reserve > prepare + 3 * cleanup + timedelta(seconds=3)
 
 
 @pytest.mark.parametrize("label", ["likely_not_exploitable", "potentially_exploitable"])
@@ -451,7 +519,7 @@ async def test_finalize_detects_wrapper_cut_in_receipts(tmp_path):
 
 
 @pytest.mark.requires_temporal
-async def test_history_budget_fails_before_oversized_schedule_and_cleans_up(temporal_cli, tmp_path):
+async def test_history_budget_fails_before_oversized_schedule_and_cleans_up(temporal_env, tmp_path):
     from pydantic_ai.messages import ThinkingPart
 
     shell = FakeOpenShell()
@@ -473,44 +541,42 @@ async def test_history_budget_fails_before_oversized_schedule_and_cleans_up(temp
 
     activities = InvestigationActivities(shell, snapshot, "fixture")
     queue = f"budget-{uuid.uuid4()}"
-    async with await WorkflowEnvironment.start_local(
-        dev_server_existing_path=temporal_cli, plugins=[PydanticAIPlugin()]
-    ) as env:
-        async with Worker(
-            env.client,
+    env = temporal_env
+    async with Worker(
+        env.client,
+        task_queue=queue,
+        workflows=[InvestigationWorkflow],
+        activities=[activities.prepare, activities.finalize, activities.cleanup],
+        workflow_runner=workflow_runner(),
+    ):
+        handle = await env.client.start_workflow(
+            InvestigationWorkflow.run,
+            InvestigationRequest(
+                finding=Finding(title="Sink", repo_url="fixture"),
+                limits=Limits(total_tokens=2_000_000),
+            ),
+            id=queue,
             task_queue=queue,
-            workflows=[InvestigationWorkflow],
-            activities=[activities.prepare, activities.finalize, activities.cleanup],
-            workflow_runner=runner(),
-        ):
-            handle = await env.client.start_workflow(
-                InvestigationWorkflow.run,
-                InvestigationRequest(
-                    finding=Finding(title="Sink", repo_url="fixture"),
-                    limits=Limits(total_tokens=2_000_000),
-                ),
-                id=queue,
-                task_queue=queue,
-            )
-            with pytest.raises(WorkflowFailureError) as error:
-                await asyncio.wait_for(handle.result(), 30)
-            assert "durable payload budget" in str(error.value.cause)
-            assert len(model_calls) == 3
-            assert len(shell.executions) == 3
-            assert shell.closed == [queue]
-            assert (await handle.query(InvestigationWorkflow.state)).status == "failed"
-        history = await handle.fetch_history()
-        await Replayer(
-            workflows=[InvestigationWorkflow],
-            plugins=[PydanticAIPlugin()],
-            workflow_runner=runner(),
-        ).replay_workflow(history)
+        )
+        with pytest.raises(WorkflowFailureError) as error:
+            await asyncio.wait_for(handle.result(), 30)
+        assert "durable payload budget" in str(error.value.cause)
         assert len(model_calls) == 3
+        assert len(shell.executions) == 3
+        assert shell.closed == [queue]
+        assert (await handle.query(InvestigationWorkflow.state)).status == "failed"
+    history = await handle.fetch_history()
+    await Replayer(
+        workflows=[InvestigationWorkflow],
+        plugins=[PydanticAIPlugin()],
+        workflow_runner=workflow_runner(),
+    ).replay_workflow(history)
+    assert len(model_calls) == 3
 
 
 @pytest.mark.requires_temporal
 async def test_total_history_guard_stops_mixed_tool_batch_and_replays(
-    temporal_cli, tmp_path, monkeypatch
+    temporal_env, tmp_path, monkeypatch
 ):
     from temporalio import workflow
 
@@ -554,52 +620,50 @@ async def test_total_history_guard_stops_mixed_tool_batch_and_replays(
 
     activities = InvestigationActivities(shell, snapshot, "fixture")
     queue = f"history-{uuid.uuid4()}"
-    async with await WorkflowEnvironment.start_local(
-        dev_server_existing_path=temporal_cli, plugins=[PydanticAIPlugin()]
-    ) as env:
-        async with Worker(
-            env.client,
-            task_queue=queue,
-            workflows=[InvestigationWorkflow],
-            activities=[activities.prepare, activities.finalize, activities.cleanup],
-            workflow_runner=runner(),
-        ):
-            handle = await env.client.start_workflow(
-                InvestigationWorkflow.run,
-                InvestigationRequest(
-                    finding=Finding(
-                        title="Large finding", repo_url="fixture", description="\U0001f63a" * 90_000
-                    ),
-                    limits=Limits(total_tokens=2_000_000),
+    env = temporal_env
+    async with Worker(
+        env.client,
+        task_queue=queue,
+        workflows=[InvestigationWorkflow],
+        activities=[activities.prepare, activities.finalize, activities.cleanup],
+        workflow_runner=workflow_runner(),
+    ):
+        handle = await env.client.start_workflow(
+            InvestigationWorkflow.run,
+            InvestigationRequest(
+                finding=Finding(
+                    title="Large finding", repo_url="fixture", description="\U0001f63a" * 90_000
                 ),
-                id=queue,
-                task_queue=queue,
-            )
-            with pytest.raises(WorkflowFailureError) as error:
-                await asyncio.wait_for(handle.result(), 30)
-            assert "durable history budget" in str(error.value.cause)
-            assert len(calls) == 1
-            assert len(shell.executions) == 1
-            assert shell.closed == [queue]
-            assert [item[0] for item in observed] == [
-                "load_capability",
-                "execute",
-                "load_capability",
-            ]
-            assert all(item[2] == "sequential" for item in observed)
-            assert observed[1][1] < 2_000_000 <= observed[2][1]
-            assert (await handle.query(InvestigationWorkflow.state)).status == "failed"
-        history = await handle.fetch_history()
-        await Replayer(
-            workflows=[InvestigationWorkflow],
-            plugins=[PydanticAIPlugin()],
-            workflow_runner=runner(),
-        ).replay_workflow(history)
-        assert len(calls) == 1 and len(shell.executions) == 1
+                limits=Limits(total_tokens=2_000_000),
+            ),
+            id=queue,
+            task_queue=queue,
+        )
+        with pytest.raises(WorkflowFailureError) as error:
+            await asyncio.wait_for(handle.result(), 30)
+        assert "durable history budget" in str(error.value.cause)
+        assert len(calls) == 1
+        assert len(shell.executions) == 1
+        assert shell.closed == [queue]
+        assert [item[0] for item in observed] == [
+            "load_capability",
+            "execute",
+            "load_capability",
+        ]
+        assert all(item[2] == "sequential" for item in observed)
+        assert observed[1][1] < 2_000_000 <= observed[2][1]
+        assert (await handle.query(InvestigationWorkflow.state)).status == "failed"
+    history = await handle.fetch_history()
+    await Replayer(
+        workflows=[InvestigationWorkflow],
+        plugins=[PydanticAIPlugin()],
+        workflow_runner=workflow_runner(),
+    ).replay_workflow(history)
+    assert len(calls) == 1 and len(shell.executions) == 1
 
 
 @pytest.mark.requires_temporal
-async def test_model_finding_prompt_excludes_host_variant_path(temporal_cli, tmp_path):
+async def test_model_finding_prompt_excludes_host_variant_path(temporal_env, tmp_path):
     import json
 
     from pydantic_ai.messages import ModelRequest, UserPromptPart
@@ -631,16 +695,14 @@ async def test_model_finding_prompt_excludes_host_variant_path(temporal_cli, tmp
         cwe="CWE-78",
     )
     queue = f"prompt-{uuid.uuid4()}"
+    env = temporal_env
     async with (
-        await WorkflowEnvironment.start_local(
-            dev_server_existing_path=temporal_cli, plugins=[PydanticAIPlugin()]
-        ) as env,
         Worker(
             env.client,
             task_queue=queue,
             workflows=[InvestigationWorkflow],
             activities=[activities.prepare, activities.finalize, activities.cleanup],
-            workflow_runner=runner(),
+            workflow_runner=workflow_runner(),
         ),
     ):
         result = await asyncio.wait_for(
@@ -783,12 +845,14 @@ async def test_prepare_refuses_mismatched_candidate_before_any_side_effect():
         raise AssertionError("mismatch must refuse before source capture")
 
     activities = InvestigationActivities(shell, snapshot, "fixture", identity=lambda: identity)
-    with pytest.raises(ValueError, match="does not match"):
+    with pytest.raises(WorkerIdentityMismatch, match="does not match") as error:
         await activities.prepare(
             InvestigationRequest(
                 finding=Finding(title="case", repo_url="fixture"), expected_worker_identity="d" * 64
             )
         )
+    assert "expected=dddddddddddd bound=aaaaaaaaaaaa" in str(error.value)
+    assert error.value.non_retryable
     assert shell.executions == []
 
 
@@ -801,8 +865,10 @@ def test_worker_refuses_configuration_drift():
         FakeOpenShell(), None, "fixture", identity=lambda: current[0]
     )
     current[0] = first.model_copy(update={"config_sha256": "d" * 64})
-    with pytest.raises(ValueError, match="changed; restart"):
+    with pytest.raises(WorkerIdentityMismatch, match="changed; restart") as error:
         activities.check_identity()
+    assert error.value.non_retryable
+    assert "bound=aaaaaaaaaaaa current=aaaaaaaaaaaa" in str(error.value)
 
 
 @pytest.mark.parametrize("mode", ["different", "drift", "unknown"])
@@ -891,3 +957,4 @@ async def test_prepare_waits_for_cleanup_through_repeated_cancellation(monkeypat
     with pytest.raises(asyncio.CancelledError):
         await task
     assert shell.closed == ["owned"]
+

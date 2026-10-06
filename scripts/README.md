@@ -10,6 +10,9 @@
   [patched gateway build](../deploy/openshell/README.md#patched-gateway-build).
 - `openshell_admissions.py`: read-only native admission occupancy for `harness eval`.
 - `check_api_schema.py`, `generated.py`: generated API and development-instruction drift.
+- `corpus_verify.py`: runs each corpus fixture's maintainer tests from
+  `eval-corpus/verification/` against a temporary copy of the fixture. See
+  [fixture verification](../eval-corpus/README.md#fixture-verification).
 
 Runtime qualification, live evaluation, zero-dispatch replay and history export use
 `harness qualify`, `harness eval`, `harness replay` and `harness export-history` (through

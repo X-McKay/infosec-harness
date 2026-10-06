@@ -2,23 +2,29 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import logging
 import os
 import stat
 import tempfile
+from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
 from infosec_harness.config import Settings, get_settings
 from infosec_harness.contracts import Citation, Finding
-from infosec_harness.sandbox.process import run_bounded
+from infosec_harness.sandbox.process import finish, run_bounded
 
 EXCLUDED = frozenset({".git", ".venv", "venv", "node_modules", "__pycache__"})
 MAX_FILE = 32 * 1024 * 1024
 MAX_TOTAL = 512 * 1024 * 1024
 MAX_ENTRIES = 100_000
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -106,6 +112,21 @@ def _capture(source: Path, destination: Path | None) -> str:
     return hasher.hexdigest()
 
 
+async def _off_loop[T](function: Callable[..., T], *args: object) -> T:
+    """Run a blocking capture in a thread, keeping the worker's event loop free.
+
+    On cancellation, wait for the thread to stop touching the staging tree before the
+    cancellation propagates (and the staging directory is removed); the work is bounded.
+    """
+    future = asyncio.ensure_future(asyncio.to_thread(function, *args))
+    try:
+        return await asyncio.shield(future)
+    except asyncio.CancelledError:
+        with suppress(Exception):
+            await finish(future)
+        raise
+
+
 async def _git(source: str, revision: str, destination: Path, *, local: bool) -> None:
     if revision.startswith("-") or any(c in revision for c in "\x00\r\n"):
         raise ValueError("invalid revision")
@@ -138,7 +159,13 @@ async def _git(source: str, revision: str, destination: Path, *, local: bool) ->
     ):
         result = await run_bounded(["git", *config, *args], env=env, timeout=300, cwd=cwd)
         if result.exit_code != 0 or result.timed_out:
-            raise RuntimeError("source checkout failed; no repository code was executed")
+            # Step, exit code and timeout only: Git's stderr can echo repository content.
+            log.warning("event=source_checkout_failed step=%s exit_code=%s timed_out=%s",
+                        args[0], result.exit_code, result.timed_out)
+            raise RuntimeError(
+                f"source checkout failed at git {args[0]} (exit {result.exit_code}, "
+                f"timed_out {result.timed_out}); no repository code was executed"
+            )
 
 
 async def snapshot(finding: Finding, run_id: str, settings: Settings | None = None) -> Snapshot:
@@ -160,8 +187,10 @@ async def snapshot(finding: Finding, run_id: str, settings: Settings | None = No
             raise ValueError("snapshot identity/content mismatch")
         return Snapshot(str(published / "tree"), metadata["digest"])
 
+    # Capture and re-hash read up to MAX_TOTAL bytes; keep them off the worker's event loop,
+    # which other activities (and, under a parallel cohort, other cases) share.
     if published.exists():
-        return existing()
+        return await _off_loop(existing)
     remote = urlsplit(finding.repo_url)
     local_path = None
     if remote.scheme:
@@ -193,10 +222,11 @@ async def snapshot(finding: Finding, run_id: str, settings: Settings | None = No
             )
         elif finding.revision != "HEAD":
             raise ValueError("working snapshot cannot resolve a Git revision")
-        assert source is not None
+        if source is None:  # Unreachable: a remote source was refused unless git_revision.
+            raise ValueError("working snapshots require a local source")
         candidate = staging / "snapshot"
         candidate.mkdir()
-        digest = _capture(source, candidate / "tree")
+        digest = await _off_loop(_capture, source, candidate / "tree")
         (candidate / "metadata.json").write_text(
             json.dumps({"finding": identity, "digest": digest})
         )
@@ -205,4 +235,4 @@ async def snapshot(finding: Finding, run_id: str, settings: Settings | None = No
         except OSError:
             if not published.exists():
                 raise
-        return existing()
+        return await _off_loop(existing)

@@ -39,7 +39,6 @@ allow-direct-references = true
 [tool.hatch.build.targets.wheel]
 packages = ["src/infosec_harness"]
 # Runtime skills are package data; generated reports and state never ship.
-artifacts = []
 exclude = ["**/__pycache__", "**/*.pyc"]
 
 [tool.ruff]
@@ -48,7 +47,11 @@ target-version = "py312"
 extend-exclude = ["ui"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM"]
+# W through INT: rule families with no finding across src, tests and scripts; keep them so.
+select = [
+  "E", "F", "I", "UP", "B", "SIM",
+  "W", "DTZ", "LOG", "G", "ISC", "SLOT", "TID", "FLY", "ICN", "FURB", "YTT", "PGH", "T10", "INT",
+]
 ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]

@@ -4,18 +4,16 @@ import json
 from types import SimpleNamespace
 
 import pytest
-from fakes import FakeOpenShell, final_response
+from fakes import FakeOpenShell, final_response, make_deps, retry_feedback, tool_returns
 from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import FunctionModel
 
-from infosec_harness.agents.investigator import InvestigationDeps, build_agent
-from infosec_harness.contracts import Finding, InvestigationRequest
+from infosec_harness.agents.investigator import build_agent
 from infosec_harness.sandbox import CommandResult
 
 
 @pytest.mark.parametrize("definitive", [False, True])
 async def test_output_feedback_repairs_exact_id_or_failed_probe_without_reexecuting(definitive):
-    from pydantic_ai.messages import RetryPromptPart
 
     shell = FakeOpenShell()
     calls = 0
@@ -38,36 +36,22 @@ async def test_output_feedback_repairs_exact_id_or_failed_probe_without_reexecut
             if definitive:
                 response.parts[0].args["label"] = "potentially_exploitable"
             return response
-        feedback = [
-            part.content
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, RetryPromptPart)
-        ]
+        feedback = retry_feedback(messages)
         assert feedback
         assert (
             "cannot support a definitive verdict" if definitive else "exact full Evidence.id"
         ) in feedback[-1]
         return final_response(info, evidence_ids=["execute:1:receipt-suffix"])
 
-    request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
     result = await build_agent(shell, FunctionModel(respond)).run(
         "Inspect",
-        deps=InvestigationDeps(
-            run_id="run",
-            sandbox=await shell.create("run"),
-            source_digest="digest",
-            snapshot_path="/fixture",
-            request=request,
-        ),
+        deps=await make_deps(shell),
     )
     assert result.output.label == "inconclusive"
     assert calls == 3
     assert len(shell.executions) == 1
 
 
-@pytest.mark.asyncio
 async def test_validator_lets_a_newer_cited_probe_supersede_an_older_flawed_one():
     """Live case 'unreachable' (2026-10-05): an early buggy probe reported vulnerability_observed
     true, three corrected later probes reported false, and the verdict could never be admitted.
@@ -86,15 +70,20 @@ async def test_validator_lets_a_newer_cited_probe_supersede_an_older_flawed_one(
                               negative_control=True, vulnerability_observed=observed),
         )
 
-    flawed, corrected, later = probe("probe:6:a", True), probe("probe:9:b", False), probe("probe:12:c", True)
+    flawed, corrected = probe("probe:6:a", True), probe("probe:9:b", False)
+    later = probe("probe:12:c", True)
     ctx = SimpleNamespace(
         deps=SimpleNamespace(source_digest="digest"),
         messages=[ModelRequest(parts=[
             ToolReturnPart("run_probe", item.model_dump(), tool_call_id=item.id.split(":")[-1])
             for item in (flawed, corrected, later)])],
     )
-    base = dict(label="likely_not_exploitable", summary="fixed query, flawed probe explained",
-                evidence_ids=[corrected.id], citations=[dict(path="app.py", start_line=1, end_line=1)])
+    base = dict(
+        label="likely_not_exploitable",
+        summary="fixed query, flawed probe explained",
+        evidence_ids=[corrected.id],
+        citations=[dict(path="app.py", start_line=1, end_line=1)],
+    )
     # A later contrary probe blocks the verdict even when listed as superseded.
     with pytest.raises(ModelRetry, match="probe:12:c contradict.*cannot be superseded"):
         await validate_verdict(ctx, Verdict(**base, superseded_evidence_ids=[flawed.id, later.id]))
@@ -198,6 +187,22 @@ async def test_verdict_validator_requires_complete_matching_offline_evidence(fai
         assert await validate_verdict(ctx, verdict) == verdict
 
 
+async def test_refusal_the_feedback_cannot_explain_still_names_a_reason(monkeypatch):
+    """Admission (definitive_support) and explanation (retry_reasons) are separate code; a
+    future admission condition must not produce a retry prompt that starts with ". See"."""
+    from pydantic_ai import ModelRetry
+
+    from infosec_harness.agents import investigator
+    from infosec_harness.contracts import Verdict
+
+    monkeypatch.setattr(investigator, "definitive_support", lambda verdict, evidence: ([], [], []))
+    monkeypatch.setattr(investigator, "retry_reasons", lambda verdict, evidence: [])
+    ctx = SimpleNamespace(deps=SimpleNamespace(source_digest="digest"), messages=[])
+    verdict = Verdict(label="likely_not_exploitable", summary="s", evidence_ids=[], citations=[])
+    with pytest.raises(ModelRetry, match=r"^No cited probe is a complete, source-verified"):
+        await investigator.validate_verdict(ctx, verdict)
+
+
 async def test_output_feedback_is_bounded_and_never_retries_tool_dispatch():
     from pydantic_ai.exceptions import UnexpectedModelBehavior
 
@@ -209,25 +214,16 @@ async def test_output_feedback_is_bounded_and_never_retries_tool_dispatch():
         calls += 1
         return final_response(info, evidence_ids=["invented"])
 
-    request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
     with pytest.raises(UnexpectedModelBehavior, match="retries"):
         await build_agent(shell, FunctionModel(respond)).run(
             "Inspect",
-            deps=InvestigationDeps(
-                run_id="run",
-                sandbox=await shell.create("run"),
-                source_digest="digest",
-                snapshot_path="/fixture",
-                request=request,
-            ),
+            deps=await make_deps(shell),
         )
     assert calls == 3
     assert shell.executions == []
 
 
 async def test_failed_offline_probe_and_successful_workspace_execution_require_inconclusive():
-    from pydantic_ai.messages import RetryPromptPart
-
     shell = FakeOpenShell()
     native_execute = shell.execute
 
@@ -267,24 +263,13 @@ async def test_failed_offline_probe_and_successful_workspace_execution_require_i
             response.parts[0].args["citations"] = [dict(path="sink.py", start_line=1, end_line=1)]
             return response
         assert any(
-            isinstance(part, RetryPromptPart)
-            and "is not a complete probe: exit code" in part.content
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
+            "is not a complete probe: exit code" in feedback
+            for feedback in retry_feedback(messages)
         )
         return final_response(info, evidence_ids=["probe:1:offline", "execute:2:workspace"])
 
-    request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
     result = await build_agent(shell, FunctionModel(respond)).run(
-        "Inspect",
-        deps=InvestigationDeps(
-            run_id="run",
-            sandbox=await shell.create("run"),
-            source_digest="digest",
-            snapshot_path="/fixture",
-            request=request,
-        ),
+        "Inspect", deps=await make_deps(shell)
     )
     assert result.output.label == "inconclusive"
     assert len(shell.executions) == 2
@@ -300,7 +285,6 @@ async def test_failed_offline_probe_and_successful_workspace_execution_require_i
     "probe finished without a marker",
 ])
 async def test_rejected_probe_line_gets_precise_feedback(final_line):
-    from pydantic_ai.messages import RetryPromptPart
 
     from infosec_harness.agents.evidence import parse_probe_observations
 
@@ -325,9 +309,7 @@ async def test_rejected_probe_line_gets_precise_feedback(final_line):
             return ModelResponse(parts=[ToolCallPart(
                 "run_probe", {"command": "perl probe.pl"}, tool_call_id="p")])
         if calls == 2:
-            returned = [part.content for message in messages if isinstance(message, ModelRequest)
-                        for part in message.parts
-                        if isinstance(part, ToolReturnPart) and part.tool_name == "run_probe"]
+            returned = tool_returns(messages, "run_probe")
             assert returned[0].observations["report_excerpted"] is True
             assert returned[0].observations.get("probe_line_rejected", False) is rejected
             response = final_response(info, evidence_ids=["probe:1:p"])
@@ -336,13 +318,10 @@ async def test_rejected_probe_line_gets_precise_feedback(final_line):
                 citations=[dict(path="sink.pl", start_line=1, end_line=1)],
             )
             return response
-        feedback.extend(part.content for message in messages if isinstance(message, ModelRequest)
-                        for part in message.parts if isinstance(part, RetryPromptPart))
+        feedback.extend(retry_feedback(messages))
         return final_response(info)
 
-    request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
-    deps = InvestigationDeps(run_id="run", sandbox=await shell.create("run"),
-                             source_digest="digest", snapshot_path="/fixture", request=request)
+    deps = await make_deps(shell)
     result = await build_agent(shell, FunctionModel(respond)).run("Probe", deps=deps)
     assert result.output.label == "inconclusive"
     message = feedback[-1]
@@ -357,7 +336,6 @@ async def test_rejected_probe_line_gets_precise_feedback(final_line):
 
 
 async def test_split_probe_marker_feedback_repairs_with_new_bounded_probe():
-    from pydantic_ai.messages import RetryPromptPart
 
     from infosec_harness.agents.evidence import parse_probe_observations
 
@@ -392,13 +370,7 @@ async def test_split_probe_marker_feedback_repairs_with_new_bounded_probe():
         calls += 1
         if calls in (1, 3):
             if calls == 3:
-                feedback = [
-                    part.content
-                    for message in messages
-                    if isinstance(message, ModelRequest)
-                    for part in message.parts
-                    if isinstance(part, RetryPromptPart)
-                ]
+                feedback = retry_feedback(messages)
                 # The computed reason names the parse failure and the exact line contract.
                 assert "has no parsed HARNESS_PROBE line" in feedback[-1]
                 assert "share the final stdout line" in feedback[-1]
@@ -421,16 +393,9 @@ async def test_split_probe_marker_feedback_repairs_with_new_bounded_probe():
         )
         return response
 
-    request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
     result = await build_agent(shell, FunctionModel(respond)).run(
         "Inspect",
-        deps=InvestigationDeps(
-            run_id="run",
-            sandbox=await shell.create("run"),
-            source_digest="digest",
-            snapshot_path="/fixture",
-            request=request,
-        ),
+        deps=await make_deps(shell),
     )
     assert result.output.label == "potentially_exploitable"
     assert result.output.evidence_ids == ["probe:3:repaired"]
@@ -440,7 +405,6 @@ async def test_split_probe_marker_feedback_repairs_with_new_bounded_probe():
 
 
 async def test_blocked_target_feedback_requires_new_complete_probe():
-    from pydantic_ai.messages import RetryPromptPart
 
     shell = FakeOpenShell()
     native_execute = shell.execute
@@ -468,13 +432,7 @@ async def test_blocked_target_feedback_requires_new_complete_probe():
         calls += 1
         if calls in (1, 3):
             if calls == 3:
-                feedback = [
-                    part.content
-                    for message in messages
-                    if isinstance(message, ModelRequest)
-                    for part in message.parts
-                    if isinstance(part, RetryPromptPart)
-                ][-1]
+                feedback = retry_feedback(messages)[-1]
                 assert "target_reached=false" in feedback
                 assert "even if its guard rejected it" in feedback
                 assert "run a new corrected probe" in feedback
@@ -497,19 +455,56 @@ async def test_blocked_target_feedback_requires_new_complete_probe():
         )
         return response
 
-    request = InvestigationRequest(finding=Finding(title="Traversal", repo_url="fixture"))
     result = await build_agent(shell, FunctionModel(respond)).run(
         "Inspect",
-        deps=InvestigationDeps(
-            run_id="run",
-            sandbox=await shell.create("run"),
-            source_digest="digest",
-            snapshot_path="/fixture",
-            request=request,
-        ),
+        deps=await make_deps(shell),
     )
     assert result.output.label == "likely_not_exploitable"
     assert result.output.evidence_ids == ["probe:3:repaired"]
     assert len(shell.executions) == 2
     assert calls == 4
     assert shell.executions[0][2] != shell.executions[1][2]
+
+
+def test_model_and_tool_activities_share_one_ten_minute_single_attempt_config():
+    """build_agent passes only activity_config; the library merges it into the model
+    activity config, so model requests keep the 10-minute single-attempt schedule."""
+    from datetime import timedelta
+
+    from pydantic_ai.durable_exec.temporal import TemporalDurability
+
+    agent = build_agent(FakeOpenShell(), FunctionModel(final_response))
+    # Private attributes: the library exposes no public view of the merged configs.
+    (durability,) = [
+        capability
+        for capability in agent._root_capability.capabilities
+        if isinstance(capability, TemporalDurability)
+    ]
+    for config in (durability.activity_config, durability._model_activity_config):
+        assert config["start_to_close_timeout"] == timedelta(minutes=10)
+        assert config["retry_policy"].maximum_attempts == 1
+
+
+async def test_oversized_write_is_refused_before_the_tool_runs():
+    """The write tool has no size check of its own: the durable payload guard rejects
+    arguments over MAX_INVOCATION_BYTES before the tool body (or any sandbox exec) runs."""
+    from pydantic_ai.exceptions import UsageLimitExceeded
+
+    from infosec_harness.sandbox.executor import MAX_INVOCATION_BYTES
+
+    shell = FakeOpenShell()
+
+    def respond(messages, info):
+        content = "x" * MAX_INVOCATION_BYTES
+        return ModelResponse(
+            parts=[ToolCallPart("write", {"path": "big", "content": content}, tool_call_id="w")]
+        )
+
+    deps = await make_deps(shell)
+    limit = MAX_INVOCATION_BYTES
+    with pytest.raises(
+        UsageLimitExceeded,
+        match=rf"Tool call exceeds the durable payload budget \(\d+ > {limit} bytes\)",
+    ):
+        await build_agent(shell, FunctionModel(respond)).run("Write", deps=deps)
+    assert shell.executions == []

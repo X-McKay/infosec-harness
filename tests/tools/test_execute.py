@@ -3,12 +3,11 @@
 import json
 
 import pytest
-from fakes import FakeOpenShell, final_response
-from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart
+from fakes import FakeOpenShell, final_response, make_deps, retry_feedback, tool_returns
+from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
-from infosec_harness.agents.investigator import InvestigationDeps, build_agent
-from infosec_harness.contracts import Finding, InvestigationRequest
+from infosec_harness.agents.investigator import build_agent
 from infosec_harness.sandbox import CommandResult
 
 
@@ -22,34 +21,16 @@ async def test_native_tools_use_openshell_and_return_receipts():
                     ToolCallPart("execute", {"command": "pytest test_sink.py"}, tool_call_id="cmd")
                 ]
             )
-        returns = [
-            part
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, ToolReturnPart) and part.tool_name == "execute"
-        ]
-        content = returns[0].content
-        identity = content.id if hasattr(content, "id") else content["id"]
-        return final_response(info, evidence_ids=[identity])
+        return final_response(info, evidence_ids=[tool_returns(messages, "execute")[0].id])
 
     agent = build_agent(shell, FunctionModel(respond))
-    request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
-    sandbox = await shell.create("run")
-    result = await agent.run(
-        "Inspect sink",
-        deps=InvestigationDeps(
-            run_id="run",
-            sandbox=sandbox,
-            source_digest="digest",
-            snapshot_path="/fixture",
-            request=request,
-        ),
-    )
+    result = await agent.run("Inspect sink", deps=await make_deps(shell))
     assert result.output.evidence_ids == ["execute:1:cmd"]
     argv = shell.executions[0][1]
-    assert argv[:2] == ["/bin/bash", "-c"] and argv[3:] == ["ih-wrapper", "110", "pytest test_sink.py"]
-    assert "cd /workspace/repo && ( $2 )" in argv[2] and "timeout --preserve-status -s KILL" in argv[2]
+    assert argv[:2] == ["/bin/bash", "-c"]
+    assert argv[3:] == ["ih-wrapper", "110", "pytest test_sink.py"]
+    assert "cd /workspace/repo && ( $2\n)" in argv[2]
+    assert "timeout --preserve-status -s KILL" in argv[2]
 
 
 async def test_command_killed_at_budget_is_a_completed_receipt_with_feedback():
@@ -68,18 +49,14 @@ async def test_command_killed_at_budget_is_a_completed_receipt_with_feedback():
         if not shell.executions:
             return ModelResponse(parts=[ToolCallPart(
                 "execute", {"command": "npm ci"}, tool_call_id="slow")])
-        returned = [part.content for message in messages if isinstance(message, ModelRequest)
-                    for part in message.parts
-                    if isinstance(part, ToolReturnPart) and part.tool_name == "execute"][-1]
+        returned = tool_returns(messages, "execute")[-1]
         returned = returned.model_dump()
         assert returned["exit_code"] == 137
         assert "110s command budget" in returned["observations"]["timeout_feedback"]
         assert "not retried" in returned["observations"]["timeout_feedback"]
         return final_response(info)
 
-    request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
-    deps = InvestigationDeps(run_id="run", sandbox=await shell.create("run"),
-                             source_digest="digest", snapshot_path="/fixture", request=request)
+    deps = await make_deps(shell)
     result = await build_agent(shell, FunctionModel(respond)).run("Inspect", deps=deps)
     assert result.output.label == "inconclusive"
     _, command, operation, _ = shell.executions[0]
@@ -107,10 +84,25 @@ def run_wrapper(tmp_path, command):
         capture_output=True,
         env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)},
         timeout=60,
+        check=False,  # the exit code is the result under test
     )
     return CommandResult(
         completed.returncode, completed.stdout.decode(), completed.stderr.decode()
     )
+
+
+def test_wrapper_output_bound_is_exact_and_below_the_default_native_bound(tmp_path):
+    """WRAPPER_OUTPUT_BYTES is what a worker compares with `max_output_bytes`."""
+    from infosec_harness.sandbox.openshell import OpenShellConfig
+    from infosec_harness.tools.execute import STDERR_LIMIT, STDOUT_LIMIT, WRAPPER_OUTPUT_BYTES
+
+    both = run_wrapper(
+        tmp_path,
+        f"head -c {STDOUT_LIMIT + 1} /dev/zero; head -c {STDERR_LIMIT + 1} /dev/zero >&2",
+    )
+    assert len(both.stdout.encode()) + len(both.stderr.encode()) == WRAPPER_OUTPUT_BYTES
+    native_default = OpenShellConfig.model_fields["max_output_bytes"].default
+    assert native_default > WRAPPER_OUTPUT_BYTES
 
 
 @pytest.mark.parametrize("stream", ["stdout", "stderr"])
@@ -141,6 +133,41 @@ def test_wrapper_cut_is_reported_as_truncation(tmp_path, stream):
     assert unwrapped.exit_code == 3
 
 
+@pytest.mark.parametrize(
+    ("command", "stdout"),
+    [
+        # Review of 2026-10-06: with the closing parenthesis on the command's own line, both
+        # of these failed as "syntax error: unexpected end of file" (exit 2).
+        ("echo hi # trailing comment", "hi\n"),
+        ("cat <<'EOF'\nline one\n$HOME stays literal\nEOF", "line one\n$HOME stays literal\n"),
+        (
+            """printf '%s|%s\\n' "double \\"quoted\\"" 'single "kept"'""",
+            'double "quoted"|single "kept"\n',
+        ),
+    ],
+)
+def test_wrapper_runs_commands_ending_in_comments_heredocs_and_quotes(tmp_path, command, stdout):
+    result = run_wrapper(tmp_path, command)
+    assert (result.exit_code, result.stdout, result.stderr) == (0, stdout, "")
+
+
+def test_wrapper_keeps_the_final_probe_line_after_a_heredoc_and_comment(tmp_path):
+    from infosec_harness.agents.evidence import parse_probe_observations
+    from infosec_harness.contracts import PROBE_FIELDS
+    from infosec_harness.tools.execute import unwrap_output
+
+    claims = dict.fromkeys(PROBE_FIELDS, True)
+    line = "HARNESS_PROBE " + json.dumps(claims)
+    command = (
+        f"cat <<'EOF' >probe.sh\necho context\necho '{line}'\nEOF\n"
+        "bash probe.sh  # the probe prints its observation line last"
+    )
+    result = unwrap_output(run_wrapper(tmp_path, command))
+    assert result.exit_code == 0 and result.output_truncated is False
+    assert result.stdout == f"context\n{line}\n"
+    assert parse_probe_observations(result.stdout) == {**claims, "origin": "self_reported"}
+
+
 async def test_cut_probe_output_is_truncated_evidence_and_never_qualifies():
     from infosec_harness.tools.execute import TRUNCATION_MARKER
 
@@ -162,14 +189,10 @@ async def test_cut_probe_output_is_truncated_evidence_and_never_qualifies():
         if not shell.executions:
             return ModelResponse(parts=[ToolCallPart(
                 "run_probe", {"command": "python probe.py"}, tool_call_id="cut")])
-        returned.extend(part.content for message in messages if isinstance(message, ModelRequest)
-                        for part in message.parts
-                        if isinstance(part, ToolReturnPart) and part.tool_name == "run_probe")
+        returned.extend(tool_returns(messages, "run_probe"))
         return final_response(info)
 
-    request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
-    deps = InvestigationDeps(run_id="run", sandbox=await shell.create("run"),
-                             source_digest="digest", snapshot_path="/fixture", request=request)
+    deps = await make_deps(shell)
     await build_agent(shell, FunctionModel(respond)).run("Probe", deps=deps)
     evidence = returned[0]
     assert evidence.output_truncated is True
@@ -196,25 +219,74 @@ async def test_failed_build_tool_returns_environment_feedback_once():
             return ModelResponse(parts=[ToolCallPart(
                 "execute", {"command": "mvn test -Dtest=Probe"}, tool_call_id="build")])
         if len(shell.executions) == 1:
-            returned = [part.content for message in messages if isinstance(message, ModelRequest)
-                        for part in message.parts
-                        if isinstance(part, ToolReturnPart) and part.tool_name == "execute"][-1]
+            returned = tool_returns(messages, "execute")[-1]
             seen["build"] = returned.model_dump()["observations"]
             return ModelResponse(parts=[ToolCallPart(
                 "execute", {"command": "ls -la src"}, tool_call_id="list")])
-        returned = [part.content for message in messages if isinstance(message, ModelRequest)
-                    for part in message.parts
-                    if isinstance(part, ToolReturnPart) and part.tool_name == "execute"][-1]
+        returned = tool_returns(messages, "execute")[-1]
         seen["list"] = returned.model_dump()["observations"]
         return final_response(info)
 
-    request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
-    deps = InvestigationDeps(run_id="run", sandbox=await shell.create("run"),
-                             source_digest="digest", snapshot_path="/fixture", request=request)
+    deps = await make_deps(shell)
     await build_agent(shell, FunctionModel(respond)).run("Inspect", deps=deps)
+    # `mvn test` now routes to the Maven-specific pointer at the direct-javac recipe.
     assert "environment skill" in seen["build"]["environment_feedback"]
-    assert "Do not search the filesystem" in seen["build"]["environment_feedback"]
+    assert "javac" in seen["build"]["environment_feedback"]
+    assert "mvn test" in seen["build"]["environment_feedback"]
     assert "environment_feedback" not in seen["list"]  # a failed plain command is not a build
+
+
+@pytest.mark.parametrize(
+    "command, exit_code, truncated, expected",
+    [
+        # Maven-specific pointer: mvn test however it exits, overflowing mvn, failed mvn
+        # without a local repo.
+        ("mvn test -Dtest=Probe", 1, False, "mvn"),
+        ("mvn -o -Dmaven.repo.local=/workspace/repo/.m2 test", 0, False, "mvn"),
+        ("mvn -q -Dmaven.repo.local=/workspace/repo/.m2 compile", 0, True, "mvn"),
+        ("mvn -q compile", 1, False, "mvn"),
+        # Failed mvn WITH a local repo is a plain build failure, not the mvn-flood case.
+        ("mvn -o -Dmaven.repo.local=/workspace/repo/.m2 compile", 1, False, "build"),
+        # Other build tools point at the recipe only when they fail.
+        ("npm ci", 1, False, "build"),
+        ("npm ci", 0, False, None),
+        ("javac -d out Foo.java", 1, False, "build"),
+        # A passing mvn compile and overflowing non-mvn output are not flagged.
+        ("mvn -o -Dmaven.repo.local=/workspace/repo/.m2 compile", 0, False, None),
+        ("cat big.log", 0, True, None),
+        # A plain command is never a build, and the word "test" alone is not mvn test.
+        ("ls -la src", 1, False, None),
+        ("pytest test_sink.py", 0, False, None),
+        # Review of 2026-10-06: wrapper scripts and full paths never matched.
+        ("./gradlew test", 1, False, "build"),
+        ("cd app && ./gradlew --offline build", 1, False, "build"),
+        ("/usr/bin/javac -d out Foo.java", 1, False, "build"),
+        ("./mvnw test", 0, False, "mvn"),
+        ("/opt/maven/bin/mvn -q compile", 1, False, "mvn"),
+        ("./mvnw -o -Dmaven.repo.local=/workspace/repo/.m2 compile", 1, False, "build"),
+        # A directory or file named like a tool is not that tool.
+        ("ls node_modules/npm/bin", 1, False, None),
+        ("cat gradle.properties", 1, False, None),
+        ("./scripts/npm-check", 1, False, None),
+        ("cat src/mvn.txt", 1, False, None),
+    ],
+)
+def test_environment_feedback_triggers(command, exit_code, truncated, expected):
+    from infosec_harness.tools.execute import (
+        _BUILD_FEEDBACK,
+        _MVN_FEEDBACK,
+        environment_feedback,
+    )
+
+    feedback = environment_feedback(command, exit_code, truncated)
+    if expected is None:
+        assert feedback is None
+    elif expected == "mvn":
+        assert feedback == _MVN_FEEDBACK
+        assert "javac" in feedback and "mvn test" in feedback
+    else:
+        assert feedback == _BUILD_FEEDBACK
+        assert "Do not search the filesystem" in feedback
 
 
 async def test_probe_uses_fresh_offline_profile_and_cleans_up():
@@ -230,16 +302,9 @@ async def test_probe_uses_fresh_offline_profile_and_cleans_up():
         return final_response(info)
 
     agent = build_agent(shell, FunctionModel(respond))
-    request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
     result = await agent.run(
         "Probe",
-        deps=InvestigationDeps(
-            run_id="run",
-            sandbox=await shell.create("run"),
-            source_digest="digest",
-            snapshot_path="/fixture",
-            request=request,
-        ),
+        deps=await make_deps(shell),
     )
     assert result.output.label == "inconclusive"
     assert shell.executions[0][0].profile == "probe"
@@ -276,17 +341,10 @@ async def test_modified_source_refuses_probe_and_closes_offline_sandbox(tmp_path
         )
 
     agent = build_agent(shell, FunctionModel(respond))
-    request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
     with pytest.raises(OpenShellError, match="Original source was modified"):
         await agent.run(
             "Inspect source",
-            deps=InvestigationDeps(
-                run_id="run",
-                sandbox=await shell.create("run"),
-                source_digest="digest",
-                snapshot_path=str(tmp_path),
-                request=request,
-            ),
+            deps=await make_deps(shell, snapshot_path=str(tmp_path)),
         )
     assert len(shell.executions) == 1
     assert shell.executions[0][0].profile == "workspace"
@@ -336,21 +394,11 @@ async def test_post_probe_integrity_failure_recovery_is_narrow(failure):
         if calls == 1:
             return ModelResponse(
                 parts=[
-                    ToolCallPart(
-                        "run_probe",
-                        {"command": "python probe.py"},
-                        tool_call_id="unsafe" if calls == 1 else "corrected",
-                    )
+                    ToolCallPart("run_probe", {"command": "python probe.py"}, tool_call_id="unsafe")
                 ]
             )
         if calls == 2:
-            returned = [
-                part.content
-                for message in messages
-                if isinstance(message, ModelRequest)
-                for part in message.parts
-                if isinstance(part, ToolReturnPart) and part.tool_name == "run_probe"
-            ][-1]
+            returned = tool_returns(messages, "run_probe")[-1]
             returned = returned.model_dump()
             assert returned["id"] == "probe:1:unsafe"
             assert returned["exit_code"] == 0
@@ -359,15 +407,8 @@ async def test_post_probe_integrity_failure_recovery_is_narrow(failure):
             assert "not retried" in returned["observations"]["integrity_feedback"]
         if calls == 3:
             # The invalid probe cannot qualify even with matching claims and citations.
-            from pydantic_ai.messages import RetryPromptPart
 
-            feedback = [
-                part.content
-                for message in messages
-                if isinstance(message, ModelRequest)
-                for part in message.parts
-                if isinstance(part, RetryPromptPart)
-            ][-1]
+            feedback = retry_feedback(messages)[-1]
             assert "source-verified" in feedback
             return ModelResponse(
                 parts=[
@@ -387,14 +428,7 @@ async def test_post_probe_integrity_failure_recovery_is_narrow(failure):
         )
         return response
 
-    request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
-    deps = InvestigationDeps(
-        run_id="run",
-        sandbox=await shell.create("run"),
-        source_digest="digest",
-        snapshot_path="/fixture",
-        request=request,
-    )
+    deps = await make_deps(shell)
     agent = build_agent(shell, FunctionModel(respond))
     if failure == "unsafe":
         result = await agent.run("Inspect", deps=deps)
@@ -416,14 +450,13 @@ async def test_refused_probe_after_original_source_change_is_feedback_not_failur
     """Live cohort 4, case deserialization-fixed (2026-10-05): the agent overwrote app.py, the
     pre-copy integrity check refused the probe, and the whole investigation failed. The refusal
     stays; it now returns bounded feedback the agent can act on, with no receipt to cite."""
-    from pydantic_ai.messages import RetryPromptPart
 
-    from infosec_harness.sandbox import OpenShellError
+    from infosec_harness.sandbox import SourceChanged
 
     shell = FakeOpenShell()
 
     async def copy_workspace(workspace, probe, *, operation_id, expected_source):
-        raise OpenShellError("workspace changed or deleted original source: app.py")
+        raise SourceChanged("workspace changed or deleted original source: app.py")
 
     shell.copy_workspace = copy_workspace
     calls = 0
@@ -435,23 +468,18 @@ async def test_refused_probe_after_original_source_change_is_feedback_not_failur
             return ModelResponse(parts=[ToolCallPart(
                 "run_probe", {"command": "python probe.py"}, tool_call_id="refused")])
         if calls == 2:
-            returned = [part.content for message in messages if isinstance(message, ModelRequest)
-                        for part in message.parts
-                        if isinstance(part, ToolReturnPart) and part.tool_name == "run_probe"][-1]
+            returned = tool_returns(messages, "run_probe")[-1]
             returned = returned.model_dump()
             assert returned["id"] == "probe:1:refused" and returned["exit_code"] is None
             assert returned["observations"]["source_verified"] is False
             assert "app.py" in returned["observations"]["integrity_feedback"]
             assert "did not run" in returned["observations"]["integrity_feedback"]
             return final_response(info, evidence_ids=["probe:1:refused"])
-        feedback = [part.content for message in messages if isinstance(message, ModelRequest)
-                    for part in message.parts if isinstance(part, RetryPromptPart)][-1]
+        feedback = retry_feedback(messages)[-1]
         assert "exact full Evidence.id" in feedback  # a refused probe has no receipt to cite
         return final_response(info)
 
-    request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
-    deps = InvestigationDeps(run_id="run", sandbox=await shell.create("run"),
-                             source_digest="digest", snapshot_path="/fixture", request=request)
+    deps = await make_deps(shell)
     result = await build_agent(shell, FunctionModel(respond)).run("Inspect", deps=deps)
     assert result.output.label == "inconclusive" and result.output.evidence_ids == []
     assert shell.executions == [] and calls == 3
@@ -490,24 +518,12 @@ async def test_tool_return_evidence_keeps_history_shape_and_bounds():
             return ModelResponse(
                 parts=[ToolCallPart("run_probe", {"command": "python p.py"}, tool_call_id="p")]
             )
-        returned.extend(
-            part.content
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, ToolReturnPart)
-        )
+        returned.extend(tool_returns(messages))
         return final_response(info)
 
     await build_agent(shell, FunctionModel(respond)).run(
         "Inspect",
-        deps=InvestigationDeps(
-            run_id="run",
-            sandbox=await shell.create("run"),
-            source_digest="digest",
-            snapshot_path="/fixture",
-            request=InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture")),
-        ),
+        deps=await make_deps(shell),
     )
     output = {"exit_code": 0, "stdout": "x" + "é" * 2047, "stderr": "err", "timed_out": False}
     expected = [

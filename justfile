@@ -43,3 +43,6 @@ ui-check:
     cd ui && npm run format:check
     cd ui && npm run check:api
     cd ui && npm run build
+
+ui-e2e *args:
+    cd ui && npm run e2e -- {{args}}

@@ -2,41 +2,47 @@
 
 import json
 
-from infosec_harness.contracts import Evidence, Verdict
+from infosec_harness.contracts import PROBE_FIELDS, PROBE_PREREQUISITES, Evidence, Verdict
+
+PROBE_PREFIX = "HARNESS_PROBE "
+# The whole final line, prefix included.
+MAX_PROBE_LINE_CHARS = 4096
 
 
 def final_probe_line(stdout: str) -> str | None:
     """The final stdout line when it carries the HARNESS_PROBE prefix, parsed or not."""
     lines = stdout.rstrip("\r\n").splitlines()
-    return lines[-1] if lines and lines[-1].startswith("HARNESS_PROBE ") else None
+    return lines[-1] if lines and lines[-1].startswith(PROBE_PREFIX) else None
+
+
+def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    values = dict(pairs)
+    if len(values) != len(pairs):
+        raise ValueError("HARNESS_PROBE object repeats a field")
+    return values
 
 
 def parse_probe_observations(stdout: str) -> dict[str, bool | str]:
-    """Parse declared claims, never elevate probe-authored text into an independent oracle."""
+    """Parse the probe's self-reported claims; they never become an independent oracle.
+
+    The final stdout line must be the prefix and one JSON object of at most
+    ``MAX_PROBE_LINE_CHARS`` (whole line) with exactly the ``PROBE_FIELDS``, each a JSON
+    boolean and none repeated. Anything else yields ``{}``.
+    """
     line = final_probe_line(stdout)
-    if line is None or len(line) > 4096:
+    if line is None or len(line) > MAX_PROBE_LINE_CHARS:
         return {}
     try:
-        pairs = json.loads(line[len("HARNESS_PROBE ") :], object_pairs_hook=lambda value: value)
-        fields = {
-            "target_reached",
-            "oracle_valid",
-            "positive_control",
-            "negative_control",
-            "vulnerability_observed",
-        }
-        if not isinstance(pairs, list) or len(pairs) != len(fields):
-            return {}
-        values = dict(pairs)
-        if set(values) != fields or any(type(value) is not bool for value in values.values()):
-            return {}
-        return {**values, "origin": "self_reported"}
-    except (ValueError, TypeError):
+        values = json.loads(line[len(PROBE_PREFIX) :], object_pairs_hook=_unique_object)
+    except ValueError:
         return {}
-
-
-PREREQUISITES = ("target_reached", "oracle_valid", "positive_control", "negative_control")
-PROBE_FIELDS = (*PREREQUISITES, "vulnerability_observed")
+    if (
+        not isinstance(values, dict)
+        or set(values) != set(PROBE_FIELDS)
+        or any(type(value) is not bool for value in values.values())
+    ):
+        return {}
+    return {**values, "origin": "self_reported"}
 
 
 def retry_reasons(verdict: Verdict, evidence: list[Evidence]) -> list[str]:
@@ -63,7 +69,8 @@ def retry_reasons(verdict: Verdict, evidence: list[Evidence]) -> list[str]:
                     "prefix it must be one JSON object of exactly the five fields "
                     + ", ".join(PROBE_FIELDS)
                     + ", each the JSON boolean true or false (numbers such as 1/0, strings, "
-                    "null, duplicate or extra fields are rejected; at most 4096 characters)"
+                    "null, duplicate or extra fields are rejected; the whole line is at most "
+                    f"{MAX_PROBE_LINE_CHARS} characters)"
                 )
             else:
                 reasons.append(
@@ -71,7 +78,7 @@ def retry_reasons(verdict: Verdict, evidence: list[Evidence]) -> list[str]:
                     "boolean JSON fields must share the final stdout line"
                 )
             continue
-        for field in PREREQUISITES:
+        for field in PROBE_PREREQUISITES:
             if observed.get(field) is not True:
                 note = (
                     "; target_reached is true when the real target entry point ran with the "

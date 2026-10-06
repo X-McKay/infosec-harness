@@ -2,12 +2,14 @@
 
 import asyncio
 import copy
+import hashlib
 import io
 import json
 import tarfile
 import threading
 import uuid
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -21,6 +23,9 @@ from infosec_harness.sandbox import (
     OpenShellConfig,
     OpenShellError,
     Profile,
+    Sandbox,
+    SourceChanged,
+    SourceRejected,
     UnsafeSnapshotMetadata,
 )
 from infosec_harness.sandbox.transfer import _path
@@ -165,7 +170,6 @@ def adapter(tmp_path, monkeypatch):
     return boundary, native
 
 
-@pytest.mark.asyncio
 async def test_native_create_and_exec_receipt_replay(adapter):
     boundary, native = adapter
     sandbox = await boundary.create("run")
@@ -178,9 +182,14 @@ async def test_native_create_and_exec_receipt_replay(adapter):
     assert receipt.command == ["printf", "ok"] and receipt.sandbox.id == sandbox.id
     assert native.execs[0].sandbox == sandbox.name
     assert MessageToDict(native.creates[0].spec.template.resources) == {"limits": {"cpu": "1", "memory": "512Mi"}}
+    # Live native sandboxes carry these exact labels; close() of a pending create requires them.
+    assert dict(native.creates[0].labels) == {
+        "ih.owner": "infosec-harness.v3",
+        "ih.run": hashlib.sha256(b"run").hexdigest()[:32],
+        "ih.profile": "workspace",
+    }
 
 
-@pytest.mark.asyncio
 async def test_repeated_model_admission_reuses_qualification_without_replaying_commands(adapter):
     boundary, native = adapter
     sandbox = await boundary.create("run", profile="model")
@@ -197,7 +206,6 @@ async def test_repeated_model_admission_reuses_qualification_without_replaying_c
     assert [request.request_id for request in native.execs] == command_ids
 
 
-@pytest.mark.asyncio
 async def test_unknown_admission_closes_instead_of_resending_observation(adapter):
     boundary, native = adapter
     native.next_code = None
@@ -209,7 +217,6 @@ async def test_unknown_admission_closes_instead_of_resending_observation(adapter
     assert not native.resources and not boundary.receipts("run")
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("exit_code", [None, 124])
 async def test_exec_unknown_is_fenced_across_worker_restart(adapter, monkeypatch, exit_code):
     boundary, native = adapter
@@ -232,7 +239,6 @@ async def test_exec_unknown_is_fenced_across_worker_restart(adapter, monkeypatch
     assert len(native.execs) == 1
 
 
-@pytest.mark.asyncio
 async def test_operation_id_cannot_change_request(adapter):
     boundary, native = adapter
     sandbox = await boundary.create("run")
@@ -242,7 +248,6 @@ async def test_operation_id_cannot_change_request(adapter):
     assert len(native.execs) == 1
 
 
-@pytest.mark.asyncio
 async def test_completed_receipt_replays_after_cleanup(adapter):
     boundary, native = adapter
     sandbox = await boundary.create("run")
@@ -252,7 +257,6 @@ async def test_completed_receipt_replays_after_cleanup(adapter):
     assert len(native.execs) == 1
 
 
-@pytest.mark.asyncio
 async def test_output_overflow_cancels_rpc_and_closes_sandbox(adapter):
     boundary, native = adapter
     sandbox = await boundary.create("run")
@@ -273,21 +277,19 @@ async def test_output_overflow_cancels_rpc_and_closes_sandbox(adapter):
     ("null_device_major", 0), ("null_device_minor", 5),
     ("sockets_absent", False), ("credentials_absent", False), ("memory", "max"),
     ("cpu", "max 100000")])
-@pytest.mark.asyncio
 async def test_unconfined_workload_is_deleted_before_handle_return(adapter, field, value):
     boundary, native = adapter
     native.proof[field] = value
-    with pytest.raises(OpenShellError, match="confinement"):
+    with pytest.raises(OpenShellError, match=f"confinement was not established: {field}$"):
         await boundary.create("run")
     assert len(native.deleted) == 1
     assert not native.execs
 
 
-@pytest.mark.asyncio
 async def test_missing_discriminating_native_filesystem_proof_refuses_workload(adapter):
     boundary, native = adapter
     native.proof.pop("shared_tmp_denied")
-    with pytest.raises(OpenShellError, match="confinement"):
+    with pytest.raises(OpenShellError, match="confinement was not established: shared_tmp_denied$"):
         await boundary.create("run")
     assert len(native.deleted) == 1 and not native.execs
 
@@ -300,11 +302,10 @@ def test_only_explicit_null_sink_is_allowed_outside_workspace(adapter, writes):
     document = json.loads(path.read_bytes())
     document["filesystem"]["read_write"] = writes
     path.write_text(json.dumps(document))
-    with pytest.raises(OpenShellError, match="confined writes"):
+    with pytest.raises(OpenShellError, match="confined writes.*profile workspace fails: read_write$"):
         boundary._spec("workspace")
 
 
-@pytest.mark.asyncio
 async def test_cleanup_failure_does_not_skip_other_owned_sandboxes(adapter, monkeypatch):
     boundary, native = adapter
     first = await boundary.create("run")
@@ -322,7 +323,6 @@ async def test_cleanup_failure_does_not_skip_other_owned_sandboxes(adapter, monk
     assert native.deleted == [other.name] and first.name in native.resources
 
 
-@pytest.mark.asyncio
 async def test_outer_mount_fence_requires_observation(adapter, monkeypatch):
     boundary, native = adapter
     original = boundary._inspection_call
@@ -336,12 +336,11 @@ async def test_outer_mount_fence_requires_observation(adapter, monkeypatch):
         return raw
 
     monkeypatch.setattr(boundary, "_inspection_call", unsafe)
-    with pytest.raises(OpenShellError, match="outer workload fence"):
+    with pytest.raises(OpenShellError, match="outer workload fence failed: mounts$"):
         await boundary.create("run")
     assert len(native.deleted) == 1 and not native.execs
 
 
-@pytest.mark.asyncio
 async def test_close_idempotent_and_never_deletes_replacement(adapter):
     boundary, native = adapter
     sandbox = await boundary.create("run")
@@ -355,7 +354,6 @@ async def test_close_idempotent_and_never_deletes_replacement(adapter):
     assert native.deleted == [sandbox.name]
 
 
-@pytest.mark.asyncio
 async def test_closed_run_cannot_reacquire_or_execute(adapter):
     boundary, native = adapter
     sandbox = await boundary.create("run")
@@ -366,7 +364,6 @@ async def test_closed_run_cannot_reacquire_or_execute(adapter):
         await boundary.execute(sandbox, "true", operation_id="activity", timeout=3)
 
 
-@pytest.mark.asyncio
 async def test_cancelled_create_finishes_ownership_record_and_native_cleanup(adapter, monkeypatch):
     boundary, native = adapter
     original = native.CreateSandbox
@@ -389,7 +386,76 @@ async def test_cancelled_create_finishes_ownership_record_and_native_cleanup(ada
     assert saved["closed"] and saved["sandbox"]["id"]
 
 
-@pytest.mark.asyncio
+async def cancel_repeatedly(task, times=3):
+    """Deliver several cancellation requests, as a Temporal worker shutdown can."""
+    for _ in range(times):
+        task.cancel()
+        await asyncio.sleep(0)
+
+
+async def test_repeatedly_cancelled_create_still_finishes_native_cleanup(adapter, monkeypatch):
+    boundary, native = adapter
+    original, original_delete = native.CreateSandbox, native.delete
+    entered, release, deleting, deleted = (threading.Event() for _ in range(4))
+
+    def delayed(request, timeout):
+        entered.set()
+        assert release.wait(3)
+        return original(request, timeout)
+
+    def slow_delete(name, **kwargs):
+        deleting.set()
+        assert deleted.wait(3)
+        original_delete(name, **kwargs)
+
+    monkeypatch.setattr(native, "CreateSandbox", delayed)
+    monkeypatch.setattr(native, "delete", slow_delete)
+    task = asyncio.create_task(boundary.create("run"))
+    assert await asyncio.to_thread(entered.wait, 3)
+    await cancel_repeatedly(task)
+    release.set()
+    assert await asyncio.to_thread(deleting.wait, 3)
+    await cancel_repeatedly(task)  # while the owned close is in flight
+    deleted.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert len(native.deleted) == 1 and not native.resources
+    saved = json.loads(next((boundary.config.state_dir / "sandboxes").glob("*.json")).read_bytes())
+    assert saved["closed"] and saved["sandbox"]["id"]
+
+
+async def test_repeatedly_cancelled_exec_still_closes_its_sandbox(adapter, monkeypatch):
+    boundary, native = adapter
+    sandbox = await boundary.create("run")
+    original, original_delete = native.ExecSandbox, native.delete
+    entered, release, deleting, deleted = (threading.Event() for _ in range(4))
+
+    def blocked(request, timeout):
+        entered.set()
+        assert release.wait(3)
+        return original(request, timeout)
+
+    def slow_delete(name, **kwargs):
+        deleting.set()
+        assert deleted.wait(3)
+        original_delete(name, **kwargs)
+
+    monkeypatch.setattr(native, "ExecSandbox", blocked)
+    monkeypatch.setattr(native, "delete", slow_delete)
+    task = asyncio.create_task(boundary.execute(sandbox, "true", operation_id="activity", timeout=3))
+    assert await asyncio.to_thread(entered.wait, 3)
+    await cancel_repeatedly(task)
+    release.set()
+    assert await asyncio.to_thread(deleting.wait, 3)
+    await cancel_repeatedly(task)
+    deleted.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert native.deleted == [sandbox.name]
+    saved = json.loads(next((boundary.config.state_dir / "sandboxes").glob("*.json")).read_bytes())
+    assert saved["closed"]
+
+
 async def test_unexpected_workspace_provider_is_rejected(adapter, monkeypatch):
     boundary, native = adapter
 
@@ -404,7 +470,6 @@ async def test_unexpected_workspace_provider_is_rejected(adapter, monkeypatch):
     assert len(native.deleted) == 1 and not native.execs
 
 
-@pytest.mark.asyncio
 async def test_forged_handle_cannot_execute(adapter):
     boundary, native = adapter
     sandbox = await boundary.create("run")
@@ -448,11 +513,12 @@ def test_native_package_policy_uses_automatic_tls_and_exclusive_l7_rules(adapter
         observed = spec.policy.network_policies["packages"].endpoints[0]
         assert observed.enforcement == 1 and observed.tls == 0
     else:
-        with pytest.raises(OpenShellError, match="package egress"):
+        failed = "tls" if tls else "access"
+        with pytest.raises(OpenShellError,
+                           match=f"package egress.*rule packages endpoint 0 fails: {failed}$"):
             boundary._spec("workspace")
 
 
-@pytest.mark.asyncio
 async def test_model_cannot_receive_source_and_source_symlinks_rejected(adapter, tmp_path):
     boundary, _ = adapter
     model = await boundary.create("model-run", profile="model")
@@ -462,7 +528,7 @@ async def test_model_cannot_receive_source_and_source_symlinks_rejected(adapter,
     source = tmp_path / "source"
     source.mkdir()
     (source / "secret").symlink_to("/etc/passwd")
-    with pytest.raises(OpenShellError, match="symlinks"):
+    with pytest.raises(SourceRejected, match="symlinks"):
         await boundary.upload(sandbox, source, "/workspace/repo")
 
 
@@ -471,6 +537,15 @@ def archive(member):
     with tarfile.open(fileobj=stream, mode="w") as tar:
         tar.addfile(member, io.BytesIO(b"x" * member.size) if member.isfile() else None)
     return stream.getvalue()
+
+
+def original_of(tmp_path, member: tarfile.TarInfo) -> Path:
+    """The original source directory that ``archive(member)`` captures unchanged."""
+    original = tmp_path / "original"
+    original.mkdir()
+    if member.isfile() and not member.name.startswith(("/", "..")):
+        (original / member.name).write_bytes(b"x" * member.size)
+    return original
 
 
 def source_archive(content, *, include_original=True, mode=0o644):
@@ -487,8 +562,7 @@ def source_archive(content, *, include_original=True, mode=0o644):
     return stream.getvalue()
 
 
-@pytest.mark.asyncio
-async def test_archive_over_one_gateway_message_is_restored_in_parts(adapter):
+async def test_archive_over_one_gateway_message_is_restored_in_parts(adapter, tmp_path):
     """Live 2026-10-05: a 2.6 MB Java workspace restore failed because the pinned gateway
     decodes at most 1 MiB per gRPC message. Parts stay under that bound, each is its own
     receipt, and the final extraction runs inside the sandbox from the staged file."""
@@ -500,7 +574,9 @@ async def test_archive_over_one_gateway_message_is_restored_in_parts(adapter):
     member = tarfile.TarInfo("vendor.jar")
     member.size = 2 * _PART_BYTES + 1
     native.archive = archive(member)
-    await boundary.copy_workspace(source, probe, operation_id="copy-activity")
+    original = original_of(tmp_path, member)
+    await boundary.copy_workspace(source, probe, operation_id="copy-activity",
+                                  expected_source=original)
     parts = [r for r in native.execs if "open('ab')" in " ".join(r.command)]
     unpack = [r for r in native.execs if "extractall" in " ".join(r.command)]
     assert len(parts) == 3 and all(len(r.stdin) <= _PART_BYTES for r in parts)
@@ -508,24 +584,27 @@ async def test_archive_over_one_gateway_message_is_restored_in_parts(adapter):
     assert len(unpack) == 1 and unpack[0].stdin == b"" and "unlink" in " ".join(unpack[0].command)
     assert all(r.sandbox == probe.name for r in parts + unpack)
     before = len(native.execs)
-    await boundary.copy_workspace(source, probe, operation_id="copy-activity")
+    await boundary.copy_workspace(source, probe, operation_id="copy-activity",
+                                  expected_source=original)
     assert len(native.execs) == before  # every part and the extraction replay from receipts
 
 
-@pytest.mark.asyncio
-async def test_large_native_snapshot_enters_probe_without_host_extraction(adapter):
+async def test_large_native_snapshot_enters_probe_without_host_extraction(adapter, tmp_path):
     boundary, native = adapter
     source = await boundary.create("run")
     probe = await boundary.create("run", profile="probe", slot="activity")
     member = tarfile.TarInfo("package.py")
     member.size = 524288
     native.archive = archive(member)
-    await boundary.copy_workspace(source, probe, operation_id="copy-activity")
+    original = original_of(tmp_path, member)
+    await boundary.copy_workspace(source, probe, operation_id="copy-activity",
+                                  expected_source=original)
     capture = [request for request in native.execs if request.command[0] == "/usr/bin/tar"]
     restore = [request for request in native.execs if "extractall" in " ".join(request.command)]
     assert len(capture) == 1 and len(restore) == 1
     assert restore[0].stdin == native.archive and restore[0].sandbox == probe.name
-    await boundary.copy_workspace(source, probe, operation_id="copy-activity")
+    await boundary.copy_workspace(source, probe, operation_id="copy-activity",
+                                  expected_source=original)
     assert len(native.execs) == 2
     assert not (boundary.config.state_dir / "package.py").exists()
 
@@ -533,8 +612,7 @@ async def test_large_native_snapshot_enters_probe_without_host_extraction(adapte
 @pytest.mark.parametrize("name,kind", [("../host.py", tarfile.REGTYPE),
     ("/etc/secret", tarfile.REGTYPE), ("link", tarfile.SYMTYPE), ("hard", tarfile.LNKTYPE),
     ("pipe", tarfile.FIFOTYPE)])
-@pytest.mark.asyncio
-async def test_hostile_archive_is_not_restored_or_extracted_on_host(adapter, name, kind):
+async def test_hostile_archive_is_not_restored_or_extracted_on_host(adapter, tmp_path, name, kind):
     boundary, native = adapter
     source = await boundary.create("run")
     probe = await boundary.create("run", profile="probe", slot="activity")
@@ -542,13 +620,14 @@ async def test_hostile_archive_is_not_restored_or_extracted_on_host(adapter, nam
     member.type = kind
     member.linkname = "/etc/passwd" if kind in (tarfile.SYMTYPE, tarfile.LNKTYPE) else ""
     native.archive = archive(member)
+    original = original_of(tmp_path, member)
     with pytest.raises(UnsafeSnapshotMetadata, match="unsafe archive"):
-        await boundary.copy_workspace(source, probe, operation_id="copy-activity")
+        await boundary.copy_workspace(source, probe, operation_id="copy-activity",
+                                  expected_source=original)
     assert len(native.execs) == 1
 
 
 @pytest.mark.parametrize("content,include_original", [(b"changed", True), (b"", False)])
-@pytest.mark.asyncio
 async def test_changed_or_deleted_original_source_prevents_probe_restore(adapter, tmp_path, content, include_original):
     boundary, native = adapter
     source = await boundary.create("run")
@@ -557,13 +636,12 @@ async def test_changed_or_deleted_original_source_prevents_probe_restore(adapter
     original.mkdir()
     (original / "source.py").write_bytes(b"original")
     native.archive = source_archive(content, include_original=include_original)
-    with pytest.raises(OpenShellError, match="changed or deleted"):
+    with pytest.raises(SourceChanged, match="changed or deleted"):
         await boundary.copy_workspace(source, probe, operation_id="copy", expected_source=original)
     assert len(native.execs) == 1
     assert not boundary.receipts("run")
 
 
-@pytest.mark.asyncio
 async def test_original_source_verification_provenance_is_bound_to_completed_probe_operations(adapter, tmp_path):
     boundary, native = adapter
     source = await boundary.create("run")
@@ -583,12 +661,69 @@ async def test_original_source_verification_provenance_is_bound_to_completed_pro
     await boundary.verify_source(probe, original, operation_id="verify:first")
     assert not next(r for r in boundary.receipts("run") if r.operation_id == "probe:later").source_verified
     native.archive = source_archive(b"changed")
-    with pytest.raises(OpenShellError, match="changed or deleted"):
+    with pytest.raises(SourceChanged, match="changed or deleted"):
         await boundary.verify_source(probe, original, operation_id="verify:later")
     assert not next(r for r in boundary.receipts("run") if r.operation_id == "probe:later").source_verified
 
 
-@pytest.mark.asyncio
+async def test_replayed_capture_never_certifies_an_operation_completed_after_it(adapter, tmp_path, monkeypatch):
+    """A worker can stop between saving the integrity capture and certifying it. Commands
+    that complete before the retry are not covered by that earlier capture."""
+    boundary, native = adapter
+    source = await boundary.create("run")
+    probe = await boundary.create("run", profile="probe", slot="activity")
+    original = tmp_path / "original"
+    original.mkdir()
+    (original / "source.py").write_bytes(b"original")
+    native.archive = source_archive(b"original")
+    await boundary.copy_workspace(source, probe, operation_id="copy", expected_source=original)
+    await boundary.execute(probe, "test source.py", operation_id="probe:before", timeout=3)
+    save = boundary._save
+
+    def crash_before_certifying(path, value, **kwargs):
+        if value.get("source_verified"):
+            raise OSError("worker stopped")
+        save(path, value, **kwargs)
+
+    monkeypatch.setattr(boundary, "_save", crash_before_certifying)
+    with pytest.raises(OSError, match="worker stopped"):
+        await boundary.verify_source(probe, original, operation_id="verify")
+    monkeypatch.setattr(boundary, "_save", save)
+    await boundary.execute(probe, "change source.py", operation_id="probe:after", timeout=3)
+    captures = len([r for r in native.execs if r.command[0] == "/usr/bin/tar"])
+    await boundary.verify_source(probe, original, operation_id="verify")
+    assert len([r for r in native.execs if r.command[0] == "/usr/bin/tar"]) == captures
+    verified = {r.operation_id: r.source_verified for r in boundary.receipts("run")}
+    assert verified["probe:before"] is True
+    assert verified["probe:after"] is False
+
+
+async def test_capture_saved_without_its_covered_set_certifies_nothing(adapter, tmp_path, monkeypatch):
+    """A capture written before the covered set was recorded cannot say what it covers."""
+    boundary, native = adapter
+    source = await boundary.create("run")
+    probe = await boundary.create("run", profile="probe", slot="activity")
+    original = tmp_path / "original"
+    original.mkdir()
+    (original / "source.py").write_bytes(b"original")
+    native.archive = source_archive(b"original")
+    await boundary.copy_workspace(source, probe, operation_id="copy", expected_source=original)
+    await boundary.execute(probe, "test source.py", operation_id="probe:before", timeout=3)
+    save = boundary._save
+
+    def legacy_capture(path, value, **kwargs):
+        if value.get("source_verified"):
+            raise OSError("worker stopped")
+        save(path, {k: v for k, v in value.items() if k != "covered_operations"}, **kwargs)
+
+    monkeypatch.setattr(boundary, "_save", legacy_capture)
+    with pytest.raises(OSError, match="worker stopped"):
+        await boundary.verify_source(probe, original, operation_id="verify")
+    monkeypatch.setattr(boundary, "_save", save)
+    await boundary.verify_source(probe, original, operation_id="verify")
+    assert not next(r for r in boundary.receipts("run") if r.operation_id == "probe:before").source_verified
+
+
 async def test_changed_original_executable_bit_prevents_probe_restore(adapter, tmp_path):
     boundary, native = adapter
     source = await boundary.create("run")
@@ -598,7 +733,7 @@ async def test_changed_original_executable_bit_prevents_probe_restore(adapter, t
     (original / "source.py").write_bytes(b"original")
     (original / "source.py").chmod(0o755)
     native.archive = source_archive(b"original", mode=0o644)
-    with pytest.raises(OpenShellError, match="changed or deleted"):
+    with pytest.raises(SourceChanged, match="changed or deleted"):
         await boundary.copy_workspace(source, probe, operation_id="copy", expected_source=original)
     assert len(native.execs) == 1
 
@@ -634,7 +769,6 @@ def provider_ready_adapter(adapter, monkeypatch):
     return boundary, native, ready, calls
 
 
-@pytest.mark.asyncio
 async def test_provider_pending_to_exact_ready_precedes_exec(adapter, monkeypatch):
     boundary, native, ready, calls = provider_ready_adapter(adapter, monkeypatch)
 
@@ -652,7 +786,6 @@ async def test_provider_pending_to_exact_ready_precedes_exec(adapter, monkeypatc
     assert boundary._record("provider-readiness", sandbox.id).exists()
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("defect", ["superseded", "stale", "empty", "wrong-owner", "malformed",
     "failed", "withheld", "revoked", "unknown"])
 async def test_provider_readiness_fails_closed(adapter, monkeypatch, defect):
@@ -686,7 +819,6 @@ async def test_provider_readiness_fails_closed(adapter, monkeypatch, defect):
     assert native.deleted and not native.execs and not native.observations
 
 
-@pytest.mark.asyncio
 async def test_provider_readiness_cancellation_cleans_owned_sandbox(adapter, monkeypatch):
     boundary, native, ready, calls = provider_ready_adapter(adapter, monkeypatch)
 
@@ -705,7 +837,6 @@ async def test_provider_readiness_cancellation_cleans_owned_sandbox(adapter, mon
     assert native.deleted and not native.execs
 
 
-@pytest.mark.asyncio
 async def test_provider_readiness_timeout_is_bounded_and_cleans_up(adapter, monkeypatch):
     boundary, native, ready, calls = provider_ready_adapter(adapter, monkeypatch)
     boundary.config = boundary.config.model_copy(update={"ready_timeout_seconds": 1})
@@ -721,7 +852,6 @@ async def test_provider_readiness_timeout_is_bounded_and_cleans_up(adapter, monk
     assert native.deleted and not native.execs
 
 
-@pytest.mark.asyncio
 async def test_provider_status_not_requested_for_unattached_workspace(adapter, monkeypatch):
     boundary, native = adapter
 
@@ -732,25 +862,32 @@ async def test_provider_status_not_requested_for_unattached_workspace(adapter, m
     await boundary.create("workspace")
 
 
-@pytest.mark.asyncio
-async def test_provider_readiness_rpc_error_discloses_only_status_code(adapter, monkeypatch):
-    import grpc
+SENTINEL = "SECRET-provider-credential-sentinel"
 
-    boundary, native, _, _ = provider_ready_adapter(adapter, monkeypatch)
-    sentinel = "SECRET-provider-credential-sentinel"
+
+def rpc_failure(status="UNAVAILABLE"):
+    """A native gRPC failure whose server-supplied details must never reach a message."""
+    import grpc
 
     class Failure(grpc.RpcError):
         def code(self):
-            return grpc.StatusCode.UNAVAILABLE
+            return grpc.StatusCode[status]
 
         def details(self):
-            return sentinel
+            return SENTINEL
 
         def __str__(self):
-            return sentinel
+            return SENTINEL
+
+    return Failure()
+
+
+async def test_provider_readiness_rpc_error_discloses_only_status_code(adapter, monkeypatch):
+    boundary, native, _, _ = provider_ready_adapter(adapter, monkeypatch)
+    sentinel = SENTINEL
 
     def failure(request, timeout):
-        raise Failure()
+        raise rpc_failure()
 
     monkeypatch.setattr(native, "GetSandboxProviderStatus", failure)
     with pytest.raises(OpenShellError) as caught:
@@ -760,7 +897,6 @@ async def test_provider_readiness_rpc_error_discloses_only_status_code(adapter, 
     assert native.deleted and not native.execs
 
 
-@pytest.mark.asyncio
 async def test_ordinary_nonzero_exit_is_a_completed_replayable_receipt(adapter):
     boundary, native = adapter
     sandbox = await boundary.create("run")
@@ -774,7 +910,6 @@ async def test_ordinary_nonzero_exit_is_a_completed_replayable_receipt(adapter):
     assert len(native.execs) == 1
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("change", ["missing", "admission", "process", "restart", "container"])
 async def test_qualification_reuse_requires_unchanged_lifecycle(adapter, monkeypatch, change):
     boundary, native = adapter
@@ -806,7 +941,6 @@ async def test_qualification_reuse_requires_unchanged_lifecycle(adapter, monkeyp
     assert native.deleted == [sandbox.name]
 
 
-@pytest.mark.asyncio
 async def test_qualification_reuse_tolerates_routine_resource_version_bump(adapter):
     """Native status writes bump resource_version between audit and reuse (observed live,
     2026-10-05, 9 -> 10 after one exec); the lifecycle proof must not treat that as drift."""
@@ -818,7 +952,6 @@ async def test_qualification_reuse_tolerates_routine_resource_version_bump(adapt
     assert native.deleted == []
 
 
-@pytest.mark.asyncio
 async def test_qualification_reuse_tolerates_mount_order_but_not_mount_changes(adapter, monkeypatch):
     """docker inspect lists Mounts in varying order (observed live, 2026-10-05: the fence
     digest of one running sandbox flipped between two values). Order must not count as
@@ -848,7 +981,6 @@ async def test_qualification_reuse_tolerates_mount_order_but_not_mount_changes(a
     assert native.deleted == [sandbox.name]
 
 
-@pytest.mark.asyncio
 async def test_qualification_reuse_survives_adapter_restart(adapter, monkeypatch):
     boundary, native = adapter
     sandbox = await boundary.create("run")
@@ -858,7 +990,6 @@ async def test_qualification_reuse_survives_adapter_restart(adapter, monkeypatch
     assert len(native.observations) == 1
 
 
-@pytest.mark.asyncio
 async def test_reused_qualification_still_rejects_new_provider_attachment(adapter, monkeypatch):
     boundary, native = adapter
     sandbox = await boundary.create("run")
@@ -871,7 +1002,6 @@ async def test_reused_qualification_still_rejects_new_provider_attachment(adapte
     assert len(native.observations) == 1 and native.deleted == [sandbox.name]
 
 
-@pytest.mark.asyncio
 async def test_incomplete_qualification_is_never_audited_again(adapter):
     boundary, native = adapter
     sandbox = await boundary.create("run")
@@ -892,3 +1022,525 @@ def test_profile_limits_are_parsed_once_and_never_dumped(tmp_path):
     assert (default.cpu_cores, default.memory_bytes) == (1, 512 * 1024**2)
     # model_dump is part of every saved lifecycle binding; derived limits must not appear.
     assert set(profile.model_dump()) == {"image", "policy", "cpu", "memory", "provider"}
+
+
+def inspector(tmp_path, body: str) -> OpenShell:
+    """An adapter whose dedicated inspector is a real local script named ``docker``."""
+    import openshell
+
+    script = tmp_path / "bin" / "docker"
+    script.parent.mkdir(exist_ok=True)
+    script.write_text("#!/bin/sh\n" + body + "\n")
+    script.chmod(0o755)
+    image = "sha256:" + "a" * 64
+    profile = Profile(image=image, policy=tmp_path / "policy.yaml")
+    config = OpenShellConfig(endpoint="127.0.0.1:7777", state_dir=tmp_path / "state",
+        inspection_socket="unix:///dedicated/docker.sock",
+        inspection_command=(str(script), "--host", "unix:///dedicated/docker.sock"),
+        inspection_lima_home=tmp_path / "lima", supervisor_image=image,
+        profiles={"workspace": profile})
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(openshell, "SandboxClient",
+                      lambda *args, **kwargs: SimpleNamespace(_stub=None))
+        return OpenShell(config)
+
+
+async def test_inspector_gets_exact_arguments_and_explicit_environment(tmp_path, monkeypatch):
+    monkeypatch.setenv("IH_AMBIENT_SECRET", "must-not-leak")
+    boundary = inspector(tmp_path, 'printf "%s|%s|%s" "$LIMA_HOME" "${IH_AMBIENT_SECRET:-}" "$*"')
+    output = await boundary._inspection_call(["ps", "-a", "-q"])
+    assert output == f"{tmp_path / 'lima'}||--host unix:///dedicated/docker.sock ps -a -q"
+
+
+@pytest.mark.parametrize(("body", "message"), [
+    ("echo partial; exit 1", "inspection unavailable"),
+    ("head -c 2097153 /dev/zero | tr '\\0' x", "output bound"),
+    ("printf '\\377'", "undecodable"),
+])
+async def test_inspector_failure_modes_fail_closed(tmp_path, body, message):
+    with pytest.raises(OpenShellError, match=message):
+        await inspector(tmp_path, body)._inspection_call(["inspect", "x"])
+
+
+async def test_inspector_timeout_kills_its_whole_process_group(tmp_path, monkeypatch):
+    """A slow inspector (limactl, then ssh, then docker) fails closed and leaves no descendant."""
+    import os
+
+    import infosec_harness.sandbox.openshell as module
+
+    # The inspection deadline must not fire before the grandchild exists and its PID is
+    # published, or the test would observe nothing (a load-dependent race with a fixed short
+    # deadline). A sentinel deadline marks the inspector's timeout; the test expires that
+    # timeout itself once the PID file is observed, so the real timeout path runs every time.
+    sentinel = 3600.0
+    monkeypatch.setattr(module, "_INSPECTION_TIMEOUT_S", sentinel)
+    pidfile = tmp_path / "grandchild"
+    real_timeout = asyncio.timeout
+
+    async def expire_when_ready(deadline):
+        try:
+            async with asyncio.timeout(30):
+                while not pidfile.exists():
+                    await asyncio.sleep(0.01)
+        finally:
+            # Expire even if the PID never appears, so a broken script fails fast, not hangs.
+            deadline.reschedule(asyncio.get_running_loop().time())
+
+    watchers = []
+
+    def observed_timeout(delay):
+        deadline = real_timeout(delay)
+        if delay == sentinel:
+            watchers.append(asyncio.create_task(expire_when_ready(deadline)))
+        return deadline
+
+    monkeypatch.setattr(asyncio, "timeout", observed_timeout)
+    # The PID is written to a temporary name and renamed, so a reader never sees a partial line.
+    boundary = inspector(
+        tmp_path, f"sleep 30 & echo $! > {pidfile}.tmp && mv {pidfile}.tmp {pidfile}; wait"
+    )
+    with pytest.raises(OpenShellError, match="timed out"):
+        await boundary._inspection_call(["ps"])
+    monkeypatch.setattr(asyncio, "timeout", real_timeout)
+    assert len(watchers) == 1
+    await watchers[0]
+    grandchild = int(pidfile.read_text())
+    try:
+        async with asyncio.timeout(10):
+            while True:
+                try:
+                    os.kill(grandchild, 0)
+                except ProcessLookupError:
+                    break
+                await asyncio.sleep(0.05)
+    except TimeoutError:
+        os.kill(grandchild, 9)
+        pytest.fail("inspector descendant survived the timeout")
+
+
+class FailingStream(Stream):
+    def __iter__(self):
+        yield pb.ExecSandboxEvent(stdout=pb.ExecSandboxStdout(data=b"partial"))
+        raise rpc_failure("DEADLINE_EXCEEDED")
+
+
+async def test_exec_stream_rpc_failure_is_unknown_execution_without_server_details(adapter, monkeypatch):
+    boundary, native = adapter
+    sandbox = await boundary.create("run")
+    original = native.ExecSandbox
+
+    def failing(request, timeout):
+        original(request, timeout)
+        native.last_stream = FailingStream([])
+        return native.last_stream
+
+    monkeypatch.setattr(native, "ExecSandbox", failing)
+    with pytest.raises(ExecutionUnknown) as caught:
+        await boundary.execute(sandbox, "true", operation_id="activity", timeout=3)
+    chain = [caught.value, caught.value.__cause__]
+    assert "native exec stream failed: DEADLINE_EXCEEDED" in str(chain[1])
+    assert all(SENTINEL not in str(link) for link in chain)
+    assert native.last_stream.cancelled and native.deleted == [sandbox.name]
+
+
+async def test_capture_stream_rpc_failure_is_unknown_execution(adapter, monkeypatch, tmp_path):
+    boundary, native = adapter
+    source = await boundary.create("run")
+    probe = await boundary.create("run", profile="probe", slot="activity")
+    monkeypatch.setattr(native, "ExecSandbox", lambda request, timeout: FailingStream([]))
+    with pytest.raises(ExecutionUnknown, match="DEADLINE_EXCEEDED") as caught:
+        await boundary.copy_workspace(source, probe, operation_id="copy", expected_source=tmp_path)
+    assert SENTINEL not in str(caught.value) and native.deleted == [source.name]
+
+
+@pytest.mark.parametrize("method,what", [("GetSandbox", "sandbox lookup"),
+                                         ("ListSandboxProviders", "provider attachment")])
+async def test_unary_rpc_failure_names_only_the_call_and_status(adapter, monkeypatch, method, what):
+    boundary, native = adapter
+    await boundary.create("run")
+
+    def failure(request, timeout):
+        raise rpc_failure()
+
+    monkeypatch.setattr(native, method, failure)
+    with pytest.raises(OpenShellError) as caught:
+        await boundary.create("run")
+    assert str(caught.value) == f"native {what} RPC failed: UNAVAILABLE"
+    assert caught.value.__suppress_context__ and SENTINEL not in str(caught.value)
+
+
+async def test_create_rpc_failure_keeps_the_pending_record_fail_closed(adapter, monkeypatch):
+    boundary, native = adapter
+
+    def failure(request, timeout):
+        raise rpc_failure("DEADLINE_EXCEEDED")
+
+    monkeypatch.setattr(native, "CreateSandbox", failure)
+    with pytest.raises(OpenShellError, match=r"^native sandbox create RPC failed: DEADLINE_EXCEEDED$"):
+        await boundary.create("run")
+    saved = json.loads(next((boundary.config.state_dir / "sandboxes").glob("*.json")).read_bytes())
+    assert saved == {"sandbox": {"id": "", "run_id": "run", "name": saved["sandbox"]["name"],
+                                 "profile": "workspace", "slot": ""}, "closed": False}
+
+
+async def test_close_treats_only_not_found_as_absent(adapter, monkeypatch):
+    boundary, native = adapter
+    sandbox = await boundary.create("run")
+    status = {"value": "UNAVAILABLE"}
+
+    def failure(request, timeout):
+        raise rpc_failure(status["value"])
+
+    monkeypatch.setattr(native, "GetSandbox", failure)
+    with pytest.raises(OpenShellError, match=r"^native sandbox lookup RPC failed: UNAVAILABLE$"):
+        await boundary.close(sandbox)
+    assert not native.deleted
+    # NOT_FOUND means already gone: close still requires the inspector to show no workload.
+    status["value"] = "NOT_FOUND"
+    native.resources.pop(sandbox.name)
+    await boundary.close(sandbox)
+    saved = json.loads(next((boundary.config.state_dir / "sandboxes").glob("*.json")).read_bytes())
+    assert saved["closed"]
+
+
+def failing_close(boundary, monkeypatch):
+    async def close(sandbox):
+        raise OpenShellError("dedicated container inspection unavailable")
+
+    monkeypatch.setattr(boundary, "close", close)
+
+
+async def test_failed_close_never_replaces_unknown_execution(adapter, monkeypatch):
+    boundary, native = adapter
+    sandbox = await boundary.create("run")
+    native.next_code = None
+    failing_close(boundary, monkeypatch)
+    with pytest.raises(ExecutionUnknown, match="outcome unknown") as caught:
+        await boundary.execute(sandbox, "true", operation_id="activity", timeout=3)
+    assert caught.value.__notes__ == ["owned sandbox close failed: OpenShellError"]
+
+
+async def test_failed_close_never_replaces_cancellation(adapter, monkeypatch):
+    boundary, native = adapter
+    sandbox = await boundary.create("run")
+    entered, release = threading.Event(), threading.Event()
+    original = native.ExecSandbox
+
+    def blocked(request, timeout):
+        entered.set()
+        assert release.wait(3)
+        return original(request, timeout)
+
+    monkeypatch.setattr(native, "ExecSandbox", blocked)
+    failing_close(boundary, monkeypatch)
+    task = asyncio.create_task(boundary.execute(sandbox, "true", operation_id="activity", timeout=3))
+    assert await asyncio.to_thread(entered.wait, 3)
+    task.cancel()
+    release.set()
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await task
+    assert caught.value.__notes__ == ["owned sandbox close failed: OpenShellError"]
+
+
+async def test_failed_close_keeps_the_admission_failure(adapter, monkeypatch):
+    boundary, native = adapter
+    native.proof["uid"] = 0
+    failing_close(boundary, monkeypatch)
+    with pytest.raises(OpenShellError, match="confinement") as caught:
+        await boundary.create("run")
+    assert caught.value.__notes__ == ["owned sandbox close failed: OpenShellError"]
+
+
+@pytest.mark.parametrize("section,key,value,failed", [
+    ("process", "run_as_user", "0", "run_as_user"),
+    ("landlock", "compatibility", "best_effort", "landlock_hard_requirement"),
+    ("filesystem", "include_workdir", True, "workdir_excluded"),
+])
+def test_policy_refusal_names_each_failed_check(adapter, section, key, value, failed):
+    boundary, _ = adapter
+    path = boundary.config.profiles["probe"].policy
+    document = json.loads(path.read_bytes())
+    document[section][key] = value
+    document["network_policies"] = {"packages": {"endpoints": [{"host": "pypi.org", "port": 443,
+        "protocol": "rest", "enforcement": "enforce", "rules": [{"allow": {"method": "GET"}}]}]}}
+    path.write_text(json.dumps(document))
+    with pytest.raises(OpenShellError, match=f"profile probe fails: {failed}, egress_denied$"):
+        boundary._spec("probe")
+
+
+@pytest.mark.parametrize("change,failed", [
+    (lambda host, workload: host.update(Runtime="runsc"), "runtime"),
+    (lambda host, workload: host.update(PidsLimit=0), "pids_limit"),
+    (lambda host, workload: host.update(Privileged=True, NetworkMode="host"),
+     "network_mode, unprivileged"),
+    (lambda host, workload: workload.update(Image="sha256:" + "f" * 64), "workload_image"),
+])
+async def test_outer_fence_refusal_names_each_failed_check(adapter, monkeypatch, change, failed):
+    boundary, native = adapter
+    original = boundary._inspection_call
+
+    async def altered(args):
+        raw = await original(args)
+        if args[0] == "inspect":
+            values = json.loads(raw)
+            change(values[0]["HostConfig"], values[0])
+            return json.dumps(values)
+        return raw
+
+    monkeypatch.setattr(boundary, "_inspection_call", altered)
+    with pytest.raises(OpenShellError, match=f"outer workload fence failed: {failed}$"):
+        await boundary.create("run")
+    assert len(native.deleted) == 1 and not native.execs
+
+
+async def test_admission_refusal_names_each_failed_check(adapter, monkeypatch):
+    boundary, native = adapter
+    original = native.GetSandbox
+
+    def unready(request, timeout):
+        response = original(request, timeout)
+        response.sandbox.status.phase = pb.SANDBOX_PHASE_PROVISIONING
+        response.sandbox.status.configuration_activated = False
+        return response
+
+    monkeypatch.setattr(native, "GetSandbox", unready)
+    with pytest.raises(OpenShellError,
+                       match="admission mismatch: phase, configuration_activated$"):
+        await boundary.create("run")
+
+
+async def test_message_wording_does_not_decide_a_source_change(adapter, tmp_path):
+    """Callers classify by type: the other source failures are not a SourceChanged."""
+    boundary, native = adapter
+    source = await boundary.create("run")
+    probe = await boundary.create("run", profile="probe", slot="activity")
+    original = tmp_path / "original"
+    original.mkdir()
+    (original / "link").symlink_to("/etc/passwd")
+    native.archive = source_archive(b"original")
+    with pytest.raises(SourceRejected, match="unsafe file types") as caught:
+        await boundary.copy_workspace(source, probe, operation_id="copy", expected_source=original)
+    assert not isinstance(caught.value, SourceChanged)
+
+
+async def test_receipts_read_records_saved_by_an_earlier_v11_worker(adapter):
+    """In-flight v11 runs keep records written before the record types existed: an exec
+    receipt, a probe restore, and an integrity check without a covered-operation set."""
+    boundary, _ = adapter
+    state = boundary.config.state_dir
+    probe = {"id": "native-probe", "run_id": "run", "name": "ih-probe", "profile": "probe",
+             "slot": "probe:1:call"}
+    workspace = {**probe, "id": "native-workspace", "name": "ih-workspace", "profile": "workspace",
+                 "slot": ""}
+    records = {
+        "operations/a.json": {"command": ["/bin/sh", "-c", "run-tests"], "operation_id": "probe:1:call",
+            "request_digest": "d" * 64, "sandbox": probe,
+            "result": {"exit_code": 0, "output_truncated": False, "stderr": "", "stdout": "ok\n"}},
+        "operations/b.json": {"command": ["true"], "operation_id": "execute:2:call",
+            "request_digest": "e" * 64, "sandbox": {**probe, "run_id": "other"},
+            "result": {"exit_code": 0, "output_truncated": False, "stderr": "", "stdout": ""}},
+        "operations/c.json": {"command": ["true"], "operation_id": "probe:3:call",
+            "request_digest": "f" * 64, "sandbox": probe},
+        "transfers/restore.json": {"expected_source_digest": "o" * 64, "operation_id": "copy:1:call",
+            "probe": probe, "restored": True, "sha256": "a" * 64, "size": 10240,
+            "source": workspace},
+        "transfers/verify.json": {"expected_source_digest": "o" * 64, "operation_id": "verify:1:call",
+            "sha256": "b" * 64, "size": 10240, "source": probe, "source_verified": True,
+            "verified_operations": ["probe:1:call"]},
+    }
+    for name, value in records.items():
+        (state / name).parent.mkdir(exist_ok=True)
+        (state / name).write_text(json.dumps(value, sort_keys=True))
+    [receipt] = boundary.receipts("run")
+    assert receipt.sandbox.id == "native-probe" and receipt.sandbox.slot == "probe:1:call"
+    assert receipt.command == ["/bin/sh", "-c", "run-tests"] and receipt.request_digest == "d" * 64
+    assert receipt.result.stdout == "ok\n" and receipt.result.exit_code == 0
+    assert receipt.workspace_digest == "a" * 64 and receipt.source_verified
+
+
+@pytest.mark.parametrize("name", ["create", "upload", "copy_workspace", "verify_source",
+                                  "execute", "receipts", "close", "close_run"])
+def test_fake_adapter_keeps_the_real_signatures(name):
+    """A call that works against the fake must work against the adapter, and back."""
+    import inspect
+
+    from fakes import FakeOpenShell
+
+    def shape(method):
+        return [(p.name, p.kind, p.default) for p in inspect.signature(method).parameters.values()]
+
+    assert shape(getattr(FakeOpenShell, name)) == shape(getattr(OpenShell, name))
+
+
+async def test_boundary_events_carry_ids_but_never_commands_or_output(adapter, caplog):
+    import logging
+
+    boundary, native = adapter
+    caplog.set_level(logging.INFO, logger="infosec_harness.sandbox")
+    sandbox = await boundary.create("run")
+    native.next_output = "SECRET-workload-output"
+    await boundary.execute(sandbox, ["printf", "SECRET-command"], operation_id="execute:1:call",
+                           timeout=3)
+    native.next_code = None
+    with pytest.raises(ExecutionUnknown):
+        await boundary.execute(sandbox, "true", operation_id='probe:2:"x y"\nforged', timeout=3)
+    lines = [record.getMessage() for record in caplog.records]
+    assert lines[0] == (f"event=sandbox_created run_id=run sandbox_id={sandbox.id} "
+                        'profile=workspace slot=""')
+    assert (f"event=receipt_written run_id=run operation_id=execute:1:call sandbox_id={sandbox.id} "
+            "exit_code=0 stdout_bytes=22 stderr_bytes=0") in lines
+    unknown = next(line for line in lines if line.startswith("event=execution_unknown"))
+    assert 'operation_id="probe:2:\\"x y\\"\\nforged"' in unknown and "\n" not in unknown
+    assert f"event=sandbox_closed run_id=run sandbox_id={sandbox.id}" in lines[-1]
+    assert not any("SECRET" in line for line in lines)
+
+
+async def test_refusal_and_cleanup_failure_are_logged(adapter, monkeypatch, caplog):
+    import logging
+
+    boundary, native = adapter
+    caplog.set_level(logging.INFO, logger="infosec_harness.sandbox")
+    native.proof["uid"] = 0
+    failing_close(boundary, monkeypatch)
+    with pytest.raises(OpenShellError):
+        await boundary.create("run")
+    refused, failed = [r for r in caplog.records if "refused" in r.getMessage() or "cleanup" in r.getMessage()]
+    assert refused.levelno == logging.WARNING
+    assert 'reason="actual workload confinement was not established: uid"' in refused.getMessage()
+    assert failed.getMessage().startswith("event=cleanup_failed run_id=run sandbox_id=")
+    assert failed.getMessage().endswith("error_type=OpenShellError")
+
+
+def pending_record(boundary, run_id="run", profile="workspace"):
+    """The ownership record a worker leaves when it stops after CreateSandbox was sent."""
+    key = boundary._key(Sandbox("", run_id, "", profile, ""))
+    name = "ih-" + hashlib.sha256(key.encode()).hexdigest()[:16]
+    path = boundary._record("sandboxes", key)
+    boundary._save(path, {"sandbox": {"id": "", "run_id": run_id, "name": name,
+                                      "profile": profile, "slot": ""}, "closed": False})
+    return name, path
+
+
+def native_create(boundary, native, name, labels):
+    spec = boundary._spec("workspace")
+    native.CreateSandbox(pb.CreateSandboxRequest(name=name, spec=spec, labels=labels,
+                                                 request_id=str(uuid.uuid4())), 30)
+    native.creates.clear()
+    return native.resources[name].metadata.id
+
+
+async def test_pending_create_is_reconciled_by_owned_labels_and_never_resent(adapter):
+    boundary, native = adapter
+    name, path = pending_record(boundary)
+    native_id = native_create(boundary, native, name, boundary._labels("run", "workspace"))
+    # The reconciled sandbox has no qualification proof, so it is closed, never used.
+    with pytest.raises(OpenShellError, match="qualification proof is missing"):
+        await boundary.create("run")
+    assert not native.creates and native.deleted == [name]
+    saved = json.loads(path.read_bytes())
+    assert saved["sandbox"]["id"] == native_id and saved["closed"]
+
+
+async def test_pending_create_with_foreign_labels_is_not_adopted_or_deleted(adapter):
+    boundary, native = adapter
+    name, path = pending_record(boundary)
+    native_create(boundary, native, name, {**boundary._labels("run", "workspace"), "ih.run": "other"})
+    with pytest.raises(OpenShellError, match="pending create cannot be reconciled"):
+        await boundary.create("run")
+    with pytest.raises(OpenShellError, match="pending creation ownership mismatch"):
+        await boundary.close(Sandbox(**json.loads(path.read_bytes())["sandbox"]))
+    assert not native.creates and not native.deleted
+    assert json.loads(path.read_bytes())["sandbox"]["id"] == ""
+
+
+async def test_absent_pending_create_cannot_be_confirmed_closed(adapter, monkeypatch):
+    """NOT_FOUND by name does not prove that a create sent earlier will not still land."""
+    boundary, native = adapter
+    name, path = pending_record(boundary)
+
+    def missing(request, timeout):
+        raise rpc_failure("NOT_FOUND")
+
+    monkeypatch.setattr(native, "GetSandbox", missing)
+    with pytest.raises(ExecutionUnknown, match="pending native create cannot yet be confirmed absent"):
+        await boundary.close(Sandbox(**json.loads(path.read_bytes())["sandbox"]))
+    assert not json.loads(path.read_bytes())["closed"]
+
+
+@pytest.mark.parametrize("change,message", [
+    ({"endpoint": "10.0.0.5:7777"}, "explicit loopback endpoint"),
+    ({"endpoint": "localhost"}, "explicit loopback endpoint"),
+    ({"tls_cert": "/tmp/cert.pem"}, "certificate and key must be paired"),
+    ({"state_dir": "state"}, "absolute state_dir"),
+    ({"inspection_socket": "unix:///var/run/docker.sock",
+      "inspection_command": ("/usr/bin/docker", "--host", "unix:///var/run/docker.sock")},
+     "dedicated Docker socket"),
+    ({"inspection_socket": "tcp://127.0.0.1:2375"}, "dedicated Docker socket"),
+    ({"inspection_command": ("/usr/bin/docker", "--host", "unix:///other.sock")},
+     "dedicated Docker socket"),
+    ({"inspection_command": ("/usr/bin/podman", "--host", "unix:///dedicated/docker.sock")},
+     "dedicated Docker socket"),
+])
+def test_runtime_config_rejects_weakened_boundaries(adapter, change, message):
+    boundary, _ = adapter
+    values = {**boundary.config.model_dump(), **change}
+    with pytest.raises(ValueError, match=message):
+        OpenShellConfig.model_validate(values)
+
+
+def test_runtime_config_requires_absolute_policy_paths(adapter):
+    boundary, _ = adapter
+    values = boundary.config.model_dump()
+    values["profiles"] = copy.deepcopy(values["profiles"])
+    values["profiles"]["probe"]["policy"] = "policy.yaml"
+    with pytest.raises(ValueError, match="policy paths must be absolute"):
+        OpenShellConfig.model_validate(values)
+
+
+@pytest.mark.parametrize("call,message", [
+    (dict(operation_id="", timeout=3), "operation_id of 1..1024 characters is required .got 0."),
+    (dict(operation_id="x" * 1025, timeout=3), r"required \(got 1025\)"),
+    (dict(operation_id="op", timeout=0), r"timeout 0 is outside 1..300 seconds"),
+    (dict(operation_id="op", timeout=301), r"timeout 301 is outside 1..300 seconds"),
+    (dict(operation_id="op", timeout=True), r"timeout True is outside"),
+    (dict(operation_id="op", timeout=3, command=["a"] * 257),
+     r"257 arguments and 257 bytes \(max 256 and 65536\)"),
+    (dict(operation_id="op", timeout=3, command=["x" * 65537]),
+     r"1 arguments and 65537 bytes \(max 256 and 65536\)"),
+    (dict(operation_id="op", timeout=3, command=["a\x00b"]), "without NUL bytes"),
+    (dict(operation_id="op", timeout=3, command=[]), "non-empty list"),
+    (dict(operation_id="op", timeout=3, stdin=b"x" * 16777217),
+     r"stdin exceeds the transfer bound: 16777217 bytes \(max_transfer_bytes 16777216\)"),
+])
+async def test_exec_input_bounds_name_the_value_and_limit_before_any_intent(adapter, call, message):
+    boundary, native = adapter
+    sandbox = await boundary.create("run")
+    command = call.pop("command", ["true"])
+    with pytest.raises(OpenShellError, match=message):
+        await boundary.execute(sandbox, command, **call)
+    assert not native.execs and not (boundary.config.state_dir / "operations").exists()
+
+
+async def test_upload_over_the_transfer_bound_names_the_setting(adapter, tmp_path):
+    boundary, native = adapter
+    boundary.config = boundary.config.model_copy(update={"max_transfer_bytes": 1024})
+    sandbox = await boundary.create("run")
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "big.bin").write_bytes(b"x" * 1025)
+    with pytest.raises(SourceRejected, match=r"more than 1024 bytes \(max_transfer_bytes"):
+        await boundary.upload(sandbox, source, "/workspace/repo")
+    assert not native.execs
+
+
+@pytest.mark.parametrize("text,message", [
+    ("- not\n- a mapping\n", "policy must be a mapping"),
+    ("network_policies: [1]\n", "policy must be a mapping"),
+    ("key: [unclosed\n", "policy is not valid YAML"),
+    ('{"unknown_field": 1}', "policy does not match the pinned schema: .*unknown_field"),
+])
+def test_malformed_policy_is_refused_naming_the_profile(adapter, text, message):
+    boundary, _ = adapter
+    boundary.config.profiles["probe"].policy.write_text(text)
+    with pytest.raises(OpenShellError, match=f"profile probe {message}"):
+        boundary._spec("probe")

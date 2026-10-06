@@ -2,6 +2,7 @@
 
 import asyncio
 import shlex
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 from datetime import timedelta
 from pathlib import Path
@@ -21,18 +22,55 @@ with workflow.unsafe.imports_passed_through():
     from infosec_harness.agents.evidence import parse_probe_observations
     from infosec_harness.agents.investigator import InvestigationDeps
     from infosec_harness.contracts import (
-        Evidence,
+        MAX_EVIDENCE_IDS,
+        MAX_SUMMARY_CHARS,
+        Finding,
         InvestigationRequest,
         InvestigationResult,
         RunState,
         Verdict,
+        WorkerIdentity,
         definitive_support,
     )
     from infosec_harness.sandbox import OpenShell
-    from infosec_harness.sandbox.process import _finish
-    from infosec_harness.tools.execute import unwrap_output
+    from infosec_harness.sandbox.process import finish
+    from infosec_harness.tools.execute import evidence_from_result, unwrap_output
 
-    from .snapshot import validate_citation
+    from .snapshot import Snapshot, validate_citation
+
+# The terminal failure message embeds at most this many cause links, each message cut to
+# FAILURE_LINK_CHARS. Clients classify failures from it, so these values are a v11 contract.
+FAILURE_CHAIN_LINKS = 8
+FAILURE_LINK_CHARS = 400
+# Temporal wrapper types; the outermost other type names a terminal failure.
+FAILURE_WRAPPERS = frozenset({"ActivityError", "ChildWorkflowError", "WorkflowFailureError"})
+
+# Lifecycle activity bounds (v11 values; replay does not compare them, but keep them stable).
+PREPARE_TIMEOUT = timedelta(minutes=10)
+FINALIZE_TIMEOUT = timedelta(minutes=2)
+CLEANUP_TIMEOUT = timedelta(minutes=5)
+CLEANUP_ATTEMPTS = 3
+CLEANUP_RETRY = RetryPolicy(maximum_attempts=CLEANUP_ATTEMPTS)
+# Server-side backoff between cleanup attempts under CLEANUP_RETRY's (default) intervals.
+CLEANUP_BACKOFF = sum(
+    (
+        min(
+            CLEANUP_RETRY.initial_interval * CLEANUP_RETRY.backoff_coefficient**attempt,
+            CLEANUP_RETRY.maximum_interval or CLEANUP_RETRY.initial_interval * 100,
+        )
+        for attempt in range(CLEANUP_ATTEMPTS - 1)
+    ),
+    timedelta(),
+)
+# Workflow-task latency around the cleanup schedule and completion.
+CLEANUP_MARGIN = timedelta(minutes=5)
+# Time owned cleanup can need after the investigation deadline fires: prepare waits for its
+# own completion (WAIT_CANCELLATION_COMPLETED, no heartbeat), then every cleanup attempt runs
+# with its backoff. The server execution timeout and a cohort's drain must cover it, or the
+# server ends the run before its `finally` closes the owned sandboxes.
+CLEANUP_RESERVE = (
+    PREPARE_TIMEOUT + CLEANUP_ATTEMPTS * CLEANUP_TIMEOUT + CLEANUP_BACKOFF + CLEANUP_MARGIN
+)
 
 
 class PreparedInvestigation(BaseModel):
@@ -52,17 +90,59 @@ class CleanupInvestigation(BaseModel):
     expected_worker_identity: str | None = None
 
 
+class WorkerIdentityMismatch(ApplicationError):
+    """A worker identity check refused an activity before any side effect.
+
+    Non-retryable: another attempt on the same worker meets the same identity. Never in a
+    cohort's agent-level set, so it always stops a cohort. Exported from ``worker``.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, type="WorkerIdentityMismatch", non_retryable=True)
+
+
+def short(fingerprint: str | WorkerIdentity | None) -> str:
+    """A fingerprint prefix for messages; fingerprints are content digests, not secrets."""
+    if isinstance(fingerprint, WorkerIdentity):
+        fingerprint = fingerprint.fingerprint
+    return fingerprint[:12] if fingerprint else "none"
+
+
+def require_unchanged(
+    identity: Callable[[], WorkerIdentity], bound: WorkerIdentity | None
+) -> None:
+    """Refuse when the worker's current content identity differs from the one it bound."""
+    current = identity()
+    if current != bound:
+        raise WorkerIdentityMismatch(
+            "Worker code or isolation configuration changed; restart the worker "
+            f"(bound={short(bound)} current={short(current)})"
+        )
+
+
 class InvestigationActivities:
-    def __init__(self, openshell: OpenShell, snapshot, model_name: str, *, identity=None):
+    def __init__(
+        self,
+        openshell: OpenShell,
+        snapshot: Callable[[Finding, str], Awaitable[Snapshot]],
+        model_name: str,
+        *,
+        identity: Callable[[], WorkerIdentity] | None = None,
+        bound_identity: WorkerIdentity | None = None,
+    ):
+        """``identity`` recomputes the worker identity for drift checks; ``bound_identity`` is
+        the one captured at worker start (computed from ``identity`` when not given)."""
         self.openshell = openshell
         self.snapshot = snapshot
         self.model_name = model_name
         self.identity = identity
-        self.bound_identity = identity() if identity else None
+        if bound_identity is None and identity is not None:
+            bound_identity = identity()
+        self.bound_identity = bound_identity
 
-    def check_identity(self):
-        if self.identity and self.identity() != self.bound_identity:
-            raise ValueError("Worker code or isolation configuration changed; restart the worker")
+    def check_identity(self) -> None:
+        if self.identity is not None:
+            require_unchanged(self.identity, self.bound_identity)
 
     @activity.defn(name="prepare_investigation")
     async def prepare(self, request: InvestigationRequest) -> PreparedInvestigation:
@@ -71,7 +151,11 @@ class InvestigationActivities:
             self.bound_identity is None
             or request.expected_worker_identity != self.bound_identity.fingerprint
         ):
-            raise ValueError("Requested candidate does not match this worker identity")
+            raise WorkerIdentityMismatch(
+                "Requested candidate does not match this worker identity "
+                f"(expected={short(request.expected_worker_identity)} "
+                f"bound={short(self.bound_identity)})"
+            )
         run_id = activity.info().workflow_id
         snapshot = await self.snapshot(request.finding, run_id)
         try:
@@ -80,8 +164,11 @@ class InvestigationActivities:
         except BaseException:
             # This worker knows which runtime received the create, even when no
             # Prepared result reaches the workflow. Close that ownership locally.
-            await _finish(asyncio.ensure_future(self.openshell.close_run(run_id)))
+            await finish(asyncio.ensure_future(self.openshell.close_run(run_id)))
+            activity.logger.warning("event=prepare_failed run_id=%s owned_closed=true", run_id)
             raise
+        activity.logger.info("event=sandbox_prepared run_id=%s sandbox_id=%s source_digest=%s",
+                             run_id, sandbox.id, snapshot.digest[:12])
         return PreparedInvestigation(
             deps=InvestigationDeps(
                 run_id=run_id,
@@ -98,11 +185,14 @@ class InvestigationActivities:
         self.check_identity()
         deps = payload.prepared.deps
         if deps.worker_identity != self.bound_identity:
-            raise ValueError("Investigation changed worker identity before finalization")
+            raise WorkerIdentityMismatch(
+                "Investigation changed worker identity before finalization "
+                f"(prepared={short(deps.worker_identity)} bound={short(self.bound_identity)})"
+            )
         evidence = []
         for receipt in self.openshell.receipts(deps.run_id):
-            identity = receipt.operation_id
-            if not identity.startswith(("execute:", "probe:")):
+            operation_id = receipt.operation_id
+            if not operation_id.startswith(("execute:", "probe:")):
                 continue
             # Same cut detection as the tool return: the receipt holds the wrapper's marker.
             result = unwrap_output(receipt.result)
@@ -111,27 +201,27 @@ class InvestigationActivities:
                 if receipt.sandbox.profile == "probe"
                 else {}
             )
-            if digest := getattr(receipt, "workspace_digest", None):
-                observations["workspace_digest"] = digest
-                observations["source_verified"] = getattr(receipt, "source_verified", False)
+            if receipt.workspace_digest:
+                observations["workspace_digest"] = receipt.workspace_digest
+                observations["source_verified"] = receipt.source_verified
             evidence.append(
-                Evidence(
-                    id=identity,
+                evidence_from_result(
+                    operation_id,
                     kind="probe" if receipt.sandbox.profile == "probe" else "command",
                     command=shlex.join(receipt.command),
-                    exit_code=result.exit_code,
-                    stdout=result.stdout,
-                    stderr=result.stderr,
-                    timed_out=False,
-                    output_truncated=result.output_truncated,
+                    result=result,
                     sandbox_id=receipt.sandbox.id,
                     source_digest=deps.source_digest,
                     observations=observations,
                 )
             )
         known = {item.id for item in evidence}
-        if any(identity not in known for identity in payload.verdict.evidence_ids):
-            raise ValueError("Verdict cites an execution without a trusted OpenShell receipt")
+        if unknown := [item for item in payload.verdict.evidence_ids if item not in known]:
+            # Model-supplied IDs: bounded in the message.
+            raise ValueError(
+                "Verdict cites an execution without a trusted OpenShell receipt: "
+                + repr(unknown)[:200]
+            )
         for citation in payload.verdict.citations:
             validate_citation(deps.snapshot_path, citation)
         limitations = []
@@ -150,23 +240,20 @@ class InvestigationActivities:
         report_ids = set(verdict.evidence_ids)
         if verdict.label != "inconclusive":
             # Same admission rule as the validator, over receipt-rebuilt evidence only.
-            corroborated, contrary = definitive_support(verdict, evidence)
-            blocked = {item.id for item in contrary}
-            superseded = [
-                item.id
-                for item in evidence
-                if item.id in verdict.superseded_evidence_ids and item.id not in blocked
-            ]
+            support = definitive_support(verdict, evidence)
+            corroborated, contrary = support.corroborated, support.contrary
+            # Contradicting qualified probes the verdict superseded and the ordering rule excused.
+            superseded = [item.id for item in support.superseded]
             if superseded:
                 limitations.append(
                     "The investigator superseded earlier complete probes whose observations "
                     "contradicted the verdict: " + ", ".join(superseded)
                     + ". Their excerpts are retained; the summary states the claimed flaw."
                 )
-                for identity in superseded:
-                    if len(report_ids) >= 10:
+                for operation_id in superseded:
+                    if len(report_ids) >= MAX_EVIDENCE_IDS:
                         break
-                    report_ids.add(identity)
+                    report_ids.add(operation_id)
             if contrary:
                 limitations.append(
                     "Successful source-verified offline probes reported contradictory observations: "
@@ -176,7 +263,7 @@ class InvestigationActivities:
                 # Retain contrary excerpts within the existing ten-receipt report bound;
                 # every contrary ID remains named above even when excerpts do not fit.
                 for item in contrary:
-                    if len(report_ids) >= 10:
+                    if len(report_ids) >= MAX_EVIDENCE_IDS:
                         break
                     report_ids.add(item.id)
             if not corroborated or contrary:
@@ -192,7 +279,7 @@ class InvestigationActivities:
                 verdict = verdict.model_copy(
                     update={
                         "label": "inconclusive",
-                        "summary": (explanation + verdict.summary)[:12000],
+                        "summary": (explanation + verdict.summary)[:MAX_SUMMARY_CHARS],
                     }
                 )
         # Native receipts retain full bounded output. Reports contain cited and contrary excerpts.
@@ -201,6 +288,10 @@ class InvestigationActivities:
             limitations.append(
                 "Report output excerpts are bounded; full native receipts remain in the private execution state."
             )
+        activity.logger.info(
+            "event=finalized run_id=%s proposed=%s verdict=%s receipts=%d reported=%d",
+            deps.run_id, payload.verdict.label, verdict.label, len(evidence), len(reported),
+        )
         return InvestigationResult(
             finding=deps.request.finding,
             verdict=verdict,
@@ -218,12 +309,14 @@ class InvestigationActivities:
         if expected is not None and (
             self.bound_identity is None or expected != self.bound_identity.fingerprint
         ):
-            raise ApplicationError(
-                "Owned sandbox cleanup reached a different worker identity", non_retryable=True
+            raise WorkerIdentityMismatch(
+                "Owned sandbox cleanup reached a different worker identity "
+                f"(expected={short(expected)} bound={short(self.bound_identity)})"
             )
         # Current code/policy drift must not prevent the original bound adapter
         # from closing its own sandboxes.
         await self.openshell.close_run(payload.run_id)
+        activity.logger.info("event=owned_cleanup_closed run_id=%s", payload.run_id)
         if self.identity is not None and expected is None:
             raise ApplicationError(
                 "Local cleanup attempted, but original worker identity is unknown; cleanup unverified",
@@ -259,7 +352,7 @@ class InvestigationWorkflow(PydanticAIWorkflow):
                     "prepare_investigation",
                     request,
                     result_type=PreparedInvestigation,
-                    start_to_close_timeout=timedelta(minutes=10),
+                    start_to_close_timeout=PREPARE_TIMEOUT,
                     retry_policy=RetryPolicy(maximum_attempts=1),
                     cancellation_type=workflow.ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
                 )
@@ -291,7 +384,7 @@ class InvestigationWorkflow(PydanticAIWorkflow):
                         },
                     ),
                     result_type=InvestigationResult,
-                    start_to_close_timeout=timedelta(minutes=2),
+                    start_to_close_timeout=FINALIZE_TIMEOUT,
                     retry_policy=RetryPolicy(maximum_attempts=1),
                 )
         except asyncio.CancelledError as error:
@@ -303,7 +396,7 @@ class InvestigationWorkflow(PydanticAIWorkflow):
             # outcomes by the outermost meaningful type (e.g. a terminal executor exit vs
             # unknown dispatch) and by the chain embedded in the message.
             chain = [error]
-            while len(chain) < 8 and (
+            while len(chain) < FAILURE_CHAIN_LINKS and (
                 nxt := getattr(chain[-1], "cause", None) or chain[-1].__cause__
             ):
                 chain.append(nxt)
@@ -313,9 +406,10 @@ class InvestigationWorkflow(PydanticAIWorkflow):
 
             # The outermost non-wrapper type names the failure (UnexpectedModelBehavior, not
             # the ModelRetry it wraps; ModelExecutorError, not the ActivityError around it).
-            wrappers = {"ActivityError", "ChildWorkflowError", "WorkflowFailureError"}
-            named = next((item for item in chain if label(item) not in wrappers), error)
-            message = " <- ".join(f"{label(item)}: {str(item)[:400]}" for item in chain)
+            named = next((item for item in chain if label(item) not in FAILURE_WRAPPERS), error)
+            message = " <- ".join(
+                f"{label(item)}: {str(item)[:FAILURE_LINK_CHARS]}" for item in chain
+            )
             caught = ApplicationError(message, type=label(named), non_retryable=True)
             self._state.status = "failed"
             self._state.error = message
@@ -323,7 +417,7 @@ class InvestigationWorkflow(PydanticAIWorkflow):
             self._state.phase = "cleaning_up"
             try:
                 # A cancelled caller still waits for owned sandbox cleanup to settle.
-                await _finish(
+                await finish(
                     asyncio.ensure_future(
                         workflow.execute_activity(
                             "cleanup_investigation",
@@ -336,8 +430,8 @@ class InvestigationWorkflow(PydanticAIWorkflow):
                                     else request.expected_worker_identity
                                 ),
                             ),
-                            start_to_close_timeout=timedelta(minutes=5),
-                            retry_policy=RetryPolicy(maximum_attempts=3),
+                            start_to_close_timeout=CLEANUP_TIMEOUT,
+                            retry_policy=CLEANUP_RETRY,
                             cancellation_type=workflow.ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
                         )
                     )
@@ -346,14 +440,20 @@ class InvestigationWorkflow(PydanticAIWorkflow):
                 self._state.status = "failed"
                 self._state.error = f"Owned sandbox cleanup failed: {error}"
                 self._state.phase = "failed"
+                workflow.logger.warning("event=cleanup_failed run_id=%s", run_id)
                 raise ApplicationError(self._state.error, non_retryable=True) from error
         if caught is not None:
             self._state.phase = self._state.status
+            workflow.logger.info("event=investigation_ended run_id=%s status=%s failure=%s",
+                                 run_id, self._state.status, getattr(caught, "type", None))
             raise caught
-        assert result is not None
+        if result is None:  # Unreachable: every path without a result raised above.
+            raise RuntimeError("Investigation ended without a result or a failure")
         self._state.status = "completed"
         self._state.phase = "completed"
         self._state.result = result
+        workflow.logger.info("event=investigation_ended run_id=%s status=completed verdict=%s",
+                             run_id, result.verdict.label)
         return result
 
 

@@ -36,6 +36,7 @@ before run 10 passed with 11,656 claims of headroom against 6,480 required.
 | 7 | `67ab5bc` | 600k, 40, 300 | 19 / 18 | 5 | 12 | 0 | Four provider `Request timed out` failures (5 s connect default) during an endpoint slowdown; then the operator edited source during the run and the identity guard refused, as designed |
 | 8 | `f7a751e` | 600k, 40, 300 | 30 / 30 | 6 | 0 | 0 | First run to attempt every case. Four external 502 `upstream_unreachable` from the inference backend; two token-budget exhaustions (`java-sqli-fixed` never applied the Maven recipe; `perl-sqli-vulnerable` printed observation values as 1/0, which the parser rejects) |
 | 9 | `32610fe` | 600k, 40, 300 | 0 / 0 | 13 | 23 | 0 | Inference backend returned 503 `no available server` from the first case; stopped by the operator after 13 agent-level failures (`ModelExecutorError`), cleanup confirmed: 0 containers, 0 unknown operations |
+| 10 | `590128f` | 600k, 40, 300 | 33 / 30 | 3 | 2 | 0 | Operator error: the launching shell had a 2 h limit and was killed with case 34 in flight; the drain worker on the recorded queue let the orphaned tool activity time out, the workflow failed closed without retrying, and cleanup left 0 containers. Failures: `java-xxe-vulnerable` and `java-xxe-fixed` on the token budget (a broken nonce oracle, since fixed in the skills), `javascript-cmdi-fixed` on a backend connection error at the first request |
 
 Totals: 146 completed investigations, 142 correct, 0 unsafe negatives. Every completed
 `likely_not_exploitable` case was correct except `testonly` twice (before reachability guidance)
@@ -47,6 +48,23 @@ Typical cases cost 7 to 14 model requests and 25 to 45 native operations; measur
 in run 8 was a median of 2.2 minutes per case (1.2 to 4.6). Read-only inspection after run 7
 showed 6,385 retained claims; run 8 added 1,670, keeping the session near 7,100 of the
 10,000-claim quota.
+
+## Corpus label leak
+
+Runs 1 through 10 used fixtures whose paths and comments carried the label: every pair of the
+36-case corpus lived under `eval-corpus/<lang>/<topic>/vulnerable` and `.../fixed`, sources stated
+`# VULNERABLE: ...` or `# FIXED: ...` with an explanation of the weakness or the control, the
+`unreachable` case's docstring said its sink was not reachable from untrusted input, Java and
+JavaScript package names ended in `-vuln` or `-fixed`, and the two findings of each of the eight
+Python pairs had different descriptions (the exploitable one describing the weakness). The workflow
+withheld `repo_url` from the model's prompt and mounted each snapshot at `/workspace/repo`, so the
+directory name was probably not seen, but the source comments, package names and finding
+descriptions were available to the agent. The accuracy figures from these runs (142 of 146 through
+run 8, 30 of 36 in run 8, 30 of 33 in run 10, 0 unsafe negatives) are therefore not independent
+evidence of triage quality; the quality gates were already `not_checked` and stay so. The corpus was
+de-labelled on 2026-10-06 in commits `1ab456c`, `4f0d5e6`, `7a8df53` and `f7bc84f` on
+`claude/corpus-delabel` (neutral `a`/`b` directories; stripped comments, test names and metadata;
+one shared description per pair; a hygiene test), and accuracy must be re-measured on that corpus.
 
 ## Defects found live and their fixes
 
@@ -90,5 +108,16 @@ Run 9 was the restructured candidate (`agents/`, `tools/`, `workflows/`, `sandbo
 `ModelExecutorError` and say nothing about the candidate. A recovery monitor polled a minimal
 completion every 60 s; the backend answered 200 again at 09:56 UTC.
 
-Next: run 10 on `590128f` (same candidate plus the pre-flight), started 10:13 UTC on 2026-10-06,
-to obtain a complete 36-case report with the gates evaluated.
+Run 10 on `590128f` was the first run with no runtime stop cause of its own: every failure was
+either the agent's probe engineering (two Java XXE cases, root-caused to a nonce mismatch in the
+agent's oracle and fixed in the skills) or the external backend. It was cut short by the operator's
+launcher after 33 of 36 cases, so `complete_corpus` failed again and the quality gates stay
+`not_checked`; observed accuracy was 30 of 33 with 0 unsafe negatives. The three unfinished cases
+ran afterwards as a diagnostic (`diagnostic-10-remainder.json`; diagnostics never qualify) and
+were all correct: `javascript-xssesm-fixed` (594 s, 20 requests), `perl-xss-vulnerable` (150 s,
+13), `perl-xss-fixed` (211 s, 12). Across run 10 and the diagnostic every case was attempted on
+`590128f`: 33 correct, 3 failed, 0 unsafe negatives. The quota was then raised to 40,000 for the
+82-case corpus (pre-flight needs 14,760 claims of headroom at the conservative ceiling).
+
+Next: a full cohort on the consolidated candidate (develop with the quality fixes and the expanded
+corpus), launched detached from any tool time limit, after requalification.

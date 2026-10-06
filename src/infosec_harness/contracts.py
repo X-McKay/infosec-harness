@@ -2,10 +2,43 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+# The workflow generation: a breaking workflow change bumps it, which also renames the default
+# task queue and the run-id prefix, so old workers and histories drain separately.
+GENERATION = "v11"
+# Report bounds shared by the verdict contract and the workflow that writes the report.
+MAX_EVIDENCE_IDS = 10
+MAX_SUMMARY_CHARS = 12_000
+# API projection bounds: history events per run, label characters, listed report files.
+MAX_EVENTS = 500
+MAX_LABEL_CHARS = 200
+MAX_REPORTS = 200
+
+# Plain aliases (not ``type`` statements) so the JSON schema inlines them as before.
+VerdictLabel = Literal["potentially_exploitable", "likely_not_exploitable", "inconclusive"]
+# A Temporal WorkflowExecutionStatus name, lower-cased; "unknown" for anything else.
+RunStatus = Literal[
+    "running", "completed", "failed", "canceled", "terminated", "continued_as_new", "timed_out",
+    "unknown",
+]
+RunEventKind = Literal[
+    "workflow_started",
+    "activity_scheduled",
+    "activity_completed",
+    "activity_failed",
+    "activity_timed_out",
+    "timer",
+    "workflow_completed",
+    "workflow_failed",
+    "workflow_cancelled",
+    "other",
+]
+ReportKind = Literal["model", "diagnostic", "openshell", "replay", "unknown"]
 
 
 class Contract(BaseModel):
@@ -56,13 +89,18 @@ class Citation(Contract):
 
 
 class Verdict(Contract):
-    label: Literal["potentially_exploitable", "likely_not_exploitable", "inconclusive"]
-    summary: str = Field(min_length=1, max_length=12_000)
-    evidence_ids: list[str] = Field(default_factory=list, max_length=10)
+    label: VerdictLabel
+    summary: str = Field(min_length=1, max_length=MAX_SUMMARY_CHARS)
+    evidence_ids: list[str] = Field(default_factory=list, max_length=MAX_EVIDENCE_IDS)
     citations: list[Citation] = Field(default_factory=list, max_length=30)
     # Earlier complete probes the investigator disowns as flawed; each must predate the
     # cited probe and the summary must explain the flaw. They stay in the report.
-    superseded_evidence_ids: list[str] = Field(default_factory=list, max_length=10)
+    superseded_evidence_ids: list[str] = Field(default_factory=list, max_length=MAX_EVIDENCE_IDS)
+
+
+# The HARNESS_PROBE claims: four prerequisites and the observation they qualify.
+PROBE_PREREQUISITES = ("target_reached", "oracle_valid", "positive_control", "negative_control")
+PROBE_FIELDS = (*PROBE_PREREQUISITES, "vulnerability_observed")
 
 
 class Evidence(Contract):
@@ -93,15 +131,7 @@ class Evidence(Contract):
             and not self.output_truncated
             and isinstance(self.observations.get("workspace_digest"), str)
             and self.observations.get("source_verified") is True
-            and all(
-                self.observations.get(key) is True
-                for key in (
-                    "target_reached",
-                    "oracle_valid",
-                    "positive_control",
-                    "negative_control",
-                )
-            )
+            and all(self.observations.get(key) is True for key in PROBE_PREREQUISITES)
             and type(self.observations.get("vulnerability_observed")) is bool
         )
 
@@ -117,10 +147,19 @@ class Evidence(Contract):
         )
 
 
-def definitive_support(
-    verdict: Verdict, evidence: Iterable[Evidence]
-) -> tuple[bool, list[Evidence]]:
-    """Return ``(corroborated, contrary)`` for a definitive verdict.
+class Support(NamedTuple):
+    """The admission rule's decision for one definitive verdict."""
+
+    # Source citations plus a cited complete probe whose observation matches the label.
+    corroborated: bool
+    # Qualified probes that contradict the label and were not superseded; any one blocks it.
+    contrary: list[Evidence]
+    # Qualified contradicting probes the verdict superseded and the ordering rule excused.
+    superseded: list[Evidence]
+
+
+def definitive_support(verdict: Verdict, evidence: Iterable[Evidence]) -> Support:
+    """Decide whether the evidence admits a definitive verdict.
 
     Pure admission rule: source citations plus a cited complete source-verified probe whose
     ``vulnerability_observed`` matches the label; any contrary qualified probe blocks it.
@@ -138,24 +177,27 @@ def definitive_support(
     # A flawed earlier probe may be superseded only by a newer cited one: a contrary probe
     # that ran after the citation can never be disowned.
     latest_cited = max((probe_step(item.id) for item in cited), default=-1)
-    superseded = {
+    excused = {
         identity
         for identity in verdict.superseded_evidence_ids
         if -1 < probe_step(identity) < latest_cited
     }
-    contrary = [
-        item
-        for item in qualified
-        if item.observations["vulnerability_observed"] is not expected
-        and item.id not in superseded
-    ]
-    return corroborated, contrary
+    contrary: list[Evidence] = []
+    superseded: list[Evidence] = []
+    for item in qualified:
+        if item.observations["vulnerability_observed"] is not expected:
+            (superseded if item.id in excused else contrary).append(item)
+    return Support(corroborated, contrary, superseded)
+
+
+# Evidence ids are ``<kind>:<agent run step>:<tool call id>`` (built in tools/execute.py).
+EVIDENCE_ID = re.compile(r"[a-z]+:([0-9]{1,9}):.+", re.DOTALL)
 
 
 def probe_step(identity: str) -> int:
     """The agent run step from a ``kind:<step>:<tool-call>`` evidence id; -1 when unknown."""
-    parts = identity.split(":")
-    return int(parts[1]) if len(parts) >= 3 and parts[1].isdigit() else -1
+    match = EVIDENCE_ID.fullmatch(identity)
+    return int(match[1]) if match else -1
 
 
 class InvestigationResult(Contract):
@@ -181,11 +223,70 @@ class RunState(Contract):
 class RunSummary(Contract):
     id: str
     title: str
-    status: str
+    status: RunStatus
     started_at: str
     closed_at: str | None = None
+    # Null when the run is not completed or its result could not be read in time.
+    verdict: VerdictLabel | None = None
+    cwe: str | None = None
+    repo_url: str | None = None
+
+
+class CancelResult(Contract):
+    """A cancellation request, or the status of a run that had already closed."""
+
+    status: Literal["cancellation_requested", RunStatus]
 
 
 class RunPage(Contract):
     items: list[RunSummary]
     next_page_token: str | None = None
+
+
+class Health(Contract):
+    """Temporal connectivity only; never sandbox, worker or model qualification."""
+
+    status: Literal["control_plane_ready", "temporal_unavailable"]
+    temporal: bool
+    runtime: Literal["not_checked"] = "not_checked"
+    generation: str
+    task_queue: str
+
+
+class RunEvent(Contract):
+    at: str
+    kind: RunEventKind
+    # Bounded in characters (code points), not bytes.
+    name: str | None = Field(default=None, max_length=MAX_LABEL_CHARS)
+    # Bounded labels such as an exit code or failure type; never a payload.
+    detail: str = Field(default="", max_length=MAX_LABEL_CHARS)
+
+
+class RunEvents(Contract):
+    run_id: str
+    events: list[RunEvent] = Field(max_length=MAX_EVENTS)
+    truncated: bool = False
+
+
+class ReportSummary(Contract):
+    """Operator report files are untrusted and vary in shape: every parsed field is optional."""
+
+    name: str
+    kind: ReportKind
+    bytes: int
+    modified_at: str
+    status: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    commit: str | None = None
+    model: str | None = None
+    planned: int | None = None
+    completed: int | None = None
+    task_success_rate: float | None = None
+    unsafe_negatives: int | None = None
+    gates: dict[str, str] = Field(default_factory=dict)
+
+
+class ReportList(Contract):
+    items: list[ReportSummary] = Field(max_length=MAX_REPORTS)
+    truncated: bool = False
