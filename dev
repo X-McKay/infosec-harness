@@ -1,93 +1,14 @@
 #!/usr/bin/env bash
-# Must run under macOS's stock /bin/bash 3.2: no associative arrays, no ${var,,}, and empty
-# arrays are expanded as ${a[@]+"${a[@]}"} because "${a[@]}" is an unbound error under set -u.
 set -euo pipefail
-
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 cd "$ROOT_DIR"
 PROFILE=full
-COMMAND=start
-SERVICE=""
-STOP_VM=false
-ASSUME_YES=false
-GC_DELETE=false
-VALIDATION_ARGS=()
+if [[ "${1:-}" == --profile ]]; then PROFILE="${2:?profile required}"; shift 2; fi
+COMMAND="${1:-start}"
+if (($#)); then shift; fi
 ENV_FILE=.harness/dev.env
 VERSIONS_FILE=.dev-tools/versions.env
-
-usage() {
-  cat <<'EOF'
-Usage: ./dev [--profile full|offline] [COMMAND] [OPTIONS]
-
-Commands:
-  start               (default) full: pinned tools, checkout-owned VM, runsc sandbox and
-                      build-egress fixtures, complete stack, stub assessment through the API
-                      and real Temporal worker. offline: pinned tools, then just check and
-                      just test with stub models; Temporal service, API, web, persistence and
-                      sandbox are not checked.
-  check               just check with the pinned tools (lint, compile, agent validation)
-  test                just test with the pinned tools (deterministic suite; the pinned
-                      Temporal CLI is required, network-marked tests are excluded)
-  status              offline: pinned tools present; full: compose service status
-  logs [SERVICE]      display and save a bounded log snapshot under .harness/logs/
-  smoke               full: re-run the readiness, sandbox and stub assessment checks;
-                      offline: same as start
-  doctor              check pinned tools, the VM and (full) the sandbox fixtures
-  validate [OPTIONS]  check running services without submissions
-                      --model adds one explicit inference request; --report PATH keeps a
-                      sanitized report; --connectivity-receipt PATH publishes a successful check
-  reload              restart the editable API and worker, then run the stub/runtime smoke
-  reload-ui           restart API and web, then verify integration with GET-only checks
-  stop [--vm]         stop the stack; preserves this checkout's VM, volumes, findings,
-                      downloads, and generated configuration. --vm also stops the VM.
-  reset [--yes]       delete this checkout's VM, volumes, findings and generated
-                      configuration (asks for confirmation; keeps pinned tools and reports)
-  gc [--delete]       list VM homes under ~/.cache/ih; --delete removes those whose
-                      checkout no longer exists
-
-./dev never changes the host Docker context, daemon, shell profiles or global tools.
-EOF
-}
-
-while (($#)); do
-  case "$1" in
-    --profile) PROFILE="${2:?--profile needs full or offline}"; shift 2 ;;
-    --profile=*) PROFILE="${1#*=}"; shift ;;
-    start|check|test|reload|reload-ui|status|smoke|doctor|validate|stop|reset|gc)
-      COMMAND="$1"; shift ;;
-    logs)
-      COMMAND=logs
-      # Only a following non-option word names a service: `logs --profile offline` must not
-      # read "--profile" as the service.
-      if (($# > 1)) && [[ "$2" != -* ]]; then SERVICE="$2"; shift 2; else shift; fi
-      ;;
-    --vm) STOP_VM=true; shift ;;
-    --yes) ASSUME_YES=true; shift ;;
-    --delete) GC_DELETE=true; shift ;;
-    --model) VALIDATION_ARGS+=("$1"); shift ;;
-    --report|--connectivity-receipt|--timeout|--model-timeout|--api-url|--web-url|--worker-hostname|--expected-source-commit)
-      VALIDATION_ARGS+=("$1" "${2:?validation option needs a value}"); shift 2 ;;
-    -h|--help) usage; exit 0 ;;
-    *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
-  esac
-done
-if ((${#VALIDATION_ARGS[@]})) && [[ "$COMMAND" != validate ]]; then
-  echo "validation options require ./dev validate" >&2; exit 2
-fi
-if [[ "$STOP_VM" == true && "$COMMAND" != stop ]]; then
-  echo "--vm requires ./dev stop" >&2; exit 2
-fi
-if [[ "$ASSUME_YES" == true && "$COMMAND" != reset ]]; then
-  echo "--yes requires ./dev reset" >&2; exit 2
-fi
-if [[ "$GC_DELETE" == true && "$COMMAND" != gc ]]; then
-  echo "--delete requires ./dev gc" >&2; exit 2
-fi
-if [[ "$PROFILE" != full && "$PROFILE" != offline ]]; then
-  echo "profile must be full or offline" >&2
-  exit 2
-fi
-
+[[ "$PROFILE" == full || "$PROFILE" == offline ]] || { echo "profile must be full or offline" >&2; exit 2; }
 pin() {
   awk -F= -v key="$1" '$1 == key {print $2; exit}' "$VERSIONS_FILE"
 }
@@ -161,182 +82,86 @@ bootstrap_mise() {
   fi
 }
 
-case "$COMMAND" in
-  start|check|test|smoke|doctor|reset|gc) bootstrap_mise ;;
-  stop) if [[ "$STOP_VM" == true ]]; then bootstrap_mise; fi ;;
-  status) if [[ "$PROFILE" == offline ]]; then bootstrap_mise; fi ;;
-esac
 
-dev_setup() {
-  "$MISE_BIN" exec -- python scripts/dev_setup.py "$@"
-}
-
-setup() {
-  dev_setup --profile "$PROFILE" "$@"
-}
-
-run_just() {
-  "$MISE_BIN" exec -- just "$@"
-}
-
+if [[ "$COMMAND" == --help || "$COMMAND" == -h || "$COMMAND" == help ]]; then
+  echo "Usage: ./dev [--profile full|offline] [start|check|test|worker|status|logs|doctor|smoke|stop]"
+  echo "       ./dev qualify|eval|replay|worker [harness options] (--settings FILE anywhere)"
+  echo "Full mode requires explicit OpenShell configuration; see deploy/openshell/README.md."
+  echo "eval runs live inference on the corpus with an owned worker on a fresh task queue."
+  echo "stop preserves volumes and the VM; no implicit reset or paid inference."
+  exit 0
+fi
+bootstrap_mise
+managed() { "$MISE_BIN" exec -- "$@"; }
+setup() { managed python scripts/dev_setup.py --profile "$PROFILE" "$@"; }
 load_env() {
-  [[ -f "$ENV_FILE" ]] || { echo "no local environment; run ./dev first" >&2; return 2; }
+  [[ -f "$ENV_FILE" ]] || { echo "run ./dev first" >&2; return 2; }
   set -a
-  # Generated by dev_setup.py with shell-quoted values and mode 0600.
-  # shellcheck disable=SC1090
   source "$ENV_FILE"
   set +a
+  export HARNESS_TEMPORAL_ADDRESS="127.0.0.1:$HARNESS_TEMPORAL_PORT"
 }
-
 compose() {
   load_env
   docker compose -f docker-compose.yml -f docker-compose.dev.yml \
     --project-name "$COMPOSE_PROJECT_NAME" --env-file "$ENV_FILE" "$@"
 }
-
-python_managed() {
-  "$MISE_BIN" exec -- uv run --locked python "$@"
-}
-
-# The test suite must exercise durable replay: a missing Temporal CLI fails instead of skipping.
-run_tests() {
-  HARNESS_MODEL_MODE=stub HARNESS_TEST_REQUIRE_TEMPORAL=1 run_just test
-}
-
-offline() {
-  setup
-  export HARNESS_MODEL_MODE=stub
-  run_just check
-  run_tests
-  echo "offline profile: passed (stub models, zero credentials)"
-  echo "  just check: ruff over src, tests and scripts; compileall; agent spec validation"
-  echo "  just test: deterministic suite incl. Temporal dev-server replay; network-marked tests excluded"
-  echo "real Temporal service, API, web, persistence, and sandbox readiness: not_checked"
-}
-
-verify_sandbox() {
+harness() {
+  # --settings is a global harness option; accept it anywhere among the verb's arguments.
+  local command=$1 settings=() args=()
+  shift
+  while (($#)); do
+    case "$1" in
+      --settings|--settings=*)
+        ((${#settings[@]} == 0)) || { echo "--settings given more than once" >&2; return 2; }
+        if [[ "$1" == --settings ]]; then
+          settings=(--settings "${2:?settings file required}"); shift 2
+        else
+          settings=(--settings "${1#--settings=}"); shift
+        fi ;;
+      *) args+=("$1"); shift ;;
+    esac
+  done
   load_env
-  python_managed scripts/dev_sandbox_check.py \
-    --runtime "$HARNESS_SANDBOX_RUNTIME" \
-    --network "$HARNESS_BUILD_EGRESS_NETWORK" \
-    --proxy "$HARNESS_BUILD_EGRESS_PROXY" \
-    --builder "$HARNESS_BUILDX_BUILDER" \
-    --compose-project "$COMPOSE_PROJECT_NAME"
+  managed uv run --locked harness ${settings[@]+"${settings[@]}"} "$command" ${args[@]+"${args[@]}"}
 }
-
-smoke_stack() {
+qualify() { harness qualify "$@"; }
+control_plane() {
   load_env
-  python_managed scripts/dev_setup_smoke.py \
-    --api-url "http://127.0.0.1:${HARNESS_API_PORT}" \
-    --web-url "http://127.0.0.1:${HARNESS_WEB_PORT}" \
-    --temporal-address "127.0.0.1:${HARNESS_TEMPORAL_PORT}" \
-    --minio-url "http://127.0.0.1:${HARNESS_MINIO_PORT}/minio/health/ready"
+  managed uv run --locked python scripts/control_plane_check.py \
+    --api-url "http://127.0.0.1:$HARNESS_API_PORT" \
+    --web-url "http://127.0.0.1:$HARNESS_WEB_PORT"
 }
-
-save_logs() {
-  mkdir -p .harness/logs
-  local log_file
-  log_file="$(mktemp .harness/logs/compose-XXXXXXXX)"
-  if [[ -n "$SERVICE" ]]; then
-    compose logs --no-color --timestamps --tail=100 "$SERVICE" 2>&1 | tee "$log_file"
-  else
-    compose logs --no-color --timestamps --tail=100 2>&1 | tee "$log_file"
-  fi
-  echo "saved logs: $log_file"
-}
-
-start_full() {
-  setup
-  # Recreate so an edited allowlist is active before any build reaches the boundary.
-  compose up -d --force-recreate egress-proxy
-  verify_sandbox
-  compose up --build -d
-  smoke_stack
-  save_logs
-  echo "profile: full (stub inference; zero credentials and zero paid requests)"
-  echo "sandbox: runsc probe and allowlisted build boundary passed"
-  echo "temporal: deterministic API submission reached a terminal persisted result"
-  echo "web: http://127.0.0.1:${HARNESS_WEB_PORT}"
-  echo "api: http://127.0.0.1:${HARNESS_API_PORT}/docs"
-  echo "temporal: http://127.0.0.1:${HARNESS_TEMPORAL_UI_PORT}"
-  echo "artifacts: http://127.0.0.1:${HARNESS_MINIO_CONSOLE_PORT}"
-  echo "traces: http://127.0.0.1:${HARNESS_JAEGER_PORT}"
-  echo "logs: ./dev logs"
-  echo "stop: ./dev stop (preserves VM, configuration, and data)"
-}
-
 case "$COMMAND" in
   start)
-    if [[ "$PROFILE" == offline ]]; then offline; else start_full; fi
-    ;;
-  check)
-    run_just check
-    ;;
-  test)
-    run_tests
-    ;;
-  status)
+    setup
+    managed just bootstrap
     if [[ "$PROFILE" == offline ]]; then
-      setup --check-only
-      echo "offline profile: available (services are not running)"
+      managed just check
+      HARNESS_TEST_REQUIRE_TEMPORAL=1 managed just test
+      echo "Native OpenShell and live inference: not_checked (offline profile)"
     else
-      compose ps
-    fi
-    ;;
-  reload)
-    compose restart api worker
-    smoke_stack
-    echo "reloaded API and worker; persisted data was preserved"
-    ;;
-  reload-ui)
-    compose restart api web
-    load_env
-    python_managed scripts/ui_deployment_smoke.py --wait-ready \
-      --api-url "http://127.0.0.1:${HARNESS_API_PORT}" \
-      --web-url "http://127.0.0.1:${HARNESS_WEB_PORT}"
-    echo "reloaded API and UI; GET-only deployment checks passed"
-    ;;
-  logs)
-    save_logs
-    ;;
-  smoke)
-    if [[ "$PROFILE" == offline ]]; then
-      offline
-    else
-      setup --check-only
-      verify_sandbox
-      smoke_stack
-    fi
-    ;;
-  doctor)
-    setup --check-only
-    if [[ "$PROFILE" == full ]]; then verify_sandbox; fi
-    ;;
-  validate)
-    if [[ "$PROFILE" == offline ]]; then
-      python_managed scripts/service_validation.py --offline \
-        ${VALIDATION_ARGS[@]+"${VALIDATION_ARGS[@]}"}
-    else
-      load_env
-      python_managed scripts/service_validation.py --managed-worker \
-        --api-url "http://127.0.0.1:${HARNESS_API_PORT}" \
-        --web-url "http://127.0.0.1:${HARNESS_WEB_PORT}" \
-        ${VALIDATION_ARGS[@]+"${VALIDATION_ARGS[@]}"}
-    fi
-    ;;
-  stop)
-    if [[ -f "$ENV_FILE" ]]; then
-      compose down
-      echo "stopped $COMPOSE_PROJECT_NAME; configuration, volumes, and findings were preserved"
-    else
-      echo "no local environment; no stack to stop"
-    fi
-    if [[ "$STOP_VM" == true ]]; then dev_setup stop-vm; fi
-    ;;
-  reset)
-    if [[ "$ASSUME_YES" == true ]]; then dev_setup reset --yes; else dev_setup reset; fi
-    ;;
-  gc)
-    if [[ "$GC_DELETE" == true ]]; then dev_setup gc --delete; else dev_setup gc; fi
-    ;;
+      compose up -d --force-recreate egress-proxy
+      managed uv run --locked python scripts/dev_sandbox_check.py \
+        --runtime runsc --network "$HARNESS_BUILD_EGRESS_NETWORK" \
+        --proxy "$HARNESS_BUILD_EGRESS_PROXY" --builder "$HARNESS_BUILDX_BUILDER" \
+        --compose-project "$COMPOSE_PROJECT_NAME"
+      compose up --build -d --remove-orphans
+      control_plane
+      qualify
+      echo "Control plane and OpenShell checked. Start a worker with ./dev worker."
+      echo "Live model inference: not_checked; configure an explicit provider before submitting."
+    fi ;;
+  check) managed just check "$@" ;;
+  test) HARNESS_TEST_REQUIRE_TEMPORAL=1 managed just test "$@" ;;
+  worker) harness worker "$@" ;;
+  qualify) qualify "$@" ;;
+  eval) harness eval "$@" --allow-inference --owned-worker ;;
+  replay) harness replay "$@" ;;
+  status) compose ps ;;
+  logs) compose logs --no-color --tail=100 "$@" ;;
+  doctor) setup --check-only; if [[ "$PROFILE" == full ]]; then qualify; fi ;;
+  smoke) control_plane; qualify ;;
+  stop) compose down --remove-orphans ;;
+  *) echo "unknown command: $COMMAND" >&2; exit 2 ;;
 esac

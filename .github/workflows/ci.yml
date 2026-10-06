@@ -5,7 +5,6 @@ on: [push, pull_request]
 # release and SHA-256 that ./dev verifies (.dev-tools/versions.env); nothing here re-types a
 # version. Checks run through the justfile recipes developers run, never a copy of them.
 env:
-  HARNESS_MODEL_MODE: stub
   # .mise.toml pins the Temporal CLI by URL and hash; mise only reads that from a trusted file.
   MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}/.mise.toml
   # uv must use the mise-pinned interpreter, not download its own.
@@ -36,76 +35,6 @@ jobs:
       - run: just test
       # Network-marked tests (wheel build and install from PyPI), run explicitly.
       - run: just test-network
-      # Every agent's eval dataset, through its adapter, on the stub model. A load test of the
-      # datasets and adapters, not of quality: stub accuracy is meaningless and fails the gates,
-      # which this does not require. It fails when a run does not complete or no dataset exists.
-      - run: just eval
-  conformance:
-    # Validates the repo against the Agent / Multi-Agent Playbooks via agentctl, which lives
-    # in a separate repository. Fetching and building that tool is infrastructure: when it is
-    # unavailable the job warns and stops rather than reporting this repo as non-conformant,
-    # so a GitHub outage or a permissions change never reads as a contract violation.
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - name: Check out the playbooks repo (provides tools/agentctl)
-        id: playbooks
-        continue-on-error: true
-        uses: actions/checkout@v4
-        with:
-          repository: X-McKay/playbooks
-          # Match the reviewed playbook revision recorded by the development skills.
-          ref: 9e7fc03f2e1253be3e2adea10663ddf429646cea
-          path: .playbooks
-          # github.token covers a public playbooks repo; set PLAYBOOKS_TOKEN (a PAT with read
-          # access) if it is private.
-          token: ${{ secrets.PLAYBOOKS_TOKEN || github.token }}
-      - name: Read the pinned mise release
-        id: pins
-        run: |
-          pin() { awk -F= -v key="$1" '$1 == key {print $2; exit}' .dev-tools/versions.env; }
-          echo "mise-version=$(pin MISE_VERSION)" >> "$GITHUB_OUTPUT"
-          echo "mise-sha256=$(pin MISE_LINUX_X64_SHA256)" >> "$GITHUB_OUTPUT"
-      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
-        with:
-          version: ${{ steps.pins.outputs.mise-version }}
-          sha256: ${{ steps.pins.outputs.mise-sha256 }}
-          install_args: python uv just
-      - run: just bootstrap
-      # scripts/conformance.py shells out to `uv run --locked --project <path> agentctl`, so
-      # probe exactly that before the real check: the tool is either buildable or it is not,
-      # and that answer must not be reported as a conformance verdict. The agentctl project is
-      # tools/agentctl in the playbooks repo; the repo root also works if it is a uv workspace.
-      - name: Locate a runnable agentctl (infrastructure probe, not a conformance check)
-        id: agentctl
-        if: steps.playbooks.outcome == 'success'
-        continue-on-error: true
-        run: |
-          for candidate in .playbooks/tools/agentctl .playbooks; do
-            [ -f "$candidate/pyproject.toml" ] || continue
-            if uv run --locked --project "$candidate" agentctl --no-color --help > /dev/null 2>&1; then
-              echo "agentctl runs from $candidate"
-              echo "project=$candidate" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            echo "agentctl is not runnable from $candidate"
-          done
-          echo "no runnable agentctl found under .playbooks"
-          exit 1
-      - name: Playbook conformance
-        if: steps.agentctl.outcome == 'success'
-        # Exits non-zero on real errors only; documented waivers are printed and pass.
-        run: just conformance "${{ steps.agentctl.outputs.project }}"
-      - name: Explain why conformance did not run
-        if: steps.playbooks.outcome != 'success' || steps.agentctl.outcome != 'success'
-        run: |
-          if [ "${{ steps.playbooks.outcome }}" != "success" ]; then
-            reason="could not check out X-McKay/playbooks (network, or the repo is private and PLAYBOOKS_TOKEN is unset)"
-          else
-            reason="agentctl could not be built or run from the playbooks checkout (see the probe step's log)"
-          fi
-          echo "::warning title=Playbook conformance not run::${reason}. This is an infrastructure gap, not a conformance failure - the repo was not checked. Run 'just conformance /path/to/playbooks/tools/agentctl' locally."
   web:
     runs-on: ubuntu-latest
     timeout-minutes: 20

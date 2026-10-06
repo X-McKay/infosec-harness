@@ -1,4 +1,6 @@
-import { isRecord } from "../lib/json.ts";
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
 
 const MAX_MESSAGE_LENGTH = 240;
 const STATUS_MESSAGES: Record<number, string> = {

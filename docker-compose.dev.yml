@@ -1,111 +1,53 @@
-# Editable development overlay used by ./dev. Backend and web source are mounted from this
-# checkout; the base compose file remains suitable for the packaged nginx image.
-x-local-logging: &local-logging
-  driver: json-file
-  options:
-    max-size: "10m"
-    max-file: "3"
-
 services:
-  postgres:
-    runtime: runc
-    logging: *local-logging
-    environment:
-      POSTGRES_PASSWORD: ${HARNESS_POSTGRES_PASSWORD}
-
-  temporal:
-    runtime: runc
-    logging: *local-logging
-    environment:
-      POSTGRES_PWD: ${HARNESS_POSTGRES_PASSWORD}
-
-  temporal-ui:
-    runtime: runc
-    logging: *local-logging
-
-  minio:
-    runtime: runc
-    logging: *local-logging
-    # The base file's pinned RustFS image, with this checkout's generated credentials.
-    environment:
-      RUSTFS_ACCESS_KEY: ${HARNESS_MINIO_ACCESS_KEY}
-      RUSTFS_SECRET_KEY: ${HARNESS_MINIO_SECRET_KEY}
-
-  otel-collector:
-    runtime: runc
-    logging: *local-logging
-
-  jaeger:
-    runtime: runc
-    logging: *local-logging
-
   api:
     runtime: runc
-    logging: *local-logging
-    command: ["sh", "-c", "uv pip install --system --no-deps -e . && harness migrate && harness api --host 0.0.0.0 --port 8000"]
+    logging: &id001
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+    command:
+    - harness
+    - api
+    - --host
+    - 0.0.0.0
+    - --port
+    - '8000'
     volumes:
-      - .:/app:ro
+    - ./src:/app/src:ro
     environment:
-      AWS_PROFILE: !reset null
-      HARNESS_DATABASE_URL: postgresql+asyncpg://harness:${HARNESS_POSTGRES_PASSWORD}@postgres:5432/harness
-      HARNESS_S3_ACCESS_KEY: ${HARNESS_MINIO_ACCESS_KEY}
-      HARNESS_S3_SECRET_KEY: ${HARNESS_MINIO_SECRET_KEY}
-      HARNESS_BUILD_EGRESS_NETWORK: ${HARNESS_BUILD_EGRESS_NETWORK}
-      HARNESS_BUILD_EGRESS_HOST_IP: ${HARNESS_BUILD_EGRESS_HOST_IP}
-      HARNESS_BUILDX_BUILDER: ${HARNESS_BUILDX_BUILDER}
-  worker:
-    runtime: runc
-    logging: *local-logging
-    command: ["sh", "-c", "uv pip install --system --no-deps -e . && harness worker"]
-    volumes: !override
-      - /var/run/docker.sock:/var/run/docker.sock
-      - .:/app:ro
-      - ${HARNESS_WORKSPACE_DIR}:/workspace
-      # The daemon and this trusted control-plane worker share the managed VM's
-      # per-checkout Buildx inventory, so worker restarts retain the verified builder.
-      - /root/.docker/buildx:/root/.docker/buildx
-    environment:
-      AWS_PROFILE: !reset null
-      # Local sources the worker may snapshot: the smoke fixture and the seeded corpus.
-      HARNESS_LOCAL_REPO_ROOTS: '["/app/deploy/dev-runtime/fixture", "/app/eval-corpus"]'
-      HARNESS_DATABASE_URL: postgresql+asyncpg://harness:${HARNESS_POSTGRES_PASSWORD}@postgres:5432/harness
-      HARNESS_S3_ACCESS_KEY: ${HARNESS_MINIO_ACCESS_KEY}
-      HARNESS_S3_SECRET_KEY: ${HARNESS_MINIO_SECRET_KEY}
-      HARNESS_BUILD_EGRESS_NETWORK: ${HARNESS_BUILD_EGRESS_NETWORK}
-      HARNESS_BUILD_EGRESS_HOST_IP: ${HARNESS_BUILD_EGRESS_HOST_IP}
-      HARNESS_BUILDX_BUILDER: ${HARNESS_BUILDX_BUILDER}
+      PYTHONPATH: /app/src
   web:
     runtime: runc
-    logging: *local-logging
+    logging: *id001
     build: !reset null
-    # Version must equal .mise.toml's node (tests/development/test_dev_experience.py).
     image: node:22.23.3-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c
     working_dir: /app
-    command: ["sh", "-c", "npm ci --no-audit --no-fund && npm run dev -- --host 0.0.0.0 --port 5173"]
+    command:
+    - sh
+    - -c
+    - npm ci --no-audit --no-fund && npm run dev -- --host 0.0.0.0 --port 5173
     volumes:
-      - ./ui:/app:ro
-      - web_node_modules:/app/node_modules
+    - ./ui:/app:ro
+    - web_node_modules:/app/node_modules
     environment:
       VITE_API_URL: http://api:8000
-    ports:
-      - "${HARNESS_WEB_PORT:-8080}:5173"
-
+    ports: []
   egress-proxy:
     runtime: runc
-    logging: *local-logging
+    logging: *id001
     networks:
       default: {}
       build-egress:
-        aliases: [egress-proxy]
+        aliases:
+        - egress-proxy
         ipv4_address: ${HARNESS_BUILD_EGRESS_HOST_IP}
-
 volumes:
-  web_node_modules:
-
+  web_node_modules: null
 networks:
   build-egress:
     name: ${HARNESS_BUILD_EGRESS_NETWORK}
     internal: true
     ipam:
       config:
-        - subnet: ${HARNESS_BUILD_EGRESS_SUBNET}
+      - subnet: ${HARNESS_BUILD_EGRESS_SUBNET}

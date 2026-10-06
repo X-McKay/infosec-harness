@@ -1,165 +1,130 @@
-# The triage system: how the agents compose
+# Runtime architecture and boundaries
 
-Triage pre-identified vulnerability findings for exploitability: profile the repository, build
-it, author and run a unit-test probe in an isolated sandbox, and return a three-way verdict
-decided from a deterministic oracle signal.
+One Temporal workflow owns one investigation. PydanticAI's native Temporal integration
+records model and tool activity results and resumes the agent loop after worker loss.
+The investigator uses read/search/write/execute/run_probe tools and dynamically loaded skills;
+there is no hard-coded sequence of reconnaissance, planner, builder and verdict agents.
 
-Most of what the multi-agent playbook asks a System Spec to declare already exists here as
-*code*: the pydantic-graph topology in `src/infosec_harness/graph/triage.py`, the repair
-budgets in `src/infosec_harness/settings.py` and each `agent.yaml`, the verdict contract in
-`src/infosec_harness/agents/validators.py`. This page states the composition
-in prose so it can be reviewed; it is not a second source of truth, and where it and the code
-disagree, the code is what runs. Member versions, skills, toolsets and budgets are read from
-`src/infosec_harness/agents/<name>/agent.yaml`.
+Paths below are relative to `src/infosec_harness/`. `workflows/snapshot.py` captures
+approved source without executing its hooks. `agents/investigator.py` defines the
+investigator over the narrow toolbox in `tools/` (`workspace.py` for confined
+read/search/write, `execute.py` for execute and run_probe); `agents/evidence.py` parses probe
+observations and `agents/inference.py` carries model requests into the model sandbox.
+`agents/` holds exactly one investigator; the directory introduces no parallel orchestration.
+`workflows/investigation.py` prepares the workspace, runs the agent, validates its verdict
+against receipts and citations, and cleans up; `workflows/worker.py` builds the trusted worker
+and its identity guard. `contracts.py` contains strict inputs and results. `api.py` projects
+Temporal state; it does not maintain a second job ledger. `evals/` holds corpus evaluation,
+replay, native qualification and `release-policy.yaml`.
 
-## Members
+OpenShell owns three native profiles:
 
-| Agent | Role | Required | Max calls per finding | Output |
-| --- | --- | --- | --- | --- |
-| intake | normalizer | no | 1 | ExtractedFinding |
-| recon | profiler | yes | 1 (per repo@revision) | RepoProfile |
-| env-planner | environment planner | yes | 1 | EnvironmentSpec |
-| build-repair | environment repairer | no | 6 at preparation, plus 1 probe-time environment repair | EnvironmentSpec |
-| partial-build | environment repairer | no | 4 | EnvironmentSpec |
-| context | investigator | yes | 1 | FindingContext |
-| probe-planner | probe planner | yes | 1 | ProbePlan |
-| probe-author | probe author | yes | 1 | ProbeSource |
-| probe-repair | probe author | no | 3 | ProbeSource |
-| probe-diagnosis | execution judge | yes | 5 (one per probe execution) | ProbeDiagnosis |
-| verdict | verdict judge | yes | 1 | Verdict |
+| Profile | Code and permissions |
+| --- | --- |
+| workspace | Untrusted repository and generated experiments; narrowly allowed package egress; no model provider |
+| probe | Fresh copy of the prepared workspace; no external network or provider |
+| model | Only the small model executor and dependencies; explicit provider; no repository execution |
 
-"Required" means a finding cannot reach a verdict without it. The repair agents are optional
-because a build or probe that works first time never invokes them.
+The trusted worker controls profiles. Model instructions cannot change policy, credentials,
+images or limits. Provider credentials remain inside the native model boundary. The model
+executor accepts serialized PydanticAI requests, makes one provider attempt and returns a
+bounded response. There is no application credential-broker protocol or model catalogue.
+Each model request is bounded by the same command budget as a tool command, capped at the
+runtime's `max_timeout_seconds`: the executor receives that budget less 10 s as one
+whole-request provider timeout, including connect, and an in-sandbox kill enforces it. An
+executor that exits without a complete response raises a terminal `ModelExecutorError`; the
+request's provider outcome is unknown and it is never resent.
 
-## Topology
+`sandbox/openshell.py` validates native policy and provider admission, pins images and
+verifies actual workload properties; `sandbox/execution.py` owns exec receipts and replay
+fences, `sandbox/transfer.py` bounded uploads and snapshot capture, and `sandbox/executor.py`
+is the only package module shipped into the model image. OpenShell v0.1.2's API does not
+expose all outer isolation properties, so a dedicated-daemon Docker inspector reads the exact
+native-owned containers.
+It cannot serve as an execution fallback. The checks include namespaces, mounts, non-root
+identity, capability removal, seccomp, no-new-privileges, network and cgroup limits.
+Confinement is audited once per sandbox lifecycle. Reuse compares the native identity and
+configuration without `metadata.resource_version`, which routine status writes advance, and
+an order-canonical digest of the outer fence (Docker returns mounts in varying order); a
+mismatch names the changed paths and closes owned work.
 
-A programmatic pipeline. The orchestrator is deterministic code, not an agent: the graph
-decides every transition, dispatches each agent with typed evidence it assembled, and records
-what comes back. No agent delegates to another, membership is fixed, and delegation depth is
-zero. There is deliberately no coordinator agent, which is the strongest form of the
-playbook's "deterministic control, probabilistic collaboration".
+Command delivery is an external effect. A durable local receipt fence is fsynced before
+sending it. Completed results can be reused; an interrupted dispatch with no terminal
+receipt is unknown and is never blindly resent. The receipt directory and source snapshots
+must survive worker restart and be available to any worker servicing this queue. Use a
+single worker or shared durable storage with atomic exclusive-create semantics. Losing
+this storage is not a recoverable replay guarantee.
 
-## Why a multi-agent system
+The pinned gateway reports its own command timeout as exit 124 without native terminal
+finalization, so an explicit exit 124 stays unknown. Commands therefore run under an
+in-sandbox `timeout -s KILL` that fires 10 s before the command budget: a slow command becomes
+a complete receipt with exit 137, and the investigator sees `timeout_feedback`. Shell commands
+write their output to files inside the sandbox, which the wrapper prints after the command
+ends, so a background or `setsid` child that outlives the kill cannot hold the exec stream
+open. The wrapper prints at most 200,000 bytes of stdout and 60,000 of stderr; that cut is not
+yet flagged as truncation in the evidence. The gateway also decodes at most
+1 MiB per gRPC message, so archives are delivered in parts of at most 900,000 bytes; each part
+is its own replayable receipt, and the final extraction consumes the staged parts.
 
-**Claimed benefits.**
+Each probe runs in a separate offline sandbox. Before copying and after running it, the
+runtime checks the original source against the captured snapshot. A definitive result
+requires valid source citations, cited successful probe receipts, untruncated output,
+source verification and explicit target, positive-control and negative-control observations.
+The observations are self-reported by the authored experiment. They do not prove semantic
+correctness, and a post-execution check cannot detect modification followed by restoration.
+These limits require adversarial live evaluation rather than stronger claims from metadata.
 
-- Capability isolation: only the environment agents may run shell commands in the sandbox,
-  and only the probe agents author executed code. A single agent holding every tool would put
-  code execution behind every prompt.
-- Context segregation: the verdict is decided by an agent that never sees the repository, only
-  the recorded evidence, so it cannot substitute an impression of the code for the oracle
-  signal.
-- Independent review: probe-diagnosis judges an execution without having written the probe,
-  which is what lets a defective probe be told apart from a genuine negative.
-- Separately governed responsibilities: the agents that determine executed code carry a
-  critical governance tier and their own controls; the analysis agents do not.
+Any contrary complete, source-verified probe blocks a definitive verdict, with one exception.
+The verdict may list a contrary probe in `superseded_evidence_ids` when it ran at an earlier
+agent step than the newest cited probe, and the summary must explain its flaw. A probe that
+ran after the newest cited one can never be superseded. Finalization re-derives this rule
+from receipts, keeps superseded excerpts within the ten-receipt report bound and adds a
+limitation naming them.
+If the agent has changed an original source file, `run_probe` refuses before copying: it
+returns integrity feedback naming the file, with no exit code and no probe execution, so the
+investigator can restore the file and run a new probe. Refused probes can never be cited.
 
-**Baseline that could refute it.** A single conforming agent holding every skill and tool,
-prompted to triage a finding end to end and emit the same Verdict, scored on the same corpus
-with the same deterministic oracle and verdict contract.
+Budgets bound model requests, tokens, tool calls, individual commands, transfers, outputs
+and total workflow time. Cancellation reaches owned activities and cleanup. Tests exercise
+real local Temporal replay, worker restart, deadline and unknown-delivery behavior, separately
+from mocked OpenShell checks and actual native qualification.
 
-**Success measures.** The multi-agent system's false-negative rate on truly exploitable corpus
-cases is no worse than the single-agent baseline's, with the sandbox enabled. Cost per correct
-verdict is within 2x of the baseline's. Neither can claim `potentially_exploitable` without an
-oracle signal, since the contract is deterministic in both.
+Workflow generation v11 uses `investigate-v11` and binds every native model/tool activity
+to the identity captured during preparation. Pure PydanticAI output validation gives
+bounded feedback about exact receipt IDs and complete offline-probe claims before
+finalization independently reconstructs trusted evidence. Output correction schedules
+new deliberation within existing budgets; it never retries native dispatch. It breaks
+compatibility with v10 and the
+former staged graph. Drain old task queues before changing workers. The API lists this
+generation's investigations only.
 
-## Data flow
+The pinned native Docker driver leaves the workload root filesystem writable. Filesystem
+confinement is therefore OpenShell's mandatory Landlock policy, verified with both an
+allowed workspace write and denied direct/symlink writes into world-writable `/dev/shm`.
+An `/etc` denial alone would only demonstrate ordinary UNIX permissions and is insufficient.
+The adapter records the observed rootfs property; it never substitutes a configured policy
+name for these checks. Supervisor/driver/kernel changes require fresh qualification.
 
-- Every agent receives typed evidence assembled by the orchestrator, never another agent's
-  transcript. No agent sees another's history and no credentials are forwarded.
-- Repository content, finding text, and probe output are untrusted data wherever they appear.
-  See [prompt construction](#prompt-construction) for how the renderer keeps them from
-  forging prompt structure.
-- Nothing an agent emits becomes shared truth until the orchestrator records it.
+Evaluation binds the expected worker to its runtime code, packaged skills, release policy,
+SDK dependency versions, model configuration and actual policy-file bytes. Admission
+rejects a different worker before source capture or model dispatch; finalization rejects
+drift. This identifies the configured model endpoint, not the weights served behind it.
+Model history is bounded before native Temporal scheduling, and model responses are bounded
+before activity completion. Server and local evaluation deadlines include cleanup time.
 
-| Artifact | Readers | Note |
-| --- | --- | --- |
-| repo snapshot | recon, env-planner, build-repair, partial-build, context, probe-author, probe-repair | read-only, confined to the snapshot root by the tool layer |
-| probe source | probe-diagnosis, probe-repair | model-authored code; executed only inside the sandbox |
-| probe execution | probe-diagnosis, verdict | markers are detected deterministically, never by a model |
-| verdict | nobody downstream | rejected by a deterministic validator if the facts do not support it |
+`harness eval` runs the frozen corpus once; each case gets a fresh workflow ID and is never
+re-run. `--owned-worker` (used by `./dev eval`) runs the worker in-process on a fresh
+`investigate-v11-eval-<hex>` queue recorded in the report and keeps it up until every owned
+workflow and its cleanup is terminal. Failed workflows carry the outermost meaningful failure
+type and a typed cause chain, which the report records. With `--keep-going` the cohort
+continues only past a terminal failure whose whole chain is agent-level (`UsageLimitExceeded`,
+`UnexpectedModelBehavior`, `ModelExecutorError`) and names no cleanup, unknown-execution or
+OpenShell error. `--case` selects a diagnostic subset whose gates stay `not_checked`.
+`harness replay` re-executes a recorded history against current workflow code with model
+requests and native dispatch disabled.
 
-Egress: none at probe time or from the sandbox shell tool; at build time only the operator's
-allowlisting proxy (`deploy/squid-allowlist.conf`), never a list derived from the repository; the tracker write-back is
-comment-only and never edits or closes an item.
-
-## Durable execution
-
-`TriageBatchWorkflow` groups findings by repository, discovers each repository once, splits it
-into compatible components, runs `ComponentPreparationWorkflow` once per component, and fans the
-component's findings out warm-first as `FindingTriageWorkflow` children so they share the cached
-prompt prefix. Grouping, scheduling, the per-finding pipeline and failure records live in
-`src/infosec_harness/graph/pipeline.py` and `src/infosec_harness/graph/workloads.py` and are shared
-with the in-process path, which runs stub models only; real assessments always run on Temporal.
-
-Workflow type names and agent activity identities carry the execution generation
-(`EXECUTION_GENERATION`, currently `v7`). Workflow and activity arguments are typed models
-(`src/infosec_harness/workflows/payloads.py`) validated on both sides of the Temporal boundary,
-and every activity's retry policy bounds its attempts or names its non-retryable errors
-(`src/infosec_harness/workflows/activity_options.py`). There are no retained earlier generations
-and no `workflow.patched` branches: a history recorded by an earlier generation is not
-replayable, so a deployment drains or terminates in-flight batches first
-([service environments](../development/SERVICE_ENVIRONMENTS.md#deploying-a-new-execution-generation)).
-Workflow ids are opaque. Each result persists a manifest (`schema_version` 3, assigned in
-`src/infosec_harness/persistence/identity.py`) whose environment section records the probe
-adapter contract `ADAPTER_CONTRACT_VERSION` (`unit-probe-adapters/v2`, in
-`src/infosec_harness/agents/ecosystem_contract.py`) and `adapter_profiles`: `{id, support}` per
-recognised ecosystem profile, plus each unmapped language as unsupported.
-
-**Accounting.** Every batch, durable or in-process, is accepted with a root budget ledger that
-pins each agent's configuration digest; an agent reservation against a ledger that pins none,
-or with a different digest, is refused (`src/infosec_harness/persistence/budgets.py`). There is
-no unaccounted mode. A run's usage (`RunTelemetry`, schema 2, in
-`src/infosec_harness/persistence/run_telemetry.py`) is complete only when every recorded agent
-call has exactly one ledger operation and every one of them settled; otherwise totals stay
-unknown rather than zero, with the known part recorded separately. A call that failed but
-returned a partial outcome settles as `usage: partial_lower_bound`, which releases nothing from
-its reservation. In-process runs reserve nothing in the ledger, so they report their usage as
-not fully accounted.
-
-## Prompt construction
-
-`src/infosec_harness/agents/render.py` is the only path from typed inputs to prompt text. The
-layout is stable to volatile (repository context, a cache point, then the finding payload), and
-volatile fields are dropped by model and field name, never by bare key, so
-`FindingContext.path` (the source-to-sink chain) reaches the probe planner, probe author and
-verdict agents. Every value, strings included, is encoded as one line of JSON with `</` written
-as `<\/`: payload text cannot contain a raw newline or a closing tag, so the only section markers
-in a prompt are the renderer's.
-
-The repository read tools in `src/infosec_harness/agents/repo_tools.py` are confined to the
-snapshot and byte-capped per call. `search_code` runs its regular expression in a child process
-(`sys.executable -I -S`) that is killed at a deadline, so the worker must be able to spawn its
-own interpreter. `repo_digest` treats a directory as test code when any whole path segment
-names a test directory.
-
-## Termination
-
-| Rule | When | Outcome |
-| --- | --- | --- |
-| verdict reached | the verdict agent returns a contract-valid verdict | complete |
-| location unresolved | the reported file cannot be resolved inside the source snapshot, or is not a file | complete, `inconclusive` (`needs_info`); missing source is not evidence of safety |
-| probe unrepairable | probe repairs (`HARNESS_MAX_PROBE_REPAIRS`, default 3) are exhausted and the last diagnosis is `probe_defect` | complete, `inconclusive` |
-| environment unrepaired at probe time | the one probe-time environment repair (`HARNESS_MAX_ENVIRONMENT_REPAIRS`) did not help; it has its own counter and does not consume probe repairs | complete, decided on the evidence so far |
-| negative not supported | `likely_not_exploitable` without a valid negative execution that reached the sink and a parsed, passing adapter control record (missing or unparseable controls fail closed, including offline and no-sandbox runs) | complete, `inconclusive` |
-| environment unbuildable | the build and its repairs fail, including the partial-build fallback | complete, `inconclusive` |
-| budget exhausted | a member exceeds its declared run budget | stop, `inconclusive` |
-| contract unsatisfiable | the verdict agent cannot satisfy the evidence contract within its retries | stop, `inconclusive` |
-
-A context agent's claim that the sink is unreachable does not end a run: it is a model assertion
-even when its citations resolve, so the probe experiment still runs. No path name (a test or
-vendored directory) turns into a safety verdict either.
-
-`inconclusive` is a success state, not a failure: it is how the absence of evidence is reported
-rather than being rounded to "not exploitable". It is also the escalation state.
-
-**Conflict.** The deterministic verdict contract is the arbiter. Where a model's conclusion and
-the recorded facts disagree, the facts win and the verdict is rejected; the system never
-resolves a conflict by preferring the more confident agent.
-
-## Limits
-
-Per-member ceilings are the `metadata.budgets` in each spec, enforced through `UsageLimits` in
-both the local and durable paths. A finding makes at most 26 agent runs (the sum of the max
-calls above), with no parallel agents and one pass per finding; repairs are bounded per
-interaction rather than by rounds. The system's own ceiling is the sum of its members'.
+Investigations stop before scheduling another model or tool activity once native Temporal
+history reaches 32MiB. All tool calls, including deferred skill loading, execute sequentially
+so the next check observes completed history. This independent limit can stop a run before
+its token/request/tool limits and reserves room for finalization and owned cleanup. Model
+activity input is capped at 1,000,000 bytes and its response at 512,000 bytes.

@@ -1,10 +1,27 @@
-"""Sandbox: target image builds and probe execution under gVisor.
+"""Native OpenShell sandboxes: lifecycle, exec receipts, transfers and the model executor.
 
-Only the leaf constant lives here so that ``settings`` can import it without loading any
-sandbox module.
+Names resolve on first use, so that ``executor`` (shipped alone into the model image)
+imports without the worker-side modules or their dependencies.
 """
 
-# The only OCI runtime that counts as isolation. Anything else needs the explicit
-# insecure-development override, and the configured name is never evidence on its own: the daemon
-# must register it and select it as its default (``docker.runtime_available``).
-REQUIRED_RUNTIME = "runsc"
+from importlib import import_module
+
+_EXPORTS = {
+    "OpenShell": "openshell",
+    "OpenShellConfig": "openshell",
+    "Profile": "openshell",
+    "native_operation_accounting": "openshell",
+    "CommandResult": "execution",
+    "ExecutionReceipt": "execution",
+    "ExecutionUnknown": "execution",
+    "OpenShellError": "execution",
+    "Sandbox": "execution",
+    "UnsafeSnapshotMetadata": "transfer",
+}
+__all__ = sorted(_EXPORTS)
+
+
+def __getattr__(name: str):
+    if name not in _EXPORTS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    return getattr(import_module(f"{__name__}.{_EXPORTS[name]}"), name)

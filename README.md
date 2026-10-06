@@ -1,166 +1,158 @@
 # InfoSec Harness
 
-A durable graph of [PydanticAI](https://pydantic.dev/docs/ai/) agents that **filters,
-prioritizes, and triages pre-identified vulnerability findings** for exploitability. For each
-finding it profiles the target repository, works out how to build and test it, drafts a targeted
-unit-test probe, runs the probe in an isolated sandbox, and returns one of
-`potentially_exploitable` / `likely_not_exploitable` / `inconclusive` with evidence and a
-priority.
+Investigate a reported vulnerability with a tool-using PydanticAI agent, run experiments
+inside OpenShell, and retain the investigation in Temporal. A small React UI submits
+findings and displays the resulting evidence.
 
-It does not scan for new vulnerabilities, write fixes, or touch production. Probes run only
-against code in a sandbox.
+The investigator chooses how to explore, install dependencies, construct experiments and
+interpret results. Language, environment and vulnerability expertise lives in packaged
+skills. Python code enforces contracts, budgets, isolation and evidence requirements.
+There is one execution path and no application database or custom inference broker.
 
-## Quickstart
+```mermaid
+flowchart LR
+    UI[UI / CLI] --> API[API]
+    API --> T[Temporal investigation]
+    T --> A[PydanticAI agent + skills]
+    A --> W[OpenShell workspace]
+    A --> P[OpenShell offline probe]
+    A --> M[OpenShell model executor]
+    M --> Q[Explicit OpenAI-compatible or Bedrock provider]
+```
 
-On Apple Silicon macOS or Debian/Ubuntu x86-64 Linux, clone the repository and run:
+The runtime package `src/infosec_harness/` follows that path:
+
+- `api.py`, `cli.py`: the HTTP projection of Temporal state and the operator commands
+- `workflows/`: the durable investigation workflow, trusted worker and immutable source capture
+- `agents/`: the single investigator, its evidence feedback and model transport
+- `tools/`, `skills/`: the investigator's OpenShell tools and packaged expertise
+- `sandbox/`: the OpenShell adapter (lifecycle, receipts, transfers) and the model executor
+- `evals/`: corpus evaluation, history replay, native qualification and the release policy
+- `contracts.py`, `config.py`, `_io.py`: contracts, operator configuration and atomic writes
+
+## Development
+
+Pins are recorded in `.mise.toml` and `.dev-tools/`. On macOS Apple Silicon or Linux x86-64:
 
 ```bash
-./dev
+./dev --profile offline        # pinned tools and deterministic checks, including local Temporal
+./dev                         # managed control plane and configured native OpenShell checks
+./dev worker                  # run the trusted Temporal worker
+./dev status
+./dev logs
+./dev stop                    # preserve VM, configuration and data
 ```
 
-The launcher installs pinned tools and locked dependencies, provisions a checkout-owned Lima VM
-with Docker and gVisor (`runsc`) without changing host Docker configuration, verifies the
-sandbox and build-egress fixtures, starts the stack, and runs a stub assessment through the API
-and the Temporal worker. It prints the web, API, Temporal UI and log locations when ready.
-Inference is stubbed by default, so no provider is contacted. Run `./dev reload` after backend
-edits; web edits reload through Vite. `./dev stop` stops this checkout's stack and preserves its
-VM, volumes and findings; `./dev reset` is the only command that deletes them.
+Full mode requires the native runtime described in [OpenShell setup](deploy/openshell/README.md).
+It fails if that boundary cannot be demonstrated. It does not silently substitute Docker,
+a stub agent or a public model. The checkout-managed Linux VM and isolated image builder
+are provisioning infrastructure; investigation commands always go through OpenShell. A full
+evaluation cohort exceeds the pinned gateway's admission quota and needs the
+[patched gateway](deploy/openshell/README.md#patched-gateway-build).
 
-On a host without hardware virtualization, `./dev --profile offline` runs the locked lint,
-agent validation and deterministic test suite with stub models. It reports the API, Temporal,
-web, persistence and real sandbox gates as `not_checked`; it is not a full-stack result.
-
-[Local setup](docs/development/LOCAL_SETUP.md) covers host requirements, every `./dev` command,
-live models, migrations and troubleshooting.
-
-## Common tasks
-
-Three entry points, one job each: `./dev` sets up the machine and runs the stack, `just` is the
-code loop, and `harness` is the product and its evals.
-
-| Task | Command |
-| --- | --- |
-| Set up the repository (tools, VM, stack, smoke) | `./dev` |
-| Run the tests | `./dev test` |
-| Run the evals for one agent | `harness eval run verdict` |
-| Run the evals for all agents | `harness eval run --all` |
-| Qualify a release and record its evidence | `harness eval release --save-baselines` |
-| Run one agent's evals against two models | `harness eval run verdict -m sonnet -m opus` |
-| Record a baseline | `harness eval baseline save --latest verdict` |
-
-`harness` is the console script `./dev` installs in `.venv/bin/` (activate the virtualenv, or
-use `uv run harness`). Evals call the live model you configure
-([live models](docs/development/LOCAL_SETUP.md#live-models)); prefix `HARNESS_MODEL_MODE=stub`
-to exercise the plumbing offline, which is what `just eval` does for every agent and what CI
-runs. Stub scores never measure quality. With no `HARNESS_DATABASE_URL`, eval and local
-commands store experiments in `.harness/local.db`, and reports go to `.harness/reports/`.
-A release qualification needs a live model, a clean tree at a commit and a `runsc` host:
-without the sandbox, `build-repair`'s execution checks are `not_checked` and its
-`execution_not_checked_count` gate fails by design
-([release evidence](docs/evaluation/RELEASE_EVIDENCE.md)).
-
-### Full command reference
+Set operator configuration in the worker environment. No provider credentials belong in
+that environment: provision them in OpenShell's model profile.
 
 ```bash
-./dev [start|check|test|status|logs|smoke|doctor|validate|reload|reload-ui|stop|reset|gc]
-just bootstrap | check | lint-fix | test | test-network | test-all | eval | generated-check
-just regenerate | measure | conformance | ui-build | ui-check | validate-services
-harness submit FINDINGS.json [--local]   # triage a batch; --local runs in-process on stub models
-harness runs | report RUN_ID             # list runs by priority; one run's full report as JSON
-harness worker | api | migrate [--local] # serve; migrate HARNESS_DATABASE_URL (or local.db)
-harness agents validate | schema
-harness eval run AGENT... | --all [-m TIER]... [--repeat N] [--dataset PATH] [--require-gates]
-harness eval release [--agent NAME]... [-m TIER] [--save-baselines]
-harness eval results | compare | calibrate | corpus
-harness eval baseline save EXPERIMENT_ID | --latest AGENT [-m TIER]
-harness eval baseline list
-harness ops readiness | model-connectivity --model   # read-only deployment checks
+export HARNESS_OPENSHELL_CONFIG=/absolute/path/to/runtime.json
+export HARNESS_MODEL_PROVIDER=openai
+export HARNESS_MODEL_BASE_URL=https://your-model-host/v1
+export HARNESS_MODEL_NAME=Qwen3.6-35B-A3B-NVFP4
+export HARNESS_LOCAL_REPO_ROOTS='["/absolute/path/to/approved/repositories"]'
+./dev worker
 ```
 
-`-m`/`--model` names a model-catalogue tier (`opus`, `sonnet`, `haiku`), never a raw model id.
-`harness submit examples/findings.sample.json --local` runs the whole pipeline in-process on
-stub models; its verdicts are deliberately `inconclusive` because the stub is not a judge.
+Budgets come from `Limits` (defaults: 300,000 tokens, 30 model requests, 120 s per command),
+for example `HARNESS_LIMITS__TOTAL_TOKENS=600000`. To freeze one exact configuration, pass
+`--settings FILE`: a JSON document of `Settings` fields, including nested `limits`, that is
+used instead of every `HARNESS_*` variable, so it must also name the Temporal address:
 
-## Find your way around
-
-- [Documentation index](docs/README.md): setup, architecture, safety, evaluation and evidence.
-- [Repository guide](docs/development/REPOSITORY_GUIDE.md): module map, output locations and
-  directory conventions.
-- [Developer scripts](scripts/README.md), [UI](ui/README.md), [deployment](deploy/README.md),
-  [eval inputs](evals/README.md) and [fixture corpus](eval-corpus/README.md).
-
-## How it works
-
-- **Agents are data.** Each of the 11 agents is one PydanticAI Agent Spec
-  (`src/infosec_harness/agents/<name>/agent.yaml`): a prompt, a model tier, cache settings and a
-  skills list. Typed I/O, the capability allowlist and the verdict contract stay in code. Skills
-  (`src/infosec_harness/skills/<name>/SKILL.md`) give per-CWE, per-language and per-toolchain
-  guidance on demand.
-- **Durable orchestration.** `TriageBatch` groups findings by repository, prepares each
-  compatible component once (`ComponentPreparation`: recon, environment plan, build with a
-  bounded repair loop and a partial-build fallback, smoke test), then fans the findings out
-  (`FindingTriage`: context, probe plan, author, execute, diagnose, repair, verdict). The same
-  pipeline code runs in-process for stub demos and tests. See
-  [the triage system](docs/architecture/TRIAGE_SYSTEM.md).
-- **Deterministic where it counts.** Stack detection, building, probe execution, the three-way
-  verdict contract, prioritization and cost accounting are plain code. Exploitability is decided
-  from an explicit oracle signal, never from a passing test.
-- **Sandbox.** Build and probe containers run under gVisor, non-root, read-only root,
-  resource-capped, and with no network at probe time. Any runtime other than `runsc` is refused
-  unless `HARNESS_ALLOW_INSECURE_RUNTIME=true` is set for local development.
-- **Models.** AWS Bedrock or an operator-configured OpenAI-compatible endpoint; one backend,
-  selected per deployment, serves every agent. `stub` mode runs the whole pipeline
-  deterministically with no credentials.
-- **Prompt caching.** A stable-to-volatile prompt layout, pinned model settings per agent and
-  repository-grouped warm-then-fan-out scheduling keep the shared prefix cached;
-  `tests/agents/test_cache_prefix.py` and `tests/agents/test_exploration_cost.py` check both.
-- **Evidence-based tuning.** Every agent has an eval dataset and a release policy.
-  `harness eval run <agent> -m sonnet -m opus` runs one dataset against each model in turn,
-  `harness eval release` qualifies a commit, and accepted results are committed under
-  [`evals/baselines/`](evals/baselines/README.md).
-- **Governed.** Each agent declares an owner, execution class, governance tier, data
-  classification, model policy and an enforced per-run budget; its tier must match the risk
-  scenarios it carries. See [playbook conformance](docs/architecture/PLAYBOOK_CONFORMANCE.md)
-  and the [threat model](docs/threat-models/triage-system.md).
-
-## Layout
-
-Anything an agent needs in order to run is package data and ships in the wheel; anything
-reviewers and CI read about the system stays at the repository root.
-
-```
-src/infosec_harness/
-  agents/<name>/        # the 11 agent specs, eval datasets and release policies
-  agents/risk-scenarios.yaml  # scored harm scenarios, their controls, and which agents carry each
-  agents/*.py           # loader, registry, model factory, capabilities, renderer, validators
-  skills/               # runtime SKILL.md files: probe-oracle-protocol, cwe-*, lang-*, build-*, test-*
-  config/               # model catalogue and the disabled reference broker catalog
-  tools/                # per-toolset policy (effect, retry safety, timeout, output bound)
-  domain/               # typed contracts (Finding, EnvironmentSpec, ProbePlan, Verdict, ...)
-  graph/                # triage graph, preparation, shared pipeline and workloads, scoring
-  workflows/            # Temporal workflows, activities, submission, local runs, worker
-  sandbox/              # gVisor Docker runner, isolation policy, bounded subprocesses
-  repo/                 # hardened checkout, access checks, component and stack detection
-  persistence/          # run store, artifacts, accounting, recipe cache, alembic migrations
-  inference/            # opt-in credential broker: wire, catalog, worker, controller, executor, native
-  evals/                # datasets, adapters, gates, reports, baselines, corpus and calibration
-  operations/           # read-only readiness and model-connectivity checks
-  qualification/broker/ # operator broker qualification runners (not imported by serving code)
-  api/ cli.py           # FastAPI service and Typer CLI
-  intake/ integrations/ # JSON intake and Azure DevOps comment-only write-back
-docs/                   # documentation index, living docs, and dated evidence under evidence/
-eval-corpus/            # paired vulnerable/fixed fixture repositories and ground truth
-evals/                  # committed baselines, held-out sets, calibration plans and overlays
-examples/               # sample findings for the demo
-scripts/                # setup, validation, broker qualification and measurement tools
-tests/                  # agents, runtime, persistence, evals, development and qualification
-ui/                     # React triage UI (API types generated from the OpenAPI document)
-deploy/                 # compose support, egress proxy, dev VM, Kubernetes and OpenShell
-.claude/skills/         # development skills (.agents/skills is a symlink for Codex)
-.harness/               # ignored local state: tools, workspace, reports and log snapshots
+```json
+{
+  "temporal_address": "127.0.0.1:<temporal-port>",
+  "openshell_config": "/absolute/path/to/runtime.json",
+  "model_base_url": "https://your-model-host/v1",
+  "local_repo_roots": ["/absolute/path/to/infosec-harness/eval-corpus"],
+  "native_occupancy_command": ["/path/to/read-only-occupancy-command"],
+  "limits": {"total_tokens": 600000, "max_requests": 40, "command_timeout_seconds": 300}
+}
 ```
 
-Specs address their resources by path inside the distribution, and `infosec_harness.resources`
-resolves them through `importlib.resources`, never relative to the working directory.
-`tests/development/test_packaging.py` builds and installs the real wheel and constructs all 11
-agents from an unrelated directory.
+`native_occupancy_command` names an operator-owned read-only command whose last stdout line
+is `{"retained": N, "quota": M, "read_only": true}` for the native admission ledger (see
+[admission occupancy](deploy/openshell/README.md#admission-occupancy)). `harness eval`
+records the observation as the report's `native_operation_budget` and refuses to start when
+the headroom is below `cases × (max_requests + max_tool_calls + 40)`. Without the command the
+budget stays `not_checked`.
+
+A `command_timeout_seconds` above the runtime's `max_timeout_seconds` (default 300) is capped
+for model requests but makes every tool command fail, so keep it within that maximum.
+
+The model name must match the endpoint's served identifier. The self-hosted model is not
+provisioned or downloaded by this repository. A Bedrock executor is included, but its native credential-profile integration is not yet
+qualified; do not treat the provider option as working execution evidence.
+
+The API binds loopback by default. It has no authentication layer: deploy it behind an
+authenticated service boundary before exposing it to other users. Local repository roots
+are an explicit allowlist; remote repository inputs accept HTTPS Git URLs without embedded
+credentials. Snapshots reject symlinks and special files rather than copying material
+outside the approved source tree.
+
+## Submit and inspect
+
+```json
+{
+  "title": "Potential command injection",
+  "description": "Explain the reported input, entry point and suspected sensitive operation.",
+  "repo_url": "https://example.org/team/repository.git",
+  "revision": "reviewed-commit",
+  "file_path": "src/handler.py",
+  "cwe": "CWE-78"
+}
+```
+
+```bash
+uv run --locked harness submit finding.json
+uv run --locked harness report investigate-v11-<id>
+```
+
+For a local uncommitted fixture, use `source_mode: working_snapshot` and `revision: HEAD`.
+The worker captures an immutable source snapshot before invoking the model.
+The API exposes `/api/runs`, `/api/runs/{id}`, cancellation and `/api/health`.
+Health proves control-plane connectivity only; it does not qualify sandbox or model execution.
+
+## Checks and evaluation
+
+```bash
+just check
+just test
+just test-network
+just generated-check          # API schema, CLAUDE.md and copied development skills
+just ui-check
+./dev qualify                 # native boundaries, no model calls
+./dev eval                    # live corpus with an owned worker on a fresh task queue
+./dev eval --case NAME        # one-case diagnostic; never qualifies
+./dev replay RUN_ID           # zero-dispatch history replay
+```
+
+Evaluation uses the unchanged paired corpus and packaged release policy. It requires a
+clean source identity, the native runtime and model endpoint; `--settings FILE`, accepted
+anywhere among a `./dev` verb's arguments, pins one exact configuration. Each qualify and
+eval report gets a new timestamped path under `.harness/reports/`; failures and unstarted
+cases remain visible. See
+[OpenShell setup](deploy/openshell/README.md#qualification-and-evaluation) for draining an
+interrupted owned worker and `--keep-going`. Live runs consume inference
+resources and never happen as part of ordinary setup or deterministic tests.
+
+A definitive verdict requires source citations and a successful, complete offline probe
+whose original source files remain unchanged, with explicit target and control observations.
+Those observations are model-authored claims, not independent semantic attestation. Unknown
+command delivery, missing controls, truncation, failure or contradictory evidence must not
+be reported as a verified negative result. A contrary probe can be set aside only when it
+is older than the newest cited probe and the summary explains its flaw. A command killed at
+its budget inside the sandbox is a complete exit-137 result; the gateway's own exit 124 stays
+unknown. See [architecture and boundaries](docs/architecture/TRIAGE_SYSTEM.md).
+
+The current workflow generation uses the `investigate-v11` queue. It binds every native
+model/tool activity to the captured worker identity. v10 and older histories and workers
+are incompatible; drain them before deployment. Historical reports do not qualify this candidate.

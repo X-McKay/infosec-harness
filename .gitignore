@@ -11,3 +11,7 @@ deploy/extra-ca.crt
 # Agent worktrees checked out inside the repository, and the pre-redesign research notes.
 .claude/worktrees/
 research/
+
+# Per-developer Claude Code permission rules
+.claude/settings.local.json
+.claude/launch.json

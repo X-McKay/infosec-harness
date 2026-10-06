@@ -47,9 +47,8 @@ def atomic_write_bytes(path: Path, data: bytes, *, exclusive: bool = False,
             os.unlink(temporary)
 
 
-def write_json(path: Path, document: Any, *, sort_keys: bool = False,
-               exclusive: bool = False) -> None:
+def write_json(path: Path, document: Any, *, exclusive: bool = False) -> None:
     """Indented JSON with a trailing newline, written by :func:`atomic_write_bytes`."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    encoded = json.dumps(document, indent=2, sort_keys=sort_keys) + "\n"
+    encoded = json.dumps(document, indent=2) + "\n"
     atomic_write_bytes(path, encoded.encode(), exclusive=exclusive)

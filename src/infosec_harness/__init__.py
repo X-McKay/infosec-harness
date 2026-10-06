@@ -1,1 +1,1 @@
-"""Exploitability triage harness: a durable graph of PydanticAI agents."""
+"""OpenShell-isolated PydanticAI investigations, durably executed by Temporal."""

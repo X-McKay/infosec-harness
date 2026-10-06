@@ -1,175 +1,371 @@
-import { parseFindingDetailSearch, parseFindingSearch } from "@/lib/search";
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import ReactDOM from "react-dom/client";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
-  Link,
-  Outlet,
-  createRootRoute,
-  createRoute,
-  createRouter,
-  RouterProvider,
-} from "@tanstack/react-router";
-import {
-  Activity,
-  ChartNoAxesCombined,
-  FlaskConical,
-  ListFilter,
-  Settings2,
-  ShieldCheck,
-} from "lucide-react";
-import { RuntimeIndicator } from "./components/RuntimeIndicator";
-import { Qualification } from "./routes/Qualification";
-import { ConfigView } from "./routes/ConfigView";
-import { Experiments } from "./routes/Experiments";
-import { FindingDetail } from "./routes/FindingDetail";
-import { Metrics } from "./routes/Metrics";
-import { TriageQueue } from "./routes/TriageQueue";
-import { Workflows } from "./routes/Workflows";
+  QueryClient,
+  QueryClientProvider,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { req } from "./api/http";
+import type { components } from "./api/schema";
 import "./index.css";
 
-const navigation = [
-  ["/", "Findings", ListFilter],
-  ["/workflows", "Workflows", Activity],
-  ["/experiments", "Evaluations", FlaskConical],
-  ["/metrics", "Metrics", ChartNoAxesCombined],
-  ["/qualification", "Qualification", ShieldCheck],
-  ["/config", "Settings", Settings2],
-] as const;
+type Finding = components["schemas"]["Finding"];
+type RunState = components["schemas"]["RunState"];
+type RunPage = components["schemas"]["RunPage"];
+const queryClient = new QueryClient();
+const message = (error: unknown) =>
+  error instanceof Error ? error.message : "Request failed";
 
-function Shell() {
-  const [theme, setTheme] = useState(
-    () => localStorage.getItem("harness-theme") || "system",
-  );
-  useEffect(() => {
-    const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const apply = () =>
-      document.documentElement.classList.toggle(
-        "dark",
-        theme === "dark" || (theme === "system" && media.matches),
-      );
-    apply();
-    localStorage.setItem("harness-theme", theme);
-    media.addEventListener("change", apply);
-    return () => media.removeEventListener("change", apply);
-  }, [theme]);
+function App() {
+  const client = useQueryClient();
+  const [selected, setSelected] = useState(location.hash.slice(1));
+  const [pages, setPages] = useState<string[]>([""]);
+  const token = pages.at(-1) || "";
+  const [finding, setFinding] = useState<Finding>({
+    title: "",
+    repo_url: "",
+    description: "",
+    revision: "HEAD",
+    source_mode: "git_revision",
+  });
+  const select = (id: string) => {
+    setSelected(id);
+    history.replaceState(null, "", `#${id}`);
+  };
+  const runs = useQuery({
+    queryKey: ["runs", token],
+    queryFn: ({ signal }) =>
+      req<RunPage>(
+        `/api/runs${token ? `?page_token=${encodeURIComponent(token)}` : ""}`,
+        { signal },
+      ),
+    refetchInterval: 5000,
+  });
+  const detail = useQuery({
+    queryKey: ["run", selected],
+    queryFn: ({ signal }) =>
+      req<RunState>(`/api/runs/${encodeURIComponent(selected)}`, { signal }),
+    enabled: !!selected,
+    refetchInterval: (query) =>
+      ["pending", "running"].includes(query.state.data?.status || "pending")
+        ? 3000
+        : false,
+  });
+  const submit = useMutation({
+    mutationFn: () =>
+      req<RunState>("/api/runs", {
+        method: "POST",
+        body: JSON.stringify(finding),
+      }),
+    onSuccess: (run) => {
+      select(run.id);
+      setPages([""]);
+      void client.invalidateQueries({ queryKey: ["runs"] });
+    },
+  });
+  const cancel = useMutation({
+    mutationFn: () =>
+      req(`/api/runs/${encodeURIComponent(selected)}/cancel`, {
+        method: "POST",
+      }),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: ["run", selected] });
+      void client.invalidateQueries({ queryKey: ["runs"] });
+    },
+  });
+  const run = detail.data;
   return (
-    <div className="min-h-screen md:pl-56">
-      <a
-        href="#content"
-        className="sr-only focus:not-sr-only focus:fixed focus:left-2 focus:top-2 z-50 bg-background p-3"
-      >
-        Skip to content
-      </a>
-      <aside className="sidebar flex gap-4 border-b p-4 md:fixed md:inset-y-0 md:left-0 md:w-56 md:flex-col md:border-r">
-        <div className="flex items-center gap-2 py-3 text-sm font-semibold">
-          <ShieldCheck className="h-5 w-5 text-primary" /> Harness{" "}
-        </div>
-        <RuntimeIndicator />
-        <nav
-          aria-label="Main navigation"
-          className="flex min-w-0 flex-1 gap-1 overflow-x-auto md:flex-col"
+    <>
+      <header>
+        <a
+          href="#"
+          onClick={(event) => {
+            event.preventDefault();
+            select("");
+          }}
         >
-          {navigation.map(([to, label, Icon]) => (
-            <Link
-              key={to}
-              to={to}
-              activeOptions={{ exact: to === "/" }}
-              className="nav-link"
-              activeProps={{
-                className: "nav-link selected",
-                "aria-current": "page",
-              }}
-            >
-              <Icon className="h-4 w-4 shrink-0" />
-              <span>{label}</span>
-            </Link>
-          ))}
-        </nav>
-        <label className="appearance-control shrink-0 text-xs text-muted-foreground md:mt-auto">
-          Appearance
-          <select
-            aria-label="Appearance"
-            className="field mt-2 w-full"
-            value={theme}
-            onChange={(event) => setTheme(event.target.value)}
+          InfoSec Harness
+        </a>
+        <span>Vulnerability investigations</span>
+      </header>
+      <main>
+        <section aria-labelledby="submit-heading" className="submission">
+          <div>
+            <p className="eyebrow">New investigation</p>
+            <h1 id="submit-heading">Follow the evidence.</h1>
+            <p>
+              Submit a finding and source revision. The investigator will
+              inspect the code, prepare its environment, and test the finding in
+              an isolated workspace.
+            </p>
+          </div>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              submit.mutate();
+            }}
           >
-            <option value="system">System</option>
-            <option value="light">Light</option>
-            <option value="dark">Dark</option>
-          </select>
-        </label>
-      </aside>
-      <main id="content" className="mx-auto max-w-[1600px] px-5 py-8 lg:px-10">
-        <Outlet />
+            <label>
+              Finding title
+              <input
+                required
+                maxLength={1000}
+                value={finding.title}
+                onChange={(event) =>
+                  setFinding({ ...finding, title: event.target.value })
+                }
+              />
+            </label>
+            <div className="form-row">
+              <label>
+                Repository URL or approved local path
+                <input
+                  required
+                  value={finding.repo_url}
+                  onChange={(event) =>
+                    setFinding({ ...finding, repo_url: event.target.value })
+                  }
+                />
+              </label>
+              <label>
+                Revision
+                <input
+                  required
+                  value={finding.revision}
+                  onChange={(event) =>
+                    setFinding({ ...finding, revision: event.target.value })
+                  }
+                />
+              </label>
+            </div>
+            <label>
+              Source
+              <select
+                value={finding.source_mode}
+                onChange={(event) =>
+                  setFinding({
+                    ...finding,
+                    source_mode: event.target.value as Finding["source_mode"],
+                  })
+                }
+              >
+                <option value="git_revision">Git revision</option>
+                <option value="working_snapshot">Local working snapshot</option>
+              </select>
+            </label>
+            <label>
+              Finding description
+              <textarea
+                rows={4}
+                value={finding.description}
+                onChange={(event) =>
+                  setFinding({ ...finding, description: event.target.value })
+                }
+              />
+            </label>
+            {submit.error && (
+              <p role="alert" className="error">
+                {message(submit.error)}
+              </p>
+            )}
+            <button disabled={submit.isPending}>
+              {submit.isPending ? "Submitting…" : "Start investigation"}
+            </button>
+          </form>
+        </section>
+        <div className="workspace">
+          <section className="runs" aria-labelledby="runs-heading">
+            <div className="section-heading">
+              <h2 id="runs-heading">Investigations</h2>
+              <button className="secondary" onClick={() => void runs.refetch()}>
+                Refresh
+              </button>
+            </div>
+            {runs.isPending && <p role="status">Loading investigations…</p>}
+            {runs.error && (
+              <p role="alert" className="error">
+                {message(runs.error)}
+              </p>
+            )}
+            {runs.data?.items.length === 0 && (
+              <p className="muted">No investigations yet.</p>
+            )}
+            <ul>
+              {runs.data?.items.map((item) => (
+                <li key={item.id}>
+                  <button
+                    className={`run ${selected === item.id ? "selected" : ""}`}
+                    onClick={() => select(item.id)}
+                  >
+                    <strong>{item.title}</strong>
+                    <span>
+                      <span className={`status ${item.status}`}>
+                        {item.status}
+                      </span>
+                      <time>{new Date(item.started_at).toLocaleString()}</time>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <div className="pagination">
+              <button
+                className="secondary"
+                disabled={pages.length === 1}
+                onClick={() => setPages(pages.slice(0, -1))}
+              >
+                Previous
+              </button>
+              <button
+                className="secondary"
+                disabled={!runs.data?.next_page_token}
+                onClick={() =>
+                  runs.data?.next_page_token &&
+                  setPages([...pages, runs.data.next_page_token])
+                }
+              >
+                Next
+              </button>
+            </div>
+          </section>
+          <section className="detail" aria-label="Investigation detail">
+            {!selected && (
+              <div className="empty">
+                <h2>Inspect an investigation</h2>
+                <p>
+                  Select a run to see its progress, conclusion, and execution
+                  evidence.
+                </p>
+              </div>
+            )}
+            {selected && detail.isPending && (
+              <p role="status">Loading investigation…</p>
+            )}
+            {detail.error && (
+              <p role="alert" className="error">
+                {message(detail.error)}
+              </p>
+            )}
+            {run && (
+              <>
+                <div className="section-heading">
+                  <div>
+                    <p className="eyebrow">{run.phase}</p>
+                    <h2>{run.finding.title}</h2>
+                  </div>
+                  <span className={`status ${run.status}`}>{run.status}</span>
+                </div>
+                <p className="muted source">
+                  {run.finding.repo_url} · {run.finding.revision}
+                </p>
+                {["pending", "running"].includes(run.status) && (
+                  <button
+                    className="secondary"
+                    disabled={cancel.isPending}
+                    onClick={() => cancel.mutate()}
+                  >
+                    {cancel.isPending
+                      ? "Requesting cancellation…"
+                      : "Cancel investigation"}
+                  </button>
+                )}
+                {cancel.error && (
+                  <p role="alert" className="error">
+                    {message(cancel.error)}
+                  </p>
+                )}
+                {run.error && (
+                  <p role="alert" className="error">
+                    {run.error}
+                  </p>
+                )}
+                {run.result && (
+                  <>
+                    <h3>{run.result.verdict.label.replaceAll("_", " ")}</h3>
+                    <p className="summary">{run.result.verdict.summary}</p>
+                    {!!(run.result.limitations ?? []).length && (
+                      <div className="limitations">
+                        <h4>Limitations</h4>
+                        <ul>
+                          {(run.result.limitations ?? []).map(
+                            (value, index) => (
+                              <li key={index}>{value}</li>
+                            ),
+                          )}
+                        </ul>
+                      </div>
+                    )}
+                    <h3>Source references</h3>
+                    <ul>
+                      {(run.result.verdict.citations ?? []).map(
+                        (citation, index) => (
+                          <li key={index}>
+                            <code>
+                              {citation.path}:{citation.start_line}–
+                              {citation.end_line}
+                            </code>
+                          </li>
+                        ),
+                      )}
+                    </ul>
+                    <h3>Execution evidence</h3>
+                    <p className="muted">
+                      Command output is untrusted source material. Process
+                      outcomes are recorded by the runtime.
+                    </p>
+                    {run.result.evidence.map((evidence) => (
+                      <details key={evidence.id}>
+                        <summary>
+                          <code>{evidence.command}</code>
+                          <span className="status">
+                            {evidence.timed_out
+                              ? "timed out"
+                              : `exit ${evidence.exit_code ?? "unknown"}`}
+                          </span>
+                        </summary>
+                        <p className="muted">
+                          {evidence.kind} · {evidence.id}
+                          {evidence.output_truncated && " · output truncated"}
+                        </p>
+                        <pre>{evidence.stdout}</pre>
+                        {evidence.stderr && <pre>{evidence.stderr}</pre>}
+                      </details>
+                    ))}
+                    <details>
+                      <summary>Provenance and usage</summary>
+                      <pre>
+                        {JSON.stringify(
+                          {
+                            source_digest: run.result.source_digest,
+                            model: run.result.model,
+                            usage: run.result.usage,
+                          },
+                          null,
+                          2,
+                        )}
+                      </pre>
+                    </details>
+                  </>
+                )}
+              </>
+            )}
+          </section>
+        </div>
       </main>
-    </div>
+      <footer>
+        Evidence-led triage · Results require review before remediation
+        decisions.
+      </footer>
+    </>
   );
 }
 
-const rootRoute = createRootRoute({ component: Shell });
-const indexRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/",
-  component: TriageQueue,
-  validateSearch: parseFindingSearch,
-});
-const detailRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/runs/$runId",
-  component: FindingDetail,
-  validateSearch: parseFindingDetailSearch,
-});
-const expRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/experiments",
-  component: Experiments,
-});
-const qualificationRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/qualification",
-  component: Qualification,
-});
-const cfgRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/config",
-  component: ConfigView,
-});
-const metricsRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/metrics",
-  component: Metrics,
-});
-const workflowsRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/workflows",
-  component: Workflows,
-});
-const router = createRouter({
-  routeTree: rootRoute.addChildren([
-    indexRoute,
-    detailRoute,
-    expRoute,
-    cfgRoute,
-    qualificationRoute,
-    metricsRoute,
-    workflowsRoute,
-  ]),
-});
-declare module "@tanstack/react-router" {
-  interface Register {
-    router: typeof router;
-  }
-}
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: { staleTime: 5000, retry: 1, refetchIntervalInBackground: false },
-  },
-});
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router} />
+      <App />
     </QueryClientProvider>
   </React.StrictMode>,
 );

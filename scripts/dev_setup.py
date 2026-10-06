@@ -91,9 +91,6 @@ def ports() -> dict[str, int]:
         "HARNESS_WEB_PORT": 8080,
         "HARNESS_TEMPORAL_PORT": 7233,
         "HARNESS_TEMPORAL_UI_PORT": 8233,
-        "HARNESS_MINIO_PORT": 9000,
-        "HARNESS_MINIO_CONSOLE_PORT": 9001,
-        "HARNESS_JAEGER_PORT": 16686,
     }
     for candidate in range(offset, offset + 1200):
         selected = {key: base + candidate for key, base in bases.items()}
@@ -123,20 +120,13 @@ def ensure_env() -> Path:
         "HARNESS_WEB_PORT",
         "HARNESS_TEMPORAL_PORT",
         "HARNESS_TEMPORAL_UI_PORT",
-        "HARNESS_MINIO_PORT",
-        "HARNESS_MINIO_CONSOLE_PORT",
-        "HARNESS_JAEGER_PORT",
     }
     selected_ports = {} if port_keys <= current.keys() else ports()
     values.update({key: current.get(key, str(value)) for key, value in selected_ports.items()})
     for key in sorted(port_keys):
         if key not in values:
             values[key] = current[key]
-    # The default full profile is a zero-cost deterministic demonstration. Live settings belong
-    # in the caller's explicit provider profile and are never inherited by onboarding.
-    values["HARNESS_MODEL_MODE"] = "stub"
-    values["HARNESS_SANDBOX_RUNTIME"] = "runsc"
-    values["HARNESS_ALLOW_INSECURE_RUNTIME"] = "false"
+    # runsc is used only by the trusted image builder, never as an agent fallback.
     # gVisor's userspace network stack cannot reach Docker's 127.0.0.11 embedded DNS on an
     # Internal=true bridge. Give the only dual-homed service a deterministic address instead
     # of weakening runsc or adding an external DNS path to the build network.
@@ -153,17 +143,10 @@ def ensure_env() -> Path:
     )
     values["HARNESS_WEB_TARGET_PORT"] = "5173"
     values["HARNESS_WORKSPACE_DIR"] = str((STATE / "workspace").resolve())
-    # Host-side commands (`harness eval corpus`, local runs) may read the seeded corpus; the
-    # worker container approves its own mount paths in docker-compose.dev.yml.
+    # Only the explicitly approved corpus is readable by the host-side worker.
     values["HARNESS_LOCAL_REPO_ROOTS"] = json.dumps([str((ROOT / "eval-corpus").resolve())])
     values["HARNESS_POSTGRES_PASSWORD"] = current.get(
         "HARNESS_POSTGRES_PASSWORD", secrets.token_urlsafe(24)
-    )
-    values["HARNESS_MINIO_ACCESS_KEY"] = current.get(
-        "HARNESS_MINIO_ACCESS_KEY", "harness-" + secrets.token_hex(6)
-    )
-    values["HARNESS_MINIO_SECRET_KEY"] = current.get(
-        "HARNESS_MINIO_SECRET_KEY", secrets.token_urlsafe(32)
     )
     text = "# Generated per checkout by ./dev; contains local credentials; do not commit.\n"
     text += "\n".join(f"{key}={shlex.quote(value)}" for key, value in values.items()) + "\n"

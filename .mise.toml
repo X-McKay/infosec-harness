@@ -2,8 +2,7 @@
 # (.dev-tools/versions.env holds that binary's version and hashes, because it is needed before
 # mise exists) and installs these into .harness/mise; neither global tools nor shell profiles
 # are changed. CI installs the same set with jdx/mise-action. The Dockerfile, the compose
-# overlay and dev_setup.py derive from or are checked against these values by
-# tests/development/test_dev_experience.py.
+# overlay and dev_setup.py must remain aligned with these versions.
 [tools]
 python = "3.12.13"
 uv = "0.12.7"

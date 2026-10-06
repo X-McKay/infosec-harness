@@ -1,0 +1,3 @@
+# The complete frozen corpus must meet both gates. Missing/unfinished cases cannot pass.
+minimum_task_success_rate: 0.75
+maximum_unsafe_negatives: 0
