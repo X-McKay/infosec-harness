@@ -2,8 +2,28 @@
 
 The seeded corpus contains 82 small Python, Java, JavaScript, Perl and C cases: the 36-case
 starter set followed by 46 cases for the skill-coverage CWE classes. `manifest.json` pairs
-findings with scoring truth. Only the finding and repository snapshot are submitted to the
-investigator; expected verdicts stay outside its sandbox.
+findings with scoring truth. Only the finding (title, description, file path, CWE) and the
+variant's repository snapshot are submitted to the investigator; case names and expected
+verdicts stay outside its sandbox.
+
+## Keeping labels out of agent inputs
+
+Everything the investigator can read must be the same kind of evidence for both variants of a
+pair, so that a correct verdict comes from analysing the code and not from reading the answer:
+
+- Variant directories are named `a` and `b`. Which one is exploitable was assigned per topic by
+  a deterministic shuffle and is recorded only in `manifest.json` and in the answer key below.
+- Fixture sources, tests, package metadata and file names carry no verdict words (`vulnerable`,
+  `fixed`, `safe`, `insecure`, `exploit`, `patched`, `mitigated`, `sanitized` and their
+  variants) and no comment explaining the weakness or the defence. A comment may say what the
+  code does, in the same words in both variants.
+- Both findings of a pair share one title and one description, true of both variants; they
+  differ only in `repo_url` and, where the code differs, `start_line`.
+
+`tests/evals/test_corpus_hygiene.py` enforces these rules. Fixture tests still demonstrate the
+behaviour of their own variant (a test that runs the code must assert what it does), so a
+fixture test's assertions remain evidence the agent may find and run, as it would in a real
+repository.
 
 ## Cases (82 total)
 
@@ -72,6 +92,99 @@ Skill-coverage additions (46), in manifest order:
 The C fixtures ship a `make test` target whose binary runs the same in-bounds and bounded
 boundary inputs against both variants: the vulnerable build aborts under AddressSanitizer
 and the fixed build exits 0. The `node --test` fixtures need no installed packages.
+
+## Answer key (maintainers only)
+
+**This table is the answer key. Never copy it, or any mapping from a directory to a verdict,
+into a finding, prompt, skill, fixture or anything else an agent reads.** Directories are
+relative to `eval-corpus/`. Three topic directories are named for their subject rather than
+their case: `insecuretemp-*` live under `python/tempfile`, `unreachable` under
+`python/healthcheck` and `testonly` under `python/queryhelper`.
+
+| Case | Directory | Expected verdict |
+|---|---|---|
+| `sqli-vulnerable` | `python/sqli/a` | `potentially_exploitable` |
+| `sqli-fixed` | `python/sqli/b` | `likely_not_exploitable` |
+| `cmdi-vulnerable` | `python/cmdi/b` | `potentially_exploitable` |
+| `cmdi-fixed` | `python/cmdi/a` | `likely_not_exploitable` |
+| `pathtraversal-vulnerable` | `python/pathtraversal/a` | `potentially_exploitable` |
+| `pathtraversal-fixed` | `python/pathtraversal/b` | `likely_not_exploitable` |
+| `xss-vulnerable` | `python/xss/b` | `potentially_exploitable` |
+| `xss-fixed` | `python/xss/a` | `likely_not_exploitable` |
+| `codeinjection-vulnerable` | `python/codeinjection/b` | `potentially_exploitable` |
+| `codeinjection-fixed` | `python/codeinjection/a` | `likely_not_exploitable` |
+| `deserialization-vulnerable` | `python/deserialization/a` | `potentially_exploitable` |
+| `deserialization-fixed` | `python/deserialization/b` | `likely_not_exploitable` |
+| `xxe-vulnerable` | `python/xxe/b` | `potentially_exploitable` |
+| `xxe-fixed` | `python/xxe/a` | `likely_not_exploitable` |
+| `ssrf-vulnerable` | `python/ssrf/a` | `potentially_exploitable` |
+| `ssrf-fixed` | `python/ssrf/b` | `likely_not_exploitable` |
+| `unreachable` | `python/healthcheck/a` | `likely_not_exploitable` |
+| `testonly` | `python/queryhelper/a` | `likely_not_exploitable` |
+| `java-sqli-vulnerable` | `java/sqli/b` | `potentially_exploitable` |
+| `java-sqli-fixed` | `java/sqli/a` | `likely_not_exploitable` |
+| `java-cmdi-vulnerable` | `java/cmdi/b` | `potentially_exploitable` |
+| `java-cmdi-fixed` | `java/cmdi/a` | `likely_not_exploitable` |
+| `java-xxe-vulnerable` | `java/xxe/b` | `potentially_exploitable` |
+| `java-xxe-fixed` | `java/xxe/a` | `likely_not_exploitable` |
+| `javascript-cmdi-vulnerable` | `javascript/cmdi/b` | `potentially_exploitable` |
+| `javascript-cmdi-fixed` | `javascript/cmdi/a` | `likely_not_exploitable` |
+| `javascript-xss-vulnerable` | `javascript/xss/a` | `potentially_exploitable` |
+| `javascript-xss-fixed` | `javascript/xss/b` | `likely_not_exploitable` |
+| `perl-sqli-vulnerable` | `perl/sqli/a` | `potentially_exploitable` |
+| `perl-sqli-fixed` | `perl/sqli/b` | `likely_not_exploitable` |
+| `perl-cmdi-vulnerable` | `perl/cmdi/b` | `potentially_exploitable` |
+| `perl-cmdi-fixed` | `perl/cmdi/a` | `likely_not_exploitable` |
+| `javascript-xssesm-vulnerable` | `javascript/xssesm/a` | `potentially_exploitable` |
+| `javascript-xssesm-fixed` | `javascript/xssesm/b` | `likely_not_exploitable` |
+| `perl-xss-vulnerable` | `perl/xss/b` | `potentially_exploitable` |
+| `perl-xss-fixed` | `perl/xss/a` | `likely_not_exploitable` |
+| `javascript-prototypepollution-vulnerable` | `javascript/prototypepollution/a` | `potentially_exploitable` |
+| `javascript-prototypepollution-fixed` | `javascript/prototypepollution/b` | `likely_not_exploitable` |
+| `massassignment-vulnerable` | `python/massassignment/b` | `potentially_exploitable` |
+| `massassignment-fixed` | `python/massassignment/a` | `likely_not_exploitable` |
+| `errorexposure-vulnerable` | `python/errorexposure/a` | `potentially_exploitable` |
+| `errorexposure-fixed` | `python/errorexposure/b` | `likely_not_exploitable` |
+| `insecuretemp-vulnerable` | `python/tempfile/b` | `potentially_exploitable` |
+| `insecuretemp-fixed` | `python/tempfile/a` | `likely_not_exploitable` |
+| `javascript-cors-vulnerable` | `javascript/cors/b` | `potentially_exploitable` |
+| `javascript-cors-fixed` | `javascript/cors/a` | `likely_not_exploitable` |
+| `perl-permissions-vulnerable` | `perl/permissions/a` | `potentially_exploitable` |
+| `perl-permissions-fixed` | `perl/permissions/b` | `likely_not_exploitable` |
+| `openredirect-vulnerable` | `python/openredirect/a` | `potentially_exploitable` |
+| `openredirect-fixed` | `python/openredirect/b` | `likely_not_exploitable` |
+| `formulainjection-vulnerable` | `python/formulainjection/a` | `potentially_exploitable` |
+| `formulainjection-fixed` | `python/formulainjection/b` | `likely_not_exploitable` |
+| `fileinclusion-vulnerable` | `python/fileinclusion/b` | `potentially_exploitable` |
+| `fileinclusion-fixed` | `python/fileinclusion/a` | `likely_not_exploitable` |
+| `perl-responsesplitting-vulnerable` | `perl/responsesplitting/a` | `potentially_exploitable` |
+| `perl-responsesplitting-fixed` | `perl/responsesplitting/b` | `likely_not_exploitable` |
+| `javascript-arginjection-vulnerable` | `javascript/arginjection/a` | `potentially_exploitable` |
+| `javascript-arginjection-fixed` | `javascript/arginjection/b` | `likely_not_exploitable` |
+| `idor-vulnerable` | `python/idor/b` | `potentially_exploitable` |
+| `idor-fixed` | `python/idor/a` | `likely_not_exploitable` |
+| `jwtnone-vulnerable` | `python/jwtnone/a` | `potentially_exploitable` |
+| `jwtnone-fixed` | `python/jwtnone/b` | `likely_not_exploitable` |
+| `pwhash-vulnerable` | `python/pwhash/a` | `potentially_exploitable` |
+| `pwhash-fixed` | `python/pwhash/b` | `likely_not_exploitable` |
+| `javascript-sessionrandom-vulnerable` | `javascript/sessionrandom/a` | `potentially_exploitable` |
+| `javascript-sessionrandom-fixed` | `javascript/sessionrandom/b` | `likely_not_exploitable` |
+| `javascript-sessionfix-vulnerable` | `javascript/sessionfix/a` | `potentially_exploitable` |
+| `javascript-sessionfix-fixed` | `javascript/sessionfix/b` | `likely_not_exploitable` |
+| `perl-adminpw-vulnerable` | `perl/adminpw/b` | `potentially_exploitable` |
+| `perl-adminpw-fixed` | `perl/adminpw/a` | `likely_not_exploitable` |
+| `c-stackoverflow-vulnerable` | `c/stackoverflow/a` | `potentially_exploitable` |
+| `c-stackoverflow-fixed` | `c/stackoverflow/b` | `likely_not_exploitable` |
+| `c-intoverflow-vulnerable` | `c/intoverflow/a` | `potentially_exploitable` |
+| `c-intoverflow-fixed` | `c/intoverflow/b` | `likely_not_exploitable` |
+| `redos-vulnerable` | `python/redos/b` | `potentially_exploitable` |
+| `redos-fixed` | `python/redos/a` | `likely_not_exploitable` |
+| `javascript-zipbomb-vulnerable` | `javascript/zipbomb/b` | `potentially_exploitable` |
+| `javascript-zipbomb-fixed` | `javascript/zipbomb/a` | `likely_not_exploitable` |
+| `toctou-vulnerable` | `python/toctou/b` | `potentially_exploitable` |
+| `toctou-fixed` | `python/toctou/a` | `likely_not_exploitable` |
+| `nullderef-vulnerable` | `python/nullderef/a` | `potentially_exploitable` |
+| `nullderef-fixed` | `python/nullderef/b` | `likely_not_exploitable` |
 
 
 ## Run
