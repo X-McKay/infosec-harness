@@ -2,12 +2,14 @@
 
 import asyncio
 import copy
+import hashlib
 import io
 import json
 import tarfile
 import threading
 import uuid
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -178,6 +180,12 @@ async def test_native_create_and_exec_receipt_replay(adapter):
     assert receipt.command == ["printf", "ok"] and receipt.sandbox.id == sandbox.id
     assert native.execs[0].sandbox == sandbox.name
     assert MessageToDict(native.creates[0].spec.template.resources) == {"limits": {"cpu": "1", "memory": "512Mi"}}
+    # Live native sandboxes carry these exact labels; close() of a pending create requires them.
+    assert dict(native.creates[0].labels) == {
+        "ih.owner": "infosec-harness.v3",
+        "ih.run": hashlib.sha256(b"run").hexdigest()[:32],
+        "ih.profile": "workspace",
+    }
 
 
 @pytest.mark.asyncio
@@ -473,6 +481,15 @@ def archive(member):
     return stream.getvalue()
 
 
+def original_of(tmp_path, member: tarfile.TarInfo) -> Path:
+    """The original source directory that ``archive(member)`` captures unchanged."""
+    original = tmp_path / "original"
+    original.mkdir()
+    if member.isfile() and not member.name.startswith(("/", "..")):
+        (original / member.name).write_bytes(b"x" * member.size)
+    return original
+
+
 def source_archive(content, *, include_original=True, mode=0o644):
     stream = io.BytesIO()
     with tarfile.open(fileobj=stream, mode="w") as tar:
@@ -488,7 +505,7 @@ def source_archive(content, *, include_original=True, mode=0o644):
 
 
 @pytest.mark.asyncio
-async def test_archive_over_one_gateway_message_is_restored_in_parts(adapter):
+async def test_archive_over_one_gateway_message_is_restored_in_parts(adapter, tmp_path):
     """Live 2026-10-05: a 2.6 MB Java workspace restore failed because the pinned gateway
     decodes at most 1 MiB per gRPC message. Parts stay under that bound, each is its own
     receipt, and the final extraction runs inside the sandbox from the staged file."""
@@ -500,7 +517,9 @@ async def test_archive_over_one_gateway_message_is_restored_in_parts(adapter):
     member = tarfile.TarInfo("vendor.jar")
     member.size = 2 * _PART_BYTES + 1
     native.archive = archive(member)
-    await boundary.copy_workspace(source, probe, operation_id="copy-activity")
+    original = original_of(tmp_path, member)
+    await boundary.copy_workspace(source, probe, operation_id="copy-activity",
+                                  expected_source=original)
     parts = [r for r in native.execs if "open('ab')" in " ".join(r.command)]
     unpack = [r for r in native.execs if "extractall" in " ".join(r.command)]
     assert len(parts) == 3 and all(len(r.stdin) <= _PART_BYTES for r in parts)
@@ -508,24 +527,28 @@ async def test_archive_over_one_gateway_message_is_restored_in_parts(adapter):
     assert len(unpack) == 1 and unpack[0].stdin == b"" and "unlink" in " ".join(unpack[0].command)
     assert all(r.sandbox == probe.name for r in parts + unpack)
     before = len(native.execs)
-    await boundary.copy_workspace(source, probe, operation_id="copy-activity")
+    await boundary.copy_workspace(source, probe, operation_id="copy-activity",
+                                  expected_source=original)
     assert len(native.execs) == before  # every part and the extraction replay from receipts
 
 
 @pytest.mark.asyncio
-async def test_large_native_snapshot_enters_probe_without_host_extraction(adapter):
+async def test_large_native_snapshot_enters_probe_without_host_extraction(adapter, tmp_path):
     boundary, native = adapter
     source = await boundary.create("run")
     probe = await boundary.create("run", profile="probe", slot="activity")
     member = tarfile.TarInfo("package.py")
     member.size = 524288
     native.archive = archive(member)
-    await boundary.copy_workspace(source, probe, operation_id="copy-activity")
+    original = original_of(tmp_path, member)
+    await boundary.copy_workspace(source, probe, operation_id="copy-activity",
+                                  expected_source=original)
     capture = [request for request in native.execs if request.command[0] == "/usr/bin/tar"]
     restore = [request for request in native.execs if "extractall" in " ".join(request.command)]
     assert len(capture) == 1 and len(restore) == 1
     assert restore[0].stdin == native.archive and restore[0].sandbox == probe.name
-    await boundary.copy_workspace(source, probe, operation_id="copy-activity")
+    await boundary.copy_workspace(source, probe, operation_id="copy-activity",
+                                  expected_source=original)
     assert len(native.execs) == 2
     assert not (boundary.config.state_dir / "package.py").exists()
 
@@ -534,7 +557,7 @@ async def test_large_native_snapshot_enters_probe_without_host_extraction(adapte
     ("/etc/secret", tarfile.REGTYPE), ("link", tarfile.SYMTYPE), ("hard", tarfile.LNKTYPE),
     ("pipe", tarfile.FIFOTYPE)])
 @pytest.mark.asyncio
-async def test_hostile_archive_is_not_restored_or_extracted_on_host(adapter, name, kind):
+async def test_hostile_archive_is_not_restored_or_extracted_on_host(adapter, tmp_path, name, kind):
     boundary, native = adapter
     source = await boundary.create("run")
     probe = await boundary.create("run", profile="probe", slot="activity")
@@ -542,8 +565,10 @@ async def test_hostile_archive_is_not_restored_or_extracted_on_host(adapter, nam
     member.type = kind
     member.linkname = "/etc/passwd" if kind in (tarfile.SYMTYPE, tarfile.LNKTYPE) else ""
     native.archive = archive(member)
+    original = original_of(tmp_path, member)
     with pytest.raises(UnsafeSnapshotMetadata, match="unsafe archive"):
-        await boundary.copy_workspace(source, probe, operation_id="copy-activity")
+        await boundary.copy_workspace(source, probe, operation_id="copy-activity",
+                                  expected_source=original)
     assert len(native.execs) == 1
 
 
@@ -892,3 +917,67 @@ def test_profile_limits_are_parsed_once_and_never_dumped(tmp_path):
     assert (default.cpu_cores, default.memory_bytes) == (1, 512 * 1024**2)
     # model_dump is part of every saved lifecycle binding; derived limits must not appear.
     assert set(profile.model_dump()) == {"image", "policy", "cpu", "memory", "provider"}
+
+
+def inspector(tmp_path, body: str) -> OpenShell:
+    """An adapter whose dedicated inspector is a real local script named ``docker``."""
+    import openshell
+
+    script = tmp_path / "bin" / "docker"
+    script.parent.mkdir(exist_ok=True)
+    script.write_text("#!/bin/sh\n" + body + "\n")
+    script.chmod(0o755)
+    image = "sha256:" + "a" * 64
+    profile = Profile(image=image, policy=tmp_path / "policy.yaml")
+    config = OpenShellConfig(endpoint="127.0.0.1:7777", state_dir=tmp_path / "state",
+        inspection_socket="unix:///dedicated/docker.sock",
+        inspection_command=(str(script), "--host", "unix:///dedicated/docker.sock"),
+        inspection_lima_home=tmp_path / "lima", supervisor_image=image,
+        profiles={"workspace": profile})
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(openshell, "SandboxClient",
+                      lambda *args, **kwargs: SimpleNamespace(_stub=None))
+        return OpenShell(config)
+
+
+@pytest.mark.asyncio
+async def test_inspector_gets_exact_arguments_and_explicit_environment(tmp_path, monkeypatch):
+    monkeypatch.setenv("IH_AMBIENT_SECRET", "must-not-leak")
+    boundary = inspector(tmp_path, 'printf "%s|%s|%s" "$LIMA_HOME" "${IH_AMBIENT_SECRET:-}" "$*"')
+    output = await boundary._inspection_call(["ps", "-a", "-q"])
+    assert output == f"{tmp_path / 'lima'}||--host unix:///dedicated/docker.sock ps -a -q"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("body", "message"), [
+    ("echo partial; exit 1", "inspection unavailable"),
+    ("head -c 2097153 /dev/zero | tr '\\0' x", "output bound"),
+    ("printf '\\377'", "undecodable"),
+])
+async def test_inspector_failure_modes_fail_closed(tmp_path, body, message):
+    with pytest.raises(OpenShellError, match=message):
+        await inspector(tmp_path, body)._inspection_call(["inspect", "x"])
+
+
+@pytest.mark.asyncio
+async def test_inspector_timeout_kills_its_whole_process_group(tmp_path, monkeypatch):
+    """A slow inspector (limactl, then ssh, then docker) fails closed and leaves no descendant."""
+    import os
+
+    import infosec_harness.sandbox.openshell as module
+
+    monkeypatch.setattr(module, "_INSPECTION_TIMEOUT_S", 0.5)
+    pidfile = tmp_path / "grandchild"
+    boundary = inspector(tmp_path, f"sleep 30 & echo $! > {pidfile}; wait")
+    with pytest.raises(OpenShellError, match="timed out"):
+        await boundary._inspection_call(["ps"])
+    grandchild = int(pidfile.read_text())
+    for _ in range(50):
+        try:
+            os.kill(grandchild, 0)
+        except ProcessLookupError:
+            break
+        await asyncio.sleep(0.1)
+    else:
+        os.kill(grandchild, 9)
+        pytest.fail("inspector descendant survived the timeout")

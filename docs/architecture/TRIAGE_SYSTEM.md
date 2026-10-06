@@ -62,10 +62,14 @@ in-sandbox `timeout -s KILL` that fires 10 s before the command budget: a slow c
 a complete receipt with exit 137, and the investigator sees `timeout_feedback`. Shell commands
 write their output to files inside the sandbox, which the wrapper prints after the command
 ends, so a background or `setsid` child that outlives the kill cannot hold the exec stream
-open. The wrapper prints at most 200,000 bytes of stdout and 60,000 of stderr; that cut is not
-yet flagged as truncation in the evidence. The gateway also decodes at most
-1 MiB per gRPC message, so archives are delivered in parts of at most 900,000 bytes; each part
-is its own replayable receipt, and the final extraction consumes the staged parts.
+open. The wrapper prints at most 200,000 bytes of stdout and 60,000 of stderr and reports a
+cut with one fixed marker line on stderr; both the tool return and finalization turn that
+marker into `output_truncated`, so a cut probe never supports a definitive verdict. Native
+output beyond the runtime's `max_output_bytes` is unknown execution, not truncation. The
+gateway also decodes at most 1 MiB per gRPC message, so archives are delivered in parts of at
+most 900,000 bytes; each part is its own replayable receipt, and the final extraction consumes
+the staged parts. The read-only container inspector runs through the same bounded process
+runner as source checkout: a slow, oversized, failed or undecodable observation fails closed.
 
 Each probe runs in a separate offline sandbox. Before copying and after running it, the
 runtime checks the original source against the captured snapshot. A definitive result

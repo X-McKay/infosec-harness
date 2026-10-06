@@ -65,6 +65,11 @@ class Verdict(Contract):
     superseded_evidence_ids: list[str] = Field(default_factory=list, max_length=10)
 
 
+# The HARNESS_PROBE claims: four prerequisites and the observation they qualify.
+PROBE_PREREQUISITES = ("target_reached", "oracle_valid", "positive_control", "negative_control")
+PROBE_FIELDS = (*PROBE_PREREQUISITES, "vulnerability_observed")
+
+
 class Evidence(Contract):
     """Process fields are observed; text and observations remain untrusted claims."""
 
@@ -93,15 +98,7 @@ class Evidence(Contract):
             and not self.output_truncated
             and isinstance(self.observations.get("workspace_digest"), str)
             and self.observations.get("source_verified") is True
-            and all(
-                self.observations.get(key) is True
-                for key in (
-                    "target_reached",
-                    "oracle_valid",
-                    "positive_control",
-                    "negative_control",
-                )
-            )
+            and all(self.observations.get(key) is True for key in PROBE_PREREQUISITES)
             and type(self.observations.get("vulnerability_observed")) is bool
         )
 
