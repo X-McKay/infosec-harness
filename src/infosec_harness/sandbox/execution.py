@@ -44,6 +44,9 @@ class CommandResult:
     exit_code: int
     stdout: str
     stderr: str
+    # Never set by native exec, whose overflow raises ExecutionUnknown instead; set only by
+    # ``tools.execute.unwrap_output`` from the shell wrapper's cut marker. Saved receipts
+    # carry the key, so it stays part of the receipt shape.
     output_truncated: bool = False
 
 
@@ -80,21 +83,18 @@ class Execution:
         stream = self._stub.ExecSandbox(request, timeout=timeout + 10)
         stdout, stderr = bytearray(), bytearray()
         code = None
-        truncated = False
         try:
             for event in stream:
                 payload = event.WhichOneof("payload")
                 if payload in ("stdout", "stderr"):
                     target = stdout if payload == "stdout" else stderr
                     chunk = getattr(event, payload).data
-                    available = limit - len(stdout) - len(stderr)
-                    target.extend(chunk[:available])
-                    if len(chunk) > available:
-                        truncated = True
+                    if len(chunk) > limit - len(stdout) - len(stderr):
                         # Cancel the native RPC on overflow; the caller closes the
                         # workload rather than assuming cancellation killed the process.
                         stream.cancel()
                         raise ExecutionUnknown("command output exceeded the boundary limit")
+                    target.extend(chunk)
                 elif payload == "exit":
                     code = int(event.exit.exit_code)
             if code is None:
@@ -103,8 +103,8 @@ class Execution:
                 # Pinned OpenShell also synthesizes 124 on timeout without native
                 # terminal finalization. An explicit process exit 124 is ambiguous.
                 raise ExecutionUnknown("native exit 124 cannot establish terminal execution")
-            return CommandResult(code, "" if binary else stdout.decode(errors="replace"), stderr.decode(errors="replace"),
-                                 truncated), bytes(stdout)
+            return CommandResult(code, "" if binary else stdout.decode(errors="replace"),
+                                 stderr.decode(errors="replace")), bytes(stdout)
         finally:
             stream.cancel()
 
