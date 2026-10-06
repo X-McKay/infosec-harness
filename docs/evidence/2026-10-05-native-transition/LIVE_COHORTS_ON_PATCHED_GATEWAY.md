@@ -38,6 +38,7 @@ before run 10 passed with 11,656 claims of headroom against 6,480 required.
 | 9 | `32610fe` | 600k, 40, 300 | 0 / 0 | 13 | 23 | 0 | Inference backend returned 503 `no available server` from the first case; stopped by the operator after 13 agent-level failures (`ModelExecutorError`), cleanup confirmed: 0 containers, 0 unknown operations |
 | 10 | `590128f` | 600k, 40, 300 | 33 / 30 | 3 | 2 | 0 | Operator error: the launching shell had a 2 h limit and was killed with case 34 in flight; the drain worker on the recorded queue let the orphaned tool activity time out, the workflow failed closed without retrying, and cleanup left 0 containers. Failures: `java-xxe-vulnerable` and `java-xxe-fixed` on the token budget (a broken nonce oracle, since fixed in the skills), `javascript-cmdi-fixed` on a backend connection error at the first request |
 | 12 | `f734f3f` | 600k, 40, 300; parallel 3; 82 de-labelled cases | 69 / 67 | 5 | 8 | 0 | First independent accuracy measurement. Failures: three token budgets (`ssrf-fixed`, `perl-sqli-vulnerable`, `javascript-arginjection-fixed`), one backend 502 at the first request (`java-sqli-fixed`), and one harness defect (`c-intoverflow-vulnerable`: a citation of a probe-written file raised `FileNotFoundError` in finalize; non-agent-level, so the stop latch left 8 memory-group cases unstarted). Wrong: `fileinclusion-fixed` (false positive from a probe that altered `sys.path`). Inconclusive: `c-stackoverflow-vulnerable` (no C headers in the image; correct refusal). Two C negatives rest on stand-ins and should be discounted |
+| 13 | `b1256fc` | 600k, 40, 300; parallel 3; 82 cases | 78 / 72 | 4 | 0 | 0 | First run to attempt every case of the 82-case corpus. Failures: three token budgets (`java-sqli-fixed`, `perl-cmdi-fixed`, `toctou-vulnerable`) and one verdict returned twice without citations (`perl-xss-fixed`). Not scored: four `inconclusive` (`ssrf-fixed`, `errorexposure-fixed`, `redos-fixed`, `javascript-sessionrandom-vulnerable`) and two positives on fixed cases, one a real bypass the fixture missed (`openredirect-fixed`, ground truth corrected) and one a probe-scope error on a trusted parameter (`c-stackoverflow-fixed`) |
 
 Totals: 146 completed investigations, 142 correct, 0 unsafe negatives. Every completed
 `likely_not_exploitable` case was correct except `testonly` twice (before reachability guidance)
@@ -151,6 +152,44 @@ diagnostic every one of the 82 cases was attempted on `f734f3f`: 76 completed, 7
 correct (74 counting the corrected fixture), 6 failed (four token budgets, one backend 502, one
 citation defect), one false positive, one inconclusive, 0 unsafe negatives, with the two C
 negatives discounted as stand-ins.
+
+### Run 13 in detail
+
+Run 13 (`cohort-13.json`, 16:19 to 18:53 UTC, 2 h 34 min for all 82 cases with three in flight)
+ran on `b1256fc`, which carries every fix from run 12 (citation feedback, the probe rules on
+caller inputs and stand-ins, C headers in the workspace image, the corrected nullderef fixture),
+with both images requalified (`native-qualification-16.json`, config `e16e8e59…`).
+
+| Measure | Value |
+| --- | --- |
+| Attempted / completed / correct | 82 / 78 / 72 (original 36: 33 completed, 32 correct; new 46: 45 completed, 40 correct) |
+| Unsafe negatives | 0 |
+| Correct over planned | 72 / 82 = 0.878 against the 0.75 threshold; `complete_corpus` failed on the four no-verdict cases, so the quality gates stay `not_checked` |
+| Failed | 4: three token budgets, one output-retry exhaustion (two verdicts without citations) |
+| Duration per case | median 268 s, p90 611 s, max 996 s |
+| Model requests per completed case | median 11, max 31; 13.2 M tokens |
+| Native operations | 3,657 completed, 0 unknown |
+
+Case-by-case against run 12 and its remainder diagnostic, 15 outcomes changed: seven improved
+(`perl-sqli-vulnerable`, `javascript-arginjection-fixed`, `c-intoverflow-vulnerable` from
+failures to correct; `c-stackoverflow-vulnerable` from inconclusive to correct, the first C case
+proven with headers and AddressSanitizer in the sandbox; `fileinclusion-fixed` from a false
+positive to correct under the caller-inputs rule; `nullderef-fixed` correct on the corrected
+fixture; `ssrf-fixed` and `redos-fixed` from budget failures to `inconclusive` within budget),
+five regressed (`perl-cmdi-fixed`, `perl-xss-fixed`, `toctou-vulnerable` from correct to failed;
+`errorexposure-fixed`, `javascript-sessionrandom-vulnerable` from correct to `inconclusive`), and
+two fixture findings: `openredirect-fixed` accepted `/\evil.example/`, which browsers normalise
+to an external redirect (the investigator was right; fixture corrected), and
+`c-stackoverflow-fixed` was called exploitable by passing `outcap = -1`, the trusted caller's own
+buffer size rather than the untrusted `name` (a probe-scope error; the probe skill now states the
+rule and the fixture types the capacity as `size_t`). Both corrections are in
+`claude/run13-fixes`.
+
+The regressions and the inconclusives are model variance on negative cases: each of those cases
+has been correct on this candidate family in another run. The gates require every case to reach
+a verdict, so a passing cohort needs either fewer budget exhaustions on negatives (the stated
+probe rule to conclude after a complete probe with valid controls) or a budget decision, which is
+the operator's.
 
 ## Defects found live and their fixes
 
