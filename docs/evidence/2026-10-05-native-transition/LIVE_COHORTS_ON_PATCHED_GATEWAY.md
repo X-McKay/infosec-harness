@@ -15,7 +15,13 @@ was built reproducibly with `deploy/openshell/build_gateway.sh` on `rust:1.95.0-
 `scripts/openshell_gateway.py`: binary SHA-256 `e334d59c…a703`, installed beside the pinned
 release binary, `max_mutation_admissions_per_caller = 10000`, config backup retained. Read-only
 inspection afterwards showed the same 1,000 retained claims and a healthy gateway; the ledger
-was never modified.
+was never modified. On 2026-10-06 09:56 UTC, with no live workloads, the same helper raised the
+quota to 20,000 (`gateway.toml.before-20261006T095650Z` retained, verified process swap,
+healthy). `scripts/openshell_admissions.py` then read 8,344 retained claims through the
+verified gateway process in SQLite read-only mode. Commit `590128f` makes that reading a
+pre-flight: `harness eval` records it as the report's `native_operation_budget` and refuses to
+start when headroom is below `cases × (max_requests + max_tool_calls + 40)`; the live check
+before run 10 passed with 11,656 claims of headroom against 6,480 required.
 
 ## Runs
 
@@ -29,6 +35,7 @@ was never modified.
 | 6 | `4edf1c6` | 600k, 40, 120 | 25 / 25 | 2 | 9 | 0 | Exit 124 again: a killed child kept the exec pipes open |
 | 7 | `67ab5bc` | 600k, 40, 300 | 19 / 18 | 5 | 12 | 0 | Four provider `Request timed out` failures (5 s connect default) during an endpoint slowdown; then the operator edited source during the run and the identity guard refused, as designed |
 | 8 | `f7a751e` | 600k, 40, 300 | 30 / 30 | 6 | 0 | 0 | First run to attempt every case. Four external 502 `upstream_unreachable` from the inference backend; two token-budget exhaustions (`java-sqli-fixed` never applied the Maven recipe; `perl-sqli-vulnerable` printed observation values as 1/0, which the parser rejects) |
+| 9 | `32610fe` | 600k, 40, 300 | 0 / 0 | 13 | 23 | 0 | Inference backend returned 503 `no available server` from the first case; stopped by the operator after 13 agent-level failures (`ModelExecutorError`), cleanup confirmed: 0 containers, 0 unknown operations |
 
 Totals: 146 completed investigations, 142 correct, 0 unsafe negatives. Every completed
 `likely_not_exploitable` case was correct except `testonly` twice (before reachability guidance)
@@ -78,4 +85,10 @@ and this rerun, 34 of the 36 corpus cases have a correct verdict on this candida
 two remaining failures were budget exhaustions whose causes (Java recipe adherence, Perl boolean
 encoding) are now addressed in skills and tool feedback but not yet observed live.
 
-Next: one more full cohort to obtain a complete 36-case report with the gates evaluated.
+Run 9 was the restructured candidate (`agents/`, `tools/`, `workflows/`, `sandbox/`, `evals/`,
+`skills/`), qualified before the run; its 13 failures were all the backend's 503 surfaced as
+`ModelExecutorError` and say nothing about the candidate. A recovery monitor polled a minimal
+completion every 60 s; the backend answered 200 again at 09:56 UTC.
+
+Next: run 10 on `590128f` (same candidate plus the pre-flight), started 10:13 UTC on 2026-10-06,
+to obtain a complete 36-case report with the gates evaluated.
