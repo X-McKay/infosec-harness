@@ -74,6 +74,9 @@ class Evidence(Contract):
     exit_code: int | None
     stdout: str = ""
     stderr: str = ""
+    # Reserved and currently always False: an in-sandbox kill at the command budget surfaces
+    # as exit 137 with observations["timeout_feedback"]. Kept so v11 histories still decode;
+    # removing it is a v12 change.
     timed_out: bool = False
     output_truncated: bool = False
     sandbox_id: str

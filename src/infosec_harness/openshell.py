@@ -83,7 +83,7 @@ def native_operation_accounting(state_dir: Path, run_id: str) -> dict:
         "limitations": ["Unknown intents may not have reached native dispatch.",
                         "Absent local receipts do not prove zero operations or visibility of a remote worker.",
                         "Read RPCs, cleanup, native ledger retention and occupancy are not counted.",
-                        "Transfers count capture execs; restore/upload/download execs appear under exec.",
+                        "Transfers count capture execs; restore/upload execs and their delivery parts appear under exec.",
                         "Legacy qualification receipts can overwrite repeated audits; those counts are lower bounds."],
     }
 

@@ -37,7 +37,11 @@ def api(host: str = "127.0.0.1", port: int = 8000):
 
 
 @app.command()
-def worker(task_queue: str | None = typer.Option(None, help="Drain a reported eval queue.")):
+def worker(
+    task_queue: str | None = typer.Option(
+        None, help="Serve this task queue (for example, drain an owned eval queue)."
+    ),
+):
     """Run the Temporal worker with native PydanticAI model/tool activities."""
     from infosec_harness.web import connect
     from infosec_harness.workflow import create_worker
@@ -79,9 +83,17 @@ def report(run_id: str):
 
 @app.command("eval")
 def evaluate(
-    manifest: Path = Path("eval-corpus/manifest.json"),
-    output: Path | None = None,
-    allow_inference: bool = False,
+    manifest: Path = typer.Option(
+        Path("eval-corpus/manifest.json"), help="Corpus manifest with independent ground truth."
+    ),
+    output: Path | None = typer.Option(
+        None,
+        help="Report path, never overwritten. Default: .harness/reports/model-<UTC>.json "
+        "(diagnostic-<UTC>.json with --case).",
+    ),
+    allow_inference: bool = typer.Option(
+        False, help="Required: confirm that this run sends live model requests."
+    ),
     owned_worker: bool = typer.Option(
         False, help="Run a worker in this process on a fresh queue until owned cleanup ends."
     ),
@@ -92,7 +104,7 @@ def evaluate(
         False, help="Continue only after a terminal agent/model-level case failure."
     ),
 ):
-    """Run the paired corpus once, preserving failures and unstarted cases."""
+    """Run the paired corpus (or a diagnostic subset) once, preserving failures and unstarted cases."""
     if not allow_inference:
         raise typer.BadParameter("Live evaluation requires --allow-inference")
     from infosec_harness.evaluation import evaluate_corpus
@@ -107,7 +119,11 @@ def evaluate(
 
 
 @app.command()
-def qualify(output: Path | None = None):
+def qualify(
+    output: Path | None = typer.Option(
+        None, help="Report path, never overwritten. Default: .harness/reports/openshell-<UTC>.json."
+    ),
+):
     """Exercise actual native workspace/probe boundaries, without model calls."""
     from infosec_harness.qualification import qualify_runtime
 
@@ -117,7 +133,12 @@ def qualify(output: Path | None = None):
 
 
 @app.command()
-def replay(run_id: str, output: Path | None = None):
+def replay(
+    run_id: str,
+    output: Path | None = typer.Option(
+        None, help="Also write the report here, never overwritten. Default: print only."
+    ),
+):
     """Replay one recorded workflow history with no native or model dispatch."""
     from infosec_harness._io import write_json
     from infosec_harness.evaluation import replay_history

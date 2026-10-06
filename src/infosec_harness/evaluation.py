@@ -27,11 +27,11 @@ from infosec_harness.web import PREFIX, RPC_TIMEOUT, connect, execution_timeout,
 
 # Covers prepare's waited cancellation and three bounded cleanup attempts of an owned run.
 DRAIN = timedelta(minutes=30)
-# Raised by workflow code itself (budgets, invalid model output after retries). Model and tool
-# activities surface only as ActivityError, whose external outcome is unknown: those stop.
-# Terminal failures with complete receipts: budgets, malformed output, or an executor that
-# exited without a response (e.g. a sandbox DNS/connect failure before any request was
-# sent). Unknown dispatch (OpenShellError/ExecutionUnknown) is never in this set.
+# Terminal agent-level failures that --keep-going may continue past: budgets and invalid model
+# output (raised by workflow code), and ModelExecutorError, an executor that exited without a
+# response under a complete receipt (e.g. a sandbox DNS/connect failure, or a kill at the
+# budget). Unknown dispatch (OpenShellError/ExecutionUnknown) is never in this set, and
+# `agent_level` also scans the embedded chain text for those markers and for cleanup.
 AGENT_FAILURES = frozenset({"UsageLimitExceeded", "UnexpectedModelBehavior", "ModelExecutorError"})
 
 

@@ -297,8 +297,9 @@ class InvestigationWorkflow(PydanticAIWorkflow):
             self._state.status = "cancelled"
             self._state.error = "Investigation cancelled"
         except Exception as error:
-            # Keep the root cause: Temporal wraps activity failures, and callers classify
-            # outcomes by the innermost type (e.g. a terminal executor exit vs unknown dispatch).
+            # Keep the whole cause chain: Temporal wraps activity failures, and callers classify
+            # outcomes by the outermost meaningful type (e.g. a terminal executor exit vs
+            # unknown dispatch) and by the chain embedded in the message.
             chain = [error]
             while len(chain) < 8 and (
                 nxt := getattr(chain[-1], "cause", None) or chain[-1].__cause__
