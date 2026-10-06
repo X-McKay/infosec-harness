@@ -64,6 +64,8 @@ def provider_model(invocation: ModelInvocation) -> Model:
             )
         # SDK retries would resubmit an unknown provider side effect.
         client = AsyncOpenAI(
+            # The SDK requires a key. OpenShell's provider supplies the real one (or a
+            # self-hosted endpoint needs none); the placeholder is never a credential.
             api_key=os.environ.get("OPENAI_API_KEY", "openshell"),
             base_url=invocation.base_url,
             max_retries=0,

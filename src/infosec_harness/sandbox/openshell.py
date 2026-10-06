@@ -359,12 +359,19 @@ class OpenShell(Transfer):
                            exclusive=exclusive, sync_directory=True)
 
     def _spec(self, profile: ProfileName) -> Any:
-        from google.protobuf.json_format import ParseDict
+        from google.protobuf.json_format import ParseDict, ParseError
 
         config = self.config.profiles.get(profile)
         if config is None:
             raise OpenShellError(f"profile {profile} is not configured")
-        authored = yaml.safe_load(config.policy.read_bytes())
+        try:
+            authored = yaml.safe_load(config.policy.read_bytes())
+        except yaml.YAMLError as error:
+            raise OpenShellError(f"profile {profile} policy is not valid YAML: "
+                                 f"{type(error).__name__}") from None
+        if not isinstance(authored, dict) or not isinstance(authored.get("network_policies", {}), dict):
+            raise OpenShellError(f"profile {profile} policy must be a mapping with a "
+                                 "network_policies mapping")
         # The CLI's YAML aliases differ from protobuf JSON enum names. Resolve
         # only the pinned declared enum values; unknown values fail validation.
         for rule in authored.get("network_policies", {}).values():
@@ -375,7 +382,12 @@ class OpenShell(Transfer):
                     value = endpoint.get(field)
                     if isinstance(value, str) and not value.startswith(prefix):
                         endpoint[field] = prefix + value.upper()
-        policy = ParseDict(authored, self._policy_pb.SandboxPolicy())
+        try:
+            policy = ParseDict(authored, self._policy_pb.SandboxPolicy())
+        except ParseError as error:
+            # The parser names the offending field of the operator's own policy file.
+            raise OpenShellError(f"profile {profile} policy does not match the pinned "
+                                 f"schema: {str(error)[:200]}") from None
         failed = _failed({
             "landlock_hard_requirement": policy.landlock.compatibility == "hard_requirement",
             "run_as_user": policy.process.run_as_user == "65532",

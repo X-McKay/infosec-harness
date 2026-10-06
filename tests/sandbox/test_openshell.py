@@ -1498,3 +1498,16 @@ async def test_upload_over_the_transfer_bound_names_the_setting(adapter, tmp_pat
     with pytest.raises(SourceRejected, match=r"more than 1024 bytes \(max_transfer_bytes"):
         await boundary.upload(sandbox, source, "/workspace/repo")
     assert not native.execs
+
+
+@pytest.mark.parametrize("text,message", [
+    ("- not\n- a mapping\n", "policy must be a mapping"),
+    ("network_policies: [1]\n", "policy must be a mapping"),
+    ("key: [unclosed\n", "policy is not valid YAML"),
+    ('{"unknown_field": 1}', "policy does not match the pinned schema: .*unknown_field"),
+])
+def test_malformed_policy_is_refused_naming_the_profile(adapter, text, message):
+    boundary, _ = adapter
+    boundary.config.profiles["probe"].policy.write_text(text)
+    with pytest.raises(OpenShellError, match=f"profile probe {message}"):
+        boundary._spec("probe")
