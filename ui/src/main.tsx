@@ -8,24 +8,48 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  useParams,
 } from "@tanstack/react-router";
-import { FileText, ListFilter, Settings2, ShieldCheck } from "lucide-react";
+import {
+  ChartLine,
+  FileText,
+  ListFilter,
+  Settings2,
+  ShieldCheck,
+} from "lucide-react";
 import { RuntimeIndicator } from "@/components/RuntimeIndicator";
 import { ThemeProvider, ThemeSelect } from "@/components/ThemeProvider";
+import {
+  EvaluationLinkProvider,
+  type EvalLinkProps,
+} from "@/components/evaluations/links";
 import { Card, CardContent } from "@/components/ui/card";
+import { isReportName } from "@/lib/reports";
 import { parseDetailSearch, parseInvestigationSearch } from "@/lib/search";
 import { InvestigationDetail } from "@/routes/InvestigationDetail";
 import { Investigations } from "@/routes/Investigations";
+import { Metrics } from "@/routes/Metrics";
+import { Qualification } from "@/routes/Qualification";
+import { ReportDetail } from "@/routes/ReportDetail";
+import { Reports } from "@/routes/Reports";
 import { Runtime } from "@/routes/Runtime";
-import { Qualification, Reports } from "@/routes/placeholders";
 import "./index.css";
 
 const navigation = [
   ["/", "Investigations", ListFilter],
   ["/reports", "Reports", FileText],
+  ["/metrics", "Metrics", ChartLine],
   ["/qualification", "Qualification", ShieldCheck],
   ["/runtime", "Runtime", Settings2],
 ] as const;
+
+/**
+ * Evaluation views build hrefs only with `reportPath`/`runPath` from validated report names
+ * and workflow IDs (or the literal "/reports"); this renders them as client-side links.
+ */
+function RouterLink({ href, ...props }: EvalLinkProps) {
+  return <Link to={href} {...props} />;
+}
 
 function Shell() {
   return (
@@ -77,6 +101,13 @@ function Shell() {
   );
 }
 
+/** `/reports/$name`: only a validated report file name reaches the view or the API. */
+function ReportRoute() {
+  const { name } = useParams({ from: "/reports/$name" });
+  if (!isReportName(name)) return <NotFound />;
+  return <ReportDetail name={name} />;
+}
+
 function NotFound() {
   return (
     <Card>
@@ -111,11 +142,20 @@ const runtimeRoute = createRoute({
   path: "/runtime",
   component: Runtime,
 });
-// Placeholders; the reports and qualification change replaces these two routes.
 const reportsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/reports",
   component: Reports,
+});
+const reportRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/reports/$name",
+  component: ReportRoute,
+});
+const metricsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/metrics",
+  component: Metrics,
 });
 const qualificationRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -128,6 +168,8 @@ const router = createRouter({
     detailRoute,
     runtimeRoute,
     reportsRoute,
+    reportRoute,
+    metricsRoute,
     qualificationRoute,
   ]),
 });
@@ -145,7 +187,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <RouterProvider router={router} />
+        <EvaluationLinkProvider value={RouterLink}>
+          <RouterProvider router={router} />
+        </EvaluationLinkProvider>
       </ThemeProvider>
     </QueryClientProvider>
   </React.StrictMode>,
