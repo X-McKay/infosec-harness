@@ -1,12 +1,21 @@
 #!/usr/bin/env bash
-# Build the patched gateway through the qualified build-egress builder. Requires the private
-# build context under .harness/openshell/gateway-build/: src/ (upstream clone at the pinned
-# commit) and vendor/ (cargo vendor --locked of that clone). Patches come from this directory.
+# Build the patched gateway on the managed VM's original Docker daemon (plain runc, ordinary
+# egress), never on host Docker. Requires the private build context under
+# .harness/openshell/gateway-build/: src/ (upstream clone at the pinned commit) and vendor/
+# (cargo vendor --locked of that clone). Patches come from this directory.
 set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 cd "$ROOT"
-# A worktree may build against the main checkout's managed state: HARNESS_DIR=/path/.harness
-HARNESS_DIR="${HARNESS_DIR:-$ROOT/.harness}"
+# A linked worktree builds against the main checkout's managed state, as ./dev does;
+# HARNESS_DIR=/path/.harness overrides that.
+if [[ -z "${HARNESS_DIR:-}" ]]; then
+  COMMON="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+  if [[ "$(basename "${COMMON:-none}")" == .git ]]; then
+    HARNESS_DIR="$(dirname "$COMMON")/.harness"
+  else
+    HARNESS_DIR="$ROOT/.harness"
+  fi
+fi
 BUILD="$HARNESS_DIR/openshell/gateway-build"
 PINNED="$(python3 -c 'import json;print(json.load(open(".dev-tools/openshell.json"))["commit"])')"
 ACTUAL="$(git -C "$BUILD/src" rev-parse HEAD)"
@@ -17,9 +26,7 @@ command rm -rf "$BUILD/patches" "$BUILD/out"
 mkdir -p "$BUILD/patches"
 command cp deploy/openshell/patches/*.patch "$BUILD/patches/"
 printf 'src/.git\nsrc/target\nprobe\nout\n' > "$BUILD/.dockerignore"
-set -a; source "$HARNESS_DIR/dev.env"; set +a
-"$HARNESS_DIR/bin/docker" buildx build --builder "$HARNESS_BUILDX_BUILDER" \
-  --build-arg HTTP_PROXY="$HARNESS_BUILD_EGRESS_PROXY" --build-arg HTTPS_PROXY="$HARNESS_BUILD_EGRESS_PROXY" \
+"$HARNESS_DIR/bin/docker" build \
   --build-arg CARGO_JOBS="${CARGO_JOBS:-4}" --progress plain \
   -f deploy/openshell/Dockerfile.gateway --output "type=local,dest=$BUILD/out" "$BUILD"
 python3 - "$BUILD" "$PINNED" <<'PY'
