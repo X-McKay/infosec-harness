@@ -386,7 +386,7 @@ served model identifier in the worker environment, and put provider credentials 
 native model provider. Run the unchanged registered corpus with:
 
 ```bash
-./dev eval [--settings settings.json] [--keep-going]   # .harness/reports/model-<UTC time>.json
+./dev eval [--settings settings.json] [--keep-going] [--parallel N]   # .harness/reports/model-<UTC time>.json
 ./dev eval --case pathtraversal-fixed                 # diagnostic; never qualifies
 ./dev replay investigate-v11-eval-<id> --output .harness/reports/replay-<id>.json
 ```
@@ -400,7 +400,11 @@ terminal agent-level failure: an exhausted budget, invalid model output after co
 a `ModelExecutorError` (the executor exited without a complete response, including a kill at
 the request budget; that request is never resent). Any other timeout, transport, identity,
 unknown-dispatch, native or cleanup failure stops the cohort. No case is re-run, and an
-incomplete cohort fails. `replay` re-executes the history against current workflow code with
+incomplete cohort fails. `--parallel N` (default 1) runs up to N cases at once against the
+one owned worker and records a report limitation: latency and executor failure rates are not
+comparable to a sequential baseline, and peak in-flight native operations rise with
+concurrency. A stopping failure latches: in-flight cases finish and no new case starts.
+`replay` re-executes the history against current workflow code with
 model and native dispatch disabled.
 
 Review the manifest, endpoint, model, dataset hashes, report destination and bounded request
