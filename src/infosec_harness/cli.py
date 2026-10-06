@@ -150,6 +150,48 @@ def replay(
     raise typer.Exit(0 if result["status"] == "passed" else 1)
 
 
+@app.command("export-history")
+def export_history(
+    run_id: str,
+    output: Path | None = typer.Option(
+        None, help="History JSON path, never overwritten. Default: .harness/histories/<RUN_ID>.json."
+    ),
+):
+    """Write one workflow history as Temporal JSON. Read-only: nothing is started or changed."""
+    import hashlib
+    import re
+
+    from temporalio.service import RPCError
+
+    from infosec_harness._io import atomic_write_bytes
+    from infosec_harness.api import RPC_TIMEOUT, connect
+
+    if output is None:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,199}", run_id):
+            raise typer.BadParameter("RUN_ID is not a safe file name; pass --output")
+        output = Path(".harness/histories") / f"{run_id}.json"
+    if output.exists():
+        raise typer.BadParameter(f"{output} already exists; histories are never overwritten")
+
+    async def fetch():
+        handle = (await connect()).get_workflow_handle(run_id)
+        return await handle.fetch_history(rpc_timeout=RPC_TIMEOUT)
+
+    try:
+        history = asyncio.run(fetch())
+    except RPCError as error:
+        typer.echo(f"could not fetch the history of {run_id}: {error}", err=True)
+        raise typer.Exit(1) from None
+    # Exactly Temporal's history JSON, so its SHA-256 equals `harness replay`'s history_sha256.
+    data = history.to_json().encode()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_bytes(output, data, exclusive=True)
+    typer.echo(json.dumps({
+        "workflow_id": run_id, "history_events": len(history.events),
+        "history_sha256": hashlib.sha256(data).hexdigest(), "output": str(output),
+    }, indent=2))
+
+
 def main():
     app()
 
