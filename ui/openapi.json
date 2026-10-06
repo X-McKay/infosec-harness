@@ -177,11 +177,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "title": "Response Cancel Api Runs  Run Id  Cancel Post"
+                  "$ref": "#/components/schemas/CancelResult"
                 }
               }
             }
@@ -302,6 +298,32 @@
   },
   "components": {
     "schemas": {
+      "CancelResult": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "cancellation_requested",
+              "running",
+              "completed",
+              "failed",
+              "canceled",
+              "terminated",
+              "continued_as_new",
+              "timed_out",
+              "unknown"
+            ],
+            "title": "Status"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "CancelResult",
+        "description": "A cancellation request, or the status of a run that had already closed."
+      },
       "Citation": {
         "properties": {
           "path": {
@@ -951,6 +973,16 @@
           },
           "status": {
             "type": "string",
+            "enum": [
+              "running",
+              "completed",
+              "failed",
+              "canceled",
+              "terminated",
+              "continued_as_new",
+              "timed_out",
+              "unknown"
+            ],
             "title": "Status"
           },
           "started_at": {

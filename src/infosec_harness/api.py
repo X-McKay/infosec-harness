@@ -10,68 +10,99 @@ import asyncio
 import base64
 import binascii
 import json
+import logging
 import math
 import os
 import re
 import stat
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, TypedDict, cast, get_args
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
+from google.protobuf.internal.enum_type_wrapper import EnumTypeWrapper
 from pydantic import ValidationError
 from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
+from temporalio.api.common.v1 import Payloads
 from temporalio.api.enums.v1 import EventType, TimeoutType
+from temporalio.api.failure.v1 import Failure
+from temporalio.api.history.v1 import HistoryEvent
 from temporalio.api.workflowservice.v1 import GetSystemInfoRequest
-from temporalio.client import Client, WorkflowExecutionStatus
+from temporalio.client import (
+    Client,
+    WorkflowExecution,
+    WorkflowExecutionStatus,
+    WorkflowHandle,
+)
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.service import RPCError, RPCStatusCode, TLSConfig
 
 from infosec_harness.config import Settings, get_settings
 from infosec_harness.contracts import (
+    GENERATION,
+    MAX_EVENTS,
+    MAX_LABEL_CHARS,
+    MAX_REPORTS,
+    CancelResult,
     Finding,
     Health,
     InvestigationRequest,
     InvestigationResult,
     Limits,
+    ReportKind,
     ReportList,
     ReportSummary,
     RunEvent,
     RunEvents,
     RunPage,
     RunState,
+    RunStatus,
     RunSummary,
+    VerdictLabel,
 )
+from infosec_harness.workflows.investigation import CLEANUP_RESERVE
+
+log = logging.getLogger(__name__)
 
 WORKFLOW = "InvestigationWorkflow"
-GENERATION = "v11"
-PREFIX = "investigate-v11-"
+PREFIX = f"investigate-{GENERATION}-"
 RPC_TIMEOUT = timedelta(seconds=10)
 PAGE_SIZE = 50
 # Run-list verdicts: bounded concurrency, a short per-run RPC and an overall deadline.
 VERDICT_CONCURRENCY = 8
 VERDICT_RPC_TIMEOUT = timedelta(seconds=3)
 VERDICT_DEADLINE_SECONDS = 8.0
-MAX_EVENTS = 500
-MAX_DETAIL = 200
-MAX_REPORTS = 200
 MAX_REPORT_BYTES = 16 * 1024 * 1024
 # Bytes parsed for one listing; later files are listed without a summary.
 REPORT_LISTING_BUDGET = 64 * 1024 * 1024
 REPORT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\.json")
-REPORT_KINDS = ("model", "diagnostic", "openshell", "replay")
+REPORT_KINDS: tuple[ReportKind, ...] = tuple(
+    kind for kind in get_args(ReportKind) if kind != "unknown"
+)
+RUN_STATUSES: tuple[RunStatus, ...] = get_args(RunStatus)
 
 
 def execution_timeout(limits: Limits) -> timedelta:
-    # Starts at submission, including time queued without a worker. Reserve cleanup time.
-    return timedelta(seconds=limits.timeout_seconds + 600)
+    # Starts at submission, including time queued without a worker. Reserve the time owned
+    # cleanup can need after the investigation deadline, or the server ends the run first.
+    return timedelta(seconds=limits.timeout_seconds) + CLEANUP_RESERVE
 
 
-def temporal_connection_options(settings: Settings) -> dict[str, Any]:
-    options: dict[str, Any] = {}
+class ConnectionOptions(TypedDict, total=False):
+    tls: TLSConfig | bool
+    api_key: str
+
+
+# The workflow is started by name, so its class (the handle's first parameter) is not imported.
+RunHandle = WorkflowHandle[Any, InvestigationResult]
+
+
+def temporal_connection_options(settings: Settings) -> ConnectionOptions:
+    options: ConnectionOptions = {}
     if settings.temporal_tls:
         if any(
             (
@@ -98,13 +129,13 @@ def temporal_connection_options(settings: Settings) -> dict[str, Any]:
     if settings.temporal_api_key_file:
         key = settings.temporal_api_key_file.read_text().strip()
         if not key:
-            raise ValueError("Temporal API key file is empty")
+            raise ValueError(f"Temporal API key file {settings.temporal_api_key_file} is empty")
     if key:
         options["api_key"] = key
     return options
 
 
-async def connect(settings=None) -> Client:
+async def connect(settings: Settings | None = None) -> Client:
     settings = settings or get_settings()
     return await Client.connect(
         settings.temporal_address,
@@ -114,8 +145,13 @@ async def connect(settings=None) -> Client:
     )
 
 
-async def start_investigation(client: Client, finding: Finding, settings, run_id: str,
-                              expected_identity: str | None = None):
+async def start_investigation(
+    client: Client,
+    finding: Finding,
+    settings: Settings,
+    run_id: str,
+    expected_identity: str | None = None,
+) -> RunHandle:
     """Start one fresh workflow ID; a duplicate is rejected rather than resent."""
     return await client.start_workflow(
         WORKFLOW,
@@ -133,7 +169,7 @@ async def start_investigation(client: Client, finding: Finding, settings, run_id
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.temporal = await connect()
     yield
 
@@ -142,21 +178,35 @@ app = FastAPI(title="InfoSec Harness", version="3.0.0.dev0", lifespan=lifespan)
 
 
 def temporal() -> Client:
-    return app.state.temporal
+    return cast(Client, app.state.temporal)
 
 
 TemporalClient = Annotated[Client, Depends(temporal)]
 
 
+def rpc_failure(status: RPCStatusCode) -> tuple[int, str]:
+    """The HTTP status and operator message for a Temporal RPC status; never its payload."""
+    if status == RPCStatusCode.NOT_FOUND:
+        return 404, "Investigation not found"
+    if status == RPCStatusCode.INVALID_ARGUMENT:
+        return 400, "Temporal rejected the request as invalid"
+    if status == RPCStatusCode.DEADLINE_EXCEEDED:
+        seconds = int(RPC_TIMEOUT.total_seconds())
+        return 504, (
+            f"No worker answered within {seconds}s: is `harness worker` serving task queue "
+            f"{get_settings().task_queue}?"
+        )
+    return 503, f"Workflow service unavailable ({status.name})"
+
+
 @app.exception_handler(RPCError)
-async def temporal_error(_request, exc: RPCError):
-    status = 404 if exc.status == RPCStatusCode.NOT_FOUND else 503
-    return JSONResponse(
-        status_code=status,
-        content={
-            "detail": "Investigation not found" if status == 404 else "Workflow service unavailable"
-        },
+async def temporal_error(request: Request, exc: RPCError) -> JSONResponse:
+    code, detail = rpc_failure(exc.status)
+    log.warning(
+        "event=temporal_rpc_failed status=%s http_status=%d path=%s",
+        exc.status.name, code, request.url.path,
     )
+    return JSONResponse(status_code=code, content={"detail": detail})
 
 
 @app.get(
@@ -164,7 +214,7 @@ async def temporal_error(_request, exc: RPCError):
     response_model=Health,
     responses={503: {"model": Health, "description": "Temporal is unreachable"}},
 )
-async def health(client: TemporalClient):
+async def health(client: TemporalClient) -> Health | JSONResponse:
     """Temporal connectivity only; sandbox, worker and model execution stay not_checked."""
     task_queue = get_settings().task_queue
     try:
@@ -220,7 +270,7 @@ async def runs(
             RunSummary(
                 id=entry.id,
                 title=str(finding.get("title", entry.id)),
-                status=entry.status.name.lower() if entry.status else "unknown",
+                status=run_status(entry.status),
                 started_at=entry.start_time.isoformat(),
                 closed_at=entry.close_time.isoformat() if entry.close_time else None,
                 verdict=verdicts.get(entry.id),
@@ -234,11 +284,13 @@ async def runs(
     return RunPage(items=items, next_page_token=following)
 
 
-async def completed_verdicts(client: Client, page) -> dict[str, str]:
+async def completed_verdicts(
+    client: Client, page: Sequence[WorkflowExecution]
+) -> dict[str, VerdictLabel]:
     """Verdict labels for completed runs; a failed or slow result fetch leaves the run out."""
     gate = asyncio.Semaphore(VERDICT_CONCURRENCY)
 
-    async def verdict(entry) -> tuple[str, str | None]:
+    async def verdict(entry: WorkflowExecution) -> tuple[str, VerdictLabel | None]:
         async with gate:
             try:
                 handle = client.get_workflow_handle(
@@ -251,7 +303,10 @@ async def completed_verdicts(client: Client, page) -> dict[str, str]:
                     VERDICT_RPC_TIMEOUT.total_seconds(),
                 )
                 return entry.id, InvestigationResult.model_validate(result).verdict.label
-            except Exception:
+            except Exception as exc:  # noqa: BLE001 - one unreadable result never fails the list
+                log.debug(
+                    "event=verdict_unavailable run_id=%s error=%s", entry.id, type(exc).__name__
+                )
                 return entry.id, None
 
     tasks = [
@@ -269,7 +324,13 @@ async def completed_verdicts(client: Client, page) -> dict[str, str]:
     return {run_id: label for run_id, label in labels if label is not None}
 
 
-def run_handle(client: Client, run_id: str):
+def run_status(status: WorkflowExecutionStatus | None) -> RunStatus:
+    """The lower-cased Temporal status name; "unknown" when absent or not a known status."""
+    name = status.name.lower() if status else "unknown"
+    return next((known for known in RUN_STATUSES if known == name), "unknown")
+
+
+def run_handle(client: Client, run_id: str) -> RunHandle:
     if not run_id.startswith(PREFIX) or len(run_id) > 100:
         raise HTTPException(404, "Investigation not found")
     return client.get_workflow_handle(run_id, result_type=InvestigationResult)
@@ -294,33 +355,33 @@ async def run(run_id: str, client: TemporalClient) -> RunState:
         finding=finding,
         status="cancelled" if cancelled else "failed",
         phase="finished",
-        error=description.status.name.lower() if description.status else "unknown",
+        error=run_status(description.status),
     )
 
 
-@app.post("/api/runs/{run_id}/cancel", status_code=202)
-async def cancel(run_id: str, client: TemporalClient) -> dict[str, str]:
+@app.post("/api/runs/{run_id}/cancel", response_model=CancelResult, status_code=202)
+async def cancel(run_id: str, client: TemporalClient) -> CancelResult:
     handle = run_handle(client, run_id)
     description = await handle.describe(rpc_timeout=RPC_TIMEOUT)
     if description.status == WorkflowExecutionStatus.RUNNING:
         await handle.cancel(rpc_timeout=RPC_TIMEOUT)
-        return {"status": "cancellation_requested"}
-    return {"status": description.status.name.lower() if description.status else "unknown"}
+        return CancelResult(status="cancellation_requested")
+    return CancelResult(status=run_status(description.status))
 
 
-def bounded(value: Any, limit: int = MAX_DETAIL) -> str:
+def bounded(value: object, limit: int = MAX_LABEL_CHARS) -> str:
     """One printable line of at most ``limit`` characters."""
     return "".join(char if char.isprintable() else " " for char in str(value)[:limit])
 
 
-def enum_label(enum, value: int, prefix: str, default: str) -> str:
+def enum_label(enum: EnumTypeWrapper, value: int, prefix: str, default: str) -> str:
     try:
         return enum.Name(value).removeprefix(prefix).lower()
     except ValueError:
         return default
 
 
-def failure_type(failure) -> str:
+def failure_type(failure: Failure) -> str:
     """The failure's type, never its message: messages can carry untrusted output."""
     if failure.HasField("application_failure_info") and failure.application_failure_info.type:
         return failure.application_failure_info.type
@@ -332,27 +393,27 @@ def failure_type(failure) -> str:
     return which.removesuffix("_failure_info") if which else "failure"
 
 
-def exit_code(payloads) -> str:
-    """``exit_code=N`` when a small JSON result records an integer exit code, else ``""``."""
+def exit_code(payloads: Payloads) -> str:
+    """``exit_code=N`` when a tool call returned Evidence with an integer exit code, else ``""``.
+
+    Read from one fixed location: PydanticAI records a tool call's return as
+    ``{"kind": "tool_return", "result": <Evidence>}``. Nothing nested deeper (such as probe
+    observations) can supply the label.
+    """
     if not payloads.payloads:
         return ""
     payload = payloads.payloads[0]
     if payload.metadata.get("encoding") != b"json/plain" or len(payload.data) > 64 * 1024:
         return ""
     try:
-        layer = [json.loads(payload.data)]
+        document = json.loads(payload.data)
     except (ValueError, RecursionError):
         return ""
-    for _ in range(3):
-        following = []
-        for item in layer:
-            if not isinstance(item, dict):
-                continue
-            if type(code := item.get("exit_code")) is int:
-                return f"exit_code={code}"
-            following.extend(value for value in item.values() if isinstance(value, dict))
-        layer = following[:32]
-    return ""
+    if not isinstance(document, dict) or document.get("kind") != "tool_return":
+        return ""
+    returned = document.get("result")
+    code = returned.get("exit_code") if isinstance(returned, dict) else None
+    return f"exit_code={code}" if type(code) is int else ""
 
 
 ACTIVITY_OUTCOMES = {
@@ -369,7 +430,7 @@ TIMERS = (
 )
 
 
-def project_event(event, activities: dict[int, str]) -> RunEvent:
+def project_event(event: HistoryEvent, activities: dict[int, str]) -> RunEvent:
     """Map one history event to a kind and bounded labels; payloads are never copied."""
     kind_of = event.event_type
     label = enum_label(EventType, kind_of, "EVENT_TYPE_", "unknown")
@@ -434,47 +495,51 @@ def reports_root() -> Path:
 
 
 def report_path(name: str) -> Path:
-    """A regular file directly inside ``reports_dir``; anything else is not found."""
+    """A name directly inside ``reports_dir``; :func:`read_report` decides what it is."""
     if len(name) > 255 or not REPORT_NAME.fullmatch(name):
         raise HTTPException(404, "Report not found")
-    root = reports_root()
-    try:
-        path = (root / name).resolve(strict=True)
-    except (OSError, RuntimeError) as exc:
-        raise HTTPException(404, "Report not found") from exc
-    if path.parent != root or not path.is_file():
-        raise HTTPException(404, "Report not found")
-    return path
+    # The name has no separator, so only its final component could be a link, and
+    # read_report opens with O_NOFOLLOW: a symlink is not found, as in the listing.
+    return reports_root() / name
 
 
-def reject_constant(value: str):
+def reject_constant(value: str) -> None:
     raise ValueError(f"non-finite number {value}")
 
 
-def read_report(path: Path, size: int) -> tuple[bytes, dict[str, Any]]:
-    """Read and parse one regular-file report object of at most ``size`` bytes.
+class ReportTooLarge(ValueError):
+    """The report is larger than the byte limit it is read under."""
 
-    Raises ``OSError`` or ``ValueError``; a symlink or special file is never opened for reading.
+
+def read_report(path: Path, limit: int) -> tuple[bytes, dict[str, Any]]:
+    """Read and parse one regular-file report object of at most ``limit`` bytes.
+
+    The size is checked on the opened descriptor, so nothing can change between the check and
+    the read. Raises ``OSError`` when the path is missing, a symlink or not a regular file,
+    :class:`ReportTooLarge` above ``limit``, and ``ValueError`` when it is not a JSON object.
     """
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     with os.fdopen(os.open(path, flags), "rb") as stream:
-        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
-            raise ValueError("report is not a regular file")
-        data = stream.read(size + 1)
-    if len(data) > size:
-        raise ValueError("report grew while reading")
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode):
+            raise OSError(f"report {path.name} is not a regular file")
+        if info.st_size > limit:
+            raise ReportTooLarge(f"report {path.name} exceeds {limit} bytes")
+        data = stream.read(limit + 1)
+    if len(data) > limit:
+        raise ReportTooLarge(f"report {path.name} grew past {limit} bytes while reading")
     document = json.loads(data, parse_constant=reject_constant)
     if not isinstance(document, dict):
         raise ValueError("report is not a JSON object")
     return data, document
 
 
-def text_field(document: dict, key: str, limit: int = 200) -> str | None:
+def text_field(document: dict[str, Any], key: str, limit: int = 200) -> str | None:
     value = document.get(key)
     return bounded(value, limit) if isinstance(value, str) else None
 
 
-def count_field(document: dict, key: str) -> int | None:
+def count_field(document: dict[str, Any], key: str) -> int | None:
     value = document.get(key)
     return value if type(value) is int and value >= 0 else None
 
@@ -505,9 +570,9 @@ def summarize_report(document: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def report_kind(name: str) -> str:
+def report_kind(name: str) -> ReportKind:
     prefix = name.split("-", 1)[0]
-    return prefix if prefix in REPORT_KINDS else "unknown"
+    return next((kind for kind in REPORT_KINDS if kind == prefix), "unknown")
 
 
 @app.get("/api/reports", response_model=ReportList)
@@ -527,7 +592,12 @@ def reports() -> ReportList:
                 except OSError:
                     continue
                 found.append((info.st_mtime, entry.name, info.st_size))
-    except OSError:
+    except FileNotFoundError:
+        return ReportList(items=[])  # No report written yet.
+    except OSError as exc:
+        log.warning(
+            "event=reports_dir_unreadable path=%s error=%s", root, exc.strerror or type(exc).__name__
+        )
         return ReportList(items=[])
     found.sort(reverse=True)
     budget = REPORT_LISTING_BUDGET
@@ -541,8 +611,10 @@ def reports() -> ReportList:
         else:
             budget -= size
             try:
+                # Read under the listed size: a file that grew since the scan is unreadable.
                 fields = summarize_report(read_report(root / name, size)[1])
-            except (OSError, ValueError, RecursionError):
+            except (OSError, ValueError, RecursionError) as exc:
+                log.info("event=report_unreadable name=%s error=%s", name, type(exc).__name__)
                 fields["status"] = "unreadable"
         items.append(
             ReportSummary(
@@ -565,17 +637,13 @@ def reports() -> ReportList:
         422: {"description": "Report is not a readable JSON object"},
     },
 )
-def report(name: str):
+def report(name: str) -> Response:
     """One report document, validated as a JSON object. Its content is untrusted data."""
     path = report_path(name)
     try:
-        size = path.stat().st_size
-    except OSError as exc:
-        raise HTTPException(404, "Report not found") from exc
-    if size > MAX_REPORT_BYTES:
-        raise HTTPException(413, "Report exceeds 16 MiB")
-    try:
-        data, _document = read_report(path, size)
+        data, _document = read_report(path, MAX_REPORT_BYTES)
+    except ReportTooLarge as exc:
+        raise HTTPException(413, "Report exceeds 16 MiB") from exc
     except OSError as exc:
         raise HTTPException(404, "Report not found") from exc
     except (ValueError, RecursionError) as exc:

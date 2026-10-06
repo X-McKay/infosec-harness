@@ -3,6 +3,7 @@
 import asyncio
 import uuid
 from datetime import timedelta
+from importlib.metadata import version
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -10,12 +11,11 @@ from unittest.mock import AsyncMock
 import pytest
 from fakes import FakeOpenShell
 from pydantic import BaseModel
-from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, TemporalDurability
+from pydantic_ai.durable_exec.temporal import TemporalDurability
 from pydantic_ai.models.function import FunctionModel
 from temporalio import workflow
 from temporalio.client import WorkflowFailureError
 from temporalio.common import RetryPolicy
-from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import ExecuteActivityInput, Worker
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 
@@ -34,7 +34,11 @@ from infosec_harness.workflows.investigation import (
     InvestigationWorkflow,
     PreparedInvestigation,
 )
-from infosec_harness.workflows.worker import WorkerIdentityInterceptor, worker_identity
+from infosec_harness.workflows.worker import (
+    WorkerIdentityInterceptor,
+    WorkerIdentityMismatch,
+    worker_identity,
+)
 
 
 def identity(value="a"):
@@ -74,8 +78,11 @@ async def test_guard_checks_prepared_and_current_identity_before_handler(monkeyp
         assert await guarded.execute_activity(payload) == "executed"
         downstream.execute_activity.assert_awaited_once()
     else:
-        with pytest.raises(ValueError, match="identity|changed; restart"):
+        with pytest.raises(WorkerIdentityMismatch, match="identity|changed; restart") as error:
             await guarded.execute_activity(payload)
+        assert error.value.non_retryable and error.value.type == "WorkerIdentityMismatch"
+        # Both fingerprints are named so an operator can see which candidate is running.
+        assert "bound=aaaaaaaaaaaa" in str(error.value)
         downstream.execute_activity.assert_not_awaited()
 
 
@@ -151,7 +158,7 @@ class IdentityDispatchWorkflow:
 @pytest.mark.requires_temporal
 @pytest.mark.parametrize("kind", ["model", "workspace", "skill"])
 async def test_real_temporal_different_worker_refuses_native_activity_before_execution(
-    temporal_cli, tmp_path, kind
+    temporal_env, tmp_path, kind
 ):
     shell = FakeOpenShell()
     model_calls = []
@@ -196,10 +203,8 @@ async def test_real_temporal_different_worker_refuses_native_activity_before_exe
             __name__, "infosec_harness.workflows.investigation", "annotated_types", "typing_inspection"
         )
     )
+    env = temporal_env
     async with (
-        await WorkflowEnvironment.start_local(
-            dev_server_existing_path=temporal_cli, plugins=[PydanticAIPlugin()]
-        ) as env,
         Worker(
             env.client,
             task_queue=queue,
@@ -247,7 +252,7 @@ def test_identity_binds_policy_contents_dependencies_and_configuration(tmp_path)
     settings = Settings(openshell_config=config, temporal_api_key="do-not-report")
     first = worker_identity(settings)
     assert "do-not-report" not in first.model_dump_json()
-    assert first.dependencies["openshell"] == "0.1.2"
+    assert first.dependencies["openshell"] == version("openshell")
     settings.temporal_api_key = "another-secret"
     assert worker_identity(settings) == first
     policy.write_text("network: allow")
@@ -258,15 +263,27 @@ def test_identity_binds_policy_contents_dependencies_and_configuration(tmp_path)
     assert worker_identity(settings).fingerprint != second.fingerprint
 
 
-@pytest.mark.parametrize("budget", [300, 301])
-def test_worker_refuses_command_budget_above_runtime_maximum(tmp_path, monkeypatch, budget):
-    """Above the runtime bound every execute is refused mid-investigation; the worker must
-    refuse to start instead of silently capping only the model timeout."""
-    import temporalio.worker
+def test_identity_ignores_operator_settings_that_cannot_change_an_investigation(tmp_path):
+    config = tmp_path / "runtime.json"
+    config.write_text("{}")
+    settings = Settings(openshell_config=config)
+    first = worker_identity(settings)
+    changed = settings.model_copy(update={"log_level": "DEBUG", "reports_dir": tmp_path / "r"})
+    assert worker_identity(changed) == first
 
+
+@pytest.mark.parametrize(("budget", "output_bytes"), [(300, None), (301, None), (300, 260_070)])
+def test_worker_refuses_command_budget_above_runtime_maximum(
+    tmp_path, monkeypatch, budget, output_bytes
+):
+    """Above the runtime bound every execute is refused mid-investigation; the worker must
+    refuse to start instead of silently capping only the model timeout. Below the wrapper's
+    bounded output, a large command would become an unknown execution: refuse likewise."""
     from infosec_harness.config import get_settings
+    from infosec_harness.tools.execute import WRAPPER_OUTPUT_BYTES
     from infosec_harness.workflows import worker
 
+    output_bytes = output_bytes or WRAPPER_OUTPUT_BYTES
     config = tmp_path / "runtime.json"
     config.write_text("{}")
     settings = get_settings().model_copy(update={
@@ -274,9 +291,10 @@ def test_worker_refuses_command_budget_above_runtime_maximum(tmp_path, monkeypat
         "limits": Limits(command_timeout_seconds=budget),
     })
     monkeypatch.setattr(worker, "OpenShellConfig", SimpleNamespace(
-        load=lambda path: SimpleNamespace(max_timeout_seconds=300)))
+        load=lambda path: SimpleNamespace(max_timeout_seconds=300,
+                                          max_output_bytes=output_bytes)))
     monkeypatch.setattr(worker, "OpenShell", lambda config: SimpleNamespace(config=config))
-    monkeypatch.setattr(temporalio.worker, "Worker", lambda client, **kwargs: kwargs)
+    monkeypatch.setattr(worker, "Worker", lambda client, **kwargs: kwargs)
     monkeypatch.setattr(InvestigationWorkflow, "agent", None)
     monkeypatch.setattr(InvestigationWorkflow, "__pydantic_ai_agents__", [])
     if budget > 300:
@@ -284,5 +302,18 @@ def test_worker_refuses_command_budget_above_runtime_maximum(tmp_path, monkeypat
             worker.create_worker(None, settings)
         assert InvestigationWorkflow.agent is None
         return
-    assert worker.create_worker(None, settings)["task_queue"] == settings.task_queue
+    if output_bytes < WRAPPER_OUTPUT_BYTES:
+        with pytest.raises(ValueError, match=r"max_output_bytes \(260070\) is below"):
+            worker.create_worker(None, settings)
+        assert InvestigationWorkflow.agent is None
+        return
+    captures = []
+    monkeypatch.setattr(worker, "worker_identity",
+                        lambda settings: captures.append(settings) or identity())
+    created = worker.create_worker(None, settings)
+    assert created["task_queue"] == settings.task_queue
     assert InvestigationWorkflow.agent.model.timeout == 300
+    # One capture at startup, shared by the lifecycle activities and the native guard.
+    assert len(captures) == 1
+    activities = created["activities"][0].__self__
+    assert activities.bound_identity is created["interceptors"][0].bound_identity

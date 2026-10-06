@@ -3,7 +3,6 @@
 from datetime import timedelta
 from pathlib import Path
 
-from pydantic import BaseModel
 from pydantic_ai import Agent, AgentRetries, ModelRetry, RunContext
 from pydantic_ai.capabilities import AbstractCapability, ValidatedToolArgs
 from pydantic_ai.durable_exec.temporal import TemporalDurability, TemporalRunContext
@@ -16,16 +15,12 @@ from pydantic_core import to_json
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 
-from infosec_harness.contracts import (
-    Evidence,
-    InvestigationRequest,
-    Verdict,
-    WorkerIdentity,
-    definitive_support,
-)
-from infosec_harness.sandbox import OpenShell, Sandbox
+from infosec_harness.contracts import Evidence, Verdict, definitive_support
+from infosec_harness.sandbox import OpenShell
 from infosec_harness.sandbox.executor import MAX_INVOCATION_BYTES
+from infosec_harness.tools import build_toolset
 
+from .deps import InvestigationDeps
 from .evidence import retry_reasons
 
 MAX_HISTORY_BYTES = 32 * 1024 * 1024
@@ -36,41 +31,49 @@ GUARDED_ACTIVITY_PREFIX = f"agent__{AGENT_NAME}__"
 SKILLS = Path(__file__).parents[1] / "skills"
 
 
-class InvestigationDeps(BaseModel):
-    run_id: str
-    sandbox: Sandbox
-    source_digest: str
-    snapshot_path: str
-    request: InvestigationRequest
-    worker_identity: WorkerIdentity | None = None
-
-
 class DurablePayloadLimit(AbstractCapability[InvestigationDeps]):
     """Pure guards before native scheduling; reserve history space for finalization/cleanup."""
 
     @staticmethod
     def check_history() -> None:
-        if (
-            workflow.in_workflow()
-            and workflow.info().get_current_history_size() >= MAX_HISTORY_BYTES
-        ):
-            raise UsageLimitExceeded("Investigation exceeds the durable history budget")
+        if not workflow.in_workflow():
+            return
+        size = workflow.info().get_current_history_size()
+        if size >= MAX_HISTORY_BYTES:
+            raise UsageLimitExceeded(
+                f"Investigation exceeds the durable history budget "
+                f"({size} >= {MAX_HISTORY_BYTES} bytes)"
+            )
 
-    async def before_model_request(
-        self, ctx: RunContext[InvestigationDeps], request_context: ModelRequestContext
-    ) -> ModelRequestContext:
-        self.check_history()
+    @classmethod
+    def check_payload(
+        cls, subject: str, ctx: RunContext[InvestigationDeps], **parts: object
+    ) -> None:
+        """Refuse a native activity whose serialized input would exceed the payload budget."""
+        cls.check_history()
         encoded = to_json(
             {
-                "messages": request_context.messages,
-                "settings": request_context.model_settings,
-                "parameters": request_context.model_request_parameters,
+                **parts,
                 "deps": ctx.deps,
                 "context": TemporalRunContext.serialize_run_context(ctx),
             }
         )
         if len(encoded) > MAX_INVOCATION_BYTES:
-            raise UsageLimitExceeded("Investigation exceeds the durable payload budget")
+            raise UsageLimitExceeded(
+                f"{subject} exceeds the durable payload budget "
+                f"({len(encoded)} > {MAX_INVOCATION_BYTES} bytes)"
+            )
+
+    async def before_model_request(
+        self, ctx: RunContext[InvestigationDeps], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        self.check_payload(
+            "Investigation",
+            ctx,
+            messages=request_context.messages,
+            settings=request_context.model_settings,
+            parameters=request_context.model_request_parameters,
+        )
         return request_context
 
     async def before_tool_execute(
@@ -81,16 +84,7 @@ class DurablePayloadLimit(AbstractCapability[InvestigationDeps]):
         tool_def: ToolDefinition,
         args: ValidatedToolArgs,
     ) -> ValidatedToolArgs:
-        self.check_history()
-        encoded = to_json(
-            {
-                "args": args,
-                "deps": ctx.deps,
-                "context": TemporalRunContext.serialize_run_context(ctx),
-            }
-        )
-        if len(encoded) > MAX_INVOCATION_BYTES:
-            raise UsageLimitExceeded("Tool call exceeds the durable payload budget")
+        self.check_payload("Tool call", ctx, args=args)
         return args
 
 
@@ -116,7 +110,7 @@ async def validate_verdict(ctx: RunContext[InvestigationDeps], verdict: Verdict)
     if verdict.label == "inconclusive":
         return verdict
     evidence = [item for item in evidence if item.source_digest == ctx.deps.source_digest]
-    corroborated, contrary = definitive_support(verdict, evidence)
+    corroborated, contrary, _superseded = definitive_support(verdict, evidence)
     if not corroborated or contrary:
         reasons = retry_reasons(verdict, evidence)
         if contrary:
@@ -127,6 +121,9 @@ async def validate_verdict(ctx: RunContext[InvestigationDeps], verdict: Verdict)
                 "superseded_evidence_ids with the flaw explained in the summary; a probe newer "
                 "than the cited one cannot be superseded"
             )
+        if not reasons:
+            # Admission and the explanation are separate code; never send empty feedback.
+            reasons.append("No cited probe is a complete, source-verified, matching probe")
         raise ModelRetry(
             "; ".join(reasons) + ". See the probe skill; run a new corrected probe and cite "
             "its exact id; do not relabel. Or return inconclusive."
@@ -135,17 +132,12 @@ async def validate_verdict(ctx: RunContext[InvestigationDeps], verdict: Verdict)
 
 
 def build_agent(openshell: OpenShell, model: Model) -> Agent[InvestigationDeps, Verdict]:
-    # The tools are typed by InvestigationDeps above, so they import this module.
-    from infosec_harness.tools import build_toolset
-
+    """The investigator over ``openshell`` tools and ``model``, durable under Temporal."""
     tools = build_toolset(openshell)
 
+    # Model activities inherit this config (the library merges model_activity_config on top).
     durability = TemporalDurability(
         activity_config={
-            "start_to_close_timeout": timedelta(minutes=10),
-            "retry_policy": RetryPolicy(maximum_attempts=1),
-        },
-        model_activity_config={
             "start_to_close_timeout": timedelta(minutes=10),
             "retry_policy": RetryPolicy(maximum_attempts=1),
         },

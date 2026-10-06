@@ -386,6 +386,80 @@ def test_keep_going_continues_only_after_terminal_agent_level_failure():
     assert not cohort.agent_level(deep)
 
 
+def test_keep_going_classifies_from_the_untruncated_chain_with_an_allowlist():
+    # The shape the workflow writes: ActivityError around the named type, all links embedded.
+    assert cohort.agent_level(workflow_failure(
+        ("ModelExecutorError", "ActivityError: Activity task failed <- ModelExecutorError: "
+         "OpenShell model executor returned no complete response (exit 1)")))
+    # Regression: the report view cuts each message at 500 characters; a marker past the cut
+    # was invisible to the classifier and --keep-going continued after unknown dispatch.
+    hidden = ("UnexpectedModelBehavior: " + "x" * 400 + " <- ModelRetry: " + "y" * 400
+              + " <- ExecutionUnknown: native execution outcome unknown; sandbox closed")
+    assert len(hidden) > 800 and "ExecutionUnknown" not in hidden[:500]
+    past_cut = workflow_failure(("UnexpectedModelBehavior", hidden))
+    assert "ExecutionUnknown" not in str(cohort.failure_chain(past_cut))
+    # Regression: a substring denylist let inner types it did not name through.
+    for stop in (
+        past_cut,
+        workflow_failure(("UnexpectedModelBehavior",
+                          "UnexpectedModelBehavior: x <- TimeoutError: rpc deadline")),
+        workflow_failure(("ModelExecutorError", "ModelExecutorError: x <- RpcError: unavailable")),
+        workflow_failure(("UsageLimitExceeded",
+                          "UsageLimitExceeded: x <- UnsafeSnapshotMetadata: y")),
+        workflow_failure(("UsageLimitExceeded", "budget"), ("TimeoutError", "rpc deadline")),
+        # A separator not followed by a label fails closed.
+        workflow_failure(("UnexpectedModelBehavior", "UnexpectedModelBehavior: x <- y")),
+        # The workflow embeds at most eight links; a full message may have lost deeper ones.
+        workflow_failure(("UsageLimitExceeded", " <- ".join(["ModelRetry: x"] * 8))),
+    ):
+        assert not cohort.agent_level(stop), stop
+
+
+def test_drain_is_the_workflow_cleanup_reserve():
+    from infosec_harness.workflows.investigation import CLEANUP_RESERVE
+
+    assert cohort.DRAIN == CLEANUP_RESERVE
+
+
+def test_execution_timeout_reserves_owned_cleanup():
+    from datetime import timedelta
+
+    from infosec_harness.workflows.investigation import CLEANUP_RESERVE
+
+    limits = Limits()
+    reserve = cohort.execution_timeout(limits) - timedelta(seconds=limits.timeout_seconds)
+    assert reserve >= CLEANUP_RESERVE
+
+
+@pytest.mark.parametrize("ended", ["timed_out", "terminated"])
+async def test_server_ended_run_records_unconfirmed_cleanup_and_stops(
+    tmp_path, monkeypatch, ended
+):
+    from temporalio.client import WorkflowFailureError
+    from temporalio.exceptions import TerminatedError, TimeoutError, TimeoutType
+
+    finding = Finding(title="case", repo_url="repo")
+    manifest = prepared_cohort(tmp_path, monkeypatch, [(finding, "inconclusive", "a"),
+                                                        (finding, "inconclusive", "b")])
+    cause = (TimeoutError("Workflow execution timed out", type=TimeoutType.START_TO_CLOSE,
+                          last_heartbeat_details=[])
+             if ended == "timed_out" else TerminatedError("Workflow execution terminated"))
+    handle = SimpleNamespace(result=AsyncMock(side_effect=WorkflowFailureError(cause=cause)),
+                             cancel=AsyncMock())
+    client = SimpleNamespace(start_workflow=AsyncMock(return_value=handle),
+                             get_workflow_handle=lambda run_id: handle)
+    monkeypatch.setattr(cohort, "connect", AsyncMock(return_value=client))
+    report = await cohort.evaluate_corpus(
+        manifest, tmp_path / "report.json", get_settings(), keep_going=True)
+    first, second = report["cases"]
+    assert first["status"] == "failed"
+    assert first["cleanup"] == "unconfirmed"
+    assert "close_run" in first["cleanup_next_step"]
+    assert "cancellation" not in first  # A closed run cannot be cancelled.
+    handle.cancel.assert_not_awaited()
+    assert second["status"] == "unstarted"  # Never agent-level, even with --keep-going.
+
+
 @pytest.mark.parametrize("keep_going", [False, True])
 async def test_keep_going_never_reruns_and_cannot_pass_incomplete_cohort(
     tmp_path, monkeypatch, fixture_worker_identity, keep_going
@@ -450,9 +524,193 @@ async def test_keep_going_never_reruns_and_cannot_pass_incomplete_cohort(
                                "unsafe_negatives": "not_checked"}
 
 
-async def test_named_cases_are_a_diagnostic_that_never_qualifies(
-    tmp_path, monkeypatch, fixture_worker_identity, capsys
+class ParallelClient:
+    """Fake Temporal client: one handle per started ID, each case scripted by title.
+
+    ``script[title]`` is ``(release, outcome)``: the result waits for ``release`` and then
+    returns or raises ``outcome``. Tracks the peak number of results awaited at once.
+    """
+
+    def __init__(self, script):
+        self.script, self.started, self.handles = script, [], {}
+        self.in_flight = self.peak = 0
+        self.cancelled = []
+
+    async def start_workflow(self, workflow, request, *, id, **kwargs):
+        title = request.finding.title
+        self.started.append((title, id))
+        release, outcome = self.script[title]
+        client = self
+        cancel_requested = asyncio.Event()
+
+        async def result(**kwargs):
+            client.in_flight += 1
+            client.peak = max(client.peak, client.in_flight)
+            try:
+                waiters = {asyncio.ensure_future(release.wait()),
+                           asyncio.ensure_future(cancel_requested.wait())}
+                try:
+                    await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
+                finally:
+                    for waiter in waiters:
+                        waiter.cancel()
+            finally:
+                client.in_flight -= 1
+            if cancel_requested.is_set():
+                raise workflow_failure(("CancelledError", "Workflow cancelled"))
+            if isinstance(outcome, BaseException):
+                raise outcome
+            return outcome
+
+        async def cancel(**kwargs):
+            client.cancelled.append(title)
+            cancel_requested.set()
+
+        handle = SimpleNamespace(result=result, cancel=cancel)
+        self.handles[id] = handle
+        return handle
+
+    def get_workflow_handle(self, run_id):
+        return self.handles[run_id]
+
+
+def parallel_cohort(tmp_path, monkeypatch, identity, titles, outcomes):
+    finding = Finding(title="case", repo_url="repo")
+    manifest = prepared_cohort(tmp_path, monkeypatch, [
+        (finding.model_copy(update={"title": title}), "inconclusive", title) for title in titles])
+    completed = InvestigationResult(
+        finding=finding, verdict=Verdict(label="inconclusive", summary="fixture"), evidence=[],
+        source_digest="hash", model=get_settings().model_name, worker_identity=identity)
+    releases = {title: asyncio.Event() for title in titles}
+    client = ParallelClient({title: (releases[title], outcomes.get(title, completed))
+                             for title in titles})
+    monkeypatch.setattr(cohort, "connect", AsyncMock(return_value=client))
+    return manifest, client, releases
+
+
+async def until(condition):
+    async with asyncio.timeout(5):
+        while not condition():
+            await asyncio.sleep(0.005)
+
+
+async def test_parallel_runs_at_most_n_cases_and_keeps_manifest_order(
+    tmp_path, monkeypatch, fixture_worker_identity
 ):
+    titles = list("abcdefg")
+    manifest, client, releases = parallel_cohort(
+        tmp_path, monkeypatch, fixture_worker_identity, titles, {})
+    task = asyncio.create_task(cohort.evaluate_corpus(
+        manifest, tmp_path / "report.json", get_settings(), parallel=3))
+    await until(lambda: client.in_flight == 3)
+    # Cases start in manifest order; finishing out of order frees slots for the next ones.
+    assert [title for title, _ in client.started] == ["a", "b", "c"]
+    for title in reversed(titles):
+        releases[title].set()
+    report = await asyncio.wait_for(task, 5)
+    assert client.peak == 3
+    assert [title for title, _ in client.started] == titles
+    assert [row["name"] for row in report["cases"]] == titles
+    assert all(row["status"] == "completed" for row in report["cases"])
+    assert report["parallel"] == 3 and report["limitations"] == [cohort.PARALLEL_LIMITATION]
+    assert report["status"] == "passed"
+    assert report == json.loads((tmp_path / "report.json").read_text())
+
+
+@pytest.mark.parametrize("keep_going", [False, True])
+async def test_parallel_stop_latch_lets_in_flight_cases_finish_and_starts_no_more(
+    tmp_path, monkeypatch, fixture_worker_identity, keep_going
+):
+    # b fails with a non-agent failure while a and c are still running.
+    titles = list("abcdef")
+    manifest, client, releases = parallel_cohort(
+        tmp_path, monkeypatch, fixture_worker_identity, titles,
+        {"b": workflow_failure(("ActivityError", "Activity task failed"))})
+    task = asyncio.create_task(cohort.evaluate_corpus(
+        manifest, tmp_path / "report.json", get_settings(), parallel=3, keep_going=keep_going))
+    await until(lambda: client.in_flight == 3)
+    releases["b"].set()
+    await until(lambda: client.in_flight == 2)
+    await asyncio.sleep(0.05)
+    assert [title for title, _ in client.started] == ["a", "b", "c"]  # Latched: no d.
+    releases["a"].set()
+    releases["c"].set()
+    for title in "def":
+        releases[title].set()
+    report = await asyncio.wait_for(task, 5)
+    assert [row["status"] for row in report["cases"]] == [
+        "completed", "failed", "completed", "unstarted", "unstarted", "unstarted"]
+    # The failed case is never re-run and every started ID is fresh.
+    started_ids = [run_id for _, run_id in client.started]
+    assert len(started_ids) == len(set(started_ids)) == 3
+    assert client.cancelled == []  # A sibling's failure never cancels in-flight work.
+    assert report["gates"]["complete_corpus"] == "failed" and report["status"] == "failed"
+
+
+async def test_parallel_keep_going_continues_past_agent_failures_without_rerunning(
+    tmp_path, monkeypatch, fixture_worker_identity
+):
+    titles = list("abcde")
+    manifest, client, releases = parallel_cohort(
+        tmp_path, monkeypatch, fixture_worker_identity, titles,
+        {"a": workflow_failure(("UsageLimitExceeded", "budget")),
+         "d": workflow_failure(("UnexpectedModelBehavior", "bad output"))})
+    for release in releases.values():
+        release.set()
+    report = await asyncio.wait_for(cohort.evaluate_corpus(
+        manifest, tmp_path / "report.json", get_settings(), parallel=3, keep_going=True), 5)
+    assert [row["status"] for row in report["cases"]] == [
+        "failed", "completed", "completed", "failed", "completed"]
+    assert [title for title, _ in client.started] == titles  # Each case exactly once.
+
+
+async def test_parallel_cancellation_reconciles_every_in_flight_run_before_the_worker_stops(
+    tmp_path, monkeypatch, fixture_worker_identity
+):
+    from contextlib import asynccontextmanager
+
+    from infosec_harness.workflows import worker
+
+    titles = list("abcde")
+    manifest, client, _ = parallel_cohort(
+        tmp_path, monkeypatch, fixture_worker_identity, titles, {})
+    worker_stopped_after = []
+
+    @asynccontextmanager
+    async def owned(client_, settings):
+        try:
+            yield
+        finally:
+            worker_stopped_after.append(sorted(client.cancelled))
+
+    monkeypatch.setattr(worker, "create_worker", owned)
+    output = tmp_path / "report.json"
+    task = asyncio.create_task(cohort.evaluate_corpus(
+        manifest, output, get_settings(), owned_worker=True, parallel=3))
+    await until(lambda: client.in_flight == 3)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, 5)
+    # Each in-flight run was cancelled and drained concurrently, before the worker stopped.
+    assert worker_stopped_after == [["a", "b", "c"]]
+    persisted = json.loads(output.read_text())
+    assert [row["status"] for row in persisted["cases"]] == [
+        "failed", "failed", "failed", "unstarted", "unstarted"]
+    assert all(row["cancellation"] == "terminal" for row in persisted["cases"][:3])
+    assert [title for title, _ in client.started] == ["a", "b", "c"]
+
+
+@pytest.mark.parametrize("parallel", [0, cohort.MAX_PARALLEL + 1])
+async def test_parallel_is_bounded(tmp_path, parallel):
+    with pytest.raises(ValueError, match="parallel must be between 1 and"):
+        await cohort.evaluate_corpus(tmp_path / "m.json", tmp_path / "r.json", get_settings(),
+                                     parallel=parallel)
+
+
+async def test_named_cases_are_a_diagnostic_that_never_qualifies(
+    tmp_path, monkeypatch, fixture_worker_identity, caplog
+):
+    caplog.set_level("INFO", logger=cohort.__name__)
     finding = Finding(title="case", repo_url="repo")
     manifest = prepared_cohort(
         tmp_path, monkeypatch,
@@ -483,7 +741,7 @@ async def test_named_cases_are_a_diagnostic_that_never_qualifies(
     assert set(report["gates"].values()) == {"not_checked"}
     assert report["status"] == "completed"
     run_id = report["cases"][0]["workflow_id"]
-    assert f"[1/1] b {run_id} completed" in capsys.readouterr().err
+    assert f"event=case_end position=1/1 case=b run_id={run_id} status=completed" in caplog.text
 
 
 def owned_worker_factory(monkeypatch, tmp_path, shell, respond, identity, created):
@@ -521,13 +779,11 @@ def owned_worker_factory(monkeypatch, tmp_path, shell, respond, identity, create
 
 @pytest.mark.requires_temporal
 async def test_owned_worker_keeps_going_after_agent_failure_and_replays(
-    temporal_cli, tmp_path, monkeypatch, fixture_worker_identity
+    temporal_env, tmp_path, monkeypatch, fixture_worker_identity
 ):
     from fakes import FakeOpenShell, final_response
-    from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
     from pydantic_ai.messages import ModelResponse, ToolCallPart
     from temporalio.client import WorkflowExecutionStatus
-    from temporalio.testing import WorkflowEnvironment
 
     from infosec_harness.contracts import Limits
 
@@ -547,38 +803,34 @@ async def test_owned_worker_keeps_going_after_agent_failure_and_replays(
     ])
     settings = get_settings()
     settings.limits = Limits(max_requests=1)
-    async with await WorkflowEnvironment.start_local(
-        dev_server_existing_path=temporal_cli, plugins=[PydanticAIPlugin()]
-    ) as env:
-        monkeypatch.setattr(cohort, "connect", AsyncMock(return_value=env.client))
-        report = await asyncio.wait_for(cohort.evaluate_corpus(
-            manifest, tmp_path / "report.json", settings, owned_worker=True, keep_going=True
-        ), 60)
-        first, second = report["cases"]
-        assert report["task_queue"] == created[0].task_queue
-        assert report["task_queue"].startswith("investigate-v11-eval-")
-        assert settings.task_queue == "investigate-v11"  # The operator's settings are unchanged.
-        assert first["status"] == "failed" and second["status"] == "completed"
-        assert first["failure_chain"][1]["type"] == "UsageLimitExceeded"
-        assert shell.closed == [first["workflow_id"], second["workflow_id"]]
-        assert report["status"] == "failed" and report["gates"]["complete_corpus"] == "failed"
-        executions = list(shell.executions)
-        replayed = await cohort.replay_history(second["workflow_id"], settings, env.client)
-        assert replayed["status"] == "passed" and replayed["verdict"] == "inconclusive"
-        assert replayed["history_events"] > 0 and len(replayed["history_sha256"]) == 64
-        assert shell.executions == executions
-        description = await env.client.get_workflow_handle(second["workflow_id"]).describe()
-        assert description.status == WorkflowExecutionStatus.COMPLETED
+    env = temporal_env
+    monkeypatch.setattr(cohort, "connect", AsyncMock(return_value=env.client))
+    report = await asyncio.wait_for(cohort.evaluate_corpus(
+        manifest, tmp_path / "report.json", settings, owned_worker=True, keep_going=True
+    ), 60)
+    first, second = report["cases"]
+    assert report["task_queue"] == created[0].task_queue
+    assert report["task_queue"].startswith("investigate-v11-eval-")
+    assert settings.task_queue == "investigate-v11"  # The operator's settings are unchanged.
+    assert first["status"] == "failed" and second["status"] == "completed"
+    assert first["failure_chain"][1]["type"] == "UsageLimitExceeded"
+    assert shell.closed == [first["workflow_id"], second["workflow_id"]]
+    assert report["status"] == "failed" and report["gates"]["complete_corpus"] == "failed"
+    executions = list(shell.executions)
+    replayed = await cohort.replay_history(second["workflow_id"], settings, env.client)
+    assert replayed["status"] == "passed" and replayed["verdict"] == "inconclusive"
+    assert replayed["history_events"] > 0 and len(replayed["history_sha256"]) == 64
+    assert shell.executions == executions
+    description = await env.client.get_workflow_handle(second["workflow_id"]).describe()
+    assert description.status == WorkflowExecutionStatus.COMPLETED
 
 
 @pytest.mark.requires_temporal
 async def test_owned_worker_stays_up_until_cancelled_run_cleans_up(
-    temporal_cli, tmp_path, monkeypatch, fixture_worker_identity
+    temporal_env, tmp_path, monkeypatch, fixture_worker_identity
 ):
     from fakes import FakeOpenShell
-    from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
     from temporalio.client import WorkflowExecutionStatus
-    from temporalio.testing import WorkflowEnvironment
 
     shell = FakeOpenShell()
     entered = asyncio.Event()
@@ -593,24 +845,22 @@ async def test_owned_worker_stays_up_until_cancelled_run_cleans_up(
         (Finding(title="never", repo_url="fixture"), "inconclusive", "b"),
     ])
     output = tmp_path / "report.json"
-    async with await WorkflowEnvironment.start_local(
-        dev_server_existing_path=temporal_cli, plugins=[PydanticAIPlugin()]
-    ) as env:
-        monkeypatch.setattr(cohort, "connect", AsyncMock(return_value=env.client))
-        task = asyncio.create_task(cohort.evaluate_corpus(
-            manifest, output, get_settings(), owned_worker=True))
-        await asyncio.wait_for(entered.wait(), 30)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(task, 60)
-        persisted = json.loads(output.read_text())
-        row = persisted["cases"][0]
-        # Cleanup completed before evaluate_corpus (and its owned worker) returned.
-        assert shell.closed == [row["workflow_id"]]
-        assert row["cancellation"] == "terminal"
-        assert persisted["cases"][1]["status"] == "unstarted"
-        description = await env.client.get_workflow_handle(row["workflow_id"]).describe()
-        assert description.status == WorkflowExecutionStatus.CANCELED
+    env = temporal_env
+    monkeypatch.setattr(cohort, "connect", AsyncMock(return_value=env.client))
+    task = asyncio.create_task(cohort.evaluate_corpus(
+        manifest, output, get_settings(), owned_worker=True))
+    await asyncio.wait_for(entered.wait(), 30)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, 60)
+    persisted = json.loads(output.read_text())
+    row = persisted["cases"][0]
+    # Cleanup completed before evaluate_corpus (and its owned worker) returned.
+    assert shell.closed == [row["workflow_id"]]
+    assert row["cancellation"] == "terminal"
+    assert persisted["cases"][1]["status"] == "unstarted"
+    description = await env.client.get_workflow_handle(row["workflow_id"]).describe()
+    assert description.status == WorkflowExecutionStatus.CANCELED
 
 
 def occupancy_command(output: str, exit_code: int = 0) -> list[str]:
@@ -625,34 +875,88 @@ def test_case_operation_ceiling_covers_the_largest_live_observation():
 
 
 @pytest.mark.parametrize(
-    "command",
+    ("command", "error_type", "detail"),
     [
-        occupancy_command(json.dumps({"retained": 1, "quota": 20000, "read_only": False})),
-        occupancy_command(json.dumps({"retained": 1, "quota": 20000})),
-        occupancy_command("not json"),
-        occupancy_command(json.dumps({"retained": 1, "quota": 20000, "read_only": True}), 1),
-        ["/nonexistent/occupancy-command"],
+        (occupancy_command(json.dumps({"retained": 1, "quota": 20000, "read_only": False})),
+         "ValueError", "read_only: value_error"),
+        (occupancy_command(json.dumps({"retained": 1, "quota": 20000})),
+         "ValueError", "read_only: missing"),
+        (occupancy_command("not json"), "ValueError", "json_invalid"),
+        (occupancy_command(json.dumps({"retained": 1, "quota": 20000, "read_only": True}), 1),
+         "RuntimeError", "exited 1"),
+        (["/nonexistent/occupancy-command"], "FileNotFoundError", "occupancy-command"),
+        # Strict: an integer is not a read-only claim and a string is not a count.
+        (occupancy_command(json.dumps({"retained": 1, "quota": 20000, "read_only": 1})),
+         "ValueError", "read_only: value_error"),
+        (occupancy_command(json.dumps({"retained": "5", "quota": 20000, "read_only": True})),
+         "ValueError", "retained: int_type"),
+        ([sys.executable, "-c", "pass"], "ValueError", "no observation line"),
     ],
 )
-def test_capacity_preflight_fails_closed_without_a_read_only_observation(monkeypatch, command):
+async def test_capacity_preflight_fails_closed_without_a_read_only_observation(
+    monkeypatch, command, error_type, detail
+):
     settings = get_settings()
     monkeypatch.setattr(settings, "native_occupancy_command", command)
-    report = cohort.native_capacity_preflight(settings, 36)
+    report = await cohort.native_capacity_preflight(settings, 36)
     assert report["status"] == "failed"
-    assert "retained" not in report and "error_type" in report
+    assert "retained" not in report
+    assert report["error_type"] == error_type
+    assert detail in report["error"] and len(report["error"]) <= cohort.ERROR_CHARS
 
 
-def test_capacity_preflight_is_unchecked_only_when_unconfigured(monkeypatch):
+async def test_capacity_preflight_records_exit_code_and_a_bounded_stderr_tail(monkeypatch):
+    settings = get_settings()
+    noisy = "import sys; sys.stderr.write('\\x1b[31m' + 'e' * 5000 + 'gateway down'); sys.exit(3)"
+    monkeypatch.setattr(settings, "native_occupancy_command", [sys.executable, "-c", noisy])
+    monkeypatch.setenv("HARNESS_TEMPORAL_API_KEY", "never-passed-on")
+    report = await cohort.native_capacity_preflight(settings, 1)
+    assert (report["status"], report["exit_code"]) == ("failed", 3)
+    assert report["stderr_tail"].endswith("gateway down")
+    assert len(report["stderr_tail"]) <= cohort.ERROR_CHARS
+    assert "\x1b" not in report["stderr_tail"]
+
+
+async def test_capacity_preflight_kills_the_whole_command_group_at_its_bound(monkeypatch):
+    import time
+
+    settings = get_settings()
+    # A grandchild keeps the pipes open; only a process-group kill ends the wait.
+    hang = [sys.executable, "-c",
+            "import subprocess, sys, time; subprocess.Popen([sys.executable, '-c', "
+            "'import time; time.sleep(60)']); time.sleep(60)"]
+    monkeypatch.setattr(settings, "native_occupancy_command", hang)
+    monkeypatch.setattr(cohort, "OCCUPANCY_TIMEOUT", 0.5)
+    began = time.monotonic()
+    report = await cohort.native_capacity_preflight(settings, 1)
+    assert time.monotonic() - began < 5
+    assert (report["status"], report["error_type"]) == ("failed", "TimeoutError")
+    assert report["exit_code"] is None
+
+
+async def test_capacity_preflight_passes_only_the_non_harness_environment(monkeypatch, tmp_path):
+    settings = get_settings()
+    probe = ("import json, os; print(json.dumps({'retained': 0, 'quota': 10 ** 6, "
+             "'read_only': True, 'observed_at_ms': len([k for k in os.environ "
+             "if k.startswith('HARNESS_')])}))")
+    monkeypatch.setattr(settings, "native_occupancy_command", [sys.executable, "-c", probe])
+    monkeypatch.setenv("HARNESS_TEMPORAL_API_KEY", "never-passed-on")
+    report = await cohort.native_capacity_preflight(settings, 1)
+    assert report["status"] == "passed" and report["observed_at_ms"] == 0
+
+
+async def test_capacity_preflight_is_unchecked_only_when_unconfigured(monkeypatch):
     settings = get_settings()
     monkeypatch.setattr(settings, "native_occupancy_command", [])
-    report = cohort.native_capacity_preflight(settings, 36)
+    report = await cohort.native_capacity_preflight(settings, 36)
     assert report["status"] == "not_checked"
     assert report["required_headroom"] == 36 * cohort.case_operation_ceiling(settings.limits)
     monkeypatch.setattr(settings, "native_occupancy_command", occupancy_command(
         json.dumps({"retained": 8344, "quota": 20000, "read_only": True, "observed_at_ms": 5})))
-    report = cohort.native_capacity_preflight(settings, 36)
+    report = await cohort.native_capacity_preflight(settings, 36)
     assert report["status"] == "passed"
     assert (report["retained"], report["quota"], report["headroom"]) == (8344, 20000, 11656)
+    assert report["exit_code"] == 0
 
 
 async def test_saturated_ledger_refuses_the_cohort_before_any_dispatch(tmp_path, monkeypatch):

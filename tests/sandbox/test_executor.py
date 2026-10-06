@@ -3,7 +3,9 @@
 import json
 
 import httpx
+import pytest
 from openai import AsyncOpenAI
+from pydantic import ValidationError
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
@@ -14,7 +16,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.usage import RequestUsage
 
-from infosec_harness.sandbox.executor import RESPONSE, ModelInvocation, execute
+from infosec_harness.sandbox.executor import RESPONSE, ModelInvocation, execute, provider_model
 
 
 def test_reasoning_usage_extensions_survive_next_turn_transport():
@@ -102,3 +104,53 @@ async def test_compatible_chat_preserves_instructions_with_one_leading_system(mo
         response = RESPONSE.validate_json(await execute(invocation))
     assert response.parts[0].content == "ok"
     assert len(seen) == 1
+
+
+def invocation_fields(**overrides):
+    fields = {"provider": "bedrock", "model_name": "model", "region": "us-west-2",
+              "timeout_seconds": 37, "messages": [], "settings": None,
+              "parameters": ModelRequestParameters()}
+    return {**fields, **overrides}
+
+
+def test_unknown_invocation_field_is_refused_not_ignored():
+    """A stale executor image must fail on a field it does not know, never drop a budget."""
+    with pytest.raises(ValidationError, match="unknown model invocation fields"):
+        ModelInvocation.model_validate(invocation_fields(future_budget=5))
+    encoded = json.dumps({**invocation_fields(), "parameters": {}, "future_budget": 5})
+    with pytest.raises(ValidationError, match=r"\['future_budget'\]"):
+        ModelInvocation.model_validate_json(encoded)
+
+
+def test_bedrock_client_is_bounded_by_the_invocation_budget(monkeypatch):
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "native-placeholder")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "native-placeholder")
+    config = provider_model(ModelInvocation(**invocation_fields())).client.meta.config
+    assert (config.connect_timeout, config.read_timeout) == (37, 37)
+    assert config.retries["total_max_attempts"] == 1
+
+
+@pytest.mark.parametrize("endpoint", [
+    "https://user:password@model.example/v1",
+    "https://model.example/v1#fragment",
+    "ftp://model.example/v1",
+    "https:///v1",
+])
+def test_executor_refuses_endpoints_with_credentials_or_without_a_host(endpoint):
+    invocation = ModelInvocation(**invocation_fields(provider="openai", base_url=endpoint))
+    with pytest.raises(ValueError, match="endpoint without credentials is required"):
+        provider_model(invocation)
+
+
+def test_executor_refuses_an_oversized_invocation_before_parsing(monkeypatch):
+    import io
+    import sys
+
+    from infosec_harness.sandbox import executor
+
+    stdin = io.BytesIO(b"{" + b" " * executor.MAX_INVOCATION_BYTES)
+    monkeypatch.setattr(sys, "stdin", type("Stdin", (), {"buffer": stdin})())
+    limit = executor.MAX_INVOCATION_BYTES
+    with pytest.raises(ValueError, match=rf"\(at least {limit + 1} > {limit} bytes\)"):
+        executor.main()
+    assert stdin.tell() == executor.MAX_INVOCATION_BYTES + 1

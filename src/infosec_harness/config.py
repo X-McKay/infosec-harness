@@ -1,13 +1,12 @@
 """Operator configuration. No model-selected permissions or automatic runtime fallback."""
 
-from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Self
 
 from pydantic import Field, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
-from infosec_harness.contracts import Limits
+from infosec_harness.contracts import GENERATION, Limits
 
 
 class Settings(BaseSettings):
@@ -17,7 +16,7 @@ class Settings(BaseSettings):
 
     temporal_address: str = "localhost:7233"
     temporal_namespace: str = "default"
-    task_queue: str = "investigate-v11"
+    task_queue: str = f"investigate-{GENERATION}"
     temporal_tls: bool = False
     temporal_tls_ca_file: Path | None = None
     temporal_tls_client_cert: Path | None = None
@@ -38,9 +37,11 @@ class Settings(BaseSettings):
     model_base_url: str | None = None
     model_region: str = "us-east-1"
     limits: Limits = Field(default_factory=Limits)
+    # Level of the one stderr handler that `harness worker`, `api` and `eval` install.
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
     @model_validator(mode="after")
-    def valid_tls(self):
+    def valid_tls(self) -> Self:
         if bool(self.temporal_tls_client_cert) != bool(self.temporal_tls_client_key):
             raise ValueError("Temporal client certificate and key must be configured together")
         if not self.temporal_tls and any(
@@ -62,21 +63,48 @@ class FileSettings(Settings):
     model_config = SettingsConfigDict(extra="forbid")
 
     @classmethod
-    def settings_customise_sources(cls, settings_cls, init_settings, **_sources):
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        del settings_cls, env_settings, dotenv_settings, file_secret_settings
         return (init_settings,)
 
 
-_explicit: Settings | None = None
+# The one process configuration. It is not frozen yet: tests still assign fields on it
+# (tests/evals, tests/workflows); freezing it is a separate change with those tests.
+_settings: Settings | None = None
 
 
-@lru_cache
 def get_settings() -> Settings:
-    return _explicit if _explicit is not None else Settings()
+    """The bound settings file, else the environment as read on first use."""
+    global _settings
+    if _settings is None:
+        _settings = Settings()
+    return _settings
 
 
 def use_settings_file(path: Path) -> Settings:
-    """Bind one frozen configuration file. Environment variables are not merged into it."""
-    global _explicit
-    _explicit = FileSettings.model_validate_json(path.read_bytes())
-    get_settings.cache_clear()
-    return _explicit
+    """Bind one frozen configuration file. Environment variables are not merged into it.
+
+    Refuses once settings exist, so one process never mixes two configurations.
+    """
+    global _settings
+    if _settings is not None:
+        raise RuntimeError(
+            f"Settings are already in use; refusing to rebind them to {path}. "
+            "Pass --settings once, before anything reads the configuration."
+        )
+    _settings = FileSettings.model_validate_json(path.read_bytes())
+    return _settings
+
+
+def reset_settings() -> None:
+    """Forget the process settings so the next read starts fresh. Tests only."""
+    global _settings
+    _settings = None
+

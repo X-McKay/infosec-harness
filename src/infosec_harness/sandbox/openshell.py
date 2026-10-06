@@ -13,8 +13,10 @@ import asyncio
 import hashlib
 import ipaddress
 import json
+import logging
 import os
 import uuid
+from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -27,18 +29,26 @@ from infosec_harness._io import atomic_write_bytes
 
 from .execution import (
     _PYTHON,
-    Execution,
     ExecutionUnknown,
     OpenShellError,
+    OwnershipRecord,
     ProfileName,
     Sandbox,
     _digest,
+    _event,
+    _load,
+    _records,
     _request_id,
+    _sandbox_record,
+    _status,
 )
-from .process import run_bounded
+from .process import finish, run_bounded
 from .transfer import Transfer
 
+# The native ownership label, independent of the workflow generation: live sandboxes and saved
+# records carry it, so changing it would orphan them.
 _OWNER = "infosec-harness.v3"
+log = logging.getLogger(__name__)
 # The dedicated-daemon inspector: bounded time and output for one ps/inspect call.
 _INSPECTION_TIMEOUT_S = 20
 _INSPECTION_BYTES = 2_097_152
@@ -57,8 +67,7 @@ def native_operation_accounting(state_dir: Path, run_id: str) -> dict:
     for folder, category in (("sandboxes", "create"), ("qualification", "admission_exec"),
                              ("operations", "exec"), ("transfers", "workspace_capture")):
         completed = unknown = 0
-        for path in (state_dir / folder).glob("*.json"):
-            saved = json.loads(path.read_bytes())
+        for saved in _records(state_dir, folder):
             sandbox = saved.get("sandbox", saved.get("source", saved.get("binding", {}).get("sandbox", {})))
             if sandbox.get("run_id") != run_id:
                 continue
@@ -176,6 +185,69 @@ def _changed_paths(saved: Any, fresh: Any, path: str = "", limit: int = 8) -> li
     return [] if saved == fresh else [path or "."]
 
 
+def _failed(checks: dict[str, bool]) -> str:
+    """The names of the failed checks (never the observed values), or "" when all pass."""
+    return ", ".join(name for name, passed in checks.items() if not passed)
+
+
+# Every fact the confinement probe must report, by key. A missing key or a value of the
+# wrong shape fails that check. Thresholds come from the profile.
+_PROOF_FLAGS = ("filesystem_denied", "shared_tmp_denied", "symlink_escape_denied",
+                "workspace_writable", "network_denied", "sockets_absent", "credentials_absent",
+                "null_sink_verified")
+
+
+def _cpu_fraction(value: str) -> float:
+    quota, period = (int(v) for v in value.split())
+    return quota / period
+
+
+def _proof_checks(proof: Any, profile: Profile) -> dict[str, bool]:
+    expected: dict[str, Callable[[Any], bool]] = {
+        "uid": lambda v: v == 65532,
+        "nnp": lambda v: v == "1",
+        "seccomp": lambda v: v == "2",
+        "caps": lambda v: v == 0,
+        "shared_tmp_mode": lambda v: v == 0o1777,
+        "null_device_major": lambda v: type(v) is int and v == 1,
+        "null_device_minor": lambda v: type(v) is int and v == 3,
+        **{flag: (lambda v: v is True) for flag in _PROOF_FLAGS},
+        "memory": lambda v: 0 < int(v) <= profile.memory_bytes,
+        "cpu": lambda v: 0 < _cpu_fraction(v) <= profile.cpu_cores,
+    }
+    if not isinstance(proof, dict):
+        return {"proof": False}
+    checks = {}
+    for key, check in expected.items():
+        try:
+            checks[key] = key in proof and bool(check(proof[key]))
+        except (ValueError, TypeError, AttributeError, ZeroDivisionError):
+            checks[key] = False
+    return checks
+
+
+def _ownership(sandbox: Sandbox, *, closed: bool = False) -> OwnershipRecord:
+    return {"sandbox": _sandbox_record(sandbox), "closed": closed}
+
+
+def _refused(sandbox: Sandbox, error: BaseException) -> None:
+    # Adapter refusal messages name checks and limits, never workload output or paths.
+    reason = str(error)[:300] if isinstance(error, OpenShellError) else ""
+    _event(log, logging.WARNING, "sandbox_refused", run_id=sandbox.run_id, sandbox_id=sandbox.id,
+           profile=sandbox.profile, slot=sandbox.slot, error_type=type(error).__name__,
+           reason=reason)
+
+
+def _cleanup_failed(sandbox: Sandbox, error: BaseException) -> None:
+    _event(log, logging.INFO, "cleanup_failed", run_id=sandbox.run_id, sandbox_id=sandbox.id,
+           profile=sandbox.profile, slot=sandbox.slot, error_type=type(error).__name__)
+
+
+def _valid_timestamp(value: Any) -> bool:
+    """A protobuf Timestamp within its documented range (years 1..9999)."""
+    return -62135596800 <= value.seconds <= 253402300799 and 0 <= value.nanos <= 999999999
+
+
 def _directory(path: Path) -> None:
     missing = []
     parent = path
@@ -252,7 +324,7 @@ print(json.dumps({'uid':os.getuid(),'nnp':s['NoNewPrivs'].strip(),
 """
 
 
-class OpenShell(Execution, Transfer):
+class OpenShell(Transfer):
     """The pinned native adapter: lifecycle here, exec and transfer from the mixins."""
 
     def __init__(self, config: OpenShellConfig) -> None:
@@ -286,13 +358,20 @@ class OpenShell(Execution, Transfer):
         atomic_write_bytes(path, json.dumps(value, sort_keys=True).encode(),
                            exclusive=exclusive, sync_directory=True)
 
-    def _spec(self, profile: ProfileName):
-        from google.protobuf.json_format import ParseDict
+    def _spec(self, profile: ProfileName) -> Any:
+        from google.protobuf.json_format import ParseDict, ParseError
 
         config = self.config.profiles.get(profile)
         if config is None:
             raise OpenShellError(f"profile {profile} is not configured")
-        authored = yaml.safe_load(config.policy.read_bytes())
+        try:
+            authored = yaml.safe_load(config.policy.read_bytes())
+        except yaml.YAMLError as error:
+            raise OpenShellError(f"profile {profile} policy is not valid YAML: "
+                                 f"{type(error).__name__}") from None
+        if not isinstance(authored, dict) or not isinstance(authored.get("network_policies", {}), dict):
+            raise OpenShellError(f"profile {profile} policy must be a mapping with a "
+                                 "network_policies mapping")
         # The CLI's YAML aliases differ from protobuf JSON enum names. Resolve
         # only the pinned declared enum values; unknown values fail validation.
         for rule in authored.get("network_policies", {}).values():
@@ -303,35 +382,64 @@ class OpenShell(Execution, Transfer):
                     value = endpoint.get(field)
                     if isinstance(value, str) and not value.startswith(prefix):
                         endpoint[field] = prefix + value.upper()
-        policy = ParseDict(authored, self._policy_pb.SandboxPolicy())
-        if (policy.landlock.compatibility != "hard_requirement"
-                or policy.process.run_as_user != "65532"
-                or policy.process.run_as_group != "65532"
-                or policy.filesystem.include_workdir
-                or set(policy.filesystem.read_write) != {"/workspace", "/tmp", "/dev/null"}
-                or (profile != "workspace" and policy.network_policies)):
-            raise OpenShellError("profile must require Landlock, nonroot, confined writes and deny egress")
-        for rule in policy.network_policies.values():
-            for endpoint in rule.endpoints:
-                if (not endpoint.host or "*" in endpoint.host
-                        or endpoint.protocol != "rest"
-                        or endpoint.enforcement != self._policy_pb.NETWORK_ENFORCEMENT_MODE_ENFORCE
-                        or endpoint.tls != self._policy_pb.NETWORK_TLS_MODE_UNSPECIFIED
-                        or not endpoint.rules
-                        or endpoint.access != self._policy_pb.NETWORK_ACCESS_PRESET_UNSPECIFIED
-                        or any(r.allow.method not in ("GET", "HEAD") for r in endpoint.rules)):
-                    raise OpenShellError("package egress must use exact hosts and enforced read-only REST")
-        spec = self._pb.SandboxSpec(
+        try:
+            policy = ParseDict(authored, self._policy_pb.SandboxPolicy())
+        except ParseError as error:
+            # The parser names the offending field of the operator's own policy file.
+            raise OpenShellError(f"profile {profile} policy does not match the pinned "
+                                 f"schema: {str(error)[:200]}") from None
+        failed = _failed({
+            "landlock_hard_requirement": policy.landlock.compatibility == "hard_requirement",
+            "run_as_user": policy.process.run_as_user == "65532",
+            "run_as_group": policy.process.run_as_group == "65532",
+            "workdir_excluded": not policy.filesystem.include_workdir,
+            "read_write": set(policy.filesystem.read_write) == {"/workspace", "/tmp", "/dev/null"},
+            "egress_denied": profile == "workspace" or not policy.network_policies,
+        })
+        if failed:
+            raise OpenShellError("profile must require Landlock, nonroot, confined writes and deny "
+                                 f"egress; profile {profile} fails: {failed}")
+        pb = self._policy_pb
+        for rule_name, rule in policy.network_policies.items():
+            for index, endpoint in enumerate(rule.endpoints):
+                failed = _failed({
+                    "exact_host": bool(endpoint.host) and "*" not in endpoint.host,
+                    "protocol": endpoint.protocol == "rest",
+                    "enforcement": endpoint.enforcement == pb.NETWORK_ENFORCEMENT_MODE_ENFORCE,
+                    "tls": endpoint.tls == pb.NETWORK_TLS_MODE_UNSPECIFIED,
+                    "rules": bool(endpoint.rules),
+                    "access": endpoint.access == pb.NETWORK_ACCESS_PRESET_UNSPECIFIED,
+                    "read_only_methods": all(r.allow.method in ("GET", "HEAD") for r in endpoint.rules),
+                })
+                if failed:
+                    raise OpenShellError("package egress must use exact hosts and enforced read-only "
+                        f"REST; profile {profile} rule {rule_name} endpoint {index} fails: {failed}")
+        return self._pb.SandboxSpec(
             template=self._pb.SandboxTemplate(image=config.image,
                 resources={"limits": {"cpu": config.cpu, "memory": config.memory}}),
             policy=policy, providers=[config.provider] if config.provider else [],
             command=[_PYTHON, "-c", "import time; time.sleep(2147483647)"], tty=False,
         )
-        return spec
 
-    async def _get(self, name: str):
-        return await asyncio.to_thread(self._stub.GetSandbox,
-            self._pb.GetSandboxRequest(workspace_scope=self._scope, name=name), timeout=30)
+    async def _rpc(self, what: str, call: Callable[..., Any], *args: Any,
+                   missing_ok: bool = False, **kwargs: Any) -> Any:
+        """One blocking native call in a thread. A gRPC failure becomes ``OpenShellError``
+        naming ``what`` and the status code only (server details can carry anything);
+        ``missing_ok`` turns NOT_FOUND into ``None``."""
+        import grpc
+
+        try:
+            return await asyncio.to_thread(call, *args, **kwargs)
+        except grpc.RpcError as error:
+            status = _status(error)
+            if missing_ok and status == grpc.StatusCode.NOT_FOUND.name:
+                return None
+            raise OpenShellError(f"native {what} RPC failed: {status}") from None
+
+    async def _get(self, name: str, *, missing_ok: bool = False) -> Any:
+        return await self._rpc("sandbox lookup", self._stub.GetSandbox,
+            self._pb.GetSandboxRequest(workspace_scope=self._scope, name=name), timeout=30,
+            missing_ok=missing_ok)
 
     async def _corroborate(self, sandbox: Sandbox, mismatch: str) -> None:
         """Recheck the exact native id and the outer fence immediately before dispatch."""
@@ -353,7 +461,8 @@ class OpenShell(Execution, Transfer):
 
     async def create(self, run_id: str, *, profile: ProfileName = "workspace", slot: str = "") -> Sandbox:
         if not run_id or len(run_id) > 512 or len(slot) > 1024:
-            raise OpenShellError("invalid run id")
+            raise OpenShellError("invalid run id: a run id of 1..512 characters and a slot of at "
+                                 f"most 1024 are required (got {len(run_id)} and {len(slot)})")
         if self._fenced(run_id):
             raise OpenShellError("investigation has been closed")
         key = self._key(Sandbox("", run_id, "", profile, slot))
@@ -364,14 +473,14 @@ class OpenShell(Execution, Transfer):
             initial = not path.exists()
             try:
                 spec = self._spec(profile)
-            except BaseException:
+            except BaseException as error:
                 if not initial:
-                    saved = json.loads(path.read_bytes())
+                    saved: OwnershipRecord = _load(path)
                     if not saved.get("closed"):
-                        await asyncio.shield(self.close(Sandbox(**saved["sandbox"])))
+                        await self._close_owned(Sandbox(**saved["sandbox"]), error)
                 raise
             if path.exists():
-                saved = json.loads(path.read_bytes())
+                saved = _load(path)
                 if saved.get("closed"):
                     raise OpenShellError("closed investigation cannot acquire a new sandbox")
                 sandbox = Sandbox(**saved["sandbox"])
@@ -382,20 +491,20 @@ class OpenShell(Execution, Transfer):
                     if dict(current.metadata.labels) != labels or not current.metadata.id:
                         raise OpenShellError("pending create cannot be reconciled")
                     sandbox = Sandbox(current.metadata.id, run_id, name, profile, slot)
-                    self._save(path, {"sandbox": asdict(sandbox), "closed": False})
+                    self._save(path, _ownership(sandbox))
             else:
                 sandbox = Sandbox("", run_id, name, profile, slot)
-                self._save(path, {"sandbox": asdict(sandbox), "closed": False}, exclusive=True)
+                self._save(path, _ownership(sandbox), exclusive=True)
 
                 async def provision() -> Sandbox:
-                    response = await asyncio.to_thread(self._stub.CreateSandbox,
+                    response = await self._rpc("sandbox create", self._stub.CreateSandbox,
                         self._pb.CreateSandboxRequest(workspace_scope=self._scope, spec=spec,
                             name=name, labels=labels, request_id=_request_id(key)),
                         timeout=self.config.ready_timeout_seconds)
                     owned = Sandbox(response.sandbox.metadata.id, run_id, name, profile, slot)
                     if not owned.id or dict(response.sandbox.metadata.labels) != labels:
                         raise OpenShellError("native create returned an invalid identity")
-                    self._save(path, {"sandbox": asdict(owned), "closed": False})
+                    self._save(path, _ownership(owned))
                     if self._fenced(run_id):
                         await self.close(owned)
                         raise OpenShellError("investigation closed during native create")
@@ -404,41 +513,57 @@ class OpenShell(Execution, Transfer):
                 task = asyncio.create_task(provision())
                 try:
                     sandbox = await asyncio.shield(task)
-                except asyncio.CancelledError:
-                    # Shield preserves the exact ownership record even when a
-                    # Temporal cancellation interrupts the waiting activity.
-                    await asyncio.shield(self.close(await task))
+                except asyncio.CancelledError as cancelled:
+                    # CreateSandbox may already have crossed the native boundary. Let it
+                    # finish, even under repeated cancellation, then close whatever the
+                    # ownership record names (a pending record reconciles by labels).
+                    try:
+                        await finish(task)
+                    except Exception as error:
+                        cancelled.add_note(f"cancelled native create failed: {type(error).__name__}")
+                    await self._close_owned(Sandbox(**_load(path)["sandbox"]),
+                                            cancelled)
                     raise
             try:
                 if self._fenced(run_id):
                     raise OpenShellError("investigation closed during native create")
-                await asyncio.to_thread(self._client.wait_ready, name, workspace=self.config.workspace,
-                                        timeout_seconds=self.config.ready_timeout_seconds)
+                await self._rpc("sandbox readiness", self._client.wait_ready, name,
+                    workspace=self.config.workspace, timeout_seconds=self.config.ready_timeout_seconds)
                 await self._verify(sandbox, spec, labels, initial=initial)
                 if self._fenced(run_id):
                     raise OpenShellError("investigation closed during qualification")
-            except BaseException:
-                await asyncio.shield(self.close(sandbox))
+            except BaseException as error:
+                if not isinstance(error, asyncio.CancelledError):
+                    _refused(sandbox, error)
+                await self._close_owned(sandbox, error)
                 raise
+            _event(log, logging.INFO, "sandbox_created" if initial else "sandbox_reused",
+                   run_id=run_id, sandbox_id=sandbox.id, profile=profile, slot=slot)
             return sandbox
 
     async def _verify(self, sandbox: Sandbox, spec: Any, labels: dict[str, str],
                       *, initial: bool = False) -> None:
         observed = (await self._get(sandbox.name)).sandbox
         admission = observed.status.configuration_admission
-        if (observed.metadata.id != sandbox.id or observed.metadata.resource_version <= 0
-                or not admission.instance_id or admission.config_revision <= 0
-                or not admission.policy_hash or not observed.status.main_process_instance_id
-                or dict(observed.metadata.labels) != labels
-                or observed.status.phase != self._pb.SANDBOX_PHASE_READY
-                or admission.state != self._pb.CONFIGURATION_ADMISSION_STATE_ACCEPTED
-                or not observed.status.configuration_activated
-                or observed.spec.template.image != spec.template.image
-                or observed.spec.policy != spec.policy
-                or list(observed.spec.providers) != list(spec.providers)
-                or observed.spec.template.resources != spec.template.resources):
-            raise OpenShellError("native sandbox identity, policy or admission mismatch")
-        attached = await asyncio.to_thread(self._stub.ListSandboxProviders,
+        failed = _failed({
+            "id": observed.metadata.id == sandbox.id,
+            "resource_version": observed.metadata.resource_version > 0,
+            "admission_instance": bool(admission.instance_id),
+            "config_revision": admission.config_revision > 0,
+            "policy_hash": bool(admission.policy_hash),
+            "main_process": bool(observed.status.main_process_instance_id),
+            "labels": dict(observed.metadata.labels) == labels,
+            "phase": observed.status.phase == self._pb.SANDBOX_PHASE_READY,
+            "admission_state": admission.state == self._pb.CONFIGURATION_ADMISSION_STATE_ACCEPTED,
+            "configuration_activated": bool(observed.status.configuration_activated),
+            "image": observed.spec.template.image == spec.template.image,
+            "policy": observed.spec.policy == spec.policy,
+            "providers": list(observed.spec.providers) == list(spec.providers),
+            "resources": observed.spec.template.resources == spec.template.resources,
+        })
+        if failed:
+            raise OpenShellError(f"native sandbox identity, policy or admission mismatch: {failed}")
+        attached = await self._rpc("provider attachment", self._stub.ListSandboxProviders,
             self._pb.ListSandboxProvidersRequest(workspace_scope=self._scope, sandbox=sandbox.name),
             timeout=30)
         providers = list(attached.providers)
@@ -475,7 +600,7 @@ class OpenShell(Execution, Transfer):
         if not initial:
             if not path.exists():
                 raise OpenShellError("sandbox qualification proof is missing")
-            saved = json.loads(path.read_bytes())
+            saved = _load(path)
             if saved.get("binding") != binding or not saved.get("workload"):
                 changed = _changed_paths(saved.get("binding"), binding)
                 raise OpenShellError("sandbox qualification binding changed or is incomplete: "
@@ -492,22 +617,12 @@ class OpenShell(Execution, Transfer):
             proof = json.loads(result[0].stdout)
         except (ValueError, TypeError):
             raise OpenShellError("confinement probe returned invalid evidence") from None
-        config = self.config.profiles[sandbox.profile]
-        try:
-            quota, period = (int(v) for v in proof["cpu"].split())
-            valid = (proof["uid"] == 65532 and proof["nnp"] == "1" and proof["seccomp"] == "2"
-                     and proof["caps"] == 0 and proof["shared_tmp_mode"] == 0o1777
-                     and type(proof["null_device_major"]) is int and proof["null_device_major"] == 1
-                     and type(proof["null_device_minor"]) is int and proof["null_device_minor"] == 3
-                     and all(proof[k] is True for k in ("filesystem_denied", "shared_tmp_denied",
-                         "symlink_escape_denied", "workspace_writable", "network_denied",
-                         "sockets_absent", "credentials_absent", "null_sink_verified"))
-                     and 0 < int(proof["memory"]) <= config.memory_bytes
-                     and 0 < quota / period <= config.cpu_cores)
-        except (ValueError, KeyError, TypeError, AttributeError, ZeroDivisionError):
-            valid = False
-        if result[0].exit_code != 0 or result[0].output_truncated or not valid:
-            raise OpenShellError("actual workload confinement was not established")
+        # Only check names reach the message: the proof values are workload output.
+        failed = _failed({"exit_code": result[0].exit_code == 0,
+                          "output_truncated": not result[0].output_truncated,
+                          **_proof_checks(proof, self.config.profiles[sandbox.profile])})
+        if failed:
+            raise OpenShellError(f"actual workload confinement was not established: {failed}")
         self._save(path,
             {"binding": binding, "request_id": request_id,
              "sandbox": asdict(sandbox), "outer": outer, "workload": proof,
@@ -520,8 +635,6 @@ class OpenShell(Execution, Transfer):
         intent and a ready sandbox phase do not prove credential installation.
         Only read-only status RPCs may repeat. No inference or exec is retried.
         """
-        import grpc
-
         pb = self._pb
         request = pb.GetSandboxProviderStatusRequest(workspace_scope=self._scope,
             sandbox=sandbox.name, provider=provider.metadata.name)
@@ -530,18 +643,15 @@ class OpenShell(Execution, Transfer):
         try:
             async with asyncio.timeout(self.config.ready_timeout_seconds):
                 while True:
-                    response = await asyncio.to_thread(self._stub.GetSandboxProviderStatus, request,
-                        timeout=self.config.ready_timeout_seconds)
+                    response = await self._rpc("provider readiness", self._stub.GetSandboxProviderStatus,
+                        request, timeout=self.config.ready_timeout_seconds)
                     status = response.status
                     receipt = status.receipt
                     desired = receipt.desired
-                    def valid_time(t: Any) -> bool:
-                        return (-62135596800 <= t.seconds <= 253402300799
-                                and 0 <= t.nanos <= 999999999)
                     if (not status.HasField("receipt") or not receipt.HasField("desired")
                             or not receipt.HasField("persisted_time")
-                            or not valid_time(receipt.persisted_time)
-                            or any(status.HasField(field) and not valid_time(getattr(status, field))
+                            or not _valid_timestamp(receipt.persisted_time)
+                            or any(status.HasField(field) and not _valid_timestamp(getattr(status, field))
                                    for field in ("observed_time", "evaluated_time"))
                             or not receipt.receipt_id or not receipt.mutation_id
                             or receipt.workspace != self.config.workspace
@@ -584,9 +694,6 @@ class OpenShell(Execution, Transfer):
                             f"{pb.ProviderReadinessState.Name(status.state)} "
                             f"{pb.ProviderReadinessReason.Name(status.reason)}")
                     await asyncio.sleep(0.25)
-        except grpc.RpcError as error:
-            raise OpenShellError("native provider readiness RPC failed: "
-                                 + error.code().name) from None
         except TimeoutError:
             reason = (pb.ProviderReadinessReason.Name(status.reason) if status is not None
                       else "no native observation")
@@ -595,7 +702,7 @@ class OpenShell(Execution, Transfer):
     def _owned(self, sandbox: Sandbox) -> None:
         key = self._key(sandbox)
         path = self._record("sandboxes", key)
-        if not path.exists() or json.loads(path.read_bytes()) != {"sandbox": asdict(sandbox), "closed": False}:
+        if not path.exists() or _load(path) != _ownership(sandbox):
             raise OpenShellError("sandbox is not owned by this active investigation")
         if self._fenced(sandbox.run_id):
             raise OpenShellError("investigation has been closed")
@@ -625,7 +732,7 @@ class OpenShell(Execution, Transfer):
         if deleted:
             if ids:
                 raise OpenShellError("native deletion left workload resources behind")
-            return
+            return None
         if len(ids) != 2 or any(not all(c in "0123456789abcdef" for c in i) for i in ids):
             raise OpenShellError("exact native workload and supervisor were not observed")
         try:
@@ -639,25 +746,30 @@ class OpenShell(Execution, Transfer):
             config = self.config.profiles[sandbox.profile]
             observed_cpu = (host.get("NanoCpus", 0) / 1e9 or
                             host.get("CpuQuota", 0) / (host.get("CpuPeriod", 0) or 100000))
-            valid = (all(v["Config"]["Labels"].get("openshell.ai/sandbox-id") == sandbox.id
-                         and v["State"]["Running"]
-                         and v["Id"] and v["State"]["StartedAt"]
-                         and not v["State"]["StartedAt"].startswith("0001-") for v in containers)
-                and workload["Image"] == config.image.split("@")[-1]
-                and by_role["supervisor"]["Image"] == self.config.supervisor_image
-                and host["Runtime"] == "runc" and host["NetworkMode"] == "none"
-                and not host["Privileged"] and workload["Config"]["User"] == "65532:65532"
-                and "ALL" in host.get("CapDrop", []) and not host.get("CapAdd")
-                and "no-new-privileges:true" in host.get("SecurityOpt", [])
-                and not host.get("Devices") and not host.get("DeviceRequests")
-                and host.get("PidMode", "") != "host" and host.get("IpcMode", "") != "host"
-                and 0 < host.get("PidsLimit", 0) <= 1024
-                and 0 < host.get("Memory", 0) <= config.memory_bytes
-                and 0 < observed_cpu <= config.cpu_cores
-                and all(m["Type"] == "volume" and "docker.sock" not in m["Destination"]
-                        for m in workload.get("Mounts", [])))
-            if not valid:
-                raise OpenShellError("observed outer workload fence failed")
+            failed = _failed({
+                "owner_label": all(v["Config"]["Labels"].get("openshell.ai/sandbox-id") == sandbox.id
+                                   for v in containers),
+                "running": all(v["State"]["Running"] and v["Id"] and v["State"]["StartedAt"]
+                               and not v["State"]["StartedAt"].startswith("0001-")
+                               for v in containers),
+                "workload_image": workload["Image"] == config.image.split("@")[-1],
+                "supervisor_image": by_role["supervisor"]["Image"] == self.config.supervisor_image,
+                "runtime": host["Runtime"] == "runc",
+                "network_mode": host["NetworkMode"] == "none",
+                "unprivileged": not host["Privileged"],
+                "user": workload["Config"]["User"] == "65532:65532",
+                "capabilities": "ALL" in host.get("CapDrop", []) and not host.get("CapAdd"),
+                "no_new_privileges": "no-new-privileges:true" in host.get("SecurityOpt", []),
+                "devices": not host.get("Devices") and not host.get("DeviceRequests"),
+                "namespaces": host.get("PidMode", "") != "host" and host.get("IpcMode", "") != "host",
+                "pids_limit": 0 < host.get("PidsLimit", 0) <= 1024,
+                "memory": 0 < host.get("Memory", 0) <= config.memory_bytes,
+                "cpu": 0 < observed_cpu <= config.cpu_cores,
+                "mounts": all(m["Type"] == "volume" and "docker.sock" not in m["Destination"]
+                              for m in workload.get("Mounts", [])),
+            })
+            if failed:
+                raise OpenShellError(f"observed outer workload fence failed: {failed}")
             return {"containers": {role: {"id": v["Id"], "started_at": v["State"]["StartedAt"]}
                                    for role, v in by_role.items()},
                     # Observed live 2026-10-05: docker inspect returns Mounts in varying order,
@@ -671,54 +783,67 @@ class OpenShell(Execution, Transfer):
         except (ValueError, KeyError, TypeError, AttributeError, ZeroDivisionError):
             raise OpenShellError("container inspection was incomplete") from None
 
+    async def _close_owned(self, sandbox: Sandbox, cause: BaseException) -> None:
+        """Close an owned sandbox to completion while ``cause`` propagates.
+
+        Further cancellations do not interrupt the close. A close failure never replaces
+        ``cause`` (an unknown execution must stay unknown, a cancellation must stay one): it
+        is attached as a note, and the run's cleanup activity closes the sandbox again.
+        """
+        try:
+            await finish(asyncio.ensure_future(self.close(sandbox)))
+        except Exception as error:
+            _cleanup_failed(sandbox, error)
+            cause.add_note(f"owned sandbox close failed: {type(error).__name__}")
+
     async def close(self, sandbox: Sandbox) -> None:
         key = self._key(sandbox)
         path = self._record("sandboxes", key)
         if not path.exists():
             raise OpenShellError("cannot delete an unowned sandbox")
-        saved = json.loads(path.read_bytes())
+        saved: OwnershipRecord = _load(path)
         if saved["sandbox"] != asdict(sandbox):
             raise OpenShellError("sandbox deletion ownership mismatch")
         if saved.get("closed"):
             return
         # Check the exact native ID before name-based deletion. A replacement
         # under the same name must never be stopped or deleted by this run.
-        import grpc
-        try:
-            current = (await self._get(sandbox.name)).sandbox
-        except grpc.RpcError as exc:
-            if exc.code() != grpc.StatusCode.NOT_FOUND:
-                raise
-        else:
+        response = await self._get(sandbox.name, missing_ok=True)
+        if response is not None:
+            current = response.sandbox
             if not sandbox.id:
                 expected = self._labels(sandbox.run_id, sandbox.profile)
                 if dict(current.metadata.labels) != expected or not current.metadata.id:
                     raise OpenShellError("pending creation ownership mismatch")
                 sandbox = Sandbox(current.metadata.id, sandbox.run_id, sandbox.name,
                                   sandbox.profile, sandbox.slot)
-                self._save(path, {"sandbox": asdict(sandbox), "closed": False})
+                self._save(path, _ownership(sandbox))
             if current.metadata.id != sandbox.id:
                 raise OpenShellError("sandbox name now belongs to another native id")
-            await asyncio.to_thread(self._client.delete, sandbox.name,
-                                    workspace=self.config.workspace, allow_missing=True)
-            await asyncio.to_thread(self._client.wait_deleted, sandbox.name,
+            await self._rpc("sandbox delete", self._client.delete, sandbox.name,
+                            workspace=self.config.workspace, allow_missing=True)
+            await self._rpc("sandbox deletion", self._client.wait_deleted, sandbox.name,
                 workspace=self.config.workspace, timeout_seconds=60, expected_sandbox_id=sandbox.id)
         if not sandbox.id:
             raise ExecutionUnknown("pending native create cannot yet be confirmed absent")
         await self._inspect(sandbox, deleted=True)
-        self._save(path, {"sandbox": asdict(sandbox), "closed": True})
+        self._save(path, _ownership(sandbox, closed=True))
+        _event(log, logging.INFO, "sandbox_closed", run_id=sandbox.run_id, sandbox_id=sandbox.id,
+               profile=sandbox.profile, slot=sandbox.slot)
 
     async def close_run(self, run_id: str) -> None:
         self._save(self._record("closed-runs", run_id), {"run_id": run_id})
         # Persist the fence first; a create racing the scan observes it and
         # cleans up its own exact native ID before it can return a handle.
         failures = []
-        for path in (self.config.state_dir / "sandboxes").glob("*.json"):
-            saved = json.loads(path.read_bytes())
+        saved: OwnershipRecord
+        for saved in _records(self.config.state_dir, "sandboxes"):
             if saved["sandbox"]["run_id"] == run_id and not saved["closed"]:
+                sandbox = Sandbox(**saved["sandbox"])
                 try:
-                    await self.close(Sandbox(**saved["sandbox"]))
+                    await self.close(sandbox)
                 except Exception as exc:
+                    _cleanup_failed(sandbox, exc)
                     failures.append(exc)
         if failures:
             failures[0].add_note(f"{len(failures)} owned sandbox cleanup operation(s) failed")

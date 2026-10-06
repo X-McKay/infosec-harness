@@ -2,7 +2,7 @@
 
 from pydantic_ai.toolsets import FunctionToolset
 
-from infosec_harness.agents.investigator import InvestigationDeps
+from infosec_harness.agents.deps import InvestigationDeps
 from infosec_harness.sandbox import OpenShell
 
 from . import execute, workspace
