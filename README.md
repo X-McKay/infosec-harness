@@ -112,5 +112,5 @@ command delivery, missing controls, truncation, failure or contradictory evidenc
 be reported as a verified negative result. See [architecture and boundaries](docs/architecture/TRIAGE_SYSTEM.md).
 
 The current workflow generation uses the `investigate-v11` queue. It binds every native
-model/tool activity to the captured worker identity. V9 and older staged workflows are
-incompatible; drain them before deployment. Historical reports do not qualify this candidate.
+model/tool activity to the captured worker identity. v10 and older histories and workers
+are incompatible; drain them before deployment. Historical reports do not qualify this candidate.

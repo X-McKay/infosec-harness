@@ -14,6 +14,6 @@ TLS/authentication, mTLS to the OpenShell gateway, native provider configuration
 worker state. Secrets belong in operator-managed files or native provider configuration,
 not committed compose variables. The local compose stack is not a production deployment.
 
-The `investigate-v9` task queue is incompatible with old staged workflows. Drain older
+The `investigate-v11` task queue is incompatible with v10 and older workflows. Drain older
 queues before replacement. `harness qualify` proves actual runtime behavior; API health
 only checks Temporal connectivity. Run live evaluation separately against the chosen model.

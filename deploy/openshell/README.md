@@ -120,13 +120,14 @@ selected daemon socket afterward.
 
 ## Configuration contract
 
-The private gateway TOML uses the v0.1.2 schema. Replace every path and digest placeholder
+The private gateway TOML uses the v0.1.2 configuration schema, `version = 2`, which the live
+checkout gateway and the patch tests both use. Replace every path and digest placeholder
 below with private generated files and manifest-pinned images; the placeholders are not active
 credentials or deployment defaults.
 
 ```toml
 [openshell]
-version = 1
+version = 2
 
 [openshell.gateway]
 name = "checkout-openshell"
@@ -318,8 +319,10 @@ recorded in the report, and keeps it up until every owned workflow and its clean
 terminal. If the process is killed, drain cleanup with the same code and configuration:
 `./dev worker [--settings settings.json] --task-queue <task_queue>`. `--settings` uses exactly that
 JSON file and ignores `HARNESS_*` variables. `--keep-going` continues only after a terminal
-agent-level failure (budget or invalid model output); any timeout, transport, identity,
-native or cleanup failure stops the cohort. No case is re-run, and an incomplete cohort
+agent-level failure: an exhausted budget, invalid model output after corrections, or a
+`ModelExecutorError` (the executor exited without a complete response, including a kill at
+the request budget; that request is never resent). Any other timeout, transport, identity,
+unknown-dispatch, native or cleanup failure stops the cohort. No case is re-run, and an incomplete cohort
 fails. `replay` re-executes the history against current workflow code with model and native
 dispatch disabled.
 

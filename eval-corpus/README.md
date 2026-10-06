@@ -36,8 +36,13 @@ Each case name is `[<lang>-]<cwe>-<variant>` (Python cases are unprefixed). The 
 Configure the worker's approved local roots to include this directory, then run:
 
 ```bash
-uv run --locked harness eval --allow-inference --output .harness/reports/new-cohort.json
+./dev eval [--settings settings.json]   # owned worker; .harness/reports/model-<UTC time>.json
 ```
+
+`./dev eval` starts its own worker on a fresh task queue with the same configuration. A bare
+`harness eval --allow-inference` without `--owned-worker` instead needs a separately started
+worker with identical settings. See
+[qualification and evaluation](../deploy/openshell/README.md#qualification-and-evaluation).
 
 The complete corpus runs through the normal Temporal/OpenShell investigation path, once
 per case. The report retains failures and unstarted cases. `release-policy.yaml` requires

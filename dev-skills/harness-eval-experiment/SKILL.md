@@ -9,9 +9,14 @@ packaged `release-policy.yaml` and the corpus manifest before running a comparis
 1. Record the hypothesis, frozen source identity, dataset, model, native runtime
    configuration, limits and authorized inference scope.
 2. Run deterministic checks first. Mocked model tests never count as quality evidence.
-3. Run the complete agreed cohort once through the ordinary Temporal investigation path
-   with `harness eval --allow-inference --output <new-file>`. Preserve failed and unstarted
-   cases, unknown execution/cost and the original report. Never blindly retry a model dispatch.
+3. Run `./dev qualify`, then the complete agreed cohort once with `./dev eval [--settings FILE]
+   [--keep-going]`: an owned worker on a fresh task queue, through the ordinary Temporal
+   investigation path, writing a new timestamped report under `.harness/reports/`. Put the
+   frozen settings file beside the private cohort evidence. `./dev eval --case NAME` is a
+   diagnostic and never qualifies; `./dev replay RUN_ID` replays a history with zero dispatch.
+   Never edit `src/infosec_harness/` while an owned worker runs: the identity guard ends the
+   cohort. Preserve failed and unstarted cases, unknown execution/cost and the original
+   report. Never blindly retry a model dispatch.
 4. Compare the same cases, limits and scoring rules. Inspect per-language and safety
    regressions; distinguish inconclusive results from correct negative verdicts.
 5. Record provenance, budget usage, failures, limitations and a promotion recommendation.
