@@ -2,7 +2,7 @@
 
 import json
 
-from infosec_harness.contracts import Evidence, Verdict
+from infosec_harness.contracts import PROBE_FIELDS, PROBE_PREREQUISITES, Evidence, Verdict
 
 
 def final_probe_line(stdout: str) -> str | None:
@@ -18,25 +18,16 @@ def parse_probe_observations(stdout: str) -> dict[str, bool | str]:
         return {}
     try:
         pairs = json.loads(line[len("HARNESS_PROBE ") :], object_pairs_hook=lambda value: value)
-        fields = {
-            "target_reached",
-            "oracle_valid",
-            "positive_control",
-            "negative_control",
-            "vulnerability_observed",
-        }
-        if not isinstance(pairs, list) or len(pairs) != len(fields):
+        if not isinstance(pairs, list) or len(pairs) != len(PROBE_FIELDS):
             return {}
         values = dict(pairs)
-        if set(values) != fields or any(type(value) is not bool for value in values.values()):
+        if set(values) != set(PROBE_FIELDS) or any(
+            type(value) is not bool for value in values.values()
+        ):
             return {}
         return {**values, "origin": "self_reported"}
     except (ValueError, TypeError):
         return {}
-
-
-PREREQUISITES = ("target_reached", "oracle_valid", "positive_control", "negative_control")
-PROBE_FIELDS = (*PREREQUISITES, "vulnerability_observed")
 
 
 def retry_reasons(verdict: Verdict, evidence: list[Evidence]) -> list[str]:
@@ -71,7 +62,7 @@ def retry_reasons(verdict: Verdict, evidence: list[Evidence]) -> list[str]:
                     "boolean JSON fields must share the final stdout line"
                 )
             continue
-        for field in PREREQUISITES:
+        for field in PROBE_PREREQUISITES:
             if observed.get(field) is not True:
                 note = (
                     "; target_reached is true when the real target entry point ran with the "
