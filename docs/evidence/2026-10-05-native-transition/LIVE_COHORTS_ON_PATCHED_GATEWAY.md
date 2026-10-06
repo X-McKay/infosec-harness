@@ -140,6 +140,18 @@ Findings and their fixes (all in `claude/run12-fixes`, pending at the time of wr
 - **Budget exhaustions** on three cases (624k, 618k and 629k tokens of 600k): targeted skill
   guidance from their histories; the limits are unchanged.
 
+The eight cases the stop latch left unstarted ran afterwards as `diagnostic-12-remainder.json`
+(parallel 3; diagnostics never qualify): six correct (`redos-vulnerable`,
+`javascript-zipbomb-vulnerable` and `-fixed`, `toctou-vulnerable` and `-fixed`,
+`nullderef-vulnerable`), `redos-fixed` on the token budget (614k), and `nullderef-fixed` called
+potentially exploitable. On inspection the investigator was right: the fixed fixture guards the
+`address` field but not the parsed document itself, so the payload `null` still reaches a
+`None` dereference. The ground truth is being corrected, not the verdict. Across run 12 and this
+diagnostic every one of the 82 cases was attempted on `f734f3f`: 76 completed, 73 scored
+correct (74 counting the corrected fixture), 6 failed (four token budgets, one backend 502, one
+citation defect), one false positive, one inconclusive, 0 unsafe negatives, with the two C
+negatives discounted as stand-ins.
+
 ## Defects found live and their fixes
 
 | Observation | Fix | Verification |
