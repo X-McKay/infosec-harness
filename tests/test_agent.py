@@ -642,6 +642,70 @@ async def test_failed_offline_probe_and_successful_workspace_execution_require_i
     assert shell.closed == ["probe-probe:1:offline"]
 
 
+@pytest.mark.parametrize("final_line", [
+    # Live cohort: Perl probes printed numeric claims and the agent spent its budget
+    # on the generic "no parsed line" message.
+    'HARNESS_PROBE {"target_reached":1,"oracle_valid":1,"positive_control":1,'
+    '"negative_control":1,"vulnerability_observed":1}',
+    "probe finished without a marker",
+])
+async def test_rejected_probe_line_gets_precise_feedback(final_line):
+    from pydantic_ai.messages import RetryPromptPart
+
+    from infosec_harness.agent import parse_probe_observations
+
+    stdout = "context\n" * 2000 + final_line + "\n"  # longer than the tool-return excerpt
+    assert parse_probe_observations(stdout) == {}
+    rejected = final_line.startswith("HARNESS_PROBE ")
+    shell = FakeOpenShell()
+    native_execute = shell.execute
+
+    async def execute(sandbox, command, **kwargs):
+        await native_execute(sandbox, command, **kwargs)
+        return CommandResult(0, stdout, "")
+
+    shell.execute = execute
+    calls = 0
+    feedback = []
+
+    def respond(messages, info):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(parts=[ToolCallPart(
+                "run_probe", {"command": "perl probe.pl"}, tool_call_id="p")])
+        if calls == 2:
+            returned = [part.content for message in messages if isinstance(message, ModelRequest)
+                        for part in message.parts
+                        if isinstance(part, ToolReturnPart) and part.tool_name == "run_probe"]
+            assert returned[0].observations["report_excerpted"] is True
+            assert returned[0].observations.get("probe_line_rejected", False) is rejected
+            response = final_response(info, evidence_ids=["probe:1:p"])
+            response.parts[0].args.update(
+                label="potentially_exploitable",
+                citations=[dict(path="sink.pl", start_line=1, end_line=1)],
+            )
+            return response
+        feedback.extend(part.content for message in messages if isinstance(message, ModelRequest)
+                        for part in message.parts if isinstance(part, RetryPromptPart))
+        return final_response(info)
+
+    request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
+    deps = InvestigationDeps(run_id="run", sandbox=await shell.create("run"),
+                             source_digest="digest", snapshot_path="/fixture", request=request)
+    result = await build_agent(shell, FunctionModel(respond)).run("Probe", deps=deps)
+    assert result.output.label == "inconclusive"
+    message = feedback[-1]
+    if rejected:
+        assert "printed a final HARNESS_PROBE line that did not parse" in message
+        assert "JSON boolean true or false" in message and "1/0" in message
+        assert "vulnerability_observed" in message
+        assert "has no parsed HARNESS_PROBE line" not in message
+    else:
+        assert "has no parsed HARNESS_PROBE line" in message
+        assert "did not parse" not in message
+
+
 async def test_split_probe_marker_feedback_repairs_with_new_bounded_probe():
     from pydantic_ai.messages import RetryPromptPart
 

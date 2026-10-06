@@ -179,15 +179,19 @@ else:
 """
 
 
+def final_probe_line(stdout: str) -> str | None:
+    """The final stdout line when it carries the HARNESS_PROBE prefix, parsed or not."""
+    lines = stdout.rstrip("\r\n").splitlines()
+    return lines[-1] if lines and lines[-1].startswith("HARNESS_PROBE ") else None
+
+
 def parse_probe_observations(stdout: str) -> dict[str, bool | str]:
     """Parse declared claims, never elevate probe-authored text into an independent oracle."""
-    lines = stdout.rstrip("\r\n").splitlines()
-    if not lines or not lines[-1].startswith("HARNESS_PROBE ") or len(lines[-1]) > 4096:
+    line = final_probe_line(stdout)
+    if line is None or len(line) > 4096:
         return {}
     try:
-        pairs = json.loads(
-            lines[-1][len("HARNESS_PROBE ") :], object_pairs_hook=lambda value: value
-        )
+        pairs = json.loads(line[len("HARNESS_PROBE ") :], object_pairs_hook=lambda value: value)
         fields = {
             "target_reached",
             "oracle_valid",
@@ -303,6 +307,7 @@ async def validate_verdict(ctx: RunContext[InvestigationDeps], verdict: Verdict)
 
 
 PREREQUISITES = ("target_reached", "oracle_valid", "positive_control", "negative_control")
+PROBE_FIELDS = (*PREREQUISITES, "vulnerability_observed")
 
 
 def retry_reasons(verdict: Verdict, evidence: list[Evidence]) -> list[str]:
@@ -323,10 +328,19 @@ def retry_reasons(verdict: Verdict, evidence: list[Evidence]) -> list[str]:
         if observed.get("source_verified") is not True:
             reasons.append(f"{item.id} is not source-verified (see its integrity_feedback)")
         if "vulnerability_observed" not in observed:
-            reasons.append(
-                f"{item.id} has no parsed HARNESS_PROBE line: the prefix and exactly the five "
-                "boolean JSON fields must share the final stdout line"
-            )
+            if observed.get("probe_line_rejected") is True:
+                reasons.append(
+                    f"{item.id} printed a final HARNESS_PROBE line that did not parse: after the "
+                    "prefix it must be one JSON object of exactly the five fields "
+                    + ", ".join(PROBE_FIELDS)
+                    + ", each the JSON boolean true or false (numbers such as 1/0, strings, "
+                    "null, duplicate or extra fields are rejected; at most 4096 characters)"
+                )
+            else:
+                reasons.append(
+                    f"{item.id} has no parsed HARNESS_PROBE line: the prefix and exactly the five "
+                    "boolean JSON fields must share the final stdout line"
+                )
             continue
         for field in PREREQUISITES:
             if observed.get(field) is not True:
@@ -393,6 +407,9 @@ def build_agent(openshell: OpenShell, model: Model) -> Agent[InvestigationDeps, 
             )
         )
         observations = parse_probe_observations(result.stdout) if kind == "probe" else {}
+        if kind == "probe" and not observations and final_probe_line(result.stdout):
+            # Feedback only: tool returns are excerpted, so record what the full stdout showed.
+            observations["probe_line_rejected"] = True
         if result.exit_code == KILLED_EXIT:
             observations["timeout_feedback"] = (
                 f"Killed (exit {KILLED_EXIT}) at the {command_budget(timeout)}s command "
