@@ -2,11 +2,7 @@ import importlib
 
 
 def load_plugin(name: str):
-    """Load the report plugin the caller named.
-
-    VULNERABLE: `name` is imported directly, so the caller can cause any importable
-    module on the path to be loaded and its top-level code executed.
-    """
+    """Load the report plugin the caller named."""
     return importlib.import_module(name)
 
 

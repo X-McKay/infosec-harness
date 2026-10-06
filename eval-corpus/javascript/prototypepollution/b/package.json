@@ -1,5 +1,5 @@
 {
-  "name": "prototypepollution-fixed",
+  "name": "prototypepollution",
   "version": "1.0.0",
   "private": true,
   "scripts": {"test": "jest"},

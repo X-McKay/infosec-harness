@@ -19,8 +19,6 @@ class SessionManager {
   }
 
   // Authenticate the caller.
-  // VULNERABLE: the session id presented before login is kept after login, so an id
-  // an attacker planted in the victim's browser becomes an authenticated session.
   login(sid, user) {
     this.sessions.set(sid, { user });
     return sid;

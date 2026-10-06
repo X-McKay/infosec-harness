@@ -6,7 +6,7 @@ use Module::Build;
 # case exists for. `Build.PL` and `Test2::V0` are both things the fingerprint used to miss.
 Module::Build->new(
     module_name   => 'Renderer',
-    dist_abstract => 'Comment renderer (fixed variant)',
+    dist_abstract => 'Comment renderer',
     dist_version  => '1.0.0',
     requires      => { 'Exporter' => 0 },
     test_requires => { 'Test2::V0' => 0 },

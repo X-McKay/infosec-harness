@@ -4,8 +4,6 @@ use warnings;
 use Fcntl qw(O_CREAT O_WRONLY O_TRUNC);
 
 # Persist a user's API token to a file under the given directory.
-# FIXED: the file is created owner-only (0600) under a restrictive umask, and the mode is
-# reasserted in case the file already existed.
 sub save_token {
     my ($dir, $user, $token) = @_;
     my $path = "$dir/$user.token";

@@ -17,9 +17,8 @@ def test_reads_regular_file():
     assert read_config(path) == "ok"
 
 
-def test_refuses_symlink():
-    # O_NOFOLLOW makes the atomic open refuse a final symlink, so the outside
-    # target is never read.
+def test_symlink():
+    # A final symlink to a file outside the directory.
     d = tempfile.mkdtemp()
     secret = os.path.join(d, "secret.txt")
     with open(secret, "w") as handle:

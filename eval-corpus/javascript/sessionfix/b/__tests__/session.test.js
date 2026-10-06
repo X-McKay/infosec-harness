@@ -4,7 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert");
 const { SessionManager } = require("../src/session");
 
-test("the session id is regenerated on login (no fixation)", () => {
+test("session id across login", () => {
   const mgr = new SessionManager();
 
   // Attacker plants a session id in the victim's browser.
@@ -16,7 +16,7 @@ test("the session id is regenerated on login (no fixation)", () => {
   // positive control: the id the victim ends up with is authenticated.
   assert.strictEqual(mgr.userFor(afterLogin), "victim");
 
-  // FIXED: the planted id is destroyed and no longer authenticates.
+  // The planted id after login.
   assert.notStrictEqual(afterLogin, planted);
   assert.strictEqual(mgr.userFor(planted), null);
 });

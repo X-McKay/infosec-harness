@@ -13,8 +13,5 @@ class _AllowlistUnpickler(pickle.Unpickler):
 
 
 def load_profile(blob: bytes) -> object:
-    """Restore a cached user profile.
-
-    FIXED: type allowlisting rejects any class the payload asks for outside plain data.
-    """
+    """Restore a cached user profile."""
     return _AllowlistUnpickler(io.BytesIO(blob)).load()

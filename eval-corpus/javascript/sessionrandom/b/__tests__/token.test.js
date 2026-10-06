@@ -12,16 +12,16 @@ function seededRandom(seed) {
   };
 }
 
-test("session token is not predictable from the Math.random stream", () => {
+test("session token and the Math.random stream", () => {
   const original = Math.random;
   try {
-    // Same weak stream installed both times, yet the CSPRNG-based tokens differ.
+    // The same seeded stream is installed both times.
     Math.random = seededRandom(12345);
     const first = generateToken();
     Math.random = seededRandom(12345);
     const second = generateToken();
 
-    // FIXED: reproducing Math.random does not reproduce the token.
+    // Tokens generated under the same seeded stream.
     assert.notStrictEqual(first, second);
     assert.match(first, /^[0-9a-f]{32}$/);
   } finally {

@@ -16,11 +16,7 @@ EDITABLE_FIELDS = frozenset({"email", "display_name"})
 
 
 def update_profile(username: str, body: str) -> User:
-    """Apply a profile-edit request body (JSON) to the signed-in user.
-
-    FIXED: only allow-listed fields are copied; anything else, including `is_admin`,
-    is ignored.
-    """
+    """Apply a profile-edit request body (JSON) to the signed-in user."""
     user = USERS[username]
     changes = json.loads(body)
     for key, value in changes.items():

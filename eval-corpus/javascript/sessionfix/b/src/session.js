@@ -18,8 +18,6 @@ class SessionManager {
   }
 
   // Authenticate the caller.
-  // FIXED: a fresh session id is issued on login and the pre-login id is destroyed,
-  // so an attacker-planted id never becomes authenticated.
   login(sid, user) {
     this.sessions.delete(sid);
     const newSid = crypto.randomBytes(16).toString("hex");

@@ -19,11 +19,7 @@ class _TextHandler(xml.sax.ContentHandler):
 
 
 def parse_note(document: str) -> str:
-    """Return the text of an uploaded XML note.
-
-    VULNERABLE: external general entities are resolved, so a DOCTYPE in the uploaded
-    document can pull in content the parser should never fetch.
-    """
+    """Return the text of an uploaded XML note."""
     parser = xml.sax.make_parser()
     parser.setFeature(feature_external_ges, True)
     handler = _TextHandler()

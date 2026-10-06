@@ -4,7 +4,6 @@ const http = require("http");
 const ALLOWED_ORIGINS = new Set(["https://app.example.com", "https://admin.example.com"]);
 
 // Return the signed-in user's profile to the single-page app.
-// FIXED: the Origin must match the allow-list exactly before it is echoed with credentials.
 function handleProfile(req, res) {
   const origin = req.headers.origin;
   if (origin && ALLOWED_ORIGINS.has(origin)) {

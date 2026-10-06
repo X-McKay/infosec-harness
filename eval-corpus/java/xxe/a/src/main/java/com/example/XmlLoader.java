@@ -12,8 +12,6 @@ public class XmlLoader {
 
     public String loadTitle(String xml) throws Exception {
         DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-        // The named control: a document declaring a DOCTYPE - and so any entity - is refused
-        // outright, so no external entity can be resolved on the way to the parse below.
         factory.setFeature(DISALLOW_DOCTYPE, true);
         factory.setXIncludeAware(false);
         factory.setExpandEntityReferences(false);

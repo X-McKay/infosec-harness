@@ -13,11 +13,7 @@ USERS = {"alice": User("alice", "alice@example.invalid", "Alice")}
 
 
 def update_profile(username: str, body: str) -> User:
-    """Apply a profile-edit request body (JSON) to the signed-in user.
-
-    VULNERABLE: every key in the request is copied onto the user, so the caller can
-    also set attributes such as `is_admin` that only an administrator should change.
-    """
+    """Apply a profile-edit request body (JSON) to the signed-in user."""
     user = USERS[username]
     changes = json.loads(body)
     for key, value in changes.items():

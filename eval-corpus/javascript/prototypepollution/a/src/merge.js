@@ -1,5 +1,4 @@
 // Merge user preferences (parsed request JSON) onto the stored defaults.
-// VULNERABLE: every key is copied recursively, including "__proto__" and "constructor".
 function mergePreferences(target, source) {
   for (const key of Object.keys(source)) {
     const value = source[key];

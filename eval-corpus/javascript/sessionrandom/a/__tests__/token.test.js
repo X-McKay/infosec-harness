@@ -4,8 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert");
 const { generateToken } = require("../src/token");
 
-// A deterministic stand-in for Math.random so the probe can reproduce the stream an
-// attacker would recover from a non-cryptographic PRNG.
+// A deterministic stand-in for Math.random.
 function seededRandom(seed) {
   let state = seed >>> 0;
   return function () {
@@ -15,10 +14,10 @@ function seededRandom(seed) {
   };
 }
 
-test("session token is predictable from the Math.random stream", () => {
+test("session token and the Math.random stream", () => {
   const original = Math.random;
   try {
-    // positive control: a known weak stream reproduces the same token twice.
+    // The same seeded stream is installed both times.
     Math.random = seededRandom(12345);
     const first = generateToken();
     Math.random = seededRandom(12345);
@@ -29,7 +28,7 @@ test("session token is predictable from the Math.random stream", () => {
     Math.random = seededRandom(67890);
     assert.notStrictEqual(generateToken(), first);
 
-    // VULNERABLE: the real generator's output is fully determined by the PRNG stream.
+    // Token format.
     assert.match(first, /^[0-9a-f]{16}$/);
   } finally {
     Math.random = original;

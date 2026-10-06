@@ -3,11 +3,7 @@ from urllib.parse import parse_qs, urlparse
 
 
 def redirect_target(next_url: str) -> str:
-    """Choose the Location destination for the post-login redirect.
-
-    VULNERABLE: `next_url` becomes the Location value unchanged, so the caller can
-    send the browser to any external origin.
-    """
+    """Choose the Location destination for the post-login redirect."""
     return next_url
 
 

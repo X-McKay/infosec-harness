@@ -8,11 +8,7 @@ ALLOWED_PLUGINS = {
 
 
 def load_plugin(name: str):
-    """Load the report plugin the caller named.
-
-    FIXED: `name` selects from a fixed allowlist of known plugins, so the caller
-    cannot cause an arbitrary module to be imported and executed.
-    """
+    """Load the report plugin the caller named."""
     if name not in ALLOWED_PLUGINS:
         raise ValueError("unknown plugin")
     return importlib.import_module(ALLOWED_PLUGINS[name])

@@ -1,8 +1,4 @@
-"""A hand-rolled JWT-style token: base64url(header).base64url(payload).signature.
-
-VULNERABLE: verify_token trusts the header's `alg`. When `alg` is "none" it accepts
-the token with an empty signature, so anyone can forge claims.
-"""
+"""A hand-rolled JWT-style token: base64url(header).base64url(payload).signature."""
 
 import base64
 import hashlib
@@ -31,10 +27,7 @@ def issue_token(claims: dict, secret: bytes) -> str:
 
 
 def verify_token(token: str, secret: bytes):
-    """Return the claims if the token verifies, else None.
-
-    VULNERABLE: the algorithm comes from the attacker-controlled header.
-    """
+    """Return the claims if the token verifies, else None."""
     header_b64, payload_b64, signature = token.split(".")
     header = json.loads(_b64d(header_b64))
     if header.get("alg") == "none":

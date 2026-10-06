@@ -12,6 +12,6 @@ def test_present_address_returns_city():
     assert user_city('{"address": {"city": "NYC"}}') == "NYC"
 
 
-def test_missing_address_raises_attribute_error():
+def test_missing_address():
     with pytest.raises(AttributeError):
         user_city('{"name": "bob"}')

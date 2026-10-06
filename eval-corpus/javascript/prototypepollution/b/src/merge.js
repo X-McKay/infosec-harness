@@ -1,5 +1,4 @@
 // Merge user preferences (parsed request JSON) onto the stored defaults.
-// FIXED: keys that can reach a shared prototype are skipped, and only own keys descend.
 const BLOCKED_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
 function mergePreferences(target, source) {

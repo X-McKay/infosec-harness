@@ -19,11 +19,7 @@ class _TextHandler(xml.sax.ContentHandler):
 
 
 def parse_note(document: str) -> str:
-    """Return the text of an uploaded XML note.
-
-    FIXED: external general entity resolution is disabled, so a DOCTYPE in the uploaded
-    document cannot make the parser fetch anything.
-    """
+    """Return the text of an uploaded XML note."""
     parser = xml.sax.make_parser()
     parser.setFeature(feature_external_ges, False)
     handler = _TextHandler()

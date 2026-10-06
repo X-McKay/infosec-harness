@@ -19,9 +19,8 @@ def test_benign_input_is_valid():
     assert is_valid_email("user@example.com") is True
 
 
-def test_match_time_stays_flat():
-    # The same adversarial inputs the vulnerable pattern chokes on finish almost
-    # instantly here; the linear pattern cannot backtrack, so time stays flat.
+def test_match_time():
+    # Two small, bounded input sizes.
     t_small = _match_time(20)
     t_large = _match_time(24)
     assert t_large < 0.05

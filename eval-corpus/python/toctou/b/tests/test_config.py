@@ -17,9 +17,8 @@ def test_reads_regular_file():
     assert read_config(path) == "ok"
 
 
-def test_follows_symlink_to_outside_target():
-    # The check/use pattern follows a final symlink: a link that points outside
-    # the intended location is read anyway, exposing the target's content.
+def test_symlink():
+    # A final symlink to a file outside the directory.
     d = tempfile.mkdtemp()
     secret = os.path.join(d, "secret.txt")
     with open(secret, "w") as handle:

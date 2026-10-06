@@ -13,11 +13,7 @@ def _neutralize(value: str) -> str:
 
 
 def export_csv(rows: list[dict]) -> str:
-    """Export user-submitted records as a CSV file for download.
-
-    FIXED: a leading formula trigger is prefixed with an apostrophe, so every cell is
-    kept as text and no spreadsheet will evaluate it as a formula.
-    """
+    """Export user-submitted records as a CSV file for download."""
     buffer = io.StringIO()
     writer = csv.writer(buffer)
     writer.writerow(["name", "note"])

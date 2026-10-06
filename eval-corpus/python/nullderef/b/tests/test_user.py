@@ -10,5 +10,5 @@ def test_present_address_returns_city():
     assert user_city('{"address": {"city": "NYC"}}') == "NYC"
 
 
-def test_missing_address_returns_default():
+def test_missing_address():
     assert user_city('{"name": "bob"}') == "unknown"

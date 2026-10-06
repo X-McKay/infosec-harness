@@ -1,8 +1,6 @@
 const http = require("http");
 
 // Return the signed-in user's profile to the single-page app.
-// VULNERABLE: any Origin is echoed back together with Allow-Credentials, so a page on any
-// site can read the profile with the visitor's session cookie.
 function handleProfile(req, res) {
   const origin = req.headers.origin;
   if (origin) {

@@ -1,5 +1,5 @@
 {
-  "name": "sessionrandom-vuln",
+  "name": "sessionrandom",
   "version": "1.0.0",
   "private": true,
   "scripts": {"test": "node --test"}

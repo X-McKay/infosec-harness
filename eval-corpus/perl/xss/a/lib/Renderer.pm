@@ -6,7 +6,7 @@ our @EXPORT_OK = qw(render);
 
 my %ESCAPE = ('&' => '&amp;', '<' => '&lt;', '>' => '&gt;', '"' => '&quot;', "'" => '&#39;');
 
-# Render a comment into HTML. FIXED: every HTML metacharacter is encoded first.
+# Render a comment into HTML.
 sub render {
     my ($text) = @_;
     $text =~ s/([&<>"'])/$ESCAPE{$1}/g;

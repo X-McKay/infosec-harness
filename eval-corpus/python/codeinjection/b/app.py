@@ -1,8 +1,5 @@
 def compute_setting(expr: str):
-    """Turn a setting written in a config file into a Python value.
-
-    VULNERABLE: `expr` is evaluated as Python source, so it can run arbitrary code.
-    """
+    """Turn a setting written in a config file into a Python value."""
     return eval(expr)
 
 

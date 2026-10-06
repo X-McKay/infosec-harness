@@ -10,9 +10,7 @@ int main(void) {
     format_greeting("alice", out, (int)sizeof out);
     printf("normal: %s\n", out);
 
-    /* Bounded over-length name: 24 bytes into a 16-byte buffer. A memory-safety
-       detector (AddressSanitizer, stack canary) fires here on the vulnerable
-       build; the fixed build truncates and returns cleanly. */
+    /* Bounded over-length name: 24 bytes into a 16-byte buffer. */
     char big[25];
     memset(big, 'A', 24);
     big[24] = '\0';

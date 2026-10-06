@@ -11,7 +11,7 @@ def init_db() -> sqlite3.Connection:
 
 
 def get_user(conn: sqlite3.Connection, name: str):
-    """Look up a user by name. FIXED: `name` is passed as a bound parameter."""
+    """Look up a user by name."""
     cur = conn.cursor()
     cur.execute("SELECT id, name, secret FROM users WHERE name = ?", (name,))
     return cur.fetchall()

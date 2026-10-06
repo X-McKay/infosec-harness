@@ -1,7 +1,5 @@
 import re
 
-# FIXED: a flat character class with a single quantifier matches in linear time;
-# there is no nested repetition for the engine to backtrack over.
 EMAIL_RE = re.compile(r"^[a-zA-Z0-9]+@example\.com$")
 
 

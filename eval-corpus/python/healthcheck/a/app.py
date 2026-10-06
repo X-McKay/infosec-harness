@@ -13,5 +13,5 @@ def _run(conn, sql: str):
 
 
 def healthcheck(conn) -> list:
-    """Only ever runs a fixed query; the sink is not reachable from untrusted input."""
+    """Run the health-check query."""
     return _run(conn, "SELECT 1")

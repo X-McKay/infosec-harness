@@ -14,8 +14,8 @@ ok( Auth::authenticate(\%config, 'admin', 'deployed-nonce-password'), 'configure
 # negative control: a wrong password is rejected.
 ok( !Auth::authenticate(\%config, 'admin', 'wrong'), 'wrong password rejected' );
 
-# FIXED: the old hard-coded admin password no longer works.
+# Login as admin with the literal password.
 ok(
     !Auth::authenticate(\%config, 'admin', 'S3cr3t-Admin-2024'),
-    'former hard-coded admin password is rejected'
+    'admin login with the literal password'
 );

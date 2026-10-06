@@ -2,10 +2,7 @@ import ast
 
 
 def compute_setting(expr: str):
-    """Turn a setting written in a config file into a Python value.
-
-    FIXED: `expr` is parsed as a data literal, so nothing in it is evaluated as code.
-    """
+    """Turn a setting written in a config file into a Python value."""
     return ast.literal_eval(expr)
 
 

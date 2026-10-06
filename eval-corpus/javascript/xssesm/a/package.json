@@ -1,5 +1,5 @@
 {
-  "name": "xssesm-vuln",
+  "name": "xssesm",
   "version": "1.0.0",
   "private": true,
   "type": "module",

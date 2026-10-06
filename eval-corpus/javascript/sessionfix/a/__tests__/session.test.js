@@ -4,7 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert");
 const { SessionManager } = require("../src/session");
 
-test("a pre-login session id stays valid after login (fixation)", () => {
+test("session id across login", () => {
   const mgr = new SessionManager();
 
   // Attacker plants a session id in the victim's browser.
@@ -19,7 +19,7 @@ test("a pre-login session id stays valid after login (fixation)", () => {
   // negative control: an id the server never issued is not authenticated.
   assert.strictEqual(mgr.userFor("ffffffffffffffffffffffffffffffff"), null);
 
-  // VULNERABLE: the attacker-known planted id now authenticates as the victim.
+  // The planted id after login.
   assert.strictEqual(afterLogin, planted);
   assert.strictEqual(mgr.userFor(planted), "victim");
 });

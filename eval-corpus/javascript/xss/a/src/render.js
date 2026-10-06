@@ -1,4 +1,4 @@
-// Render a comment into HTML. VULNERABLE: no output encoding.
+// Render a comment into HTML.
 function renderComment(text) {
   return "<div class='comment'>" + text + "</div>";
 }

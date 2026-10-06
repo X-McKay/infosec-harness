@@ -20,7 +20,7 @@ def forge_alg_none(claims: dict) -> str:
     return f"{header}.{payload}."
 
 
-def test_alg_none_forgery_is_rejected():
+def test_alg_none_token():
     # positive control: a genuinely signed token verifies.
     good = issue_token({"sub": "alice", "role": "user"}, SECRET)
     assert verify_token(good, SECRET)["role"] == "user"
@@ -28,6 +28,6 @@ def test_alg_none_forgery_is_rejected():
     # negative control: a tampered signed token is rejected.
     assert verify_token(good + "x", SECRET) is None
 
-    # FIXED: a forged alg:none token is rejected.
+    # A forged alg:none token.
     forged = forge_alg_none({"sub": "attacker", "role": "admin"})
     assert verify_token(forged, SECRET) is None

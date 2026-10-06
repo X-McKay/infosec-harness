@@ -19,9 +19,8 @@ def test_benign_input_is_valid():
     assert is_valid_email("user@example.com") is True
 
 
-def test_match_time_grows_super_linearly():
-    # Two small, bounded input sizes. Catastrophic backtracking makes the larger
-    # one dramatically slower; we measure the growth, never running to exhaustion.
+def test_match_time():
+    # Two small, bounded input sizes.
     t_small = _match_time(20)
     t_large = _match_time(24)
     assert t_large > 0.1

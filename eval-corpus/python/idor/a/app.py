@@ -1,7 +1,4 @@
-"""A tiny notes service. Each note belongs to one user.
-
-FIXED: get_note returns a note only when it belongs to the authenticated caller.
-"""
+"""A tiny notes service. Each note belongs to one user."""
 
 
 class Store:
@@ -18,10 +15,7 @@ class Store:
 
 
 def get_note(store: Store, current_user: str, note_id: int):
-    """Return a note by id for the authenticated caller.
-
-    FIXED: the note is returned only if its owner matches current_user.
-    """
+    """Return a note by id for the authenticated caller."""
     note = store.notes.get(note_id)
     if note is None:
         return None

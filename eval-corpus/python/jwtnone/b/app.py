@@ -1,8 +1,4 @@
-"""A hand-rolled JWT-style token: base64url(header).base64url(payload).signature.
-
-FIXED: verify_token pins the expected algorithm to HS256 and always checks the HMAC.
-A token claiming `alg: none`, or any unsigned token, is rejected.
-"""
+"""A hand-rolled JWT-style token: base64url(header).base64url(payload).signature."""
 
 import base64
 import hashlib
@@ -31,10 +27,7 @@ def issue_token(claims: dict, secret: bytes) -> str:
 
 
 def verify_token(token: str, secret: bytes):
-    """Return the claims if the token verifies, else None.
-
-    FIXED: HS256 is required and the HMAC is always verified.
-    """
+    """Return the claims if the token verifies, else None."""
     header_b64, payload_b64, signature = token.split(".")
     header = json.loads(_b64d(header_b64))
     if header.get("alg") != "HS256":

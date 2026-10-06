@@ -16,11 +16,7 @@ def load_report(report_id: str) -> dict:
 
 class ReportHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        """Serve /report?id=N.
-
-        VULNERABLE: on any error the full traceback, including local values formatted
-        into the exception, is returned to the caller.
-        """
+        """Serve /report?id=N."""
         try:
             report_id = self.path.partition("id=")[2]
             body = json.dumps(load_report(report_id)).encode()

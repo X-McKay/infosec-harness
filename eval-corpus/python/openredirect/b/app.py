@@ -6,11 +6,7 @@ ALLOWED_HOSTS = frozenset({"app.example.com"})
 
 
 def redirect_target(next_url: str) -> str:
-    """Choose the Location destination for the post-login redirect.
-
-    FIXED: only a same-site relative path or an allowlisted host is accepted, so the
-    caller cannot redirect the browser to an external origin.
-    """
+    """Choose the Location destination for the post-login redirect."""
     parsed = urlparse(next_url)
     if not parsed.scheme and not parsed.netloc and next_url.startswith("/") and not next_url.startswith("//"):
         return next_url

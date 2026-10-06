@@ -1,8 +1,6 @@
 "use strict";
 
 // Issue a session token.
-// VULNERABLE: the token is built from Math.random(), a non-cryptographic PRNG. An
-// attacker who learns or reproduces the generator state can predict future tokens.
 function generateToken() {
   let token = "";
   for (let i = 0; i < 16; i++) {

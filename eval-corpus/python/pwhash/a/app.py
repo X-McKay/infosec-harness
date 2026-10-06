@@ -1,17 +1,10 @@
-"""Password storage for a small user table.
-
-VULNERABLE: hash_password stores an unsalted MD5 digest. Identical passwords yield
-identical digests, and MD5 is a fast hash unsuitable for passwords.
-"""
+"""Password storage for a small user table."""
 
 import hashlib
 
 
 def hash_password(password: str) -> str:
-    """Return the stored representation of a password.
-
-    VULNERABLE: unsalted MD5.
-    """
+    """Return the stored representation of a password."""
     return hashlib.md5(password.encode("utf-8")).hexdigest()
 
 
