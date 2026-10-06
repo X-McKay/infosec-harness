@@ -141,6 +141,13 @@ def receipt_summary(config_path: Path, run_id: str) -> dict:
          "output_truncated": receipt.result.output_truncated} for receipt in receipts[:10]]}
 
 
+def case_end(started: datetime) -> dict:
+    """UTC end time and duration for a case record, stamped when its outcome is known."""
+    now = datetime.now(UTC)
+    return {"finished_at": now.isoformat(),
+            "duration_seconds": round((now - started).total_seconds(), 3)}
+
+
 def progress(index: int, total: int, record: dict) -> None:
     print(f"[{index}/{total}] {record['name']} {record.get('workflow_id', '-')} {record['status']}",
           file=sys.stderr, flush=True)
@@ -254,7 +261,8 @@ async def evaluate_corpus(manifest: Path, output: Path, settings, *, names=(),
             zip(cases, candidate["cases"], strict=True), 1
         ):
             run_id = PREFIX + "eval-" + uuid4().hex
-            record.update(status="starting", workflow_id=run_id)
+            started = datetime.now(UTC)
+            record.update(status="starting", workflow_id=run_id, started_at=started.isoformat())
             write_json(output, candidate)
             progress(index, len(cases), record)
             failure = None
@@ -273,6 +281,7 @@ async def evaluate_corpus(manifest: Path, output: Path, settings, *, names=(),
                         "Evaluation result does not match the requested worker/model identity"
                     )
                 record.update(
+                    **case_end(started),
                     status="completed",
                     predicted=result.verdict.label,
                     passed=result.verdict.label == expected,
@@ -285,7 +294,7 @@ async def evaluate_corpus(manifest: Path, output: Path, settings, *, names=(),
                 # A failed workflow may have completed an external request. Never silently resend it.
                 failure = exc
                 record.update(status="failed", error_type=type(exc).__name__,
-                              failure_chain=failure_chain(exc))
+                              failure_chain=failure_chain(exc), **case_end(started))
                 candidate["status"] = "failed"
                 candidate["gates"]["complete_corpus"] = "failed"
                 write_json(output, candidate)

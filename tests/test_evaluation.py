@@ -418,6 +418,22 @@ async def test_keep_going_never_reruns_and_cannot_pass_incomplete_cohort(
     statuses = [row["status"] for row in report["cases"]]
     assert statuses == (["failed", "completed", "failed"] if keep_going
                         else ["failed", "unstarted", "unstarted"])
+    from datetime import datetime
+
+    for row in report["cases"]:
+        if row["status"] == "unstarted":
+            assert not {"started_at", "finished_at", "duration_seconds"} & set(row)
+            continue
+        started, finished = (datetime.fromisoformat(row[key])
+                             for key in ("started_at", "finished_at"))
+        assert started.utcoffset().total_seconds() == 0  # UTC
+        assert datetime.fromisoformat(report["started_at"]) <= started <= finished
+        assert finished <= datetime.fromisoformat(report["finished_at"])
+        assert row["duration_seconds"] == round((finished - started).total_seconds(), 3) >= 0
+    timed = [row for row in report["cases"] if row["status"] != "unstarted"]
+    assert all(datetime.fromisoformat(earlier["finished_at"])
+               <= datetime.fromisoformat(later["started_at"])
+               for earlier, later in zip(timed, timed[1:], strict=False))
     first = report["cases"][0]
     assert first["failure_chain"][1] == {"type": "UsageLimitExceeded",
                                         "message": "UsageLimitExceeded: budget"}
