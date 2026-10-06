@@ -24,7 +24,7 @@ MAX_FILE_BYTES = 2_000_000
 # copy cannot import worker code, so a fix to one must reach the others by hand.
 _FILE_TOOL = (
     f"OUTPUT_BYTES, LINE_CHARS, FILE_BYTES = {EXCERPT_BYTES}, {MAX_LINE_CHARS}, {MAX_FILE_BYTES}\n"
-    + r"""
+     r"""
 import json, pathlib, sys
 root = pathlib.Path('/workspace/repo').resolve()
 budget = OUTPUT_BYTES + 1  # one byte past the excerpt tells the worker the output was cut

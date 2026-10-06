@@ -195,7 +195,7 @@ async def test_refusal_the_feedback_cannot_explain_still_names_a_reason(monkeypa
     from infosec_harness.agents import investigator
     from infosec_harness.contracts import Verdict
 
-    monkeypatch.setattr(investigator, "definitive_support", lambda verdict, evidence: ([], []))
+    monkeypatch.setattr(investigator, "definitive_support", lambda verdict, evidence: ([], [], []))
     monkeypatch.setattr(investigator, "retry_reasons", lambda verdict, evidence: [])
     ctx = SimpleNamespace(deps=SimpleNamespace(source_digest="digest"), messages=[])
     verdict = Verdict(label="likely_not_exploitable", summary="s", evidence_ids=[], citations=[])
