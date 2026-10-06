@@ -11,7 +11,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Health */
+        /**
+         * Health
+         * @description Temporal connectivity only; sandbox, worker and model execution stay not_checked.
+         */
         get: operations["health_api_health_get"];
         put?: never;
         post?: never;
@@ -67,6 +70,66 @@ export interface paths {
         put?: never;
         /** Cancel */
         post: operations["cancel_api_runs__run_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/runs/{run_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Run Events
+         * @description At most ``MAX_EVENTS`` history events as kinds, activity names and bounded labels.
+         */
+        get: operations["run_events_api_runs__run_id__events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Reports
+         * @description Newest report files first; one unreadable file never fails the listing.
+         */
+        get: operations["reports_api_reports_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reports/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Report
+         * @description One report document, validated as a JSON object. Its content is untrusted data.
+         */
+        get: operations["report_api_reports__name__get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -163,6 +226,29 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /**
+         * Health
+         * @description Temporal connectivity only; never sandbox, worker or model qualification.
+         */
+        Health: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "control_plane_ready" | "temporal_unavailable";
+            /** Temporal */
+            temporal: boolean;
+            /**
+             * Runtime
+             * @default not_checked
+             * @constant
+             */
+            runtime: "not_checked";
+            /** Generation */
+            generation: string;
+            /** Task Queue */
+            task_queue: string;
+        };
         /** InvestigationResult */
         InvestigationResult: {
             finding: components["schemas"]["Finding"];
@@ -180,6 +266,84 @@ export interface components {
             };
             /** Limitations */
             limitations?: string[];
+        };
+        /** ReportList */
+        ReportList: {
+            /** Items */
+            items: components["schemas"]["ReportSummary"][];
+            /**
+             * Truncated
+             * @default false
+             */
+            truncated: boolean;
+        };
+        /**
+         * ReportSummary
+         * @description Operator report files are untrusted and vary in shape: every parsed field is optional.
+         */
+        ReportSummary: {
+            /** Name */
+            name: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "model" | "diagnostic" | "openshell" | "replay" | "unknown";
+            /** Bytes */
+            bytes: number;
+            /** Modified At */
+            modified_at: string;
+            /** Status */
+            status?: string | null;
+            /** Started At */
+            started_at?: string | null;
+            /** Finished At */
+            finished_at?: string | null;
+            /** Commit */
+            commit?: string | null;
+            /** Model */
+            model?: string | null;
+            /** Planned */
+            planned?: number | null;
+            /** Completed */
+            completed?: number | null;
+            /** Task Success Rate */
+            task_success_rate?: number | null;
+            /** Unsafe Negatives */
+            unsafe_negatives?: number | null;
+            /** Gates */
+            gates?: {
+                [key: string]: string;
+            };
+        };
+        /** RunEvent */
+        RunEvent: {
+            /** At */
+            at: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "workflow_started" | "activity_scheduled" | "activity_completed" | "activity_failed" | "activity_timed_out" | "timer" | "workflow_completed" | "workflow_failed" | "workflow_cancelled" | "other";
+            /** Name */
+            name?: string | null;
+            /**
+             * Detail
+             * @default
+             */
+            detail: string;
+        };
+        /** RunEvents */
+        RunEvents: {
+            /** Run Id */
+            run_id: string;
+            /** Events */
+            events: components["schemas"]["RunEvent"][];
+            /**
+             * Truncated
+             * @default false
+             */
+            truncated: boolean;
         };
         /** RunPage */
         RunPage: {
@@ -216,6 +380,12 @@ export interface components {
             started_at: string;
             /** Closed At */
             closed_at?: string | null;
+            /** Verdict */
+            verdict?: ("potentially_exploitable" | "likely_not_exploitable" | "inconclusive") | null;
+            /** Cwe */
+            cwe?: string | null;
+            /** Repo Url */
+            repo_url?: string | null;
         };
         /** ValidationError */
         ValidationError: {
@@ -283,9 +453,16 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
+                    "application/json": components["schemas"]["Health"];
+                };
+            };
+            /** @description Temporal is unreachable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Health"];
                 };
             };
         };
@@ -415,6 +592,102 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    run_events_api_runs__run_id__events_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunEvents"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reports_api_reports_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportList"];
+                };
+            };
+        };
+    };
+    report_api_reports__name__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description No such report */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Report exceeds 16 MiB */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Report is not a readable JSON object */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
