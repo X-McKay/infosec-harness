@@ -892,3 +892,67 @@ def test_profile_limits_are_parsed_once_and_never_dumped(tmp_path):
     assert (default.cpu_cores, default.memory_bytes) == (1, 512 * 1024**2)
     # model_dump is part of every saved lifecycle binding; derived limits must not appear.
     assert set(profile.model_dump()) == {"image", "policy", "cpu", "memory", "provider"}
+
+
+def inspector(tmp_path, body: str) -> OpenShell:
+    """An adapter whose dedicated inspector is a real local script named ``docker``."""
+    import openshell
+
+    script = tmp_path / "bin" / "docker"
+    script.parent.mkdir(exist_ok=True)
+    script.write_text("#!/bin/sh\n" + body + "\n")
+    script.chmod(0o755)
+    image = "sha256:" + "a" * 64
+    profile = Profile(image=image, policy=tmp_path / "policy.yaml")
+    config = OpenShellConfig(endpoint="127.0.0.1:7777", state_dir=tmp_path / "state",
+        inspection_socket="unix:///dedicated/docker.sock",
+        inspection_command=(str(script), "--host", "unix:///dedicated/docker.sock"),
+        inspection_lima_home=tmp_path / "lima", supervisor_image=image,
+        profiles={"workspace": profile})
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(openshell, "SandboxClient",
+                      lambda *args, **kwargs: SimpleNamespace(_stub=None))
+        return OpenShell(config)
+
+
+@pytest.mark.asyncio
+async def test_inspector_gets_exact_arguments_and_explicit_environment(tmp_path, monkeypatch):
+    monkeypatch.setenv("IH_AMBIENT_SECRET", "must-not-leak")
+    boundary = inspector(tmp_path, 'printf "%s|%s|%s" "$LIMA_HOME" "${IH_AMBIENT_SECRET:-}" "$*"')
+    output = await boundary._inspection_call(["ps", "-a", "-q"])
+    assert output == f"{tmp_path / 'lima'}||--host unix:///dedicated/docker.sock ps -a -q"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("body", "message"), [
+    ("echo partial; exit 1", "inspection unavailable"),
+    ("head -c 2097153 /dev/zero | tr '\\0' x", "output bound"),
+    ("printf '\\377'", "undecodable"),
+])
+async def test_inspector_failure_modes_fail_closed(tmp_path, body, message):
+    with pytest.raises(OpenShellError, match=message):
+        await inspector(tmp_path, body)._inspection_call(["inspect", "x"])
+
+
+@pytest.mark.asyncio
+async def test_inspector_timeout_kills_its_whole_process_group(tmp_path, monkeypatch):
+    """A slow inspector (limactl, then ssh, then docker) fails closed and leaves no descendant."""
+    import os
+
+    import infosec_harness.sandbox.openshell as module
+
+    monkeypatch.setattr(module, "_INSPECTION_TIMEOUT_S", 0.5)
+    pidfile = tmp_path / "grandchild"
+    boundary = inspector(tmp_path, f"sleep 30 & echo $! > {pidfile}; wait")
+    with pytest.raises(OpenShellError, match="timed out"):
+        await boundary._inspection_call(["ps"])
+    grandchild = int(pidfile.read_text())
+    for _ in range(50):
+        try:
+            os.kill(grandchild, 0)
+        except ProcessLookupError:
+            break
+        await asyncio.sleep(0.1)
+    else:
+        os.kill(grandchild, 9)
+        pytest.fail("inspector descendant survived the timeout")

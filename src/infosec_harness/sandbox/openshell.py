@@ -35,9 +35,13 @@ from .execution import (
     _digest,
     _request_id,
 )
+from .process import run_bounded
 from .transfer import Transfer
 
 _OWNER = "infosec-harness.v3"
+# The dedicated-daemon inspector: bounded time and output for one ps/inspect call.
+_INSPECTION_TIMEOUT_S = 20
+_INSPECTION_BYTES = 2_097_152
 
 
 def native_operation_accounting(state_dir: Path, run_id: str) -> dict:
@@ -592,27 +596,23 @@ class OpenShell(Execution, Transfer):
             raise OpenShellError("investigation has been closed")
 
     async def _inspection_call(self, args: list[str]) -> str:
+        """Run the read-only inspector; a slow, oversized or failed observation fails closed."""
         env = {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": str(Path.home())}
         if self.config.inspection_lima_home:
             env["LIMA_HOME"] = str(self.config.inspection_lima_home)
-        process = await asyncio.create_subprocess_exec(*self.config.inspection_command, *args,
-            env=env, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL)
-        assert process.stdout is not None
-        data = bytearray()
-        try:
-            async with asyncio.timeout(20):
-                while chunk := await process.stdout.read(65536):
-                    data.extend(chunk)
-                    if len(data) > 2097152:
-                        raise OpenShellError("container inspection exceeded its output bound")
-                if await process.wait() != 0:
-                    raise OpenShellError("dedicated container inspection unavailable")
-        finally:
-            if process.returncode is None:
-                process.kill()
-                await process.wait()
-        return data.decode()
+        # The owned runner kills and reaps the whole process group on timeout or cancellation.
+        result = await run_bounded([*self.config.inspection_command, *args], env=env,
+                                   timeout=_INSPECTION_TIMEOUT_S, capture_limit=_INSPECTION_BYTES)
+        if result.timed_out:
+            raise OpenShellError("dedicated container inspection timed out")
+        if result.truncated:
+            raise OpenShellError("container inspection exceeded its output bound")
+        if result.exit_code != 0:
+            raise OpenShellError("dedicated container inspection unavailable")
+        if "�" in result.stdout:
+            # The runner decodes with replacement; inspector output must be exact UTF-8.
+            raise OpenShellError("container inspection returned undecodable output")
+        return result.stdout
 
     async def _inspect(self, sandbox: Sandbox, *, deleted: bool = False) -> dict[str, Any] | None:
         ids = (await self._inspection_call(["ps", "-a", "-q", "--no-trunc", "--filter",

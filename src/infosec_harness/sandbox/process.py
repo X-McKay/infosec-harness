@@ -1,4 +1,4 @@
-"""The one owned subprocess runner (used for Git).
+"""The one owned subprocess runner (source checkout and read-only container inspection).
 
 Every child gets its own process group, an explicit environment and no stdin. Output is
 captured with a bound per stream. A timeout or cancellation kills the whole group and reaps it
