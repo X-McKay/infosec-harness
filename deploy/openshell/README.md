@@ -48,7 +48,12 @@ observed Java executables are `/usr/lib/jvm/java-17-openjdk-arm64/bin/java` and
 `/usr/lib/jvm/java-17-openjdk-arm64/bin/javac`; workspace policies should allow only those
 observed compiler/runtime paths when Java package egress is needed. The image adds Node.js
 and npm, Maven, Perl with cpanminus, `libdbi-perl` and `libdbd-sqlite3-perl` (CPAN is not
-reachable under the workspace policy), gcc and make. Every command runs under
+reachable under the workspace policy), gcc and make, and `libc6-dev` so the C standard
+library headers are present (gcc only recommends them, and the image installs without
+recommends). The AddressSanitizer runtime `libasan8` is present through gcc's own
+dependencies (`gcc-12` -> `libgcc-12-dev`); whether `-fsanitize=address` works under the
+sandbox's runtime and memory limits is not qualified. Images built before 2026-10-06 lack
+the headers: rebuild, load and requalify before relying on C probes. Every command runs under
 `/usr/bin/timeout`, and shell commands under `/bin/bash`, so workload images must provide both;
 the model executor image needs `/usr/bin/timeout`.
 
