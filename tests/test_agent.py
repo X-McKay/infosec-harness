@@ -796,6 +796,52 @@ async def test_post_probe_integrity_failure_recovery_is_narrow(failure):
         assert shell.closed == ["probe-probe:1:unsafe"]
 
 
+async def test_refused_probe_after_original_source_change_is_feedback_not_failure():
+    """Live cohort 4, case deserialization-fixed (2026-10-05): the agent overwrote app.py, the
+    pre-copy integrity check refused the probe, and the whole investigation failed. The refusal
+    stays; it now returns bounded feedback the agent can act on, with no receipt to cite."""
+    from pydantic_ai.messages import RetryPromptPart
+
+    from infosec_harness.openshell import OpenShellError
+
+    shell = FakeOpenShell()
+
+    async def copy_workspace(workspace, probe, *, operation_id, expected_source):
+        raise OpenShellError("workspace changed or deleted original source: app.py")
+
+    shell.copy_workspace = copy_workspace
+    calls = 0
+
+    def respond(messages, info):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(parts=[ToolCallPart(
+                "run_probe", {"command": "python probe.py"}, tool_call_id="refused")])
+        if calls == 2:
+            returned = [part.content for message in messages if isinstance(message, ModelRequest)
+                        for part in message.parts
+                        if isinstance(part, ToolReturnPart) and part.tool_name == "run_probe"][-1]
+            returned = returned.model_dump()
+            assert returned["id"] == "probe:1:refused" and returned["exit_code"] is None
+            assert returned["observations"]["source_verified"] is False
+            assert "app.py" in returned["observations"]["integrity_feedback"]
+            assert "did not run" in returned["observations"]["integrity_feedback"]
+            return final_response(info, evidence_ids=["probe:1:refused"])
+        feedback = [part.content for message in messages if isinstance(message, ModelRequest)
+                    for part in message.parts if isinstance(part, RetryPromptPart)][-1]
+        assert "exact full Evidence.id" in feedback  # a refused probe has no receipt to cite
+        return final_response(info)
+
+    request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
+    deps = InvestigationDeps(run_id="run", sandbox=await shell.create("run"),
+                             source_digest="digest", snapshot_path="/fixture", request=request)
+    result = await build_agent(shell, FunctionModel(respond)).run("Inspect", deps=deps)
+    assert result.output.label == "inconclusive" and result.output.evidence_ids == []
+    assert shell.executions == [] and calls == 3
+    assert shell.closed == ["probe-probe:1:refused"]
+
+
 async def test_tool_return_evidence_keeps_history_shape_and_bounds():
     """Tool returns are durable history: pin exact bytes, 4096-byte bounds and flag order."""
     from pydantic_core import to_json

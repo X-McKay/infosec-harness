@@ -27,7 +27,7 @@ from .models import (
     WorkerIdentity,
     definitive_support,
 )
-from .openshell import OpenShell, Sandbox, UnsafeSnapshotMetadata
+from .openshell import OpenShell, OpenShellError, Sandbox, UnsafeSnapshotMetadata
 
 MAX_HISTORY_BYTES = 32 * 1024 * 1024
 AGENT_NAME = "investigator"
@@ -214,7 +214,8 @@ async def validate_verdict(ctx: RunContext[InvestigationDeps], verdict: Verdict)
         for part in message.parts:
             if isinstance(part, ToolReturnPart) and part.tool_name in ("execute", "run_probe"):
                 evidence.append(Evidence.model_validate(part.content))
-    known = {item.id for item in evidence}
+    # Refused probes (exit_code None) have no native receipt and cannot be cited.
+    known = {item.id for item in evidence if item.exit_code is not None}
     if any(
         identity not in known
         for identity in (*verdict.evidence_ids, *verdict.superseded_evidence_ids)
@@ -361,12 +362,34 @@ def build_agent(openshell: OpenShell, model: Model) -> Agent[InvestigationDeps, 
         )
         try:
             # OpenShell transfers bounded artifacts; hostile archives stay opaque on the worker.
-            digest = await openshell.copy_workspace(
-                ctx.deps.sandbox,
-                sandbox,
-                operation_id=operation_id(ctx, "copy"),
-                expected_source=Path(ctx.deps.snapshot_path),
-            )
+            try:
+                digest = await openshell.copy_workspace(
+                    ctx.deps.sandbox,
+                    sandbox,
+                    operation_id=operation_id(ctx, "copy"),
+                    expected_source=Path(ctx.deps.snapshot_path),
+                )
+            except OpenShellError as error:
+                if not str(error).startswith("workspace changed or deleted original source"):
+                    raise
+                # The agent altered original source; the probe never ran. Feedback, not failure.
+                return Evidence(
+                    id=operation_id(ctx, "probe"),
+                    kind="probe",
+                    command=command,
+                    exit_code=None,
+                    stderr=str(error),
+                    sandbox_id=sandbox.id,
+                    source_digest=ctx.deps.source_digest,
+                    observations={
+                        "source_verified": False,
+                        "integrity_feedback": (
+                            f"{error}. The probe was refused and did not run. Restore that "
+                            "file's original bytes with write, keep new files separate, and "
+                            "run a new probe; or return inconclusive."
+                        ),
+                    },
+                ).excerpt()
             evidence = await command_tool(ctx, command, sandbox, "probe")
             try:
                 await openshell.verify_source(

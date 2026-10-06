@@ -957,7 +957,9 @@ class OpenShell:
                         identity = (content_digest, original.stat().st_mode & 0o111)
                         original_files[str(name)] = identity
                         if archived_files.get(name) != identity:
-                            raise OpenShellError("workspace changed or deleted original source")
+                            # The name comes from the immutable snapshot, not from the model.
+                            raise OpenShellError(
+                                f"workspace changed or deleted original source: {name}")
             return raw, record, _digest(original_files) if expected_source is not None else None
 
     async def copy_workspace(self, source: Sandbox, probe: Sandbox, *, operation_id: str,
