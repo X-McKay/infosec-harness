@@ -9,7 +9,7 @@ from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.tools import ToolDefinition
 from test_agent import FakeOpenShell
 
-from infosec_harness.model import RESPONSE, ModelInvocation, OpenShellModel
+from infosec_harness.agents.inference import RESPONSE, ModelInvocation, OpenShellModel
 from infosec_harness.sandbox import CommandResult
 from infosec_harness.sandbox import executor as model_executor
 
@@ -52,7 +52,7 @@ async def test_transport_runs_only_in_separate_model_sandbox(monkeypatch):
 
     shell.execute = execute
     monkeypatch.setattr(
-        "infosec_harness.model.activity.info",
+        "infosec_harness.agents.inference.activity.info",
         lambda: SimpleNamespace(workflow_id="run", activity_id="7"),
     )
     adapter = OpenShellModel(shell, "fixture", base_url="https://configured.example/v1")
@@ -68,7 +68,7 @@ async def test_transport_runs_only_in_separate_model_sandbox(monkeypatch):
 async def test_failed_executor_exit_is_a_named_terminal_error_with_detail(monkeypatch):
     """A non-zero executor exit has a complete receipt: raise ModelExecutorError carrying the
     last stderr line so reports show the cause (observed live: sandbox DNS ConnectError)."""
-    from infosec_harness.model import ModelExecutorError
+    from infosec_harness.agents.inference import ModelExecutorError
 
     shell = FakeOpenShell()
 
@@ -77,7 +77,7 @@ async def test_failed_executor_exit_is_a_named_terminal_error_with_detail(monkey
 
     shell.execute = execute
     monkeypatch.setattr(
-        "infosec_harness.model.activity.info",
+        "infosec_harness.agents.inference.activity.info",
         lambda: SimpleNamespace(workflow_id="run", activity_id="7"),
     )
     adapter = OpenShellModel(shell, "fixture", base_url="https://configured.example/v1")
@@ -264,7 +264,7 @@ async def test_adapter_rejects_oversized_input_before_sandbox_creation(monkeypat
 
     shell.create = create
     monkeypatch.setattr(
-        "infosec_harness.model.activity.info",
+        "infosec_harness.agents.inference.activity.info",
         lambda: SimpleNamespace(workflow_id="run", activity_id="7"),
     )
     with pytest.raises(ValueError, match="invocation exceeds the durable payload budget"):
@@ -284,7 +284,7 @@ async def test_adapter_rejects_oversized_native_response(monkeypatch):
 
     shell.execute = execute
     monkeypatch.setattr(
-        "infosec_harness.model.activity.info",
+        "infosec_harness.agents.inference.activity.info",
         lambda: SimpleNamespace(workflow_id="run", activity_id="7"),
     )
     with pytest.raises(ValueError, match="response exceeds the durable payload budget"):

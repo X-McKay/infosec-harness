@@ -7,7 +7,7 @@ import pytest
 from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import FunctionModel
 
-from infosec_harness.agent import InvestigationDeps, build_agent
+from infosec_harness.agents.investigator import InvestigationDeps, build_agent
 from infosec_harness.models import Finding, InvestigationRequest
 from infosec_harness.sandbox import CommandResult, Sandbox
 
@@ -151,7 +151,7 @@ def run_wrapper(tmp_path, command):
     sandbox repository path are substituted (neither exists on a development host)."""
     import subprocess
 
-    from infosec_harness.agent import _SHELL_WRAPPER
+    from infosec_harness.tools.execute import _SHELL_WRAPPER
 
     fake_timeout = tmp_path / "timeout"
     fake_timeout.write_text('#!/bin/bash\nshift 4\nexec "$@"\n')
@@ -177,7 +177,7 @@ def test_wrapper_cut_is_reported_as_truncation(tmp_path, stream):
     """The wrapper cuts printed output at fixed sizes inside the sandbox. A cut must reach
     the receipt as output_truncated, or a definitive verdict's untruncated-output rule holds
     vacuously (review of 2026-10-06)."""
-    from infosec_harness.agent import (
+    from infosec_harness.tools.execute import (
         STDERR_LIMIT,
         STDOUT_LIMIT,
         TRUNCATION_MARKER,
@@ -201,7 +201,7 @@ def test_wrapper_cut_is_reported_as_truncation(tmp_path, stream):
 
 
 async def test_cut_probe_output_is_truncated_evidence_and_never_qualifies():
-    from infosec_harness.agent import TRUNCATION_MARKER
+    from infosec_harness.tools.execute import TRUNCATION_MARKER
 
     claims = dict(target_reached=True, oracle_valid=True, positive_control=True,
                   negative_control=True, vulnerability_observed=True)
@@ -333,7 +333,7 @@ async def test_read_argument_is_data_in_sandbox_not_a_worker_shell():
 
 
 def test_probe_markers_require_exact_final_json_and_boolean_claims():
-    from infosec_harness.agent import parse_probe_observations
+    from infosec_harness.agents.evidence import parse_probe_observations
 
     valid = {
         "target_reached": True,
@@ -463,7 +463,7 @@ async def test_validator_lets_a_newer_cited_probe_supersede_an_older_flawed_one(
     The agent may disown only probes older than the cited one, and must name them."""
     from pydantic_ai import ModelRetry
 
-    from infosec_harness.agent import validate_verdict
+    from infosec_harness.agents.investigator import validate_verdict
     from infosec_harness.models import Evidence, Verdict
 
     def probe(identity, observed):
@@ -514,7 +514,7 @@ async def test_validator_lets_a_newer_cited_probe_supersede_an_older_flawed_one(
 async def test_verdict_validator_requires_complete_matching_offline_evidence(failure):
     from pydantic_ai import ModelRetry
 
-    from infosec_harness.agent import validate_verdict
+    from infosec_harness.agents.investigator import validate_verdict
     from infosec_harness.models import Evidence, Verdict
 
     observations = dict(
@@ -691,7 +691,7 @@ async def test_failed_offline_probe_and_successful_workspace_execution_require_i
 async def test_rejected_probe_line_gets_precise_feedback(final_line):
     from pydantic_ai.messages import RetryPromptPart
 
-    from infosec_harness.agent import parse_probe_observations
+    from infosec_harness.agents.evidence import parse_probe_observations
 
     stdout = "context\n" * 2000 + final_line + "\n"  # longer than the tool-return excerpt
     assert parse_probe_observations(stdout) == {}
@@ -748,7 +748,7 @@ async def test_rejected_probe_line_gets_precise_feedback(final_line):
 async def test_split_probe_marker_feedback_repairs_with_new_bounded_probe():
     from pydantic_ai.messages import RetryPromptPart
 
-    from infosec_harness.agent import parse_probe_observations
+    from infosec_harness.agents.evidence import parse_probe_observations
 
     observations = dict(
         target_reached=True,

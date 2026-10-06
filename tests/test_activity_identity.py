@@ -19,7 +19,7 @@ from temporalio.worker import ExecuteActivityInput, Worker
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 from test_agent import FakeOpenShell
 
-from infosec_harness.agent import (
+from infosec_harness.agents.investigator import (
     AGENT_NAME,
     GUARDED_ACTIVITY_PREFIX,
     InvestigationDeps,
@@ -59,7 +59,7 @@ async def test_guard_checks_prepared_and_current_identity_before_handler(monkeyp
     downstream = SimpleNamespace(execute_activity=AsyncMock(return_value="executed"))
     guarded = guard.intercept_activity(downstream)
     monkeypatch.setattr(
-        "infosec_harness.agent.activity.info",
+        "infosec_harness.agents.investigator.activity.info",
         lambda: SimpleNamespace(activity_type="agent__investigator__model_request"),
     )
     candidate = None if mode == "missing" else identity("d") if mode == "different" else identity()
@@ -99,7 +99,7 @@ async def test_cleanup_remains_available_after_identity_drift(monkeypatch):
     current[0] = identity("d")
     downstream = SimpleNamespace(execute_activity=AsyncMock(return_value=None))
     monkeypatch.setattr(
-        "infosec_harness.agent.activity.info",
+        "infosec_harness.agents.investigator.activity.info",
         lambda: SimpleNamespace(activity_type="cleanup_investigation"),
     )
     await guard.intercept_activity(downstream).execute_activity(

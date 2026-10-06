@@ -15,7 +15,7 @@ from temporalio.worker import Replayer, Worker
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 from test_agent import FakeOpenShell, final_response
 
-from infosec_harness.agent import InvestigationDeps, build_agent
+from infosec_harness.agents.investigator import InvestigationDeps, build_agent
 from infosec_harness.models import Citation, Finding, InvestigationRequest, Limits, Verdict
 from infosec_harness.sandbox import Sandbox
 from infosec_harness.workflow import (
@@ -435,8 +435,8 @@ async def test_finalize_detects_wrapper_cut_in_receipts(tmp_path):
     exactly as the tool return did: a cut probe is truncated and cannot be definitive."""
     import json
 
-    from infosec_harness.agent import TRUNCATION_MARKER
     from infosec_harness.sandbox import CommandResult
+    from infosec_harness.tools.execute import TRUNCATION_MARKER
 
     shell = FakeOpenShell()
     request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
@@ -543,11 +543,11 @@ async def test_total_history_guard_stops_mixed_tool_batch_and_replays(
 ):
     from temporalio import workflow
 
-    from infosec_harness.agent import DurablePayloadLimit
+    from infosec_harness.agents.investigator import DurablePayloadLimit
 
     # Large valid finding repeats in native activity dependencies; lower the test guard
     # to cross it in one batch, rather than constructing tens of megabytes of history.
-    monkeypatch.setattr("infosec_harness.agent.MAX_HISTORY_BYTES", 2_000_000)
+    monkeypatch.setattr("infosec_harness.agents.investigator.MAX_HISTORY_BYTES", 2_000_000)
     shell = FakeOpenShell()
     observed = []
     before = DurablePayloadLimit.before_tool_execute

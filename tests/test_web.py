@@ -118,7 +118,7 @@ async def test_real_temporal_submit_query_and_cancellation(temporal_cli, tmp_pat
     from test_agent import FakeOpenShell
     from test_workflow import runner
 
-    from infosec_harness.agent import build_agent
+    from infosec_harness.agents.investigator import build_agent
     from infosec_harness.workflow import (
         InvestigationActivities,
         InvestigationWorkflow,

@@ -6,9 +6,14 @@ from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import Model
 from temporalio import activity
 
-from .agent import KILLED_EXIT, bounded, command_budget
-from .sandbox import OpenShell
-from .sandbox.executor import MAX_INVOCATION_BYTES, MAX_RESPONSE_BYTES, RESPONSE, ModelInvocation
+from infosec_harness.sandbox import OpenShell
+from infosec_harness.sandbox.executor import (
+    MAX_INVOCATION_BYTES,
+    MAX_RESPONSE_BYTES,
+    RESPONSE,
+    ModelInvocation,
+)
+from infosec_harness.tools.execute import KILLED_EXIT, bounded, command_budget
 
 
 class ModelExecutorError(RuntimeError):

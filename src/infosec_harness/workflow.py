@@ -19,7 +19,8 @@ with workflow.unsafe.imports_passed_through():
     from pydantic_ai.tool_manager import ToolManager
     from pydantic_ai.usage import UsageLimits
 
-    from .agent import InvestigationDeps, build_agent, parse_probe_observations, unwrap_output
+    from .agents.evidence import parse_probe_observations
+    from .agents.investigator import InvestigationDeps, build_agent
     from .models import (
         Evidence,
         InvestigationRequest,
@@ -31,6 +32,7 @@ with workflow.unsafe.imports_passed_through():
     from .repository import validate_citation
     from .sandbox import OpenShell
     from .sandbox.process import _finish
+    from .tools.execute import unwrap_output
 
 
 class PreparedInvestigation(BaseModel):
@@ -366,9 +368,9 @@ def create_worker(client, settings):
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 
     from . import repository
-    from .agent import WorkerIdentityInterceptor
+    from .agents.inference import OpenShellModel
+    from .agents.investigator import WorkerIdentityInterceptor
     from .identity import worker_identity
-    from .model import OpenShellModel
     from .sandbox import OpenShellConfig
 
     openshell = OpenShell(OpenShellConfig.load(settings.openshell_config))

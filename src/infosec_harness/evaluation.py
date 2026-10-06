@@ -370,8 +370,8 @@ async def replay_history(run_id: str, settings, client=None) -> dict:
     from temporalio.worker import Replayer
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 
-    from infosec_harness.agent import build_agent
-    from infosec_harness.model import OpenShellModel
+    from infosec_harness.agents.inference import OpenShellModel
+    from infosec_harness.agents.investigator import build_agent
     from infosec_harness.workflow import InvestigationWorkflow, bind_investigator
 
     pydantic_ai.models.ALLOW_MODEL_REQUESTS = False

@@ -491,7 +491,7 @@ def owned_worker_factory(monkeypatch, tmp_path, shell, respond, identity, create
     from test_workflow import runner
 
     from infosec_harness import workflow
-    from infosec_harness.agent import build_agent
+    from infosec_harness.agents.investigator import build_agent
 
     def create(client, settings):
         workflow.bind_investigator(build_agent(shell, FunctionModel(respond)))
