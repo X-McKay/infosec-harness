@@ -18,7 +18,7 @@ import stat
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, get_args
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
@@ -35,17 +35,23 @@ from temporalio.service import RPCError, RPCStatusCode, TLSConfig
 from infosec_harness.config import Settings, get_settings
 from infosec_harness.contracts import (
     GENERATION,
+    MAX_EVENTS,
+    MAX_LABEL_CHARS,
+    MAX_REPORTS,
+    CancelResult,
     Finding,
     Health,
     InvestigationRequest,
     InvestigationResult,
     Limits,
+    ReportKind,
     ReportList,
     ReportSummary,
     RunEvent,
     RunEvents,
     RunPage,
     RunState,
+    RunStatus,
     RunSummary,
 )
 
@@ -59,14 +65,14 @@ PAGE_SIZE = 50
 VERDICT_CONCURRENCY = 8
 VERDICT_RPC_TIMEOUT = timedelta(seconds=3)
 VERDICT_DEADLINE_SECONDS = 8.0
-MAX_EVENTS = 500
-MAX_DETAIL = 200
-MAX_REPORTS = 200
 MAX_REPORT_BYTES = 16 * 1024 * 1024
 # Bytes parsed for one listing; later files are listed without a summary.
 REPORT_LISTING_BUDGET = 64 * 1024 * 1024
 REPORT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\.json")
-REPORT_KINDS = ("model", "diagnostic", "openshell", "replay")
+REPORT_KINDS: tuple[ReportKind, ...] = tuple(
+    kind for kind in get_args(ReportKind) if kind != "unknown"
+)
+RUN_STATUSES: tuple[RunStatus, ...] = get_args(RunStatus)
 
 
 def execution_timeout(limits: Limits) -> timedelta:
@@ -238,7 +244,7 @@ async def runs(
             RunSummary(
                 id=entry.id,
                 title=str(finding.get("title", entry.id)),
-                status=entry.status.name.lower() if entry.status else "unknown",
+                status=run_status(entry.status),
                 started_at=entry.start_time.isoformat(),
                 closed_at=entry.close_time.isoformat() if entry.close_time else None,
                 verdict=verdicts.get(entry.id),
@@ -290,6 +296,12 @@ async def completed_verdicts(client: Client, page) -> dict[str, str]:
     return {run_id: label for run_id, label in labels if label is not None}
 
 
+def run_status(status: WorkflowExecutionStatus | None) -> RunStatus:
+    """The lower-cased Temporal status name; "unknown" when absent or not a known status."""
+    name = status.name.lower() if status else "unknown"
+    return next((known for known in RUN_STATUSES if known == name), "unknown")
+
+
 def run_handle(client: Client, run_id: str):
     if not run_id.startswith(PREFIX) or len(run_id) > 100:
         raise HTTPException(404, "Investigation not found")
@@ -315,21 +327,21 @@ async def run(run_id: str, client: TemporalClient) -> RunState:
         finding=finding,
         status="cancelled" if cancelled else "failed",
         phase="finished",
-        error=description.status.name.lower() if description.status else "unknown",
+        error=run_status(description.status),
     )
 
 
-@app.post("/api/runs/{run_id}/cancel", status_code=202)
-async def cancel(run_id: str, client: TemporalClient) -> dict[str, str]:
+@app.post("/api/runs/{run_id}/cancel", response_model=CancelResult, status_code=202)
+async def cancel(run_id: str, client: TemporalClient) -> CancelResult:
     handle = run_handle(client, run_id)
     description = await handle.describe(rpc_timeout=RPC_TIMEOUT)
     if description.status == WorkflowExecutionStatus.RUNNING:
         await handle.cancel(rpc_timeout=RPC_TIMEOUT)
-        return {"status": "cancellation_requested"}
-    return {"status": description.status.name.lower() if description.status else "unknown"}
+        return CancelResult(status="cancellation_requested")
+    return CancelResult(status=run_status(description.status))
 
 
-def bounded(value: Any, limit: int = MAX_DETAIL) -> str:
+def bounded(value: Any, limit: int = MAX_LABEL_CHARS) -> str:
     """One printable line of at most ``limit`` characters."""
     return "".join(char if char.isprintable() else " " for char in str(value)[:limit])
 
@@ -530,9 +542,9 @@ def summarize_report(document: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def report_kind(name: str) -> str:
+def report_kind(name: str) -> ReportKind:
     prefix = name.split("-", 1)[0]
-    return prefix if prefix in REPORT_KINDS else "unknown"
+    return next((kind for kind in REPORT_KINDS if kind == prefix), "unknown")
 
 
 @app.get("/api/reports", response_model=ReportList)

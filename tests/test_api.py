@@ -69,6 +69,15 @@ async def test_terminal_cancellation_never_rewrites_completed_outcome(client):
     handle.cancel.assert_awaited_once()
 
 
+def test_run_status_and_report_kind_stay_inside_their_contracts():
+    for status in WorkflowExecutionStatus:
+        assert api.run_status(status) == status.name.lower()
+    assert api.run_status(None) == "unknown"
+    assert api.REPORT_KINDS == ("model", "diagnostic", "openshell", "replay")
+    assert api.report_kind("replay-x.json") == "replay"
+    assert api.report_kind("notes-x.json") == "unknown"
+
+
 async def test_completed_result_comes_from_temporal_not_a_shadow_database(client):
     finding = Finding(title="Finding", repo_url="repo")
     result = InvestigationResult(

@@ -14,6 +14,31 @@ GENERATION = "v11"
 # Report bounds shared by the verdict contract and the workflow that writes the report.
 MAX_EVIDENCE_IDS = 10
 MAX_SUMMARY_CHARS = 12_000
+# API projection bounds: history events per run, label characters, listed report files.
+MAX_EVENTS = 500
+MAX_LABEL_CHARS = 200
+MAX_REPORTS = 200
+
+# Plain aliases (not ``type`` statements) so the JSON schema inlines them as before.
+VerdictLabel = Literal["potentially_exploitable", "likely_not_exploitable", "inconclusive"]
+# A Temporal WorkflowExecutionStatus name, lower-cased; "unknown" for anything else.
+RunStatus = Literal[
+    "running", "completed", "failed", "canceled", "terminated", "continued_as_new", "timed_out",
+    "unknown",
+]
+RunEventKind = Literal[
+    "workflow_started",
+    "activity_scheduled",
+    "activity_completed",
+    "activity_failed",
+    "activity_timed_out",
+    "timer",
+    "workflow_completed",
+    "workflow_failed",
+    "workflow_cancelled",
+    "other",
+]
+ReportKind = Literal["model", "diagnostic", "openshell", "replay", "unknown"]
 
 
 class Contract(BaseModel):
@@ -64,7 +89,7 @@ class Citation(Contract):
 
 
 class Verdict(Contract):
-    label: Literal["potentially_exploitable", "likely_not_exploitable", "inconclusive"]
+    label: VerdictLabel
     summary: str = Field(min_length=1, max_length=MAX_SUMMARY_CHARS)
     evidence_ids: list[str] = Field(default_factory=list, max_length=MAX_EVIDENCE_IDS)
     citations: list[Citation] = Field(default_factory=list, max_length=30)
@@ -198,15 +223,19 @@ class RunState(Contract):
 class RunSummary(Contract):
     id: str
     title: str
-    status: str
+    status: RunStatus
     started_at: str
     closed_at: str | None = None
     # Null when the run is not completed or its result could not be read in time.
-    verdict: (
-        Literal["potentially_exploitable", "likely_not_exploitable", "inconclusive"] | None
-    ) = None
+    verdict: VerdictLabel | None = None
     cwe: str | None = None
     repo_url: str | None = None
+
+
+class CancelResult(Contract):
+    """A cancellation request, or the status of a run that had already closed."""
+
+    status: Literal["cancellation_requested", RunStatus]
 
 
 class RunPage(Contract):
@@ -226,26 +255,16 @@ class Health(Contract):
 
 class RunEvent(Contract):
     at: str
-    kind: Literal[
-        "workflow_started",
-        "activity_scheduled",
-        "activity_completed",
-        "activity_failed",
-        "activity_timed_out",
-        "timer",
-        "workflow_completed",
-        "workflow_failed",
-        "workflow_cancelled",
-        "other",
-    ]
-    name: str | None = Field(default=None, max_length=200)
+    kind: RunEventKind
+    # Bounded in characters (code points), not bytes.
+    name: str | None = Field(default=None, max_length=MAX_LABEL_CHARS)
     # Bounded labels such as an exit code or failure type; never a payload.
-    detail: str = Field(default="", max_length=200)
+    detail: str = Field(default="", max_length=MAX_LABEL_CHARS)
 
 
 class RunEvents(Contract):
     run_id: str
-    events: list[RunEvent] = Field(max_length=500)
+    events: list[RunEvent] = Field(max_length=MAX_EVENTS)
     truncated: bool = False
 
 
@@ -253,7 +272,7 @@ class ReportSummary(Contract):
     """Operator report files are untrusted and vary in shape: every parsed field is optional."""
 
     name: str
-    kind: Literal["model", "diagnostic", "openshell", "replay", "unknown"]
+    kind: ReportKind
     bytes: int
     modified_at: str
     status: str | None = None
@@ -269,5 +288,5 @@ class ReportSummary(Contract):
 
 
 class ReportList(Contract):
-    items: list[ReportSummary] = Field(max_length=200)
+    items: list[ReportSummary] = Field(max_length=MAX_REPORTS)
     truncated: bool = False

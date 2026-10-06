@@ -12,7 +12,7 @@ import {
 
 const run = (
   id: string,
-  status: string,
+  status: RunListItem["status"],
   extra: Partial<RunListItem> = {},
 ): RunListItem => ({
   id,
