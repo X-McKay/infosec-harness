@@ -20,7 +20,14 @@ from temporalio.client import WorkflowExecutionStatus, WorkflowFailureError
 from temporalio.exceptions import ApplicationError
 
 from infosec_harness._io import write_json
-from infosec_harness.api import PREFIX, RPC_TIMEOUT, connect, execution_timeout, start_investigation
+from infosec_harness.api import (
+    GENERATION,
+    PREFIX,
+    RPC_TIMEOUT,
+    connect,
+    execution_timeout,
+    start_investigation,
+)
 from infosec_harness.contracts import Finding, InvestigationResult, Limits
 from infosec_harness.sandbox import OpenShell, OpenShellConfig, native_operation_accounting
 from infosec_harness.sandbox.process import finish
@@ -283,7 +290,7 @@ async def evaluate_corpus(manifest: Path, output: Path, settings, *, names=(),
         "version": 1,
         "kind": "diagnostic" if names else "cohort",
         "commit": commit,
-        "generation": "v11",
+        "generation": GENERATION,
         "model": settings.model_name,
         "task_queue": settings.task_queue,
         "owned_worker": owned_worker,

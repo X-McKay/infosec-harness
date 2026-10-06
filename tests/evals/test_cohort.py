@@ -476,6 +476,8 @@ async def test_named_cases_are_a_diagnostic_that_never_qualifies(
         manifest, tmp_path / "report.json", get_settings(), names=("b",)
     )
     assert report["kind"] == "diagnostic"
+    # The report names the generation its workflow ran under (AGENTS.md: v11).
+    assert report["generation"] == "v11"
     assert [(row["name"], row["status"], row["passed"]) for row in report["cases"]] == [
         ("b", "completed", True)]
     assert set(report["gates"].values()) == {"not_checked"}
