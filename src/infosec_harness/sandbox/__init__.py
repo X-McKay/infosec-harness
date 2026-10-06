@@ -16,6 +16,8 @@ _EXPORTS = {
     "ExecutionUnknown": "execution",
     "OpenShellError": "execution",
     "Sandbox": "execution",
+    "SourceChanged": "execution",
+    "SourceRejected": "execution",
     "UnsafeSnapshotMetadata": "transfer",
 }
 __all__ = sorted(_EXPORTS)

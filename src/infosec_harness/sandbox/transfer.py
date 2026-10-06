@@ -24,6 +24,8 @@ from .execution import (
     ExecutionUnknown,
     OpenShellError,
     Sandbox,
+    SourceChanged,
+    SourceRejected,
     _digest,
     _request_id,
 )
@@ -61,19 +63,19 @@ class Transfer:
         if sandbox.profile == "model":
             raise OpenShellError("repository upload is forbidden in model sandboxes")
         if not source.is_dir() or source.is_symlink():
-            raise OpenShellError("source must be a regular directory")
+            raise SourceRejected("source must be a regular directory")
         archive = io.BytesIO()
         total = 0
         with tarfile.open(fileobj=archive, mode="w") as tar:
             for path in sorted(source.rglob("*")):
                 if path.is_symlink() or not (path.is_file() or path.is_dir()):
-                    raise OpenShellError("source archive cannot contain symlinks or special files")
+                    raise SourceRejected("source archive cannot contain symlinks or special files")
                 total += path.stat().st_size if path.is_file() else 0
                 if total > self.config.max_transfer_bytes:
-                    raise OpenShellError("source archive exceeds the transfer bound")
+                    raise SourceRejected("source archive exceeds the transfer bound")
                 tar.add(path, arcname=str(path.relative_to(source)), recursive=False)
                 if archive.tell() > self.config.max_transfer_bytes:
-                    raise OpenShellError("source archive exceeds the transfer bound")
+                    raise SourceRejected("source archive exceeds the transfer bound")
         data = archive.getvalue()
         result = await self._deliver(sandbox, data, destination,
             operation_id="upload:" + _digest([destination, hashlib.sha256(data).hexdigest()]))
@@ -174,15 +176,15 @@ class Transfer:
                 raise OpenShellError("source snapshot is not a valid archive") from None
             original_files = {}
             if not expected_source.is_dir() or expected_source.is_symlink():
-                raise OpenShellError("original source snapshot must be a regular directory")
+                raise SourceRejected("original source snapshot must be a regular directory")
             total = 0
             for original in sorted(expected_source.rglob("*")):
                 if original.is_symlink() or not (original.is_file() or original.is_dir()):
-                    raise OpenShellError("original source snapshot contains unsafe file types")
+                    raise SourceRejected("original source snapshot contains unsafe file types")
                 if original.is_file():
                     total += original.stat().st_size
                     if total > self.config.max_transfer_bytes or len(original_files) >= 65536:
-                        raise OpenShellError("original source snapshot exceeds bound")
+                        raise SourceRejected("original source snapshot exceeds bound")
                     with original.open("rb") as stream:
                         content_digest = _sha256(stream)
                     name = PurePosixPath(original.relative_to(expected_source).as_posix())
@@ -190,8 +192,7 @@ class Transfer:
                     original_files[str(name)] = identity
                     if archived_files.get(name) != identity:
                         # The name comes from the immutable snapshot, not from the model.
-                        raise OpenShellError(
-                            f"workspace changed or deleted original source: {name}")
+                        raise SourceChanged(f"workspace changed or deleted original source: {name}")
             return raw, record, _digest(original_files)
 
     async def copy_workspace(self, source: Sandbox, probe: Sandbox, *, operation_id: str,

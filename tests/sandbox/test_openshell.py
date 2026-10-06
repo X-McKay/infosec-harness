@@ -23,6 +23,8 @@ from infosec_harness.sandbox import (
     OpenShellConfig,
     OpenShellError,
     Profile,
+    SourceChanged,
+    SourceRejected,
     UnsafeSnapshotMetadata,
 )
 from infosec_harness.sandbox.transfer import _path
@@ -542,7 +544,7 @@ async def test_model_cannot_receive_source_and_source_symlinks_rejected(adapter,
     source = tmp_path / "source"
     source.mkdir()
     (source / "secret").symlink_to("/etc/passwd")
-    with pytest.raises(OpenShellError, match="symlinks"):
+    with pytest.raises(SourceRejected, match="symlinks"):
         await boundary.upload(sandbox, source, "/workspace/repo")
 
 
@@ -654,7 +656,7 @@ async def test_changed_or_deleted_original_source_prevents_probe_restore(adapter
     original.mkdir()
     (original / "source.py").write_bytes(b"original")
     native.archive = source_archive(content, include_original=include_original)
-    with pytest.raises(OpenShellError, match="changed or deleted"):
+    with pytest.raises(SourceChanged, match="changed or deleted"):
         await boundary.copy_workspace(source, probe, operation_id="copy", expected_source=original)
     assert len(native.execs) == 1
     assert not boundary.receipts("run")
@@ -680,7 +682,7 @@ async def test_original_source_verification_provenance_is_bound_to_completed_pro
     await boundary.verify_source(probe, original, operation_id="verify:first")
     assert not next(r for r in boundary.receipts("run") if r.operation_id == "probe:later").source_verified
     native.archive = source_archive(b"changed")
-    with pytest.raises(OpenShellError, match="changed or deleted"):
+    with pytest.raises(SourceChanged, match="changed or deleted"):
         await boundary.verify_source(probe, original, operation_id="verify:later")
     assert not next(r for r in boundary.receipts("run") if r.operation_id == "probe:later").source_verified
 
@@ -753,7 +755,7 @@ async def test_changed_original_executable_bit_prevents_probe_restore(adapter, t
     (original / "source.py").write_bytes(b"original")
     (original / "source.py").chmod(0o755)
     native.archive = source_archive(b"original", mode=0o644)
-    with pytest.raises(OpenShellError, match="changed or deleted"):
+    with pytest.raises(SourceChanged, match="changed or deleted"):
         await boundary.copy_workspace(source, probe, operation_id="copy", expected_source=original)
     assert len(native.execs) == 1
 
@@ -1310,3 +1312,17 @@ async def test_admission_refusal_names_each_failed_check(adapter, monkeypatch):
     with pytest.raises(OpenShellError,
                        match="admission mismatch: phase, configuration_activated$"):
         await boundary.create("run")
+
+
+async def test_message_wording_does_not_decide_a_source_change(adapter, tmp_path):
+    """Callers classify by type: the other source failures are not a SourceChanged."""
+    boundary, native = adapter
+    source = await boundary.create("run")
+    probe = await boundary.create("run", profile="probe", slot="activity")
+    original = tmp_path / "original"
+    original.mkdir()
+    (original / "link").symlink_to("/etc/passwd")
+    native.archive = source_archive(b"original")
+    with pytest.raises(SourceRejected, match="unsafe file types") as caught:
+        await boundary.copy_workspace(source, probe, operation_id="copy", expected_source=original)
+    assert not isinstance(caught.value, SourceChanged)

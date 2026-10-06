@@ -13,8 +13,8 @@ from infosec_harness.contracts import Evidence
 from infosec_harness.sandbox import (
     CommandResult,
     OpenShell,
-    OpenShellError,
     Sandbox,
+    SourceChanged,
     UnsafeSnapshotMetadata,
 )
 
@@ -160,9 +160,7 @@ def register(tools: FunctionToolset[InvestigationDeps], openshell: OpenShell) ->
                     operation_id=operation_id(ctx, "copy"),
                     expected_source=Path(ctx.deps.snapshot_path),
                 )
-            except OpenShellError as error:
-                if not str(error).startswith("workspace changed or deleted original source"):
-                    raise
+            except SourceChanged as error:
                 # The agent altered original source; the probe never ran. Feedback, not failure.
                 return Evidence(
                     id=operation_id(ctx, "probe"),

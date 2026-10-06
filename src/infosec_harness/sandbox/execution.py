@@ -30,6 +30,17 @@ class ExecutionUnknown(OpenShellError):
     """Dispatch may have happened. Never automatically resend this operation."""
 
 
+class SourceRejected(OpenShellError):
+    """A trusted source tree was refused for transfer: unsafe file types or over a bound."""
+
+
+class SourceChanged(OpenShellError):
+    """A workspace no longer holds the original source bytes; the message names the file.
+
+    Raised before any probe runs, so callers may turn it into feedback for the agent.
+    """
+
+
 @dataclass(frozen=True)
 class Sandbox:
     id: str
