@@ -4,7 +4,7 @@ import pytest
 
 from infosec_harness.config import Settings
 from infosec_harness.models import Citation, Finding
-from infosec_harness.repository import snapshot, validate_citation
+from infosec_harness.workflows.snapshot import snapshot, validate_citation
 
 
 @pytest.fixture
@@ -65,7 +65,7 @@ async def test_identity_cannot_be_reassigned_to_another_finding(source):
 
 
 async def test_size_limit_fails_before_publication(source, monkeypatch):
-    import infosec_harness.repository as repository
+    import infosec_harness.workflows.snapshot as repository
 
     _, settings, finding = source
     monkeypatch.setattr(repository, "MAX_FILE", 3)
@@ -102,7 +102,7 @@ def test_citation_must_exist_inside_exact_source(source):
 async def test_approved_source_ancestor_substitution_never_imports_external_bytes(
     tmp_path, monkeypatch
 ):
-    import infosec_harness.repository as repository
+    import infosec_harness.workflows.snapshot as repository
 
     admitted = tmp_path / "admitted"
     source = admitted / "repository" / "nested"

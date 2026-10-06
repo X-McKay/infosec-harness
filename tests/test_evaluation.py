@@ -490,28 +490,28 @@ def owned_worker_factory(monkeypatch, tmp_path, shell, respond, identity, create
     from temporalio.worker import Worker
     from test_workflow import runner
 
-    from infosec_harness import workflow
     from infosec_harness.agents.investigator import build_agent
+    from infosec_harness.workflows import investigation, worker
 
     def create(client, settings):
-        workflow.bind_investigator(build_agent(shell, FunctionModel(respond)))
+        investigation.bind_investigator(build_agent(shell, FunctionModel(respond)))
 
         async def snapshot(finding, run_id):
             return SimpleNamespace(path=str(tmp_path), digest="digest")
 
-        activities = workflow.InvestigationActivities(
+        activities = investigation.InvestigationActivities(
             shell, snapshot, settings.model_name, identity=lambda: identity
         )
         created.append(settings)
         return Worker(
             client,
             task_queue=settings.task_queue,
-            workflows=[workflow.InvestigationWorkflow],
+            workflows=[investigation.InvestigationWorkflow],
             activities=[activities.prepare, activities.finalize, activities.cleanup],
             workflow_runner=runner(),
         )
 
-    monkeypatch.setattr(workflow, "create_worker", create)
+    monkeypatch.setattr(worker, "create_worker", create)
 
 
 @pytest.mark.requires_temporal

@@ -13,9 +13,8 @@ from pydantic_ai.models import Model, ModelRequestContext
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai_harness import Skills
 from pydantic_core import to_json
-from temporalio import activity, workflow
+from temporalio import workflow
 from temporalio.common import RetryPolicy
-from temporalio.worker import ActivityInboundInterceptor, Interceptor
 
 from infosec_harness.models import (
     Evidence,
@@ -44,36 +43,6 @@ class InvestigationDeps(BaseModel):
     snapshot_path: str
     request: InvestigationRequest
     worker_identity: WorkerIdentity | None = None
-
-
-class WorkerIdentityInterceptor(Interceptor):
-    """Check the receiving worker before every native investigator activity runs."""
-
-    def __init__(self, identity):
-        self.identity = identity
-        self.bound_identity = identity()
-
-    def intercept_activity(self, next: ActivityInboundInterceptor) -> ActivityInboundInterceptor:
-        owner = self
-
-        class Guard(ActivityInboundInterceptor):
-            async def execute_activity(self, input):
-                if activity.info().activity_type.startswith(GUARDED_ACTIVITY_PREFIX):
-                    deps = input.args[1] if len(input.args) > 1 else None
-                    if (
-                        not isinstance(deps, InvestigationDeps)
-                        or deps.worker_identity != owner.bound_identity
-                    ):
-                        raise ValueError(
-                            "Investigator activity does not match the prepared worker identity"
-                        )
-                    if owner.identity() != owner.bound_identity:
-                        raise ValueError(
-                            "Worker code or isolation configuration changed; restart the worker"
-                        )
-                return await self.next.execute_activity(input)
-
-        return Guard(next)
 
 
 class DurablePayloadLimit(AbstractCapability[InvestigationDeps]):

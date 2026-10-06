@@ -4,7 +4,6 @@ import asyncio
 import shlex
 from dataclasses import asdict
 from datetime import timedelta
-from functools import partial
 from pathlib import Path
 from typing import ClassVar
 
@@ -19,9 +18,9 @@ with workflow.unsafe.imports_passed_through():
     from pydantic_ai.tool_manager import ToolManager
     from pydantic_ai.usage import UsageLimits
 
-    from .agents.evidence import parse_probe_observations
-    from .agents.investigator import InvestigationDeps, build_agent
-    from .models import (
+    from infosec_harness.agents.evidence import parse_probe_observations
+    from infosec_harness.agents.investigator import InvestigationDeps
+    from infosec_harness.models import (
         Evidence,
         InvestigationRequest,
         InvestigationResult,
@@ -29,10 +28,11 @@ with workflow.unsafe.imports_passed_through():
         Verdict,
         definitive_support,
     )
-    from .repository import validate_citation
-    from .sandbox import OpenShell
-    from .sandbox.process import _finish
-    from .tools.execute import unwrap_output
+    from infosec_harness.sandbox import OpenShell
+    from infosec_harness.sandbox.process import _finish
+    from infosec_harness.tools.execute import unwrap_output
+
+    from .snapshot import validate_citation
 
 
 class PreparedInvestigation(BaseModel):
@@ -360,54 +360,3 @@ class InvestigationWorkflow(PydanticAIWorkflow):
 def bind_investigator(agent: Agent[InvestigationDeps, Verdict]) -> None:
     InvestigationWorkflow.agent = agent
     InvestigationWorkflow.__pydantic_ai_agents__ = [agent]
-
-
-def create_worker(client, settings):
-    """Register native PydanticAI model/tool activities and three lifecycle activities."""
-    from temporalio.worker import Worker
-    from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
-
-    from . import repository
-    from .agents.inference import OpenShellModel
-    from .agents.investigator import WorkerIdentityInterceptor
-    from .identity import worker_identity
-    from .sandbox import OpenShellConfig
-
-    openshell = OpenShell(OpenShellConfig.load(settings.openshell_config))
-    budget = settings.limits.command_timeout_seconds
-    if budget > openshell.config.max_timeout_seconds:
-        # Every execute would be refused mid-investigation; refuse the worker instead.
-        raise ValueError(
-            f"limits.command_timeout_seconds ({budget}) exceeds the OpenShell runtime "
-            f"max_timeout_seconds ({openshell.config.max_timeout_seconds}); lower the limit "
-            "or raise the runtime bound"
-        )
-    model = OpenShellModel(
-        openshell,
-        settings.model_name,
-        provider=settings.model_provider,
-        base_url=settings.model_base_url,
-        region=settings.model_region,
-        # One operator knob bounds every sandbox command, including inference.
-        timeout=budget,
-    )
-    agent = build_agent(openshell, model)
-    bind_investigator(agent)
-    activities = InvestigationActivities(
-        openshell,
-        partial(repository.snapshot, settings=settings),
-        settings.model_name,
-        identity=partial(worker_identity, settings),
-    )
-    return Worker(
-        client,
-        task_queue=settings.task_queue,
-        workflows=[InvestigationWorkflow],
-        activities=[activities.prepare, activities.finalize, activities.cleanup],
-        interceptors=[WorkerIdentityInterceptor(partial(worker_identity, settings))],
-        workflow_runner=SandboxedWorkflowRunner(
-            restrictions=SandboxRestrictions.default.with_passthrough_modules(
-                __name__, "annotated_types", "typing_inspection"
-            )
-        ),
-    )

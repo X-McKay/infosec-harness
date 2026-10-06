@@ -23,16 +23,16 @@ from infosec_harness.agents.investigator import (
     AGENT_NAME,
     GUARDED_ACTIVITY_PREFIX,
     InvestigationDeps,
-    WorkerIdentityInterceptor,
     build_agent,
 )
 from infosec_harness.models import Finding, InvestigationRequest, WorkerIdentity
 from infosec_harness.sandbox import Sandbox
-from infosec_harness.workflow import (
+from infosec_harness.workflows.investigation import (
     CleanupInvestigation,
     InvestigationActivities,
     PreparedInvestigation,
 )
+from infosec_harness.workflows.worker import WorkerIdentityInterceptor
 
 
 def identity(value="a"):
@@ -59,7 +59,7 @@ async def test_guard_checks_prepared_and_current_identity_before_handler(monkeyp
     downstream = SimpleNamespace(execute_activity=AsyncMock(return_value="executed"))
     guarded = guard.intercept_activity(downstream)
     monkeypatch.setattr(
-        "infosec_harness.agents.investigator.activity.info",
+        "infosec_harness.workflows.worker.activity.info",
         lambda: SimpleNamespace(activity_type="agent__investigator__model_request"),
     )
     candidate = None if mode == "missing" else identity("d") if mode == "different" else identity()
@@ -99,7 +99,7 @@ async def test_cleanup_remains_available_after_identity_drift(monkeypatch):
     current[0] = identity("d")
     downstream = SimpleNamespace(execute_activity=AsyncMock(return_value=None))
     monkeypatch.setattr(
-        "infosec_harness.agents.investigator.activity.info",
+        "infosec_harness.workflows.worker.activity.info",
         lambda: SimpleNamespace(activity_type="cleanup_investigation"),
     )
     await guard.intercept_activity(downstream).execute_activity(
@@ -191,7 +191,7 @@ async def test_real_temporal_different_worker_refuses_native_activity_before_exe
     activity_queue = queue + "-native"
     runner = SandboxedWorkflowRunner(
         restrictions=SandboxRestrictions.default.with_passthrough_modules(
-            __name__, "infosec_harness.workflow", "annotated_types", "typing_inspection"
+            __name__, "infosec_harness.workflows.investigation", "annotated_types", "typing_inspection"
         )
     )
     async with (

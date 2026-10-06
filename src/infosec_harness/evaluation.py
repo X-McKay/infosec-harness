@@ -19,11 +19,11 @@ from temporalio.client import WorkflowExecutionStatus, WorkflowFailureError
 from temporalio.exceptions import ApplicationError
 
 from infosec_harness._io import write_json
-from infosec_harness.identity import worker_identity
 from infosec_harness.models import Finding, InvestigationResult
 from infosec_harness.sandbox import OpenShell, OpenShellConfig, native_operation_accounting
 from infosec_harness.sandbox.process import _finish
 from infosec_harness.web import PREFIX, RPC_TIMEOUT, connect, execution_timeout, start_investigation
+from infosec_harness.workflows.worker import worker_identity
 
 # Covers prepare's waited cancellation and three bounded cleanup attempts of an owned run.
 DRAIN = timedelta(minutes=30)
@@ -249,7 +249,7 @@ async def evaluate_corpus(manifest: Path, output: Path, settings, *, names=(),
         try:
             client = await connect(settings)
             if owned_worker:
-                from infosec_harness.workflow import create_worker
+                from infosec_harness.workflows.worker import create_worker
 
                 await stack.enter_async_context(create_worker(client, settings))
         except BaseException as error:
@@ -372,7 +372,7 @@ async def replay_history(run_id: str, settings, client=None) -> dict:
 
     from infosec_harness.agents.inference import OpenShellModel
     from infosec_harness.agents.investigator import build_agent
-    from infosec_harness.workflow import InvestigationWorkflow, bind_investigator
+    from infosec_harness.workflows.investigation import InvestigationWorkflow, bind_investigator
 
     pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
     client = client or await connect(settings)
@@ -392,7 +392,9 @@ async def replay_history(run_id: str, settings, client=None) -> dict:
             plugins=[PydanticAIPlugin()],
             workflow_runner=SandboxedWorkflowRunner(
                 restrictions=SandboxRestrictions.default.with_passthrough_modules(
-                    "infosec_harness.workflow", "annotated_types", "typing_inspection"
+                    "infosec_harness.workflows.investigation",
+                    "annotated_types",
+                    "typing_inspection",
                 )
             ),
         ).replay_workflow(history)

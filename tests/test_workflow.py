@@ -18,7 +18,7 @@ from test_agent import FakeOpenShell, final_response
 from infosec_harness.agents.investigator import InvestigationDeps, build_agent
 from infosec_harness.models import Citation, Finding, InvestigationRequest, Limits, Verdict
 from infosec_harness.sandbox import Sandbox
-from infosec_harness.workflow import (
+from infosec_harness.workflows.investigation import (
     FinalizeInvestigation,
     InvestigationActivities,
     InvestigationWorkflow,
@@ -30,7 +30,7 @@ from infosec_harness.workflow import (
 def runner():
     return SandboxedWorkflowRunner(
         restrictions=SandboxRestrictions.default.with_passthrough_modules(
-            "infosec_harness.workflow", "annotated_types", "typing_inspection"
+            "infosec_harness.workflows.investigation", "annotated_types", "typing_inspection"
         )
     )
 
@@ -54,9 +54,8 @@ def test_worker_refuses_command_budget_above_runtime_maximum(tmp_path, monkeypat
     refuse to start instead of silently capping only the model timeout."""
     import temporalio.worker
 
-    from infosec_harness import workflow
     from infosec_harness.config import get_settings
-    from infosec_harness.sandbox import openshell
+    from infosec_harness.workflows import worker
 
     config = tmp_path / "runtime.json"
     config.write_text("{}")
@@ -64,18 +63,18 @@ def test_worker_refuses_command_budget_above_runtime_maximum(tmp_path, monkeypat
         "openshell_config": config,
         "limits": Limits(command_timeout_seconds=budget),
     })
-    monkeypatch.setattr(openshell, "OpenShellConfig", SimpleNamespace(
+    monkeypatch.setattr(worker, "OpenShellConfig", SimpleNamespace(
         load=lambda path: SimpleNamespace(max_timeout_seconds=300)))
-    monkeypatch.setattr(workflow, "OpenShell", lambda config: SimpleNamespace(config=config))
+    monkeypatch.setattr(worker, "OpenShell", lambda config: SimpleNamespace(config=config))
     monkeypatch.setattr(temporalio.worker, "Worker", lambda client, **kwargs: kwargs)
     monkeypatch.setattr(InvestigationWorkflow, "agent", None)
     monkeypatch.setattr(InvestigationWorkflow, "__pydantic_ai_agents__", [])
     if budget > 300:
         with pytest.raises(ValueError, match=r"command_timeout_seconds \(301\) exceeds"):
-            workflow.create_worker(None, settings)
+            worker.create_worker(None, settings)
         assert InvestigationWorkflow.agent is None
         return
-    assert workflow.create_worker(None, settings)["task_queue"] == settings.task_queue
+    assert worker.create_worker(None, settings)["task_queue"] == settings.task_queue
     assert InvestigationWorkflow.agent.model.timeout == 300
 
 

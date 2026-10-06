@@ -2,9 +2,9 @@ import pytest
 from test_agent import FakeOpenShell
 
 from infosec_harness.config import Settings
-from infosec_harness.identity import worker_identity
 from infosec_harness.models import Finding, InvestigationRequest, WorkerIdentity
-from infosec_harness.workflow import CleanupInvestigation, InvestigationActivities
+from infosec_harness.workflows.investigation import CleanupInvestigation, InvestigationActivities
+from infosec_harness.workflows.worker import worker_identity
 
 
 def test_identity_binds_policy_contents_dependencies_and_configuration(tmp_path):
@@ -87,7 +87,7 @@ async def test_cleanup_requires_original_bound_identity_but_allows_current_drift
 async def test_failed_prepare_closes_on_receiving_worker(monkeypatch, tmp_path, stage):
     from types import SimpleNamespace
 
-    import infosec_harness.workflow as module
+    import infosec_harness.workflows.investigation as module
 
     shell = FakeOpenShell()
 
@@ -112,7 +112,7 @@ async def test_prepare_waits_for_cleanup_through_repeated_cancellation(monkeypat
     import asyncio
     from types import SimpleNamespace
 
-    import infosec_harness.workflow as module
+    import infosec_harness.workflows.investigation as module
 
     uploading, cleaning, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
     shell = FakeOpenShell()

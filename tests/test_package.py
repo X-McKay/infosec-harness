@@ -96,9 +96,9 @@ import infosec_harness.sandbox.executor as executor
 assert pathlib.Path(executor.__file__).is_relative_to(pathlib.Path(sys.prefix))
 assert importlib.util.find_spec('temporalio') is None
 assert importlib.util.find_spec('openshell') is None
-assert 'infosec_harness.workflow' not in sys.modules
+assert 'infosec_harness.workflows.investigation' not in sys.modules
 assert 'infosec_harness.sandbox.openshell' not in sys.modules
-assert 'infosec_harness.repository' not in sys.modules
+assert 'infosec_harness.workflows.snapshot' not in sys.modules
 assert executor.ModelInvocation.model_fields['provider']
 """
     run(python, "-I", "-c", script)

@@ -44,7 +44,7 @@ def worker(
 ):
     """Run the Temporal worker with native PydanticAI model/tool activities."""
     from infosec_harness.web import connect
-    from infosec_harness.workflow import create_worker
+    from infosec_harness.workflows.worker import create_worker
 
     settings = get_settings()
     if task_queue:
