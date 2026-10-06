@@ -20,7 +20,8 @@ and live inference `not_checked`.
 
 Download release archives only through the manifest-checking helper. It validates SHA-256
 before publishing files beneath `.harness/openshell/artifacts/`; the separate official-image
-OCI digests remain in the same manifest.
+OCI digests remain in the same manifest. The release `gateway-linux-arm64` is the base
+runtime; a complete evaluation cohort needs the [patched gateway](#patched-gateway-build).
 
 ```bash
 for artifact in cli-macos-arm64 gateway-linux-arm64 supervisor-linux-arm64 sandbox-linux-arm64 sdk-wheel; do
@@ -39,7 +40,11 @@ the manifest-verified index digest
 OpenJDK 17, which supports both the Java 7 compatibility corpus and Java 17 corpus. The
 observed Java executables are `/usr/lib/jvm/java-17-openjdk-arm64/bin/java` and
 `/usr/lib/jvm/java-17-openjdk-arm64/bin/javac`; workspace policies should allow only those
-observed compiler/runtime paths when Java package egress is needed.
+observed compiler/runtime paths when Java package egress is needed. The image adds Node.js
+and npm, Maven, Perl with cpanminus, `libdbi-perl` and `libdbd-sqlite3-perl` (CPAN is not
+reachable under the workspace policy), gcc and make. Every command runs under
+`/usr/bin/timeout`, and shell commands under `/bin/bash`, so workload images must provide both;
+the model executor image needs `/usr/bin/timeout`.
 
 ```bash
 set -a
@@ -68,6 +73,9 @@ files.
 Build the separate, minimal model executor from the current module and hash-locked dependency
 closure. The context generator copies only `model_executor.py`; choose a new output directory
 for each build. It contains no Temporal worker, controller, repository snapshot or credentials.
+Rebuild and reload it, and record the new image ID in the model profile, whenever
+`model_executor.py` changes. An older image silently ignores new `ModelInvocation` fields
+(for example `timeout_seconds`), because unknown fields are not rejected there.
 
 ```bash
 .harness/bin/mise exec -- uv run --locked python deploy/openshell/build_context.py \
@@ -118,6 +126,24 @@ is launched with the pinned binary, its private config, the Docker driver and mT
 Run its configuration preflight before startup and independently inspect the guest process and
 selected daemon socket afterward.
 
+## Private checkout state
+
+Everything below lives under the checkout's ignored `.harness/` directory and is never
+committed. VM state itself lives under `~/.cache/ih/<checkout-id>/`.
+
+| Path | Contents |
+| --- | --- |
+| `bin/`, `mise/`, `mise-cache/`, `mise-state/`, `tools/`, `downloads/` | Pinned, hash-verified managed tools (mise, Docker CLI, Lima) |
+| `dev.env` | Generated ports, compose project, builder and build-egress proxy; private, do not print |
+| `runtime-home` | Path of this checkout's Lima home |
+| `openshell/artifacts/` | Hash-verified OpenShell release archives |
+| `openshell/*.tar`, `openshell/executor-context/` | Workspace and executor image build outputs |
+| `openshell/gateway-build/` | Patched-gateway `src/`, `vendor/` and `out/` |
+| `openshell/private/` | Gateway config, PKI, runtime JSON, policies, logs and private reports; `0700`/`0600` |
+| `openshell/private/live-eval-*/` | One cohort's frozen `settings.json`, reports, logs and diagnostics |
+| `workspace/` | Worker source snapshots (`HARNESS_WORKSPACE_DIR`) |
+| `reports/` | Timestamped `openshell-*` (qualify) and `model-*` (eval) reports |
+
 ## Configuration contract
 
 The private gateway TOML uses the v0.1.2 configuration schema, `version = 2`, which the live
@@ -134,6 +160,7 @@ name = "checkout-openshell"
 bind_address = "127.0.0.1"
 health_bind_address = "127.0.0.1"
 log_level = "info"
+max_mutation_admissions_per_caller = 10000   # patched binary only; see below
 compute_driver = "docker"
 disable_tls = false
 guest_tls_ca = "/var/lib/ih-openshell/<checkout-id>/certs/ca.crt"
@@ -209,6 +236,14 @@ must not. This is the JSON contract consumed by the adapter:
 }
 ```
 
+Four optional runtime JSON bounds have defaults: `max_output_bytes` (262144),
+`max_transfer_bytes` (16777216), `max_timeout_seconds` (300) and `ready_timeout_seconds`
+(120). Keep `max_output_bytes` at the default or higher: the shell wrapper can emit about
+260 kB, and larger output becomes unknown execution. `command_timeout_seconds` in the worker's
+limits must not exceed `max_timeout_seconds`. `HARNESS_OPENSHELL_CONFIG` defaults to
+`.harness/openshell/runtime.json`; point it, or `openshell_config` in a settings file, at the
+private runtime JSON.
+
 Policies are authored operator configuration, not execution evidence. This minimal example
 permits only the two exact Python package hosts; add other exact hosts and observed client
 binary paths only for required toolchains. The qualified toolchain profile also allows
@@ -271,9 +306,11 @@ admission without dispatching inference.
 The pinned 0.1.2 gateway admits at most 1,000 retained durable mutations per caller in 24
 hours, which a full cohort exceeds. `deploy/openshell/patches/` carries the tracked patch that
 makes that quota the validated config key `openshell.gateway.max_mutation_admissions_per_caller`
-(default 1000). Build the patched binary reproducibly from the exact pinned source, vendored
-crates and the pinned Rust image through the qualified build-egress builder; the build runs
-offline after the base image and `cmake` package:
+(default 1000); only the patched binary reads that key. Build the patched binary reproducibly
+from the exact pinned source, vendored crates and the pinned `rust:1.95.0-trixie` image through
+the qualified build-egress builder; the build runs offline after the base image and `cmake`
+package. From a worktree, set `HARNESS_DIR=/path/to/main/checkout/.harness` so the script uses
+that checkout's managed tools, `dev.env` and build context:
 
 ```bash
 B=.harness/openshell/gateway-build
@@ -284,10 +321,33 @@ git -C "$B/src" checkout "$(python3 -c 'import json;print(json.load(open(".dev-t
 ```
 
 `gateway-build.json` records the upstream commit, patch hashes, Rust image digest and binary
-SHA-256; keep it with the qualification evidence. Installing the binary into the guest and
-restarting the gateway is an operator rollout step handled by `scripts/openshell_gateway.py`
-(see its module docstring); it keeps the previous binary and configuration for rollback and
-never modifies the admission ledger.
+SHA-256; keep it with the qualification evidence. Roll it out with `scripts/openshell_gateway.py`,
+run as root in the guest. Each step is fail-closed: `install` checks the recorded SHA-256 and
+places the binary beside the old one, `set-quota` backs up `gateway.toml` and preflights the
+candidate configuration with the given binary, `restart` refuses while the dedicated daemon
+has live workloads (stop owned workers first) and swaps only a verified gateway process, and
+`status` reports the running binary, its hash, health and quota. The admission ledger is
+never modified, and the previous binary and configuration stay for rollback.
+
+```bash
+CHECKOUT_ID="$(basename "$(cat .harness/runtime-home)")"
+LIMA_VERSION="$(awk -F= '$1 == "LIMA_VERSION" {print $2}' .dev-tools/versions.env)"
+gateway() {
+  LIMA_HOME="$(cat .harness/runtime-home)" \
+    ".harness/tools/lima-${LIMA_VERSION}/bin/limactl" shell --tty=false --workdir "$PWD" h \
+    sudo --non-interactive python3 "$PWD/scripts/openshell_gateway.py" \
+    --checkout-id "$CHECKOUT_ID" "$@"
+}
+NEW="/var/lib/ih-openshell/$CHECKOUT_ID/bin/openshell-gateway-<label>"
+gateway status
+gateway install --source "$PWD/$B/out/openshell-gateway" \
+  --sha256 "<binary_sha256 from gateway-build.json>" --name openshell-gateway-<label>
+gateway set-quota --binary "$NEW" --quota 10000
+gateway restart --binary "$NEW"
+gateway status
+```
+
+Requalify with `./dev qualify` after the swap.
 
 ## Qualification and evaluation
 
@@ -317,14 +377,14 @@ native model provider. Run the unchanged registered corpus with:
 `./dev eval` runs an owned worker in-process on a fresh `investigate-v11-eval-<hex>` queue,
 recorded in the report, and keeps it up until every owned workflow and its cleanup is
 terminal. If the process is killed, drain cleanup with the same code and configuration:
-`./dev worker [--settings settings.json] --task-queue <task_queue>`. `--settings` uses exactly that
-JSON file and ignores `HARNESS_*` variables. `--keep-going` continues only after a terminal
-agent-level failure: an exhausted budget, invalid model output after corrections, or a
-`ModelExecutorError` (the executor exited without a complete response, including a kill at
+`./dev worker [--settings settings.json] --task-queue <task_queue>`. `--settings` uses exactly
+that JSON file and ignores `HARNESS_*` variables. `--keep-going` continues only after a
+terminal agent-level failure: an exhausted budget, invalid model output after corrections, or
+a `ModelExecutorError` (the executor exited without a complete response, including a kill at
 the request budget; that request is never resent). Any other timeout, transport, identity,
-unknown-dispatch, native or cleanup failure stops the cohort. No case is re-run, and an incomplete cohort
-fails. `replay` re-executes the history against current workflow code with model and native
-dispatch disabled.
+unknown-dispatch, native or cleanup failure stops the cohort. No case is re-run, and an
+incomplete cohort fails. `replay` re-executes the history against current workflow code with
+model and native dispatch disabled.
 
 Review the manifest, endpoint, model, dataset hashes, report destination and bounded request
 budget before dispatch. Setup, native qualification and deterministic tests make zero model
