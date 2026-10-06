@@ -102,7 +102,7 @@ def temporal_connection_options(settings: Settings) -> dict[str, Any]:
     if settings.temporal_api_key_file:
         key = settings.temporal_api_key_file.read_text().strip()
         if not key:
-            raise ValueError("Temporal API key file is empty")
+            raise ValueError(f"Temporal API key file {settings.temporal_api_key_file} is empty")
     if key:
         options["api_key"] = key
     return options
