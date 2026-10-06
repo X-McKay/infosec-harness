@@ -31,6 +31,20 @@ metadata:
 - **Sinks to note:** `Statement.executeQuery` with concatenation, `Runtime.exec`/`ProcessBuilder`,
   `new File(dir, name)`, `ObjectInputStream.readObject`, `DocumentBuilderFactory`,
   `RestTemplate`/`HttpClient` with dynamic URLs, unescaped JSP/Thymeleaf output.
+- **Before the first Maven, Gradle or `java` command**, run this in the workspace and keep it
+  for every later command (the sandbox user has no home directory, so Java otherwise writes
+  into a directory literally named `?`):
+
+  ```bash
+  export JAVA_TOOL_OPTIONS="-Duser.home=/workspace/repo/.harness-home -Djava.net.preferIPv4Stack=true"
+  mvn -q -Dmaven.repo.local=/workspace/repo/.m2 dependency:go-offline
+  ```
+
+  Then run tests with `mvn -o -Dmaven.repo.local=/workspace/repo/.m2 -Dtest=<Class> test`.
+  Dependencies resolve only in the workspace, never in the offline probe. If `go-offline`
+  fails, read the first error and fix that cause (the `environment` skill covers the trust
+  store); do not search the filesystem for jars, do not use `pip`, `curl` or `javac`
+  without the resolved classpath, and do not rerun the same failing command.
 
 ## Completion criteria
 
