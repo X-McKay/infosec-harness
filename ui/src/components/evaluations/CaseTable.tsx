@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   caseMetrics,
@@ -21,6 +21,7 @@ import {
   StatusBadge,
 } from "./common";
 import { EvalLink } from "./links";
+import type { CaseFilters } from "@/lib/search";
 
 const COLUMNS: { key: CaseSortKey; label: string; numeric?: boolean }[] = [
   { key: "name", label: "Case" },
@@ -39,14 +40,40 @@ const COLUMNS: { key: CaseSortKey; label: string; numeric?: boolean }[] = [
 const verdictText = (value: string | null) =>
   value ? value.replaceAll("_", " ") : "—";
 
-export function CaseTable({ cases }: { cases: CohortCase[] }) {
+/**
+ * The case table. Filters come from the URL (`?case=&outcome=&language=`) when the route
+ * passes them, so a filtered view can be shared and survives reloads; otherwise they are local.
+ */
+export function CaseTable({
+  cases,
+  filters: routeFilters,
+  onFilters,
+}: {
+  cases: CohortCase[];
+  filters?: CaseFilters;
+  onFilters?: (filters: CaseFilters) => void;
+}) {
   const [sort, setSort] = useState<{ key: CaseSortKey; descending: boolean }>({
     key: "name",
     descending: false,
   });
-  const [search, setSearch] = useState("");
-  const [outcome, setOutcome] = useState<Outcome | "">("");
-  const [language, setLanguage] = useState("");
+  const [localFilters, setLocalFilters] = useState<CaseFilters>({});
+  const filters = onFilters ? (routeFilters ?? {}) : localFilters;
+  const setFilters = (patch: CaseFilters) => {
+    const next = { ...filters, ...patch };
+    for (const key of Object.keys(next) as (keyof CaseFilters)[])
+      if (!next[key]) delete next[key];
+    if (onFilters) onFilters(next);
+    else setLocalFilters(next);
+  };
+  const search = filters.case ?? "";
+  // The URL keeps the trimmed filter; the box keeps what was typed (spaces included).
+  const [draft, setDraft] = useState(search);
+  useEffect(() => {
+    setDraft((current) => (current.trim() === search ? current : search));
+  }, [search]);
+  const outcome = filters.outcome ?? "";
+  const language = filters.language ?? "";
   const [open, setOpen] = useState<Set<number>>(new Set());
   const languages = useMemo(
     () =>
@@ -90,8 +117,11 @@ export function CaseTable({ cases }: { cases: CohortCase[] }) {
           <input
             className="field w-56"
             placeholder="Filter by case or error type"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
+            value={draft}
+            onChange={(event) => {
+              setDraft(event.target.value);
+              setFilters({ case: event.target.value.trim() || undefined });
+            }}
           />
         </label>
         <label className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -99,7 +129,13 @@ export function CaseTable({ cases }: { cases: CohortCase[] }) {
           <select
             className="field"
             value={outcome}
-            onChange={(event) => setOutcome(event.target.value as Outcome | "")}
+            onChange={(event) =>
+              setFilters({
+                outcome: (event.target.value || undefined) as
+                  | Outcome
+                  | undefined,
+              })
+            }
           >
             <option value="">All</option>
             {(Object.keys(OUTCOME_LABELS) as Outcome[]).map((key) => (
@@ -114,7 +150,9 @@ export function CaseTable({ cases }: { cases: CohortCase[] }) {
           <select
             className="field"
             value={language}
-            onChange={(event) => setLanguage(event.target.value)}
+            onChange={(event) =>
+              setFilters({ language: event.target.value || undefined })
+            }
           >
             <option value="">All</option>
             {languages.map((key) => (
@@ -305,18 +343,33 @@ function CaseDetail({ item }: { item: CohortCase }) {
   return (
     <div className="space-y-3 py-1">
       <dl className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Field label="Workflow ID" mono>
+        <Field
+          label="Workflow ID"
+          mono
+          copy={{ value: item.workflow_id, label: "Copy workflow ID" }}
+        >
           {item.workflow_id ?? "Not started"}
         </Field>
         <Field label="Started">{timestamp(item.started_at)}</Field>
         <Field label="Finished">{timestamp(item.finished_at)}</Field>
-        <Field label="Source digest" mono>
+        <Field
+          label="Source digest"
+          mono
+          copy={{ value: item.source_digest, label: "Copy source digest" }}
+        >
           {shortHash(item.source_digest, 16) ?? "Unavailable"}
         </Field>
         <Field label="Input / output tokens">
           {integer(metrics.inputTokens)} / {integer(metrics.outputTokens)}
         </Field>
-        <Field label="Worker fingerprint" mono>
+        <Field
+          label="Worker fingerprint"
+          mono
+          copy={{
+            value: item.worker_identity?.fingerprint,
+            label: "Copy worker fingerprint",
+          }}
+        >
           {shortHash(item.worker_identity?.fingerprint) ?? "Unavailable"}
         </Field>
         {kind && <Field label="Failure class">{FAILURE_LABELS[kind]}</Field>}

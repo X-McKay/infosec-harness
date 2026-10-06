@@ -1,5 +1,6 @@
 import type { components } from "@/api/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { CopyButton } from "@/components/ui/copy-button";
 import { number } from "@/lib/format";
 
 type Result = components["schemas"]["InvestigationResult"];
@@ -18,11 +19,25 @@ function usageRows(usage: Result["usage"]): [string, number | null][] {
   });
 }
 
-function Field({ label, value }: { label: string; value: string }) {
+function Field({
+  label,
+  value,
+  copy,
+}: {
+  label: string;
+  value: string;
+  /** Accessible name of a copy button for the value, when it is worth copying. */
+  copy?: string;
+}) {
   return (
     <div className="min-w-0">
       <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="mt-1 break-all font-mono text-xs">{value}</dd>
+      <dd className="mt-1 flex items-start gap-1">
+        <span className="min-w-0 break-all font-mono text-xs leading-6">
+          {value}
+        </span>
+        {copy && value && <CopyButton value={value} label={copy} />}
+      </dd>
     </div>
   );
 }
@@ -46,15 +61,28 @@ export function RunIdentity({ result }: { result: Result }) {
         <CardContent className="space-y-4">
           <dl className="grid gap-4 sm:grid-cols-2">
             <Field label="Model" value={result.model || "Unavailable"} />
-            <Field label="Source digest" value={result.source_digest} />
+            <Field
+              label="Source digest"
+              value={result.source_digest}
+              copy="Copy source digest"
+            />
             {identity ? (
               <>
                 <Field
                   label="Worker fingerprint"
                   value={identity.fingerprint}
+                  copy="Copy worker fingerprint"
                 />
-                <Field label="Code SHA-256" value={identity.code_sha256} />
-                <Field label="Config SHA-256" value={identity.config_sha256} />
+                <Field
+                  label="Code SHA-256"
+                  value={identity.code_sha256}
+                  copy="Copy code SHA-256"
+                />
+                <Field
+                  label="Config SHA-256"
+                  value={identity.config_sha256}
+                  copy="Copy config SHA-256"
+                />
               </>
             ) : (
               <Field label="Worker identity" value="Not recorded" />

@@ -80,9 +80,6 @@ h1 {
 .nav-link.selected svg {
   color: hsl(var(--primary));
 }
-.appearance-control {
-  width: 8rem;
-}
 /* Layered so utilities such as pl-8 or mt-2 can adjust these per use. */
 @layer components {
   .field {
@@ -125,20 +122,62 @@ h1 {
   text-align: center;
   padding: 3rem 1rem;
 }
-.data-table {
-  width: 100%;
-  font-size: 12px;
-  text-align: left;
+/*
+ * Data tables. Layered and zero-specificity on the cells (:where) so utilities such as
+ * text-foreground, text-right or whitespace-nowrap on a cell always win. Body cells align on
+ * their first text baseline, so badges, numbers and wrapped text line up across a row.
+ */
+@layer components {
+  .data-table {
+    width: 100%;
+    font-size: 12px;
+    text-align: left;
+  }
+  .data-table :where(th, td) {
+    padding: 0.7rem 0.5rem;
+    border-bottom: 1px solid hsl(var(--border));
+    vertical-align: baseline;
+  }
+  .data-table :where(th) {
+    color: hsl(var(--muted-foreground));
+    font-weight: 500;
+  }
+  /* A first column that stays in view while a wide table scrolls sideways in its card. */
+  .data-table .sticky-column {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background: hsl(var(--card));
+    box-shadow: inset -1px 0 0 hsl(var(--border));
+  }
+  /* Column headers stay on one line and sit on the header rule. */
+  .data-table :where(thead th) {
+    white-space: nowrap;
+    vertical-align: bottom;
+  }
 }
-.data-table th {
-  color: hsl(var(--muted-foreground));
-  font-weight: 500;
+kbd {
+  display: inline-block;
+  min-width: 1.25rem;
+  border: 1px solid hsl(var(--border));
+  border-bottom-width: 2px;
+  border-radius: 0.25rem;
+  padding: 0 0.3rem;
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.1rem;
+  text-align: center;
 }
-.data-table th,
-.data-table td {
-  padding: 0.7rem 0.5rem;
-  border-bottom: 1px solid hsl(var(--border));
-  vertical-align: top;
+/* The live indicator's dot; the reduced-motion rule below stops it. */
+.live-dot {
+  animation: live-pulse 2s ease-in-out infinite;
+}
+@keyframes live-pulse {
+  50% {
+    opacity: 0.35;
+  }
 }
 *:focus-visible {
   outline: 2px solid hsl(var(--ring));
@@ -152,17 +191,24 @@ h1 {
     transition: none !important;
   }
 }
+/* Phone header: the navigation is one scrolling row; links keep a 32px touch height. */
 @media (max-width: 767px) {
-  .sidebar {
-    flex-wrap: wrap;
+  .nav-row {
+    scrollbar-width: none;
+    /* The fade at the right edge says the row scrolls. */
+    mask-image: linear-gradient(
+      to right,
+      #000 calc(100% - 1.5rem),
+      transparent
+    );
+    scroll-padding-inline: 0.75rem;
   }
-  .appearance-control {
-    margin-left: auto;
+  .nav-row::-webkit-scrollbar {
+    display: none;
   }
-  .sidebar nav {
-    flex-basis: 100%;
-    order: 3;
-    flex-wrap: wrap;
-    overflow-x: visible;
+  .nav-link {
+    flex-shrink: 0;
+    gap: 0.4rem;
+    padding: 0.45rem 0.65rem;
   }
 }

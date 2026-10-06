@@ -1,0 +1,9 @@
+{
+  "run_id": "investigate-v11-fixed-0002",
+  "events": [
+    { "at": "2026-10-05T08:00:00+00:00", "kind": "workflow_started", "name": "InvestigationWorkflow", "detail": "" },
+    { "at": "2026-10-05T08:03:00+00:00", "kind": "activity_failed", "name": "run_probe", "detail": "ModelExecutorError" },
+    { "at": "2026-10-05T08:12:00+00:00", "kind": "workflow_completed", "name": null, "detail": "" }
+  ],
+  "truncated": false
+}

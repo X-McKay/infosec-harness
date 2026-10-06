@@ -71,7 +71,7 @@ function CitedEvidence({ result }: { result: Result }) {
                   </span>
                 </span>
                 {gaps.length ? (
-                  <Badge variant="inconclusive">
+                  <Badge variant="warning">
                     {gaps.length} {gaps.length === 1 ? "gap" : "gaps"}
                   </Badge>
                 ) : (

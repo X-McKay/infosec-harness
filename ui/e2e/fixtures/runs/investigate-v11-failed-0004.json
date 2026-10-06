@@ -1,0 +1,16 @@
+{
+  "id": "investigate-v11-failed-0004",
+  "status": "failed",
+  "phase": "finished",
+  "finding": {
+    "title": "XML external entity in invoice import",
+    "description": "The invoice importer parses uploaded XML with the default parser.",
+    "repo_url": "https://git.example.test/acme/billing.git",
+    "revision": "1a2b3c4",
+    "source_mode": "working_snapshot",
+    "file_path": "billing/importer.py",
+    "cwe": "CWE-611"
+  },
+  "result": null,
+  "error": "Activity task failed: OpenShellError: sandbox admission refused"
+}

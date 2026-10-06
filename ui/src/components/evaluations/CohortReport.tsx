@@ -17,6 +17,7 @@ import {
 import { integer, number, percent, seconds, timestamp } from "@/lib/format";
 import { shortHash, type CohortReport } from "@/lib/reports";
 import { CaseTable } from "./CaseTable";
+import type { CaseFilters } from "@/lib/search";
 import { CaseHistogram, RateBar } from "./charts";
 import {
   Field,
@@ -30,7 +31,15 @@ import {
 } from "./common";
 import { FailureList } from "./Failures";
 
-export function CohortReportView({ report }: { report: CohortReport }) {
+export function CohortReportView({
+  report,
+  caseFilters,
+  onCaseFilters,
+}: {
+  report: CohortReport;
+  caseFilters?: CaseFilters;
+  onCaseFilters?: (filters: CaseFilters) => void;
+}) {
   return (
     <div className="space-y-6">
       {report.kind === "diagnostic" && (
@@ -61,7 +70,7 @@ export function CohortReportView({ report }: { report: CohortReport }) {
       </div>
       <SummaryTiles report={report} />
       <Distributions report={report} />
-      <div className="grid gap-5 lg:grid-cols-2">
+      <div className="grid gap-5 2xl:grid-cols-2">
         <BreakdownCard
           title="Pass rate by language"
           rows={breakdown(report.cases, "language")}
@@ -74,7 +83,11 @@ export function CohortReportView({ report }: { report: CohortReport }) {
         />
       </div>
       <PairTable report={report} />
-      <CaseTable cases={report.cases} />
+      <CaseTable
+        cases={report.cases}
+        filters={caseFilters}
+        onFilters={onCaseFilters}
+      />
       <FailureList cases={report.cases} />
       <EstimateCard report={report} />
     </div>
@@ -89,11 +102,15 @@ function Provenance({ report }: { report: CohortReport }) {
   return (
     <Section
       title="Provenance"
-      description="Recorded by the harness when the cohort started. Hashes are shortened; the full values are in the recorded document below."
+      description="Recorded by the harness when the cohort started. Hashes are shortened; each copy button copies the full value, and the recorded document below holds them all."
       action={<StatusBadge status={report.status} />}
     >
       <dl className="grid grid-cols-2 gap-4 text-sm md:grid-cols-4">
-        <Field label="Commit" mono>
+        <Field
+          label="Commit"
+          mono
+          copy={{ value: report.commit, label: "Copy commit" }}
+        >
           {shortHash(report.commit) ?? "Unavailable"}
         </Field>
         <Field label="Generation">{report.generation ?? "Unavailable"}</Field>
@@ -110,13 +127,31 @@ function Provenance({ report }: { report: CohortReport }) {
         <Field label="Finished">
           {report.finished_at ? timestamp(report.finished_at) : "Not finished"}
         </Field>
-        <Field label="Dataset" mono>
+        <Field
+          label="Dataset"
+          mono
+          copy={{ value: report.dataset_sha256, label: "Copy dataset SHA-256" }}
+        >
           {shortHash(report.dataset_sha256) ?? "Unavailable"}
         </Field>
-        <Field label="Runtime config" mono>
+        <Field
+          label="Runtime config"
+          mono
+          copy={{
+            value: report.runtime_config_sha256,
+            label: "Copy runtime config SHA-256",
+          }}
+        >
           {shortHash(report.runtime_config_sha256) ?? "Unavailable"}
         </Field>
-        <Field label="Worker fingerprint" mono>
+        <Field
+          label="Worker fingerprint"
+          mono
+          copy={{
+            value: identity?.fingerprint,
+            label: "Copy worker fingerprint",
+          }}
+        >
           {shortHash(identity?.fingerprint) ?? "Unavailable"}
         </Field>
         <Field label="Worker code / config" mono>

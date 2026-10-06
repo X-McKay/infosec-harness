@@ -1,0 +1,8 @@
+{
+  "run_id": "investigate-v11-running-0003",
+  "events": [
+    { "at": "2026-10-05T11:55:00+00:00", "kind": "workflow_started", "name": "InvestigationWorkflow", "detail": "" },
+    { "at": "2026-10-05T11:55:02+00:00", "kind": "activity_scheduled", "name": "capture_source", "detail": "" }
+  ],
+  "truncated": false
+}

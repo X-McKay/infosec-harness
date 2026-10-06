@@ -1,0 +1,62 @@
+{
+  "id": "investigate-v11-untrusted-0005",
+  "status": "completed",
+  "phase": "finished",
+  "finding": {
+    "title": "<script>window.__e2ePwned=1</script><img src=x onerror=\"window.__e2ePwned=2\"> stored XSS",
+    "description": "<img src=x onerror=\"window.__e2ePwned=3\"> appears in the comment body. <a href=\"javascript:window.__e2ePwned=4\">click</a>",
+    "repo_url": "javascript:window.__e2ePwned=5",
+    "revision": "<b>HEAD</b>",
+    "source_mode": "git_revision",
+    "file_path": "templates/<script>.html",
+    "cwe": "CWE-79"
+  },
+  "result": {
+    "finding": {
+      "title": "<script>window.__e2ePwned=1</script><img src=x onerror=\"window.__e2ePwned=2\"> stored XSS",
+      "description": "<img src=x onerror=\"window.__e2ePwned=3\"> appears in the comment body.",
+      "repo_url": "javascript:window.__e2ePwned=5",
+      "revision": "<b>HEAD</b>",
+      "source_mode": "git_revision",
+      "file_path": "templates/<script>.html",
+      "cwe": "CWE-79"
+    },
+    "verdict": {
+      "label": "inconclusive",
+      "summary": "Model said: <script>window.__e2ePwned=6</script> and <img src=x onerror=\"window.__e2ePwned=7\">",
+      "evidence_ids": ["<img src=x onerror=window.__e2ePwned=8>"],
+      "citations": [
+        { "path": "javascript:window.__e2ePwned=9", "start_line": 1, "end_line": 2 }
+      ],
+      "superseded_evidence_ids": []
+    },
+    "evidence": [
+      {
+        "id": "<img src=x onerror=window.__e2ePwned=8>",
+        "kind": "probe",
+        "command": "echo '<script>window.__e2ePwned=10</script>'",
+        "exit_code": 0,
+        "stdout": "<script>window.__e2ePwned=11</script>\n<img src=x onerror=\"window.__e2ePwned=12\">\nHARNESS_PROBE {\"target_reached\": true, \"vulnerability_observed\": \"<img src=x onerror=1>\"}\n",
+        "stderr": "<iframe src=\"javascript:window.__e2ePwned=13\"></iframe>",
+        "timed_out": false,
+        "output_truncated": false,
+        "sandbox_id": "<script>sbx</script>",
+        "source_digest": "sha256:<img>",
+        "observations": {
+          "target_reached": true,
+          "vulnerability_observed": "<img src=x onerror=1>",
+          "origin": "<script>self_reported</script>",
+          "note": "<a href=\"javascript:window.__e2ePwned=14\">see</a>"
+        }
+      }
+    ],
+    "source_digest": "sha256:<img>",
+    "model": "<script>model</script>",
+    "worker_identity": null,
+    "usage": { "requests": 3 },
+    "limitations": [
+      "<a href=\"javascript:window.__e2ePwned=15\">click me</a> was printed by the probe."
+    ]
+  },
+  "error": null
+}

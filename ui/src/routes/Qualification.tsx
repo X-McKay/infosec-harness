@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { QualificationReportView } from "@/components/evaluations/QualificationReport";
 import { Section, StatusBadge } from "@/components/evaluations/common";
 import { EvalLink } from "@/components/evaluations/links";
-import { reportQuery, reportsQuery } from "@/api/queries";
+import { REPORTS_REFRESH_MS, reportQuery, reportsQuery } from "@/api/queries";
 import { timestamp } from "@/lib/format";
 import { reportPath } from "@/lib/reports";
 
@@ -41,6 +41,7 @@ export function Qualification() {
             at={list.data ? list.dataUpdatedAt : undefined}
             fetching={list.isFetching || detail.isFetching}
             stale={list.isError && !!list.data}
+            live={REPORTS_REFRESH_MS}
           />
           <Button
             variant="outline"
