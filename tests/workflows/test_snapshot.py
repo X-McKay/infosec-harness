@@ -4,7 +4,12 @@ import pytest
 
 from infosec_harness.config import Settings
 from infosec_harness.contracts import Citation, Finding
-from infosec_harness.workflows.snapshot import snapshot, validate_citation
+from infosec_harness.workflows.snapshot import (
+    InvalidCitation,
+    confined,
+    snapshot,
+    validate_citation,
+)
 
 
 @pytest.fixture
@@ -97,6 +102,48 @@ def test_citation_must_exist_inside_exact_source(source):
         validate_citation(repo, Citation(path="target.py", start_line=1, end_line=3))
     with pytest.raises(ValueError, match="relative"):
         validate_citation(repo, Citation(path="../secret", start_line=1, end_line=1))
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        # Live run 12, case c-intoverflow-vulnerable: the verdict cited a probe the agent
+        # wrote in the sandbox. Strict resolution raised FileNotFoundError, a harness error
+        # that failed the investigation and stopped the cohort with eight cases unstarted.
+        "probe.py",
+        "missing/dir/probe.c",
+        "target.py/below-a-file",
+        "sub",  # a directory, not a file
+        "x" * 300,  # a component past NAME_MAX raises ENAMETOOLONG
+    ],
+)
+def test_citation_outside_the_original_snapshot_is_a_named_value_error(source, relative):
+    repo, _, _ = source
+    (repo / "sub").mkdir()
+    with pytest.raises(InvalidCitation, match="is not a file in the original snapshot") as raised:
+        confined(repo, relative)
+    assert isinstance(raised.value, ValueError)
+    assert repr(relative[:200]) in str(raised.value)
+    with pytest.raises(InvalidCitation, match="cite only files that existed before your probes"):
+        validate_citation(repo, Citation(path=relative, start_line=1, end_line=1))
+
+
+def test_citation_symlink_and_escape_refusals_stay_untyped(source, tmp_path):
+    """Capture rejects links, so a link in a snapshot is never the model's mistake."""
+    repo, _, _ = source
+    outside = tmp_path / "outside.py"
+    outside.write_text("secret\n")
+    (repo / "escape.py").symlink_to(outside)
+    (repo / "dangling.py").symlink_to(tmp_path / "absent.py")
+    (repo / "linked").symlink_to(tmp_path, target_is_directory=True)
+    for relative in ("escape.py", "dangling.py", "linked/outside.py", "linked/absent.py"):
+        with pytest.raises(ValueError, match="source symlinks are not supported") as raised:
+            confined(repo, relative)
+        assert not isinstance(raised.value, InvalidCitation), relative
+    with pytest.raises(InvalidCitation, match="line range 1-3 exceeds source file length"):
+        validate_citation(repo, Citation(path="target.py", start_line=1, end_line=3))
+    with pytest.raises(FileNotFoundError):  # an absent snapshot is the harness's failure
+        confined(tmp_path / "absent-snapshot", "target.py")
 
 
 async def test_approved_source_ancestor_substitution_never_imports_external_bytes(

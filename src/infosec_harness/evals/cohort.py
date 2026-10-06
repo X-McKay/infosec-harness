@@ -45,6 +45,7 @@ from infosec_harness.workflows.investigation import (
     FAILURE_CHAIN_LINKS,
     FAILURE_WRAPPERS,
 )
+from infosec_harness.workflows.snapshot import InvalidCitation
 from infosec_harness.workflows.worker import worker_identity, workflow_runner
 
 # The harness checkout: src/infosec_harness/evals/ is three levels below it.
@@ -54,8 +55,13 @@ DRAIN = CLEANUP_RESERVE
 # Terminal agent-level failures that --keep-going may continue past: budgets and invalid model
 # output (raised by workflow code), and ModelExecutorError, an executor that exited without a
 # response under a complete receipt (e.g. a sandbox DNS/connect failure, or a kill at the
-# budget). Unknown dispatch (OpenShellError/ExecutionUnknown) is never in this set.
-AGENT_FAILURES = frozenset({"UsageLimitExceeded", "UnexpectedModelBehavior", "ModelExecutorError"})
+# budget). InvalidCitation is finalization refusing a model citation that names no line range
+# of the original snapshot; a generic ValueError is not agent-level. Unknown dispatch
+# (OpenShellError/ExecutionUnknown) is never in this set.
+AGENT_FAILURES = frozenset({
+    "UsageLimitExceeded", "UnexpectedModelBehavior", "ModelExecutorError",
+    InvalidCitation.__name__,
+})
 # Every link inside an agent-level failure must be one of these: the agent-level types, the
 # ModelRetry an exhausted output correction wraps, and Temporal's wrappers. An allowlist, so
 # an unknown inner type (a timeout, an RPC error, any OpenShellError subclass) stops a cohort.

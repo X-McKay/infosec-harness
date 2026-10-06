@@ -12,6 +12,14 @@ from infosec_harness.agents.investigator import build_agent
 from infosec_harness.sandbox import CommandResult
 
 
+@pytest.fixture
+def snapshot(tmp_path):
+    """An original snapshot holding every file these verdicts cite."""
+    for name in ("app.py", "sink.py", "sink.pl", "reader.py"):
+        (tmp_path / name).write_text("source line\n")
+    return tmp_path
+
+
 @pytest.mark.parametrize("definitive", [False, True])
 async def test_output_feedback_repairs_exact_id_or_failed_probe_without_reexecuting(definitive):
 
@@ -52,7 +60,7 @@ async def test_output_feedback_repairs_exact_id_or_failed_probe_without_reexecut
     assert len(shell.executions) == 1
 
 
-async def test_validator_lets_a_newer_cited_probe_supersede_an_older_flawed_one():
+async def test_validator_lets_a_newer_cited_probe_supersede_an_older_flawed_one(snapshot):
     """Live case 'unreachable' (2026-10-05): an early buggy probe reported vulnerability_observed
     true, three corrected later probes reported false, and the verdict could never be admitted.
     The agent may disown only probes older than the cited one, and must name them."""
@@ -73,7 +81,7 @@ async def test_validator_lets_a_newer_cited_probe_supersede_an_older_flawed_one(
     flawed, corrected = probe("probe:6:a", True), probe("probe:9:b", False)
     later = probe("probe:12:c", True)
     ctx = SimpleNamespace(
-        deps=SimpleNamespace(source_digest="digest"),
+        deps=SimpleNamespace(source_digest="digest", snapshot_path=str(snapshot)),
         messages=[ModelRequest(parts=[
             ToolReturnPart("run_probe", item.model_dump(), tool_call_id=item.id.split(":")[-1])
             for item in (flawed, corrected, later)])],
@@ -111,7 +119,9 @@ async def test_validator_lets_a_newer_cited_probe_supersede_an_older_flawed_one(
         "contrary",
     ],
 )
-async def test_verdict_validator_requires_complete_matching_offline_evidence(failure):
+async def test_verdict_validator_requires_complete_matching_offline_evidence(
+    failure, snapshot
+):
     from pydantic_ai import ModelRetry
 
     from infosec_harness.agents.investigator import validate_verdict
@@ -146,7 +156,7 @@ async def test_verdict_validator_requires_complete_matching_offline_evidence(fai
         observations=observations,
     )
     ctx = SimpleNamespace(
-        deps=SimpleNamespace(source_digest="digest"),
+        deps=SimpleNamespace(source_digest="digest", snapshot_path=str(snapshot)),
         messages=[
             ModelRequest(
                 parts=[
@@ -187,7 +197,7 @@ async def test_verdict_validator_requires_complete_matching_offline_evidence(fai
         assert await validate_verdict(ctx, verdict) == verdict
 
 
-async def test_refusal_the_feedback_cannot_explain_still_names_a_reason(monkeypatch):
+async def test_refusal_the_feedback_cannot_explain_still_names_a_reason(monkeypatch, snapshot):
     """Admission (definitive_support) and explanation (retry_reasons) are separate code; a
     future admission condition must not produce a retry prompt that starts with ". See"."""
     from pydantic_ai import ModelRetry
@@ -197,10 +207,70 @@ async def test_refusal_the_feedback_cannot_explain_still_names_a_reason(monkeypa
 
     monkeypatch.setattr(investigator, "definitive_support", lambda verdict, evidence: ([], [], []))
     monkeypatch.setattr(investigator, "retry_reasons", lambda verdict, evidence: [])
-    ctx = SimpleNamespace(deps=SimpleNamespace(source_digest="digest"), messages=[])
+    ctx = SimpleNamespace(deps=SimpleNamespace(source_digest="digest", snapshot_path=str(snapshot)), messages=[])
     verdict = Verdict(label="likely_not_exploitable", summary="s", evidence_ids=[], citations=[])
     with pytest.raises(ModelRetry, match=r"^No cited probe is a complete, source-verified"):
         await investigator.validate_verdict(ctx, verdict)
+
+
+@pytest.mark.parametrize("label", ["inconclusive", "potentially_exploitable"])
+async def test_validator_refuses_a_citation_outside_the_original_snapshot(snapshot, label):
+    """Live run 12, case c-intoverflow-vulnerable: the verdict cited probe.py, a file the
+    agent wrote in the sandbox. The validator accepted it and finalization failed the run;
+    the model must get bounded feedback instead, whatever the label."""
+    from pydantic_ai import ModelRetry
+
+    from infosec_harness.agents.investigator import validate_verdict
+    from infosec_harness.contracts import Verdict
+
+    ctx = SimpleNamespace(
+        deps=SimpleNamespace(source_digest="digest", snapshot_path=str(snapshot)), messages=[]
+    )
+    verdict = Verdict(
+        label=label,
+        summary="s",
+        citations=[
+            dict(path="sink.py", start_line=1, end_line=1),
+            dict(path="probe.py", start_line=1, end_line=20),
+            dict(path="p" * 4000, start_line=1, end_line=1),
+        ],
+    )
+    with pytest.raises(ModelRetry) as raised:
+        await validate_verdict(ctx, verdict)
+    feedback = str(raised.value)
+    assert feedback.startswith(
+        "citation path 'probe.py' is not a file in the original snapshot; cite only files "
+        "that existed before your probes, or drop the citation"
+    )
+    assert "sink.py" not in feedback
+    assert len(feedback) < 800  # 30 citations at most, each path cut to 200 characters
+    verdict.citations[1:] = []
+    if label == "inconclusive":
+        assert await validate_verdict(ctx, verdict) == verdict
+
+
+async def test_citation_feedback_repairs_the_verdict_before_finalization(snapshot):
+    shell = FakeOpenShell()
+    calls = 0
+
+    def respond(messages, info):
+        nonlocal calls
+        calls += 1
+        response = final_response(info)
+        path = "probe.py" if calls == 1 else "sink.py"
+        response.parts[0].args["citations"] = [dict(path=path, start_line=1, end_line=1)]
+        if calls == 2:
+            assert "'probe.py' is not a file in the original snapshot" in retry_feedback(
+                messages
+            )[-1]
+        return response
+
+    result = await build_agent(shell, FunctionModel(respond)).run(
+        "Inspect", deps=await make_deps(shell, snapshot_path=str(snapshot))
+    )
+    assert [citation.path for citation in result.output.citations] == ["sink.py"]
+    assert calls == 2
+    assert shell.executions == []
 
 
 async def test_output_feedback_is_bounded_and_never_retries_tool_dispatch():
@@ -223,7 +293,9 @@ async def test_output_feedback_is_bounded_and_never_retries_tool_dispatch():
     assert shell.executions == []
 
 
-async def test_failed_offline_probe_and_successful_workspace_execution_require_inconclusive():
+async def test_failed_offline_probe_and_successful_workspace_execution_require_inconclusive(
+    snapshot,
+):
     shell = FakeOpenShell()
     native_execute = shell.execute
 
@@ -269,7 +341,7 @@ async def test_failed_offline_probe_and_successful_workspace_execution_require_i
         return final_response(info, evidence_ids=["probe:1:offline", "execute:2:workspace"])
 
     result = await build_agent(shell, FunctionModel(respond)).run(
-        "Inspect", deps=await make_deps(shell)
+        "Inspect", deps=await make_deps(shell, snapshot_path=str(snapshot))
     )
     assert result.output.label == "inconclusive"
     assert len(shell.executions) == 2
@@ -284,7 +356,7 @@ async def test_failed_offline_probe_and_successful_workspace_execution_require_i
     '"negative_control":1,"vulnerability_observed":1}',
     "probe finished without a marker",
 ])
-async def test_rejected_probe_line_gets_precise_feedback(final_line):
+async def test_rejected_probe_line_gets_precise_feedback(final_line, snapshot):
 
     from infosec_harness.agents.evidence import parse_probe_observations
 
@@ -321,7 +393,7 @@ async def test_rejected_probe_line_gets_precise_feedback(final_line):
         feedback.extend(retry_feedback(messages))
         return final_response(info)
 
-    deps = await make_deps(shell)
+    deps = await make_deps(shell, snapshot_path=str(snapshot))
     result = await build_agent(shell, FunctionModel(respond)).run("Probe", deps=deps)
     assert result.output.label == "inconclusive"
     message = feedback[-1]
@@ -335,7 +407,7 @@ async def test_rejected_probe_line_gets_precise_feedback(final_line):
         assert "did not parse" not in message
 
 
-async def test_split_probe_marker_feedback_repairs_with_new_bounded_probe():
+async def test_split_probe_marker_feedback_repairs_with_new_bounded_probe(snapshot):
 
     from infosec_harness.agents.evidence import parse_probe_observations
 
@@ -395,7 +467,7 @@ async def test_split_probe_marker_feedback_repairs_with_new_bounded_probe():
 
     result = await build_agent(shell, FunctionModel(respond)).run(
         "Inspect",
-        deps=await make_deps(shell),
+        deps=await make_deps(shell, snapshot_path=str(snapshot)),
     )
     assert result.output.label == "potentially_exploitable"
     assert result.output.evidence_ids == ["probe:3:repaired"]
@@ -404,7 +476,7 @@ async def test_split_probe_marker_feedback_repairs_with_new_bounded_probe():
     assert shell.executions[0][2] != shell.executions[1][2]
 
 
-async def test_blocked_target_feedback_requires_new_complete_probe():
+async def test_blocked_target_feedback_requires_new_complete_probe(snapshot):
 
     shell = FakeOpenShell()
     native_execute = shell.execute
@@ -457,7 +529,7 @@ async def test_blocked_target_feedback_requires_new_complete_probe():
 
     result = await build_agent(shell, FunctionModel(respond)).run(
         "Inspect",
-        deps=await make_deps(shell),
+        deps=await make_deps(shell, snapshot_path=str(snapshot)),
     )
     assert result.output.label == "likely_not_exploitable"
     assert result.output.evidence_ids == ["probe:3:repaired"]
