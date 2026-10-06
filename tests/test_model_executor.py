@@ -14,7 +14,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.usage import RequestUsage
 
-from infosec_harness.model_executor import RESPONSE, ModelInvocation, execute
+from infosec_harness.sandbox.executor import RESPONSE, ModelInvocation, execute
 
 
 def test_reasoning_usage_extensions_survive_next_turn_transport():

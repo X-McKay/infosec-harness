@@ -2,7 +2,7 @@ import sys
 
 import pytest
 
-from infosec_harness.process import run_bounded
+from infosec_harness.sandbox.process import run_bounded
 
 
 @pytest.mark.asyncio

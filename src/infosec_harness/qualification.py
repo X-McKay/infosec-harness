@@ -8,8 +8,8 @@ from uuid import uuid4
 
 from infosec_harness._io import write_json
 from infosec_harness.config import get_settings
-from infosec_harness.openshell import OpenShell, OpenShellConfig
-from infosec_harness.process import _finish
+from infosec_harness.sandbox import OpenShell, OpenShellConfig
+from infosec_harness.sandbox.process import _finish
 
 
 async def qualify_runtime(output: Path) -> dict:

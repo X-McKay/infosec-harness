@@ -21,8 +21,8 @@ from temporalio.exceptions import ApplicationError
 from infosec_harness._io import write_json
 from infosec_harness.identity import worker_identity
 from infosec_harness.models import Finding, InvestigationResult
-from infosec_harness.openshell import OpenShell, OpenShellConfig, native_operation_accounting
-from infosec_harness.process import _finish
+from infosec_harness.sandbox import OpenShell, OpenShellConfig, native_operation_accounting
+from infosec_harness.sandbox.process import _finish
 from infosec_harness.web import PREFIX, RPC_TIMEOUT, connect, execution_timeout, start_investigation
 
 # Covers prepare's waited cancellation and three bounded cleanup attempts of an owned run.

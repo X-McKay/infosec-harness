@@ -9,7 +9,7 @@ from pydantic_ai.models.function import FunctionModel
 
 from infosec_harness.agent import InvestigationDeps, build_agent
 from infosec_harness.models import Finding, InvestigationRequest
-from infosec_harness.openshell import CommandResult, Sandbox
+from infosec_harness.sandbox import CommandResult, Sandbox
 
 
 class FakeOpenShell:
@@ -356,7 +356,7 @@ def test_probe_markers_require_exact_final_json_and_boolean_claims():
 
 
 async def test_modified_source_refuses_probe_and_closes_offline_sandbox(tmp_path):
-    from infosec_harness.openshell import OpenShellError
+    from infosec_harness.sandbox import OpenShellError
 
     shell = FakeOpenShell()
     (tmp_path / "sink.py").write_text("original source\n")
@@ -906,7 +906,7 @@ async def test_blocked_target_feedback_requires_new_complete_probe():
 
 @pytest.mark.parametrize("failure", ["unsafe", "unknown", "boundary", "source"])
 async def test_post_probe_integrity_failure_recovery_is_narrow(failure):
-    from infosec_harness.openshell import (
+    from infosec_harness.sandbox import (
         ExecutionUnknown,
         OpenShellError,
         UnsafeSnapshotMetadata,
@@ -1029,7 +1029,7 @@ async def test_refused_probe_after_original_source_change_is_feedback_not_failur
     stays; it now returns bounded feedback the agent can act on, with no receipt to cite."""
     from pydantic_ai.messages import RetryPromptPart
 
-    from infosec_harness.openshell import OpenShellError
+    from infosec_harness.sandbox import OpenShellError
 
     shell = FakeOpenShell()
 

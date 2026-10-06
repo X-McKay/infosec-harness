@@ -15,15 +15,15 @@ from google.protobuf.json_format import MessageToDict
 from openshell._proto import datamodel_pb2 as data
 from openshell._proto import openshell_pb2 as pb
 
-from infosec_harness.openshell import (
+from infosec_harness.sandbox import (
     ExecutionUnknown,
     OpenShell,
     OpenShellConfig,
     OpenShellError,
     Profile,
     UnsafeSnapshotMetadata,
-    _path,
 )
+from infosec_harness.sandbox.transfer import _path
 
 
 class Stream:
@@ -492,7 +492,7 @@ async def test_archive_over_one_gateway_message_is_restored_in_parts(adapter):
     """Live 2026-10-05: a 2.6 MB Java workspace restore failed because the pinned gateway
     decodes at most 1 MiB per gRPC message. Parts stay under that bound, each is its own
     receipt, and the final extraction runs inside the sandbox from the staged file."""
-    from infosec_harness.openshell import _PART_BYTES
+    from infosec_harness.sandbox.transfer import _PART_BYTES
 
     boundary, native = adapter
     source = await boundary.create("run")

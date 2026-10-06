@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_standalone_executor_has_no_worker_runtime_imports():
-    source = ROOT / "src/infosec_harness/model_executor.py"
+    source = ROOT / "src/infosec_harness/sandbox/executor.py"
     tree = ast.parse(source.read_text())
     allowed = {
         "asyncio",
@@ -35,6 +35,19 @@ def test_standalone_executor_has_no_worker_runtime_imports():
         elif isinstance(node, ast.ImportFrom):
             assert node.level == 0
             assert node.module and node.module.split(".")[0] in allowed
+
+
+def test_executor_import_loads_no_other_package_module():
+    """The package initialisers stay lazy, so the shipped executor imports alone."""
+    script = (
+        "import sys, infosec_harness.sandbox.executor; "
+        "print(sorted(m for m in sys.modules if m.startswith('infosec_harness')))"
+    )
+    loaded = subprocess.run(
+        [sys.executable, "-c", script], check=True, capture_output=True, text=True
+    ).stdout.strip()
+    expected = ["infosec_harness", "infosec_harness.sandbox", "infosec_harness.sandbox.executor"]
+    assert loaded == repr(expected)
 
 
 @pytest.mark.network
@@ -67,7 +80,7 @@ def test_installed_wheel_executor_imports_with_only_native_provider_dependencies
         names = set(artifact.namelist())
         assert "infosec_harness/skills/investigate/SKILL.md" in names
         assert "infosec_harness/release-policy.yaml" in names
-        assert "infosec_harness/model_executor.py" in names
+        assert "infosec_harness/sandbox/executor.py" in names
     environment = tmp_path / "environment"
     run(uv, "venv", "--python", sys.executable, environment)
     python = environment / "bin/python"
@@ -79,12 +92,12 @@ def test_installed_wheel_executor_imports_with_only_native_provider_dependencies
     run(uv, "pip", "install", "--python", python, f"pydantic-ai-slim[openai,bedrock]=={version}")
     script = """
 import importlib.util, pathlib, sys
-import infosec_harness.model_executor as executor
+import infosec_harness.sandbox.executor as executor
 assert pathlib.Path(executor.__file__).is_relative_to(pathlib.Path(sys.prefix))
 assert importlib.util.find_spec('temporalio') is None
 assert importlib.util.find_spec('openshell') is None
 assert 'infosec_harness.workflow' not in sys.modules
-assert 'infosec_harness.openshell' not in sys.modules
+assert 'infosec_harness.sandbox.openshell' not in sys.modules
 assert 'infosec_harness.repository' not in sys.modules
 assert executor.ModelInvocation.model_fields['provider']
 """

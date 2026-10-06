@@ -17,7 +17,7 @@ from test_agent import FakeOpenShell, final_response
 
 from infosec_harness.agent import InvestigationDeps, build_agent
 from infosec_harness.models import Citation, Finding, InvestigationRequest, Limits, Verdict
-from infosec_harness.openshell import Sandbox
+from infosec_harness.sandbox import Sandbox
 from infosec_harness.workflow import (
     FinalizeInvestigation,
     InvestigationActivities,
@@ -54,8 +54,9 @@ def test_worker_refuses_command_budget_above_runtime_maximum(tmp_path, monkeypat
     refuse to start instead of silently capping only the model timeout."""
     import temporalio.worker
 
-    from infosec_harness import openshell, workflow
+    from infosec_harness import workflow
     from infosec_harness.config import get_settings
+    from infosec_harness.sandbox import openshell
 
     config = tmp_path / "runtime.json"
     config.write_text("{}")
@@ -324,7 +325,7 @@ async def test_definitive_verdict_without_execution_becomes_inconclusive(tmp_pat
 async def test_negative_verdict_requires_both_declared_controls(tmp_path, negative_control):
     import json
 
-    from infosec_harness.openshell import CommandResult
+    from infosec_harness.sandbox import CommandResult
 
     shell = FakeOpenShell()
     request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
@@ -381,7 +382,7 @@ async def test_negative_verdict_requires_both_declared_controls(tmp_path, negati
 async def test_report_excerpts_do_not_invalidate_complete_native_probe(tmp_path):
     import json
 
-    from infosec_harness.openshell import CommandResult
+    from infosec_harness.sandbox import CommandResult
 
     shell = FakeOpenShell()
     request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
@@ -435,7 +436,7 @@ async def test_finalize_detects_wrapper_cut_in_receipts(tmp_path):
     import json
 
     from infosec_harness.agent import TRUNCATION_MARKER
-    from infosec_harness.openshell import CommandResult
+    from infosec_harness.sandbox import CommandResult
 
     shell = FakeOpenShell()
     request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
@@ -695,7 +696,7 @@ async def test_complete_contrary_probe_prevents_definitive_verdict_even_when_unc
 ):
     import json
 
-    from infosec_harness.openshell import CommandResult
+    from infosec_harness.sandbox import CommandResult
 
     shell = FakeOpenShell()
     request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
@@ -750,7 +751,7 @@ async def test_complete_contrary_probe_prevents_definitive_verdict_even_when_unc
 async def test_incomplete_contrary_probe_is_not_a_qualified_observation(tmp_path, defect):
     import json
 
-    from infosec_harness.openshell import CommandResult
+    from infosec_harness.sandbox import CommandResult
 
     shell = FakeOpenShell()
     request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))

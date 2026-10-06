@@ -291,7 +291,7 @@ async def test_result_transport_outage_is_bounded_and_cancelled_once(
 
 
 def test_native_receipt_counts_include_unknown_and_do_not_double_count_replay(tmp_path):
-    from infosec_harness.openshell import native_operation_accounting
+    from infosec_harness.sandbox import native_operation_accounting
 
     sandbox = {"run_id": "run", "id": "native-id"}
     records = {

@@ -6,11 +6,12 @@ ARG HTTPS_PROXY
 COPY requirements.txt /tmp/requirements.txt
 RUN python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r /tmp/requirements.txt \
     && rm /tmp/requirements.txt
-RUN install -d -m 0755 /usr/local/lib/python3.12/site-packages/infosec_harness
+RUN install -d -m 0755 /usr/local/lib/python3.12/site-packages/infosec_harness/sandbox
 COPY --chmod=0644 infosec_harness/*.py /usr/local/lib/python3.12/site-packages/infosec_harness/
+COPY --chmod=0644 infosec_harness/sandbox/*.py /usr/local/lib/python3.12/site-packages/infosec_harness/sandbox/
 RUN mkdir -p /workspace && chown 65532:65532 /workspace
 ENV PYTHONDONTWRITEBYTECODE=1
 USER 65532:65532
 WORKDIR /tmp
 ENTRYPOINT []
-CMD ["python", "-I", "-m", "infosec_harness.model_executor"]
+CMD ["python", "-I", "-m", "infosec_harness.sandbox.executor"]

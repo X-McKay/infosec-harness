@@ -21,7 +21,6 @@ from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
 from temporalio.worker import ActivityInboundInterceptor, Interceptor
 
-from .model_executor import MAX_INVOCATION_BYTES
 from .models import (
     Evidence,
     InvestigationRequest,
@@ -29,13 +28,14 @@ from .models import (
     WorkerIdentity,
     definitive_support,
 )
-from .openshell import (
+from .sandbox import (
     CommandResult,
     OpenShell,
     OpenShellError,
     Sandbox,
     UnsafeSnapshotMetadata,
 )
+from .sandbox.executor import MAX_INVOCATION_BYTES
 
 MAX_HISTORY_BYTES = 32 * 1024 * 1024
 AGENT_NAME = "investigator"

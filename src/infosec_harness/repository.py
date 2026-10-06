@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 
 from infosec_harness.config import Settings, get_settings
 from infosec_harness.models import Citation, Finding
-from infosec_harness.process import run_bounded
+from infosec_harness.sandbox.process import run_bounded
 
 EXCLUDED = frozenset({".git", ".venv", "venv", "node_modules", "__pycache__"})
 MAX_FILE = 32 * 1024 * 1024

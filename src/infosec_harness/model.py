@@ -7,8 +7,8 @@ from pydantic_ai.models import Model
 from temporalio import activity
 
 from .agent import KILLED_EXIT, bounded, command_budget
-from .model_executor import MAX_INVOCATION_BYTES, MAX_RESPONSE_BYTES, RESPONSE, ModelInvocation
-from .openshell import OpenShell
+from .sandbox import OpenShell
+from .sandbox.executor import MAX_INVOCATION_BYTES, MAX_RESPONSE_BYTES, RESPONSE, ModelInvocation
 
 
 class ModelExecutorError(RuntimeError):
@@ -65,7 +65,7 @@ class OpenShellModel(Model):
         sandbox = await self.openshell.create(info.workflow_id, profile="model")
         result = await self.openshell.execute(
             sandbox,
-            bounded(["python", "-I", "-m", "infosec_harness.model_executor"], self.timeout),
+            bounded(["python", "-I", "-m", "infosec_harness.sandbox.executor"], self.timeout),
             operation_id=f"model:{info.activity_id}",
             timeout=self.timeout,
             stdin=encoded,

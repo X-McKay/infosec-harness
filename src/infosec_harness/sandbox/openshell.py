@@ -2,24 +2,22 @@
 
 Only the trusted worker constructs profiles. Repository code runs in workspace/probe
 sandboxes; the model sandbox is separate and is the only profile allowed a provider.
-OpenShell's generated gRPC bindings are used for exec because the SDK convenience
-iterator retains an unbounded copy of stdout and stderr.
+This module owns configuration and the sandbox lifecycle (create, confinement audit,
+provider readiness, outer-fence inspection, close). Command execution and receipts live in
+``execution.py``; archive transfer and source verification live in ``transfer.py``.
 """
 
 from __future__ import annotations
 
 import asyncio
 import hashlib
-import io
 import ipaddress
 import json
 import os
-import tarfile
 import uuid
-from collections.abc import Sequence
-from dataclasses import asdict, dataclass
-from pathlib import Path, PurePosixPath
-from typing import Any, Literal
+from dataclasses import asdict
+from pathlib import Path
+from typing import Any
 
 import yaml
 from google.protobuf.json_format import MessageToDict
@@ -27,23 +25,19 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from infosec_harness._io import atomic_write_bytes
 
-ProfileName = Literal["workspace", "probe", "model"]
-# The pinned gateway decodes at most 1 MiB per gRPC message; archives travel in parts.
-_PART_BYTES = 900_000
+from .execution import (
+    _PYTHON,
+    Execution,
+    ExecutionUnknown,
+    OpenShellError,
+    ProfileName,
+    Sandbox,
+    _digest,
+    _request_id,
+)
+from .transfer import Transfer
+
 _OWNER = "infosec-harness.v3"
-_PYTHON = "/usr/local/bin/python"
-
-
-class OpenShellError(RuntimeError):
-    """A boundary could not be established or observed."""
-
-
-class UnsafeSnapshotMetadata(OpenShellError):
-    """A captured archive failed metadata admission; execution outcome is separate."""
-
-
-class ExecutionUnknown(OpenShellError):
-    """Dispatch may have happened. Never automatically resend this operation."""
 
 
 def native_operation_accounting(state_dir: Path, run_id: str) -> dict:
@@ -157,38 +151,6 @@ class OpenShellConfig(BaseModel):
         return cls.model_validate_json(path.read_bytes())
 
 
-@dataclass(frozen=True)
-class Sandbox:
-    id: str
-    run_id: str
-    name: str
-    profile: ProfileName
-    slot: str = ""
-
-
-@dataclass(frozen=True)
-class CommandResult:
-    exit_code: int
-    stdout: str
-    stderr: str
-    output_truncated: bool = False
-
-
-@dataclass(frozen=True)
-class ExecutionReceipt:
-    sandbox: Sandbox
-    operation_id: str
-    request_digest: str
-    command: list[str]
-    result: CommandResult
-    workspace_digest: str | None = None
-    source_verified: bool = False
-
-
-def _digest(value: Any) -> str:
-    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-
-
 def _unordered(value: Any) -> Any:
     """Sort lists of objects (Docker reports Mounts in varying order); scalar lists keep order."""
     if isinstance(value, dict):
@@ -210,17 +172,6 @@ def _changed_paths(saved: Any, fresh: Any, path: str = "", limit: int = 8) -> li
     return [] if saved == fresh else [path or "."]
 
 
-def _sha256(stream: Any) -> str:
-    digest = hashlib.sha256()
-    while chunk := stream.read(65536):
-        digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _request_id(key: str) -> str:
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, "infosec-harness:" + key))
-
-
 def _directory(path: Path) -> None:
     missing = []
     parent = path
@@ -234,15 +185,6 @@ def _directory(path: Path) -> None:
             os.fsync(descriptor)
         finally:
             os.close(descriptor)
-
-
-def _path(path: str) -> str:
-    value = PurePosixPath(path)
-    if not value.is_absolute() or ".." in value.parts or str(value) != path:
-        raise OpenShellError("sandbox path must be canonical and absolute")
-    if value != PurePosixPath("/workspace") and PurePosixPath("/workspace") not in value.parents:
-        raise OpenShellError("repository tools are confined to /workspace")
-    return path
 
 
 # Runs before any repository upload, through the same native exec endpoint. A named
@@ -306,7 +248,9 @@ print(json.dumps({'uid':os.getuid(),'nnp':s['NoNewPrivs'].strip(),
 """
 
 
-class OpenShell:
+class OpenShell(Execution, Transfer):
+    """The pinned native adapter: lifecycle here, exec and transfer from the mixins."""
+
     def __init__(self, config: OpenShellConfig) -> None:
         from importlib.metadata import version
 
@@ -721,280 +665,6 @@ class OpenShell:
                     "network_mode": host["NetworkMode"], "runtime": host["Runtime"]}
         except (ValueError, KeyError, TypeError, AttributeError, ZeroDivisionError):
             raise OpenShellError("container inspection was incomplete") from None
-
-    def _stream(self, sandbox: Sandbox, command: Sequence[str], timeout: int,
-                stdin: bytes | None, request_id: str, limit: int, binary: bool = False) -> tuple[CommandResult, bytes]:
-        # Pinned native RPC selectors are names, not immutable IDs. The trusted
-        # worker corroborates exact ID/ownership before every dispatch.
-        request = self._pb.ExecSandboxRequest(workspace_scope=self._scope, sandbox=sandbox.name,
-            command=list(command), workdir="/workspace", stdin=stdin or b"",
-            no_login_shell=True, request_id=request_id)
-        request.execution_timeout.seconds = timeout
-        stream = self._stub.ExecSandbox(request, timeout=timeout + 10)
-        stdout, stderr = bytearray(), bytearray()
-        code = None
-        truncated = False
-        try:
-            for event in stream:
-                payload = event.WhichOneof("payload")
-                if payload in ("stdout", "stderr"):
-                    target = stdout if payload == "stdout" else stderr
-                    chunk = getattr(event, payload).data
-                    available = limit - len(stdout) - len(stderr)
-                    target.extend(chunk[:available])
-                    if len(chunk) > available:
-                        truncated = True
-                        # Cancel the native RPC on overflow; the caller closes the
-                        # workload rather than assuming cancellation killed the process.
-                        stream.cancel()
-                        raise ExecutionUnknown("command output exceeded the boundary limit")
-                elif payload == "exit":
-                    code = int(event.exit.exit_code)
-            if code is None:
-                raise ExecutionUnknown("native exec ended without an exit receipt")
-            if code == 124:
-                # Pinned OpenShell also synthesizes 124 on timeout without native
-                # terminal finalization. An explicit process exit 124 is ambiguous.
-                raise ExecutionUnknown("native exit 124 cannot establish terminal execution")
-            return CommandResult(code, "" if binary else stdout.decode(errors="replace"), stderr.decode(errors="replace"),
-                                 truncated), bytes(stdout)
-        finally:
-            stream.cancel()
-
-    async def execute(self, sandbox: Sandbox, command: Sequence[str] | str, *,
-                      operation_id: str, timeout: int, stdin: bytes | None = None) -> CommandResult:
-        if not operation_id or len(operation_id) > 1024:
-            raise OpenShellError("stable operation_id is required")
-        if not isinstance(timeout, int) or isinstance(timeout, bool) or not 0 < timeout <= self.config.max_timeout_seconds:
-            raise OpenShellError("execution timeout exceeds the configured bound")
-        args = ["/bin/sh", "-c", command] if isinstance(command, str) else list(command)
-        if not args or any(not isinstance(a, str) or "\x00" in a for a in args):
-            raise OpenShellError("invalid command")
-        if len(args) > 256 or sum(len(a.encode()) for a in args) > 65536:
-            raise OpenShellError("command exceeds its input bound")
-        if stdin is not None and len(stdin) > self.config.max_transfer_bytes:
-            raise OpenShellError("stdin exceeds the transfer bound")
-        request_digest = _digest([asdict(sandbox), args, timeout,
-                                  hashlib.sha256(stdin or b"").hexdigest()])
-        key = _digest([sandbox.run_id, operation_id])
-        path = self._record("operations", key)
-        receipt = {"sandbox": asdict(sandbox), "operation_id": operation_id,
-                   "request_digest": request_digest, "command": args}
-
-        def replay() -> CommandResult:
-            saved = json.loads(path.read_bytes())
-            if saved.get("request_digest") != request_digest:
-                raise OpenShellError("operation_id was reused with a different request")
-            if "result" not in saved:
-                raise ExecutionUnknown("prior dispatch has no completed receipt; do not resend")
-            return CommandResult(**saved["result"])
-
-        async with self._locks.setdefault(key, asyncio.Lock()):
-            if path.exists():
-                return replay()
-            self._owned(sandbox)
-            try:
-                self._save(path, receipt, exclusive=True)
-            except FileExistsError:
-                return replay()
-            try:
-                await self._corroborate(sandbox, "native workload identity changed")
-                result, _ = await asyncio.to_thread(self._stream, sandbox, args, timeout, stdin,
-                    _request_id(key), self.config.max_output_bytes)
-            except asyncio.CancelledError:
-                await asyncio.shield(self.close(sandbox))
-                raise
-            except Exception as exc:
-                await self.close(sandbox)
-                raise ExecutionUnknown("native execution outcome unknown; sandbox closed") from exc
-            self._save(path, {**receipt, "result": asdict(result)})
-            return result
-
-    def receipts(self, run_id: str) -> list[ExecutionReceipt]:
-        values = []
-        snapshots = {}
-        verified = set()
-        for path in (self.config.state_dir / "transfers").glob("*.json"):
-            saved = json.loads(path.read_bytes())
-            if saved.get("restored") and saved.get("expected_source_digest"):
-                snapshots[saved["probe"]["id"]] = saved["sha256"]
-            if saved.get("source_verified"):
-                verified.update((saved["source"]["id"], operation)
-                                for operation in saved["verified_operations"])
-        for path in (self.config.state_dir / "operations").glob("*.json"):
-            saved = json.loads(path.read_bytes())
-            if saved["sandbox"]["run_id"] == run_id and "result" in saved:
-                values.append(ExecutionReceipt(Sandbox(**saved["sandbox"]), saved["operation_id"],
-                    saved["request_digest"], saved["command"], CommandResult(**saved["result"]),
-                    snapshots.get(saved["sandbox"]["id"]),
-                    (saved["sandbox"]["id"], saved["operation_id"]) in verified))
-        return values
-
-    async def upload(self, sandbox: Sandbox, source: Path, destination: str) -> None:
-        self._owned(sandbox)
-        _path(destination)
-        if sandbox.profile == "model":
-            raise OpenShellError("repository upload is forbidden in model sandboxes")
-        if not source.is_dir() or source.is_symlink():
-            raise OpenShellError("source must be a regular directory")
-        archive = io.BytesIO()
-        total = 0
-        with tarfile.open(fileobj=archive, mode="w") as tar:
-            for path in sorted(source.rglob("*")):
-                if path.is_symlink() or not (path.is_file() or path.is_dir()):
-                    raise OpenShellError("source archive cannot contain symlinks or special files")
-                total += path.stat().st_size if path.is_file() else 0
-                if total > self.config.max_transfer_bytes:
-                    raise OpenShellError("source archive exceeds the transfer bound")
-                tar.add(path, arcname=str(path.relative_to(source)), recursive=False)
-                if archive.tell() > self.config.max_transfer_bytes:
-                    raise OpenShellError("source archive exceeds the transfer bound")
-        data = archive.getvalue()
-        result = await self._deliver(sandbox, data, destination,
-            operation_id="upload:" + _digest([destination, hashlib.sha256(data).hexdigest()]))
-        if result.exit_code:
-            raise OpenShellError("source upload failed")
-
-    async def _deliver(self, sandbox: Sandbox, data: bytes, destination: str, *,
-                       operation_id: str) -> CommandResult:
-        """Extract an archive inside the sandbox, sending at most _PART_BYTES per request.
-
-        Each part is its own replayable receipt; the final extraction consumes the staged
-        file and removes it. Extraction always uses the data filter inside the sandbox.
-        """
-        extract = ("import io,pathlib,sys,tarfile; p=pathlib.Path(sys.argv[1]); "
-                   "p.mkdir(parents=True,exist_ok=True); "
-                   "t=tarfile.open(fileobj=io.BytesIO(sys.stdin.buffer.read())); "
-                   "t.extractall(p,filter='data')")
-        if len(data) <= _PART_BYTES:
-            return await self.execute(sandbox, [_PYTHON, "-I", "-c", extract, destination],
-                                      operation_id=operation_id, timeout=60, stdin=data)
-        staged = "/workspace/.ih-stage-" + hashlib.sha256(data).hexdigest()[:16]
-        append = ("import pathlib,sys; "
-                  "pathlib.Path(sys.argv[1]).open('ab').write(sys.stdin.buffer.read())")
-        for index, offset in enumerate(range(0, len(data), _PART_BYTES)):
-            result = await self.execute(sandbox, [_PYTHON, "-I", "-c", append, staged],
-                operation_id=f"{operation_id}:part{index}", timeout=60,
-                stdin=data[offset:offset + _PART_BYTES])
-            if result.exit_code:
-                return result
-        unpack = ("import pathlib,sys,tarfile; p=pathlib.Path(sys.argv[1]); "
-                  "p.mkdir(parents=True,exist_ok=True); s=pathlib.Path(sys.argv[2]); "
-                  "t=tarfile.open(s); t.extractall(p,filter='data'); s.unlink()")
-        return await self.execute(sandbox, [_PYTHON, "-I", "-c", unpack, destination, staged],
-                                  operation_id=operation_id, timeout=60)
-
-    async def _snapshot(self, source: Sandbox, *, operation_id: str,
-                        expected_source: Path | None) -> tuple[bytes, Path, str | None]:
-        """Capture and compare source bytes; never extract repository code on the worker."""
-        self._owned(source)
-        if source.profile not in ("workspace", "probe"):
-            raise OpenShellError("model workload cannot provide a repository snapshot")
-        if not operation_id or len(operation_id) > 1024:
-            raise OpenShellError("stable copy operation_id is required")
-        key = _digest([source.id, operation_id])
-        record = self._record("transfers", key)
-        archive = record.with_suffix(".tar")
-        async with self._locks.setdefault(key, asyncio.Lock()):
-            if record.exists():
-                saved = json.loads(record.read_bytes())
-                if "sha256" not in saved:
-                    raise ExecutionUnknown("source snapshot has an unknown prior outcome")
-                raw = archive.read_bytes()
-                if len(raw) != saved["size"] or hashlib.sha256(raw).hexdigest() != saved["sha256"]:
-                    raise OpenShellError("persisted source snapshot integrity failed")
-            else:
-                self._save(record, {"source": asdict(source), "operation_id": operation_id}, exclusive=True)
-                try:
-                    await self._corroborate(source, "source native identity changed")
-                    result, raw = await asyncio.to_thread(self._stream, source,
-                        ["/usr/bin/tar", "-C", "/workspace/repo", "-cf", "-", "."],
-                        60, None, _request_id(key), self.config.max_transfer_bytes, True)
-                    if result.exit_code or result.output_truncated:
-                        raise OpenShellError("source snapshot capture failed")
-                    atomic_write_bytes(archive, raw, sync_directory=True)
-                    self._save(record, {"source": asdict(source), "operation_id": operation_id,
-                        "sha256": hashlib.sha256(raw).hexdigest(), "size": len(raw)})
-                except BaseException:
-                    await asyncio.shield(self.close(source))
-                    raise
-            # Parse metadata only. No archive member is ever extracted on the
-            # worker; hardlinks, symlinks, devices and traversal are refused.
-            try:
-                with tarfile.open(fileobj=io.BytesIO(raw), mode="r:") as tar:
-                    size = 0
-                    seen = set()
-                    archived_files = {}
-                    for count, member in enumerate(tar, 1):
-                        path = PurePosixPath(member.name)
-                        size += member.size
-                        if (path.is_absolute() or ".." in path.parts or path in seen
-                                or not (member.isfile() or member.isdir())
-                                or count > 65536 or size > self.config.max_transfer_bytes):
-                            raise UnsafeSnapshotMetadata("source snapshot contains unsafe archive metadata")
-                        seen.add(path)
-                        if member.isfile():
-                            stream = tar.extractfile(member)
-                            assert stream is not None
-                            archived_files[path] = (_sha256(stream), member.mode & 0o111)
-            except tarfile.TarError:
-                raise OpenShellError("source snapshot is not a valid archive") from None
-            original_files = {}
-            if expected_source is not None:
-                if not expected_source.is_dir() or expected_source.is_symlink():
-                    raise OpenShellError("original source snapshot must be a regular directory")
-                total = 0
-                for original in sorted(expected_source.rglob("*")):
-                    if original.is_symlink() or not (original.is_file() or original.is_dir()):
-                        raise OpenShellError("original source snapshot contains unsafe file types")
-                    if original.is_file():
-                        total += original.stat().st_size
-                        if total > self.config.max_transfer_bytes or len(original_files) >= 65536:
-                            raise OpenShellError("original source snapshot exceeds bound")
-                        with original.open("rb") as stream:
-                            content_digest = _sha256(stream)
-                        name = PurePosixPath(original.relative_to(expected_source).as_posix())
-                        identity = (content_digest, original.stat().st_mode & 0o111)
-                        original_files[str(name)] = identity
-                        if archived_files.get(name) != identity:
-                            # The name comes from the immutable snapshot, not from the model.
-                            raise OpenShellError(
-                                f"workspace changed or deleted original source: {name}")
-            return raw, record, _digest(original_files) if expected_source is not None else None
-
-    async def copy_workspace(self, source: Sandbox, probe: Sandbox, *, operation_id: str,
-                             expected_source: Path | None = None) -> str:
-        self._owned(probe)
-        if source.profile != "workspace" or probe.profile != "probe" or source.run_id != probe.run_id:
-            raise OpenShellError("source snapshots may only enter this investigation's offline probe")
-        raw, record, original_digest = await self._snapshot(source, operation_id=operation_id,
-                                                          expected_source=expected_source)
-        result = await self._deliver(probe, raw, "/workspace/repo",
-                                     operation_id=operation_id + ":restore")
-        if result.exit_code:
-            raise OpenShellError("offline probe source restore failed")
-        archive_digest = hashlib.sha256(raw).hexdigest()
-        self._save(record, {"source": asdict(source), "probe": asdict(probe),
-            "operation_id": operation_id, "sha256": archive_digest, "size": len(raw),
-            "expected_source_digest": original_digest, "restored": True})
-        return archive_digest
-
-    async def verify_source(self, probe: Sandbox, expected_source: Path, *, operation_id: str) -> None:
-        if probe.profile != "probe":
-            raise OpenShellError("post-execution integrity checks require an offline probe")
-        raw, record, original_digest = await self._snapshot(probe, operation_id=operation_id,
-                                                          expected_source=expected_source)
-        if json.loads(record.read_bytes()).get("source_verified"):
-            return
-        operations = []
-        for path in (self.config.state_dir / "operations").glob("*.json"):
-            saved = json.loads(path.read_bytes())
-            if saved["sandbox"]["id"] == probe.id and "result" in saved:
-                operations.append(saved["operation_id"])
-        self._save(record, {"source": asdict(probe), "operation_id": operation_id,
-            "sha256": hashlib.sha256(raw).hexdigest(), "size": len(raw),
-            "expected_source_digest": original_digest, "source_verified": True,
-            "verified_operations": operations})
 
     async def close(self, sandbox: Sandbox) -> None:
         key = self._key(sandbox)

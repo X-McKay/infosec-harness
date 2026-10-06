@@ -61,9 +61,11 @@ def build_context(root: Path, output: Path, *, machine: str = "aarch64") -> None
     package_dir = output / "infosec_harness"
     source = root / "src/infosec_harness"
     # Provider invocation only: no workflow, host tools, source snapshot, or administration code.
-    package_dir.mkdir()
-    shutil.copyfile(source / "model_executor.py", package_dir / "model_executor.py")
+    # Empty package markers: the image never runs the worker-side package initialisers.
+    (package_dir / "sandbox").mkdir(parents=True)
+    shutil.copyfile(source / "sandbox/executor.py", package_dir / "sandbox/executor.py")
     (package_dir / "__init__.py").touch()
+    (package_dir / "sandbox/__init__.py").touch()
     shutil.copyfile(root / "deploy/openshell/Dockerfile.executor", output / "Dockerfile")
 
 

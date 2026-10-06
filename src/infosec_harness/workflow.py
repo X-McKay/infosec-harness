@@ -28,9 +28,9 @@ with workflow.unsafe.imports_passed_through():
         Verdict,
         definitive_support,
     )
-    from .openshell import OpenShell
-    from .process import _finish
     from .repository import validate_citation
+    from .sandbox import OpenShell
+    from .sandbox.process import _finish
 
 
 class PreparedInvestigation(BaseModel):
@@ -369,7 +369,7 @@ def create_worker(client, settings):
     from .agent import WorkerIdentityInterceptor
     from .identity import worker_identity
     from .model import OpenShellModel
-    from .openshell import OpenShellConfig
+    from .sandbox import OpenShellConfig
 
     openshell = OpenShell(OpenShellConfig.load(settings.openshell_config))
     budget = settings.limits.command_timeout_seconds

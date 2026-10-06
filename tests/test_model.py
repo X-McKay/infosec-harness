@@ -9,9 +9,9 @@ from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.tools import ToolDefinition
 from test_agent import FakeOpenShell
 
-from infosec_harness import model_executor
 from infosec_harness.model import RESPONSE, ModelInvocation, OpenShellModel
-from infosec_harness.openshell import CommandResult
+from infosec_harness.sandbox import CommandResult
+from infosec_harness.sandbox import executor as model_executor
 
 
 async def test_native_message_tools_and_usage_roundtrip(monkeypatch):
@@ -61,7 +61,7 @@ async def test_transport_runs_only_in_separate_model_sandbox(monkeypatch):
     sandbox, command, kwargs = shell.executions[0]
     assert sandbox.profile == "model"
     assert command == ["/usr/bin/timeout", "--preserve-status", "-s", "KILL", "110",
-                       "python", "-I", "-m", "infosec_harness.model_executor"]
+                       "python", "-I", "-m", "infosec_harness.sandbox.executor"]
     assert kwargs["operation_id"] == "model:7"
 
 
