@@ -371,6 +371,14 @@ def create_worker(client, settings):
     from .openshell import OpenShellConfig
 
     openshell = OpenShell(OpenShellConfig.load(settings.openshell_config))
+    budget = settings.limits.command_timeout_seconds
+    if budget > openshell.config.max_timeout_seconds:
+        # Every execute would be refused mid-investigation; refuse the worker instead.
+        raise ValueError(
+            f"limits.command_timeout_seconds ({budget}) exceeds the OpenShell runtime "
+            f"max_timeout_seconds ({openshell.config.max_timeout_seconds}); lower the limit "
+            "or raise the runtime bound"
+        )
     model = OpenShellModel(
         openshell,
         settings.model_name,
@@ -378,7 +386,7 @@ def create_worker(client, settings):
         base_url=settings.model_base_url,
         region=settings.model_region,
         # One operator knob bounds every sandbox command, including inference.
-        timeout=min(settings.limits.command_timeout_seconds, openshell.config.max_timeout_seconds),
+        timeout=budget,
     )
     agent = build_agent(openshell, model)
     bind_investigator(agent)

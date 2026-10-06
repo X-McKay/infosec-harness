@@ -48,6 +48,36 @@ def test_prepared_investigation_decodes_v11_payload_with_duplicated_fields(tmp_p
     assert PreparedInvestigation.model_validate(legacy) == PreparedInvestigation(deps=deps)
 
 
+@pytest.mark.parametrize("budget", [300, 301])
+def test_worker_refuses_command_budget_above_runtime_maximum(tmp_path, monkeypatch, budget):
+    """Above the runtime bound every execute is refused mid-investigation; the worker must
+    refuse to start instead of silently capping only the model timeout."""
+    import temporalio.worker
+
+    from infosec_harness import openshell, workflow
+    from infosec_harness.config import get_settings
+
+    config = tmp_path / "runtime.json"
+    config.write_text("{}")
+    settings = get_settings().model_copy(update={
+        "openshell_config": config,
+        "limits": Limits(command_timeout_seconds=budget),
+    })
+    monkeypatch.setattr(openshell, "OpenShellConfig", SimpleNamespace(
+        load=lambda path: SimpleNamespace(max_timeout_seconds=300)))
+    monkeypatch.setattr(workflow, "OpenShell", lambda config: SimpleNamespace(config=config))
+    monkeypatch.setattr(temporalio.worker, "Worker", lambda client, **kwargs: kwargs)
+    monkeypatch.setattr(InvestigationWorkflow, "agent", None)
+    monkeypatch.setattr(InvestigationWorkflow, "__pydantic_ai_agents__", [])
+    if budget > 300:
+        with pytest.raises(ValueError, match=r"command_timeout_seconds \(301\) exceeds"):
+            workflow.create_worker(None, settings)
+        assert InvestigationWorkflow.agent is None
+        return
+    assert workflow.create_worker(None, settings)["task_queue"] == settings.task_queue
+    assert InvestigationWorkflow.agent.model.timeout == 300
+
+
 async def test_finalize_rejects_invented_receipt_and_source_lines(tmp_path):
     shell = FakeOpenShell()
     activities = InvestigationActivities(shell, None, "fixture")
