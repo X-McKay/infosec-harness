@@ -1068,19 +1068,52 @@ async def test_inspector_timeout_kills_its_whole_process_group(tmp_path, monkeyp
 
     import infosec_harness.sandbox.openshell as module
 
-    monkeypatch.setattr(module, "_INSPECTION_TIMEOUT_S", 0.5)
+    # The inspection deadline must not fire before the grandchild exists and its PID is
+    # published, or the test would observe nothing (a load-dependent race with a fixed short
+    # deadline). A sentinel deadline marks the inspector's timeout; the test expires that
+    # timeout itself once the PID file is observed, so the real timeout path runs every time.
+    sentinel = 3600.0
+    monkeypatch.setattr(module, "_INSPECTION_TIMEOUT_S", sentinel)
     pidfile = tmp_path / "grandchild"
-    boundary = inspector(tmp_path, f"sleep 30 & echo $! > {pidfile}; wait")
+    real_timeout = asyncio.timeout
+
+    async def expire_when_ready(deadline):
+        try:
+            async with asyncio.timeout(30):
+                while not pidfile.exists():
+                    await asyncio.sleep(0.01)
+        finally:
+            # Expire even if the PID never appears, so a broken script fails fast, not hangs.
+            deadline.reschedule(asyncio.get_running_loop().time())
+
+    watchers = []
+
+    def observed_timeout(delay):
+        deadline = real_timeout(delay)
+        if delay == sentinel:
+            watchers.append(asyncio.create_task(expire_when_ready(deadline)))
+        return deadline
+
+    monkeypatch.setattr(asyncio, "timeout", observed_timeout)
+    # The PID is written to a temporary name and renamed, so a reader never sees a partial line.
+    boundary = inspector(
+        tmp_path, f"sleep 30 & echo $! > {pidfile}.tmp && mv {pidfile}.tmp {pidfile}; wait"
+    )
     with pytest.raises(OpenShellError, match="timed out"):
         await boundary._inspection_call(["ps"])
+    monkeypatch.setattr(asyncio, "timeout", real_timeout)
+    assert len(watchers) == 1
+    await watchers[0]
     grandchild = int(pidfile.read_text())
-    for _ in range(50):
-        try:
-            os.kill(grandchild, 0)
-        except ProcessLookupError:
-            break
-        await asyncio.sleep(0.1)
-    else:
+    try:
+        async with asyncio.timeout(10):
+            while True:
+                try:
+                    os.kill(grandchild, 0)
+                except ProcessLookupError:
+                    break
+                await asyncio.sleep(0.05)
+    except TimeoutError:
         os.kill(grandchild, 9)
         pytest.fail("inspector descendant survived the timeout")
 
