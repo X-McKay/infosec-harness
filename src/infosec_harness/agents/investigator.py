@@ -121,6 +121,9 @@ async def validate_verdict(ctx: RunContext[InvestigationDeps], verdict: Verdict)
                 "superseded_evidence_ids with the flaw explained in the summary; a probe newer "
                 "than the cited one cannot be superseded"
             )
+        if not reasons:
+            # Admission and the explanation are separate code; never send empty feedback.
+            reasons.append("No cited probe is a complete, source-verified, matching probe")
         raise ModelRetry(
             "; ".join(reasons) + ". See the probe skill; run a new corrected probe and cite "
             "its exact id; do not relabel. Or return inconclusive."

@@ -182,6 +182,22 @@ async def test_verdict_validator_requires_complete_matching_offline_evidence(fai
         assert await validate_verdict(ctx, verdict) == verdict
 
 
+async def test_refusal_the_feedback_cannot_explain_still_names_a_reason(monkeypatch):
+    """Admission (definitive_support) and explanation (retry_reasons) are separate code; a
+    future admission condition must not produce a retry prompt that starts with ". See"."""
+    from pydantic_ai import ModelRetry
+
+    from infosec_harness.agents import investigator
+    from infosec_harness.contracts import Verdict
+
+    monkeypatch.setattr(investigator, "definitive_support", lambda verdict, evidence: ([], []))
+    monkeypatch.setattr(investigator, "retry_reasons", lambda verdict, evidence: [])
+    ctx = SimpleNamespace(deps=SimpleNamespace(source_digest="digest"), messages=[])
+    verdict = Verdict(label="likely_not_exploitable", summary="s", evidence_ids=[], citations=[])
+    with pytest.raises(ModelRetry, match=r"^No cited probe is a complete, source-verified"):
+        await investigator.validate_verdict(ctx, verdict)
+
+
 async def test_output_feedback_is_bounded_and_never_retries_tool_dispatch():
     from pydantic_ai.exceptions import UnexpectedModelBehavior
 
