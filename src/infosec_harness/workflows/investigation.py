@@ -22,7 +22,6 @@ with workflow.unsafe.imports_passed_through():
     from infosec_harness.agents.evidence import parse_probe_observations
     from infosec_harness.agents.investigator import InvestigationDeps
     from infosec_harness.contracts import (
-        Evidence,
         Finding,
         InvestigationRequest,
         InvestigationResult,
@@ -33,7 +32,7 @@ with workflow.unsafe.imports_passed_through():
     )
     from infosec_harness.sandbox import OpenShell
     from infosec_harness.sandbox.process import finish
-    from infosec_harness.tools.execute import unwrap_output
+    from infosec_harness.tools.execute import evidence_from_result, unwrap_output
 
     from .snapshot import Snapshot, validate_citation
 
@@ -192,8 +191,8 @@ class InvestigationActivities:
             )
         evidence = []
         for receipt in self.openshell.receipts(deps.run_id):
-            identity = receipt.operation_id
-            if not identity.startswith(("execute:", "probe:")):
+            operation_id = receipt.operation_id
+            if not operation_id.startswith(("execute:", "probe:")):
                 continue
             # Same cut detection as the tool return: the receipt holds the wrapper's marker.
             result = unwrap_output(receipt.result)
@@ -206,23 +205,23 @@ class InvestigationActivities:
                 observations["workspace_digest"] = receipt.workspace_digest
                 observations["source_verified"] = receipt.source_verified
             evidence.append(
-                Evidence(
-                    id=identity,
+                evidence_from_result(
+                    operation_id,
                     kind="probe" if receipt.sandbox.profile == "probe" else "command",
                     command=shlex.join(receipt.command),
-                    exit_code=result.exit_code,
-                    stdout=result.stdout,
-                    stderr=result.stderr,
-                    timed_out=False,
-                    output_truncated=result.output_truncated,
+                    result=result,
                     sandbox_id=receipt.sandbox.id,
                     source_digest=deps.source_digest,
                     observations=observations,
                 )
             )
         known = {item.id for item in evidence}
-        if any(identity not in known for identity in payload.verdict.evidence_ids):
-            raise ValueError("Verdict cites an execution without a trusted OpenShell receipt")
+        if unknown := [item for item in payload.verdict.evidence_ids if item not in known]:
+            # Model-supplied IDs: bounded in the message.
+            raise ValueError(
+                "Verdict cites an execution without a trusted OpenShell receipt: "
+                + repr(unknown)[:200]
+            )
         for citation in payload.verdict.citations:
             validate_citation(deps.snapshot_path, citation)
         limitations = []
@@ -254,10 +253,10 @@ class InvestigationActivities:
                     "contradicted the verdict: " + ", ".join(superseded)
                     + ". Their excerpts are retained; the summary states the claimed flaw."
                 )
-                for identity in superseded:
+                for operation_id in superseded:
                     if len(report_ids) >= MAX_EVIDENCE_IDS:
                         break
-                    report_ids.add(identity)
+                    report_ids.add(operation_id)
             if contrary:
                 limitations.append(
                     "Successful source-verified offline probes reported contradictory observations: "

@@ -266,13 +266,18 @@ def test_identity_binds_policy_contents_dependencies_and_configuration(tmp_path)
     assert worker_identity(settings).fingerprint != second.fingerprint
 
 
-@pytest.mark.parametrize("budget", [300, 301])
-def test_worker_refuses_command_budget_above_runtime_maximum(tmp_path, monkeypatch, budget):
+@pytest.mark.parametrize(("budget", "output_bytes"), [(300, None), (301, None), (300, 260_070)])
+def test_worker_refuses_command_budget_above_runtime_maximum(
+    tmp_path, monkeypatch, budget, output_bytes
+):
     """Above the runtime bound every execute is refused mid-investigation; the worker must
-    refuse to start instead of silently capping only the model timeout."""
+    refuse to start instead of silently capping only the model timeout. Below the wrapper's
+    bounded output, a large command would become an unknown execution: refuse likewise."""
     from infosec_harness.config import get_settings
+    from infosec_harness.tools.execute import WRAPPER_OUTPUT_BYTES
     from infosec_harness.workflows import worker
 
+    output_bytes = output_bytes or WRAPPER_OUTPUT_BYTES
     config = tmp_path / "runtime.json"
     config.write_text("{}")
     settings = get_settings().model_copy(update={
@@ -280,13 +285,19 @@ def test_worker_refuses_command_budget_above_runtime_maximum(tmp_path, monkeypat
         "limits": Limits(command_timeout_seconds=budget),
     })
     monkeypatch.setattr(worker, "OpenShellConfig", SimpleNamespace(
-        load=lambda path: SimpleNamespace(max_timeout_seconds=300)))
+        load=lambda path: SimpleNamespace(max_timeout_seconds=300,
+                                          max_output_bytes=output_bytes)))
     monkeypatch.setattr(worker, "OpenShell", lambda config: SimpleNamespace(config=config))
     monkeypatch.setattr(worker, "Worker", lambda client, **kwargs: kwargs)
     monkeypatch.setattr(InvestigationWorkflow, "agent", None)
     monkeypatch.setattr(InvestigationWorkflow, "__pydantic_ai_agents__", [])
     if budget > 300:
         with pytest.raises(ValueError, match=r"command_timeout_seconds \(301\) exceeds"):
+            worker.create_worker(None, settings)
+        assert InvestigationWorkflow.agent is None
+        return
+    if output_bytes < WRAPPER_OUTPUT_BYTES:
+        with pytest.raises(ValueError, match=r"max_output_bytes \(260070\) is below"):
             worker.create_worker(None, settings)
         assert InvestigationWorkflow.agent is None
         return

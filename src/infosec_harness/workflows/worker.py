@@ -28,6 +28,7 @@ from infosec_harness.agents.investigator import (
 from infosec_harness.config import Settings
 from infosec_harness.contracts import WorkerIdentity
 from infosec_harness.sandbox import OpenShell, OpenShellConfig
+from infosec_harness.tools.execute import WRAPPER_OUTPUT_BYTES
 
 from . import snapshot
 from .investigation import (
@@ -156,6 +157,14 @@ def create_worker(client: Client, settings: Settings) -> Worker:
             f"limits.command_timeout_seconds ({budget}) exceeds the OpenShell runtime "
             f"max_timeout_seconds ({openshell.config.max_timeout_seconds}); lower the limit "
             "or raise the runtime bound"
+        )
+    if openshell.config.max_output_bytes < WRAPPER_OUTPUT_BYTES:
+        # The shell wrapper's bounded capture would overflow the boundary limit, turning a
+        # large command into an unknown execution; refuse the worker instead.
+        raise ValueError(
+            f"OpenShell runtime max_output_bytes ({openshell.config.max_output_bytes}) is below "
+            f"the command wrapper's bounded output ({WRAPPER_OUTPUT_BYTES}); raise "
+            "max_output_bytes in the runtime configuration"
         )
     model = OpenShellModel(
         openshell,
