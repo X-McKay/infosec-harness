@@ -1,10 +1,11 @@
-"""The one atomic file writer.
+"""The atomic writer for evidence files.
 
 Reports, ledgers, lease records and artifacts are evidence, so a reader must see either the
 previous complete file or the new complete one, never a partial one: the bytes go to an
 owner-only (``mkstemp``: 0600) temporary file beside the target, are flushed to disk, and are
-published in one step. A failure at any point leaves the previous file and no temporary file
-behind.
+published in one step. An exception at any point leaves the previous file and no temporary
+file behind; a killed process or a power loss can still leave a ``.<name>.*`` temporary file.
+(Source snapshots publish by renaming a whole directory instead; see workflows/snapshot.py.)
 """
 
 from __future__ import annotations
@@ -48,7 +49,12 @@ def atomic_write_bytes(path: Path, data: bytes, *, exclusive: bool = False,
 
 
 def write_json(path: Path, document: Any, *, exclusive: bool = False) -> None:
-    """Indented JSON with a trailing newline, written by :func:`atomic_write_bytes`."""
+    """Strict, indented JSON with a trailing newline, written by :func:`atomic_write_bytes`.
+
+    ``NaN`` and infinities are refused (``ValueError``): they are not JSON, and the API would
+    list such a report as unreadable. The document is encoded before any directory is made.
+    """
+    # Any: report documents are arbitrary JSON-compatible values built by the callers.
+    encoded = json.dumps(document, indent=2, allow_nan=False) + "\n"
     path.parent.mkdir(parents=True, exist_ok=True)
-    encoded = json.dumps(document, indent=2) + "\n"
     atomic_write_bytes(path, encoded.encode(), exclusive=exclusive)

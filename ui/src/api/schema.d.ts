@@ -140,6 +140,17 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * CancelResult
+         * @description A cancellation request, or the status of a run that had already closed.
+         */
+        CancelResult: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "cancellation_requested" | "running" | "completed" | "failed" | "canceled" | "terminated" | "continued_as_new" | "timed_out" | "unknown";
+        };
         /** Citation */
         Citation: {
             /** Path */
@@ -374,8 +385,11 @@ export interface components {
             id: string;
             /** Title */
             title: string;
-            /** Status */
-            status: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "running" | "completed" | "failed" | "canceled" | "terminated" | "continued_as_new" | "timed_out" | "unknown";
             /** Started At */
             started_at: string;
             /** Closed At */
@@ -579,9 +593,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
+                    "application/json": components["schemas"]["CancelResult"];
                 };
             };
             /** @description Validation Error */
