@@ -96,7 +96,11 @@ either the agent's probe engineering (two Java XXE cases, root-caused to a nonce
 agent's oracle and fixed in the skills) or the external backend. It was cut short by the operator's
 launcher after 33 of 36 cases, so `complete_corpus` failed again and the quality gates stay
 `not_checked`; observed accuracy was 30 of 33 with 0 unsafe negatives. The three unfinished cases
-ran afterwards as a diagnostic (`diagnostic-10-remainder.json`; diagnostics never qualify).
+ran afterwards as a diagnostic (`diagnostic-10-remainder.json`; diagnostics never qualify) and
+were all correct: `javascript-xssesm-fixed` (594 s, 20 requests), `perl-xss-vulnerable` (150 s,
+13), `perl-xss-fixed` (211 s, 12). Across run 10 and the diagnostic every case was attempted on
+`590128f`: 33 correct, 3 failed, 0 unsafe negatives. The quota was then raised to 40,000 for the
+82-case corpus (pre-flight needs 14,760 claims of headroom at the conservative ceiling).
 
 Next: a full cohort on the consolidated candidate (develop with the quality fixes and the expanded
 corpus), launched detached from any tool time limit, after requalification.
