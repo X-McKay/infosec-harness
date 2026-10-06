@@ -415,6 +415,53 @@ def test_keep_going_classifies_from_the_untruncated_chain_with_an_allowlist():
         assert not cohort.agent_level(stop), stop
 
 
+def test_drain_is_the_workflow_cleanup_reserve():
+    from infosec_harness.workflows.investigation import CLEANUP_RESERVE
+
+    assert cohort.DRAIN == CLEANUP_RESERVE
+
+
+@pytest.mark.xfail(strict=True, reason="api.execution_timeout still reserves 600 s; the "
+                   "toplevel owner derives it from CLEANUP_RESERVE (remove this mark then)")
+def test_execution_timeout_reserves_owned_cleanup():
+    from datetime import timedelta
+
+    from infosec_harness.workflows.investigation import CLEANUP_RESERVE
+
+    limits = Limits()
+    reserve = cohort.execution_timeout(limits) - timedelta(seconds=limits.timeout_seconds)
+    assert reserve >= CLEANUP_RESERVE
+
+
+@pytest.mark.parametrize("ended", ["timed_out", "terminated"])
+async def test_server_ended_run_records_unconfirmed_cleanup_and_stops(
+    tmp_path, monkeypatch, ended
+):
+    from temporalio.client import WorkflowFailureError
+    from temporalio.exceptions import TerminatedError, TimeoutError, TimeoutType
+
+    finding = Finding(title="case", repo_url="repo")
+    manifest = prepared_cohort(tmp_path, monkeypatch, [(finding, "inconclusive", "a"),
+                                                        (finding, "inconclusive", "b")])
+    cause = (TimeoutError("Workflow execution timed out", type=TimeoutType.START_TO_CLOSE,
+                          last_heartbeat_details=[])
+             if ended == "timed_out" else TerminatedError("Workflow execution terminated"))
+    handle = SimpleNamespace(result=AsyncMock(side_effect=WorkflowFailureError(cause=cause)),
+                             cancel=AsyncMock())
+    client = SimpleNamespace(start_workflow=AsyncMock(return_value=handle),
+                             get_workflow_handle=lambda run_id: handle)
+    monkeypatch.setattr(cohort, "connect", AsyncMock(return_value=client))
+    report = await cohort.evaluate_corpus(
+        manifest, tmp_path / "report.json", get_settings(), keep_going=True)
+    first, second = report["cases"]
+    assert first["status"] == "failed"
+    assert first["cleanup"] == "unconfirmed"
+    assert "close_run" in first["cleanup_next_step"]
+    assert "cancellation" not in first  # A closed run cannot be cancelled.
+    handle.cancel.assert_not_awaited()
+    assert second["status"] == "unstarted"  # Never agent-level, even with --keep-going.
+
+
 @pytest.mark.parametrize("keep_going", [False, True])
 async def test_keep_going_never_reruns_and_cannot_pass_incomplete_cohort(
     tmp_path, monkeypatch, fixture_worker_identity, keep_going

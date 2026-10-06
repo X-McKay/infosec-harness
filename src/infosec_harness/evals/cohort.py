@@ -18,7 +18,8 @@ from uuid import uuid4
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 from temporalio.client import WorkflowExecutionStatus, WorkflowFailureError
-from temporalio.exceptions import ApplicationError
+from temporalio.exceptions import ApplicationError, TerminatedError
+from temporalio.exceptions import TimeoutError as TemporalTimeoutError
 
 from infosec_harness._io import write_json
 from infosec_harness.api import (
@@ -32,13 +33,17 @@ from infosec_harness.api import (
 from infosec_harness.contracts import Finding, InvestigationResult, Limits
 from infosec_harness.sandbox import OpenShell, OpenShellConfig, native_operation_accounting
 from infosec_harness.sandbox.process import finish
-from infosec_harness.workflows.investigation import FAILURE_CHAIN_LINKS, FAILURE_WRAPPERS
+from infosec_harness.workflows.investigation import (
+    CLEANUP_RESERVE,
+    FAILURE_CHAIN_LINKS,
+    FAILURE_WRAPPERS,
+)
 from infosec_harness.workflows.worker import worker_identity, workflow_runner
 
 # The harness checkout: src/infosec_harness/evals/ is three levels below it.
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
-# Covers prepare's waited cancellation and three bounded cleanup attempts of an owned run.
-DRAIN = timedelta(minutes=30)
+# Covers prepare's waited cancellation and every bounded cleanup attempt of an owned run.
+DRAIN = CLEANUP_RESERVE
 # Terminal agent-level failures that --keep-going may continue past: budgets and invalid model
 # output (raised by workflow code), and ModelExecutorError, an executor that exited without a
 # response under a complete receipt (e.g. a sandbox DNS/connect failure, or a kill at the
@@ -188,6 +193,20 @@ async def cancel_owned(client, run_id: str, drain: timedelta | None = None) -> N
         async with asyncio.timeout(drain.total_seconds()):
             with suppress(WorkflowFailureError):
                 await handle.result()
+
+
+SERVER_ENDED_STEP = (
+    "The Temporal server ended this run before its cleanup activity; its owned sandboxes may "
+    "remain open. Close them with OpenShell.close_run(<workflow_id>) under this runtime "
+    "configuration before reusing the native admission quota."
+)
+
+
+def server_ended(error: BaseException) -> bool:
+    """The server timed out or terminated the run, so workflow cleanup never ran."""
+    return isinstance(error, WorkflowFailureError) and isinstance(
+        error.cause, (TemporalTimeoutError, TerminatedError)
+    )
 
 
 def failure_label(error: BaseException) -> str:
@@ -434,6 +453,9 @@ async def evaluate_corpus(manifest: Path, output: Path, settings, *, names=(),
                     except Exception as cancellation_error:
                         record["cancellation"] = "unconfirmed"
                         record["cancellation_error_type"] = type(cancellation_error).__name__
+                elif server_ended(exc):
+                    # The workflow's `finally` never ran, so nothing closed its sandboxes.
+                    record.update(cleanup="unconfirmed", cleanup_next_step=SERVER_ENDED_STEP)
                 record["receipts"] = receipt_summary(settings.openshell_config, run_id)
             record["native_operations"] = operation_observation(settings.openshell_config, run_id)
             candidate["native_operation_estimate"] = cohort_operation_estimate(candidate["cases"])

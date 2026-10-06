@@ -41,6 +41,33 @@ FAILURE_LINK_CHARS = 400
 # Temporal wrapper types; the outermost other type names a terminal failure.
 FAILURE_WRAPPERS = frozenset({"ActivityError", "ChildWorkflowError", "WorkflowFailureError"})
 
+# Lifecycle activity bounds (v11 values; replay does not compare them, but keep them stable).
+PREPARE_TIMEOUT = timedelta(minutes=10)
+FINALIZE_TIMEOUT = timedelta(minutes=2)
+CLEANUP_TIMEOUT = timedelta(minutes=5)
+CLEANUP_ATTEMPTS = 3
+CLEANUP_RETRY = RetryPolicy(maximum_attempts=CLEANUP_ATTEMPTS)
+# Server-side backoff between cleanup attempts under CLEANUP_RETRY's (default) intervals.
+CLEANUP_BACKOFF = sum(
+    (
+        min(
+            CLEANUP_RETRY.initial_interval * CLEANUP_RETRY.backoff_coefficient**attempt,
+            CLEANUP_RETRY.maximum_interval or CLEANUP_RETRY.initial_interval * 100,
+        )
+        for attempt in range(CLEANUP_ATTEMPTS - 1)
+    ),
+    timedelta(),
+)
+# Workflow-task latency around the cleanup schedule and completion.
+CLEANUP_MARGIN = timedelta(minutes=5)
+# Time owned cleanup can need after the investigation deadline fires: prepare waits for its
+# own completion (WAIT_CANCELLATION_COMPLETED, no heartbeat), then every cleanup attempt runs
+# with its backoff. The server execution timeout and a cohort's drain must cover it, or the
+# server ends the run before its `finally` closes the owned sandboxes.
+CLEANUP_RESERVE = (
+    PREPARE_TIMEOUT + CLEANUP_ATTEMPTS * CLEANUP_TIMEOUT + CLEANUP_BACKOFF + CLEANUP_MARGIN
+)
+
 
 class PreparedInvestigation(BaseModel):
     # Default extra='ignore' keeps decoding v11 payloads that duplicated
@@ -266,7 +293,7 @@ class InvestigationWorkflow(PydanticAIWorkflow):
                     "prepare_investigation",
                     request,
                     result_type=PreparedInvestigation,
-                    start_to_close_timeout=timedelta(minutes=10),
+                    start_to_close_timeout=PREPARE_TIMEOUT,
                     retry_policy=RetryPolicy(maximum_attempts=1),
                     cancellation_type=workflow.ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
                 )
@@ -298,7 +325,7 @@ class InvestigationWorkflow(PydanticAIWorkflow):
                         },
                     ),
                     result_type=InvestigationResult,
-                    start_to_close_timeout=timedelta(minutes=2),
+                    start_to_close_timeout=FINALIZE_TIMEOUT,
                     retry_policy=RetryPolicy(maximum_attempts=1),
                 )
         except asyncio.CancelledError as error:
@@ -344,8 +371,8 @@ class InvestigationWorkflow(PydanticAIWorkflow):
                                     else request.expected_worker_identity
                                 ),
                             ),
-                            start_to_close_timeout=timedelta(minutes=5),
-                            retry_policy=RetryPolicy(maximum_attempts=3),
+                            start_to_close_timeout=CLEANUP_TIMEOUT,
+                            retry_policy=CLEANUP_RETRY,
                             cancellation_type=workflow.ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
                         )
                     )

@@ -272,6 +272,81 @@ async def test_real_temporal_unknown_side_effect_is_never_retried(temporal_cli, 
             assert shell.closed == [queue]
 
 
+@pytest.mark.requires_temporal
+async def test_real_temporal_cleanup_failure_fails_the_run_non_retryably_and_replays(
+    temporal_cli, tmp_path
+):
+    from temporalio.exceptions import ApplicationError
+
+    from infosec_harness.workflows.investigation import CLEANUP_ATTEMPTS
+
+    shell = FakeOpenShell()
+    attempts = []
+
+    async def close_run(run_id):
+        attempts.append(run_id)
+        raise RuntimeError("native delete refused")
+
+    shell.close_run = close_run
+    bind_investigator(build_agent(shell, FunctionModel(lambda messages, info: final_response(info))))
+
+    async def snapshot(finding, run_id):
+        return SimpleNamespace(path=str(tmp_path), digest="digest")
+
+    activities = InvestigationActivities(shell, snapshot, "fixture")
+    queue = f"cleanup-{uuid.uuid4()}"
+    async with await WorkflowEnvironment.start_local(  # noqa: SIM117
+        dev_server_existing_path=temporal_cli, plugins=[PydanticAIPlugin()]
+    ) as env:
+        async with Worker(
+            env.client,
+            task_queue=queue,
+            workflows=[InvestigationWorkflow],
+            activities=[activities.prepare, activities.finalize, activities.cleanup],
+            workflow_runner=workflow_runner(),
+        ):
+            handle = await env.client.start_workflow(
+                InvestigationWorkflow.run,
+                InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture")),
+                id=queue,
+                task_queue=queue,
+            )
+            with pytest.raises(WorkflowFailureError) as failed:
+                await asyncio.wait_for(handle.result(), 30)
+            # Every bounded cleanup attempt ran; the run then fails without a retry.
+            assert attempts == [queue] * CLEANUP_ATTEMPTS
+            cause = failed.value.cause
+            assert isinstance(cause, ApplicationError) and cause.non_retryable
+            assert str(cause).startswith("Owned sandbox cleanup failed: ")
+            state = await handle.query(InvestigationWorkflow.state)
+            assert (state.status, state.phase) == ("failed", "failed")
+            assert state.result is None
+        history = await handle.fetch_history()
+        await Replayer(
+            workflows=[InvestigationWorkflow],
+            plugins=[PydanticAIPlugin()],
+            workflow_runner=workflow_runner(),
+        ).replay_workflow(history)
+        assert attempts == [queue] * CLEANUP_ATTEMPTS
+
+
+def test_cleanup_reserve_covers_waited_prepare_and_every_cleanup_attempt():
+    from temporalio.common import RetryPolicy
+
+    from infosec_harness.workflows import investigation as module
+
+    prepare, cleanup, retry = module.PREPARE_TIMEOUT, module.CLEANUP_TIMEOUT, module.CLEANUP_RETRY
+    # The v11 activity options are unchanged by naming them.
+    assert prepare == timedelta(minutes=10)
+    assert cleanup == timedelta(minutes=5)
+    assert retry == RetryPolicy(maximum_attempts=3)
+    # Temporal's default backoff: 1 s, then 2 s, between the three attempts.
+    backoff = module.CLEANUP_BACKOFF
+    assert backoff == timedelta(seconds=3)
+    reserve = module.CLEANUP_RESERVE
+    assert reserve > prepare + 3 * cleanup + timedelta(seconds=3)
+
+
 @pytest.mark.parametrize("label", ["likely_not_exploitable", "potentially_exploitable"])
 async def test_definitive_verdict_without_execution_becomes_inconclusive(tmp_path, label):
     shell = FakeOpenShell()
