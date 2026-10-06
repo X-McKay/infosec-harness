@@ -9,7 +9,6 @@ import logging
 import os
 import re
 import subprocess
-import sys
 from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack, suppress
 from datetime import UTC, datetime, timedelta
@@ -372,8 +371,12 @@ def case_end(started: datetime) -> dict:
 
 
 def progress(index: int, total: int, record: dict) -> None:
-    print(f"[{index}/{total}] {record['name']} {record.get('workflow_id', '-')} {record['status']}",
-          file=sys.stderr, flush=True)
+    """One case boundary line: start (status starting) or end (its final status)."""
+    event = "case_start" if record["status"] == "starting" else "case_end"
+    log.info("event=%s position=%d/%d case=%s run_id=%s status=%s error_type=%s "
+             "duration_seconds=%s", event, index, total, record["name"],
+             record.get("workflow_id", "-"), record["status"], record.get("error_type", "-"),
+             record.get("duration_seconds", "-"))
 
 
 def operation_observation(config_path: Path, run_id: str) -> dict:
@@ -659,6 +662,9 @@ async def evaluate_corpus(
                 from infosec_harness.workflows.worker import create_worker
 
                 await stack.enter_async_context(create_worker(client, settings))
+                stack.callback(log.info, "event=owned_worker_stopped task_queue=%s",
+                               settings.task_queue)
+                log.info("event=owned_worker_started task_queue=%s", settings.task_queue)
         except BaseException as error:
             candidate.update(status="failed", error_type=type(error).__name__)
             candidate["gates"]["complete_corpus"] = "failed"

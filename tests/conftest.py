@@ -40,6 +40,18 @@ def temporal_cli():
     return found
 
 
+@pytest.fixture
+async def temporal_env(temporal_cli):
+    """A fresh local Temporal dev server with the PydanticAI plugin, for one test."""
+    from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
+    from temporalio.testing import WorkflowEnvironment
+
+    async with await WorkflowEnvironment.start_local(
+        dev_server_existing_path=temporal_cli, plugins=[PydanticAIPlugin()]
+    ) as env:
+        yield env
+
+
 def load_script(name: str):
     """Import one trusted repository utility without shadowing installed packages."""
     scripts = ROOT / "scripts"

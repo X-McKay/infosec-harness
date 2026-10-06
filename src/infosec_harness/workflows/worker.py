@@ -130,7 +130,7 @@ class WorkerIdentityInterceptor(Interceptor):
                         not isinstance(deps, InvestigationDeps)
                         or deps.worker_identity != owner.bound_identity
                     ):
-                        prepared = deps.worker_identity if isinstance(deps, InvestigationDeps) else None
+                        prepared = getattr(deps, "worker_identity", None)
                         raise WorkerIdentityMismatch(
                             "Investigator activity does not match the prepared worker identity "
                             f"(prepared={short(prepared)} bound={short(owner.bound_identity)})"

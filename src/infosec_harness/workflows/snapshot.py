@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import stat
 import tempfile
@@ -22,6 +23,8 @@ EXCLUDED = frozenset({".git", ".venv", "venv", "node_modules", "__pycache__"})
 MAX_FILE = 32 * 1024 * 1024
 MAX_TOTAL = 512 * 1024 * 1024
 MAX_ENTRIES = 100_000
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -156,7 +159,13 @@ async def _git(source: str, revision: str, destination: Path, *, local: bool) ->
     ):
         result = await run_bounded(["git", *config, *args], env=env, timeout=300, cwd=cwd)
         if result.exit_code != 0 or result.timed_out:
-            raise RuntimeError("source checkout failed; no repository code was executed")
+            # Step, exit code and timeout only: Git's stderr can echo repository content.
+            log.warning("event=source_checkout_failed step=%s exit_code=%s timed_out=%s",
+                        args[0], result.exit_code, result.timed_out)
+            raise RuntimeError(
+                f"source checkout failed at git {args[0]} (exit {result.exit_code}, "
+                f"timed_out {result.timed_out}); no repository code was executed"
+            )
 
 
 async def snapshot(finding: Finding, run_id: str, settings: Settings | None = None) -> Snapshot:

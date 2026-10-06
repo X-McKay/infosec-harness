@@ -165,7 +165,10 @@ class InvestigationActivities:
             # This worker knows which runtime received the create, even when no
             # Prepared result reaches the workflow. Close that ownership locally.
             await finish(asyncio.ensure_future(self.openshell.close_run(run_id)))
+            activity.logger.warning("event=prepare_failed run_id=%s owned_closed=true", run_id)
             raise
+        activity.logger.info("event=sandbox_prepared run_id=%s sandbox_id=%s source_digest=%s",
+                             run_id, sandbox.id, snapshot.digest[:12])
         return PreparedInvestigation(
             deps=InvestigationDeps(
                 run_id=run_id,
@@ -285,6 +288,10 @@ class InvestigationActivities:
             limitations.append(
                 "Report output excerpts are bounded; full native receipts remain in the private execution state."
             )
+        activity.logger.info(
+            "event=finalized run_id=%s proposed=%s verdict=%s receipts=%d reported=%d",
+            deps.run_id, payload.verdict.label, verdict.label, len(evidence), len(reported),
+        )
         return InvestigationResult(
             finding=deps.request.finding,
             verdict=verdict,
@@ -309,6 +316,7 @@ class InvestigationActivities:
         # Current code/policy drift must not prevent the original bound adapter
         # from closing its own sandboxes.
         await self.openshell.close_run(payload.run_id)
+        activity.logger.info("event=owned_cleanup_closed run_id=%s", payload.run_id)
         if self.identity is not None and expected is None:
             raise ApplicationError(
                 "Local cleanup attempted, but original worker identity is unknown; cleanup unverified",
@@ -432,15 +440,20 @@ class InvestigationWorkflow(PydanticAIWorkflow):
                 self._state.status = "failed"
                 self._state.error = f"Owned sandbox cleanup failed: {error}"
                 self._state.phase = "failed"
+                workflow.logger.warning("event=cleanup_failed run_id=%s", run_id)
                 raise ApplicationError(self._state.error, non_retryable=True) from error
         if caught is not None:
             self._state.phase = self._state.status
+            workflow.logger.info("event=investigation_ended run_id=%s status=%s failure=%s",
+                                 run_id, self._state.status, getattr(caught, "type", None))
             raise caught
         if result is None:  # Unreachable: every path without a result raised above.
             raise RuntimeError("Investigation ended without a result or a failure")
         self._state.status = "completed"
         self._state.phase = "completed"
         self._state.result = result
+        workflow.logger.info("event=investigation_ended run_id=%s status=completed verdict=%s",
+                             run_id, result.verdict.label)
         return result
 
 

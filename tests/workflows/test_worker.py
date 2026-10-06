@@ -11,12 +11,11 @@ from unittest.mock import AsyncMock
 import pytest
 from fakes import FakeOpenShell
 from pydantic import BaseModel
-from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, TemporalDurability
+from pydantic_ai.durable_exec.temporal import TemporalDurability
 from pydantic_ai.models.function import FunctionModel
 from temporalio import workflow
 from temporalio.client import WorkflowFailureError
 from temporalio.common import RetryPolicy
-from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import ExecuteActivityInput, Worker
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 
@@ -159,7 +158,7 @@ class IdentityDispatchWorkflow:
 @pytest.mark.requires_temporal
 @pytest.mark.parametrize("kind", ["model", "workspace", "skill"])
 async def test_real_temporal_different_worker_refuses_native_activity_before_execution(
-    temporal_cli, tmp_path, kind
+    temporal_env, tmp_path, kind
 ):
     shell = FakeOpenShell()
     model_calls = []
@@ -204,10 +203,8 @@ async def test_real_temporal_different_worker_refuses_native_activity_before_exe
             __name__, "infosec_harness.workflows.investigation", "annotated_types", "typing_inspection"
         )
     )
+    env = temporal_env
     async with (
-        await WorkflowEnvironment.start_local(
-            dev_server_existing_path=temporal_cli, plugins=[PydanticAIPlugin()]
-        ) as env,
         Worker(
             env.client,
             task_queue=queue,
