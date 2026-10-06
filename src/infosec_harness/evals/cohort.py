@@ -10,15 +10,16 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Callable
 from contextlib import AsyncExitStack, suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Literal
+from typing import Literal, NamedTuple
 from uuid import uuid4
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
-from temporalio.client import WorkflowExecutionStatus, WorkflowFailureError
+from temporalio.client import Client, WorkflowExecutionStatus, WorkflowFailureError
 from temporalio.exceptions import ApplicationError, TerminatedError
 from temporalio.exceptions import TimeoutError as TemporalTimeoutError
 
@@ -34,7 +35,7 @@ from infosec_harness.api import (
     start_investigation,
 )
 from infosec_harness.config import Settings
-from infosec_harness.contracts import Finding, InvestigationResult, Limits
+from infosec_harness.contracts import Finding, InvestigationResult, Limits, WorkerIdentity
 from infosec_harness.sandbox import OpenShell, OpenShellConfig, native_operation_accounting
 from infosec_harness.sandbox.process import finish, run_bounded
 from infosec_harness.workflows.investigation import (
@@ -68,6 +69,7 @@ _SEGMENT_LABEL = re.compile(r"([A-Za-z_][A-Za-z0-9_.]*): ")
 # each). Live run 8 retained at most 96 admissions per case under 40 requests / 100 calls.
 CASE_LIFECYCLE_OPERATIONS = 40
 OCCUPANCY_TIMEOUT = 60
+GATES = ("complete_corpus", "task_success_rate", "unsafe_negatives")
 # The observation is one JSON line; anything beyond this tail is not read.
 OCCUPANCY_CAPTURE = 64_000
 # Bound on an error message or stderr tail recorded in a report.
@@ -217,7 +219,13 @@ def source_identity() -> str:
     return read("rev-parse", "HEAD")
 
 
-def corpus_cases(manifest: Path) -> list[tuple[Finding, str, str]]:
+class CorpusCase(NamedTuple):
+    finding: Finding
+    expected: str
+    name: str
+
+
+def corpus_cases(manifest: Path) -> list[CorpusCase]:
     root = REPOSITORY_ROOT
     allowed = manifest.resolve().parent
     document = json.loads(manifest.read_text())
@@ -238,7 +246,7 @@ def corpus_cases(manifest: Path) -> list[tuple[Finding, str, str]]:
         finding = finding.model_copy(
             update={"repo_url": str(repo), "source_mode": "working_snapshot", "revision": "HEAD"}
         )
-        cases.append((finding, case["truth"]["expected_verdict"], name))
+        cases.append(CorpusCase(finding, case["truth"]["expected_verdict"], name))
     if not cases:
         raise ValueError("An empty corpus cannot qualify a candidate")
     return cases
@@ -390,8 +398,125 @@ def cohort_operation_estimate(rows: list[dict]) -> dict:
     return report
 
 
-async def evaluate_corpus(manifest: Path, output: Path, settings, *, names=(),
-                          owned_worker: bool = False, keep_going: bool = False) -> dict:
+async def _run_case(
+    client: Client,
+    settings: Settings,
+    identity: WorkerIdentity,
+    case: CorpusCase,
+    record: dict,
+    candidate: dict,
+    persist: Callable[[], None],
+    *,
+    owned_worker: bool,
+    index: int,
+    total: int,
+) -> BaseException | None:
+    """Run one case once on a fresh workflow ID and reconcile what it owns.
+
+    Returns the failure (cancellation included) instead of raising it, so the caller alone
+    decides whether to stop. A failed case is never re-run and nothing it dispatched is resent.
+    """
+    run_id = PREFIX + "eval-" + uuid4().hex
+    started = datetime.now(UTC)
+    record.update(status="starting", workflow_id=run_id, started_at=started.isoformat())
+    persist()
+    progress(index, total, record)
+    failure = None
+    terminal = False
+    try:
+        handle = await start_investigation(
+            client, case.finding, settings, run_id, identity.fingerprint
+        )
+        wait_seconds = (execution_timeout(settings.limits) + RPC_TIMEOUT).total_seconds()
+        async with asyncio.timeout(wait_seconds):
+            raw = await handle.result()
+        terminal = True
+        result = InvestigationResult.model_validate(raw)
+        if result.model != settings.model_name or result.worker_identity != identity:
+            raise ValueError(
+                "Evaluation result does not match the requested worker/model identity"
+            )
+        record.update(
+            **case_end(started),
+            status="completed",
+            predicted=result.verdict.label,
+            passed=result.verdict.label == case.expected,
+            source_digest=result.source_digest,
+            usage=result.usage,
+            limitations=result.limitations,
+            worker_identity=result.worker_identity.model_dump(),
+        )
+    except BaseException as exc:
+        # A failed workflow may have completed an external request. Never silently resend it.
+        failure = exc
+        record.update(status="failed", error_type=type(exc).__name__,
+                      failure_chain=failure_chain(exc), **case_end(started))
+        candidate["status"] = "failed"
+        candidate["gates"]["complete_corpus"] = "failed"
+        persist()
+        if not (terminal or isinstance(exc, WorkflowFailureError)):
+            # Reconcile the one owned ID; never resend an uncertain start or inference.
+            try:
+                await finish(asyncio.ensure_future(
+                    cancel_owned(client, run_id, DRAIN if owned_worker else None)))
+                record["cancellation"] = "terminal" if owned_worker else "requested"
+            except Exception as cancellation_error:
+                record["cancellation"] = "unconfirmed"
+                record["cancellation_error_type"] = type(cancellation_error).__name__
+        elif server_ended(exc):
+            # The workflow's `finally` never ran, so nothing closed its sandboxes.
+            record.update(cleanup="unconfirmed", cleanup_next_step=SERVER_ENDED_STEP)
+        record["receipts"] = receipt_summary(settings.openshell_config, run_id)
+    record["native_operations"] = operation_observation(settings.openshell_config, run_id)
+    candidate["native_operation_estimate"] = cohort_operation_estimate(candidate["cases"])
+    persist()
+    progress(index, total, record)
+    return failure
+
+
+def _derive_gates(rows: list[dict], policy: ReleasePolicy, *, diagnostic: bool) -> dict:
+    """Gates, counts and status for the recorded rows; the status follows from the gates."""
+    complete = sum(row["status"] == "completed" for row in rows)
+    passed = sum(row.get("passed", False) for row in rows)
+    unsafe_negatives = sum(
+        row.get("predicted") == "likely_not_exploitable"
+        and row["expected"] == "potentially_exploitable"
+        for row in rows
+    )
+    rate = passed / len(rows)
+    if diagnostic:
+        # A partial cohort can never qualify a candidate.
+        gates = dict.fromkeys(GATES, "not_checked")
+    elif complete != len(rows):
+        gates = {"complete_corpus": "failed", "task_success_rate": "not_checked",
+                 "unsafe_negatives": "not_checked"}
+    else:
+        gates = {
+            "complete_corpus": "passed",
+            "task_success_rate": (
+                "passed" if rate >= policy.minimum_task_success_rate else "failed"
+            ),
+            "unsafe_negatives": (
+                "passed" if unsafe_negatives <= policy.maximum_unsafe_negatives else "failed"
+            ),
+        }
+    if diagnostic:
+        status = "completed" if complete == len(rows) else "failed"
+    else:
+        status = "passed" if all(value == "passed" for value in gates.values()) else "failed"
+    return {"gates": gates, "completed": complete, "planned": len(rows),
+            "task_success_rate": rate, "unsafe_negatives": unsafe_negatives, "status": status}
+
+
+async def evaluate_corpus(
+    manifest: Path,
+    output: Path,
+    settings: Settings,
+    *,
+    names: tuple[str, ...] = (),
+    owned_worker: bool = False,
+    keep_going: bool = False,
+) -> dict:
     """Run the frozen corpus once through the production workflow; never resend a case.
 
     ``names`` selects a diagnostic subset: every gate stays ``not_checked`` and it never passes.
@@ -410,10 +535,10 @@ async def evaluate_corpus(manifest: Path, output: Path, settings, *, names=(),
     if owned_worker:
         settings = settings.model_copy(update={"task_queue": f"{PREFIX}eval-{uuid4().hex}"})
     commit = source_identity()
-    cases = corpus_cases(manifest)
-    if unknown := set(names) - {name for _, _, name in cases}:
+    cases = [CorpusCase(*case) for case in corpus_cases(manifest)]
+    if unknown := set(names) - {case.name for case in cases}:
         raise ValueError(f"Unknown corpus case: {', '.join(sorted(unknown))}")
-    cases = [case for case in cases if not names or case[2] in names]
+    cases = [case for case in cases if not names or case.name in names]
     policy, policy_digest = release_policy()
     identity = worker_identity(settings)
     candidate = {
@@ -431,140 +556,53 @@ async def evaluate_corpus(manifest: Path, output: Path, settings, *, names=(),
         "native_operation_budget": await native_capacity_preflight(settings, len(cases)),
         "started_at": datetime.now(UTC).isoformat(),
         "status": "running",
-        "gates": {
-            "complete_corpus": "not_checked",
-            "task_success_rate": "not_checked",
-            "unsafe_negatives": "not_checked",
-        },
+        "gates": dict.fromkeys(GATES, "not_checked"),
         "threshold": policy.minimum_task_success_rate,
         "release_policy_sha256": policy_digest,
         "release_policy": policy.model_dump(),
         "cases": [
-            {"name": name, "expected": expected, "status": "unstarted"}
-            for _, expected, name in cases
+            {"name": case.name, "expected": case.expected, "status": "unstarted"}
+            for case in cases
         ],
     }
-    output.parent.mkdir(parents=True, exist_ok=True)
     write_json(output, candidate, exclusive=True)
+
+    def persist() -> None:
+        # The one report writer. Writes are synchronous, so a document is never interleaved.
+        write_json(output, candidate)
+
     if candidate["native_operation_budget"]["status"] == "failed":
         error = ValueError("Native admission capacity preflight failed; no case was started")
         candidate.update(status="failed", error_type=type(error).__name__)
         candidate["gates"]["complete_corpus"] = "failed"
-        write_json(output, candidate)
+        persist()
         raise error
     async with AsyncExitStack() as stack:
         try:
             client = await connect(settings)
             if owned_worker:
+                # Looked up at call time so tests can substitute the worker factory.
                 from infosec_harness.workflows.worker import create_worker
 
                 await stack.enter_async_context(create_worker(client, settings))
         except BaseException as error:
             candidate.update(status="failed", error_type=type(error).__name__)
             candidate["gates"]["complete_corpus"] = "failed"
-            write_json(output, candidate)
+            persist()
             raise
-        for index, ((finding, expected, _), record) in enumerate(
-            zip(cases, candidate["cases"], strict=True), 1
-        ):
-            run_id = PREFIX + "eval-" + uuid4().hex
-            started = datetime.now(UTC)
-            record.update(status="starting", workflow_id=run_id, started_at=started.isoformat())
-            write_json(output, candidate)
-            progress(index, len(cases), record)
-            failure = None
-            terminal = False
-            try:
-                handle = await start_investigation(
-                    client, finding, settings, run_id, identity.fingerprint
-                )
-                wait_seconds = (execution_timeout(settings.limits) + RPC_TIMEOUT).total_seconds()
-                async with asyncio.timeout(wait_seconds):
-                    raw = await handle.result()
-                terminal = True
-                result = InvestigationResult.model_validate(raw)
-                if result.model != settings.model_name or result.worker_identity != identity:
-                    raise ValueError(
-                        "Evaluation result does not match the requested worker/model identity"
-                    )
-                record.update(
-                    **case_end(started),
-                    status="completed",
-                    predicted=result.verdict.label,
-                    passed=result.verdict.label == expected,
-                    source_digest=result.source_digest,
-                    usage=result.usage,
-                    limitations=result.limitations,
-                    worker_identity=result.worker_identity.model_dump(),
-                )
-            except BaseException as exc:
-                # A failed workflow may have completed an external request. Never silently resend it.
-                failure = exc
-                record.update(status="failed", error_type=type(exc).__name__,
-                              failure_chain=failure_chain(exc), **case_end(started))
-                candidate["status"] = "failed"
-                candidate["gates"]["complete_corpus"] = "failed"
-                write_json(output, candidate)
-                if not (terminal or isinstance(exc, WorkflowFailureError)):
-                    # Reconcile the one owned ID; never resend an uncertain start or inference.
-                    try:
-                        await finish(asyncio.ensure_future(
-                            cancel_owned(client, run_id, DRAIN if owned_worker else None)))
-                        record["cancellation"] = "terminal" if owned_worker else "requested"
-                    except Exception as cancellation_error:
-                        record["cancellation"] = "unconfirmed"
-                        record["cancellation_error_type"] = type(cancellation_error).__name__
-                elif server_ended(exc):
-                    # The workflow's `finally` never ran, so nothing closed its sandboxes.
-                    record.update(cleanup="unconfirmed", cleanup_next_step=SERVER_ENDED_STEP)
-                record["receipts"] = receipt_summary(settings.openshell_config, run_id)
-            record["native_operations"] = operation_observation(settings.openshell_config, run_id)
-            candidate["native_operation_estimate"] = cohort_operation_estimate(candidate["cases"])
-            write_json(output, candidate)
-            progress(index, len(cases), record)
+        for index, (case, record) in enumerate(zip(cases, candidate["cases"], strict=True), 1):
+            failure = await _run_case(
+                client, settings, identity, case, record, candidate, persist,
+                owned_worker=owned_worker, index=index, total=len(cases),
+            )
             if isinstance(failure, (asyncio.CancelledError, KeyboardInterrupt, SystemExit)):
                 raise failure
             if failure is not None and not (keep_going and agent_level(failure)):
                 break
-    rows = candidate["cases"]
-    candidate["native_operation_estimate"] = cohort_operation_estimate(rows)
-    complete = sum(row["status"] == "completed" for row in rows)
-    passed = sum(row.get("passed", False) for row in rows)
-    unsafe_negatives = sum(
-        row.get("predicted") == "likely_not_exploitable"
-        and row["expected"] == "potentially_exploitable"
-        for row in rows
-    )
-    candidate["gates"] = {
-        "complete_corpus": "passed" if complete == len(rows) else "failed",
-        "task_success_rate": (
-            "passed" if passed / len(rows) >= policy.minimum_task_success_rate else "failed"
-        )
-        if complete == len(rows)
-        else "not_checked",
-        "unsafe_negatives": (
-            "passed" if unsafe_negatives <= policy.maximum_unsafe_negatives else "failed"
-        )
-        if complete == len(rows)
-        else "not_checked",
-    }
-    candidate.update(
-        completed=complete,
-        planned=len(rows),
-        task_success_rate=passed / len(rows),
-        unsafe_negatives=unsafe_negatives,
-        finished_at=datetime.now(UTC).isoformat(),
-        status="passed"
-        if complete == len(rows)
-        and passed / len(rows) >= policy.minimum_task_success_rate
-        and unsafe_negatives <= policy.maximum_unsafe_negatives
-        else "failed",
-    )
-    if names:
-        # A partial cohort can never qualify a candidate.
-        candidate["gates"] = dict.fromkeys(candidate["gates"], "not_checked")
-        candidate["status"] = "completed" if complete == len(rows) else "failed"
-    write_json(output, candidate)
+    candidate["native_operation_estimate"] = cohort_operation_estimate(candidate["cases"])
+    derived = _derive_gates(candidate["cases"], policy, diagnostic=bool(names))
+    candidate.update(derived, finished_at=datetime.now(UTC).isoformat())
+    persist()
     return candidate
 
 
