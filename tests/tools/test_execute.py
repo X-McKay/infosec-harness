@@ -352,7 +352,7 @@ async def test_modified_source_refuses_probe_and_closes_offline_sandbox(tmp_path
 
 
 @pytest.mark.parametrize("failure", ["unsafe", "unknown", "boundary", "source"])
-async def test_post_probe_integrity_failure_recovery_is_narrow(failure):
+async def test_post_probe_integrity_failure_recovery_is_narrow(failure, tmp_path):
     from infosec_harness.sandbox import (
         ExecutionUnknown,
         OpenShellError,
@@ -428,7 +428,8 @@ async def test_post_probe_integrity_failure_recovery_is_narrow(failure):
         )
         return response
 
-    deps = await make_deps(shell)
+    (tmp_path / "sink.py").write_text("source\n")
+    deps = await make_deps(shell, snapshot_path=str(tmp_path))
     agent = build_agent(shell, FunctionModel(respond))
     if failure == "unsafe":
         result = await agent.run("Inspect", deps=deps)

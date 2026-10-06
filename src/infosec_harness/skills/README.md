@@ -52,25 +52,25 @@ checks frontmatter, required sections, size and the catalog budget.
 | `cwe-676-dangerous-function` | Calls to inherently risky functions such as strcpy or gets; routes to the real weakness. Use this when the finding is CWE-676/242. | 4,429 |
 | `cwe-682-incorrect-calculation` | Wrong calculations and precision loss in business logic. Use this when the finding is CWE-682/1339. | 5,415 |
 | `cwe-732-incorrect-permission-assignment` | Files, directories or sockets created with overly broad permissions. Use this when the finding is CWE-732/276/277/278. | 4,438 |
-| `cwe-77-command-injection-generic` | Argument or option injection into a program started without a shell. Use this when the finding is CWE-77/88 and no shell parses the value. | 4,936 |
+| `cwe-77-command-injection-generic` | Argument or option injection into a program started without a shell. Use this when the finding is CWE-77/88 and no shell parses the value. | 5,524 |
 | `cwe-78-os-command-injection` | Untrusted input reaching a shell command. Use this when the finding is CWE-78 or OS command injection. | 4,154 |
 | `cwe-787-out-of-bounds-write` | C/C++ writes past a buffer boundary. Use this when the finding is CWE-787/119/120/121/122/124. | 5,924 |
 | `cwe-79-xss` | Untrusted input reaching HTML markup unencoded (reflected or stored XSS). Use this when the finding is CWE-79. | 2,137 |
 | `cwe-798-hard-coded-credentials` | Credentials or keys embedded in source or stored recoverably. Use this when the finding is CWE-798/259/321/522. | 4,776 |
 | `cwe-835-infinite-loop` | Loops that may never terminate on some input. Use this when the finding is CWE-835. | 5,024 |
 | `cwe-862-missing-authorization` | Missing or wrong authorization and insecure direct object references. Use this when the finding is CWE-862/863/639. | 4,814 |
-| `cwe-89-sql-injection` | Untrusted input built into SQL text. Use this when the finding is CWE-89 or SQL injection. | 3,754 |
+| `cwe-89-sql-injection` | Untrusted input built into SQL text. Use this when the finding is CWE-89 or SQL injection. | 4,074 |
 | `cwe-90-ldap-injection` | Untrusted input built into an LDAP search filter or DN. Use this when the finding is CWE-90. | 4,185 |
 | `cwe-915-mass-assignment` | Request data bound wholesale onto model attributes. Use this when the finding is CWE-915/913 or mass assignment. | 4,076 |
 | `cwe-917-expression-language-injection` | Expression-language injection (EL, OGNL, SpEL, MVEL). Use this when the finding is CWE-917. | 4,564 |
-| `cwe-918-ssrf` | Untrusted input choosing a server-side request destination. Use this when the finding is CWE-918 or SSRF. | 3,551 |
+| `cwe-918-ssrf` | Untrusted input choosing a server-side request destination. Use this when the finding is CWE-918 or SSRF. | 3,854 |
 | `cwe-94-code-injection` | Untrusted input evaluated as program source (eval, exec). Use this when the finding is CWE-94 or code injection. | 2,470 |
 | `cwe-942-permissive-cors` | Permissive CORS policies and missing origin checks. Use this when the finding is CWE-942/346/1385. | 4,524 |
 | `cwe-943-nosql-injection` | NoSQL query or operator injection, such as MongoDB-style query objects. Use this when the finding is CWE-943. | 4,820 |
-| `cwe-98-file-inclusion` | Untrusted input choosing a file or module to load and execute. Use this when the finding is CWE-98/829. | 4,845 |
-| `environment` | Prepare and repair a focused investigation environment using observed repository manifests and tool results. | 4,817 |
-| `investigate` | Load first. Trace and test an identified vulnerability with source evidence and bounded offline experiments. | 3,607 |
-| `lang-c-cpp` | C and C++ repositories: Make/CMake, linking a probe with gcc, memory-safety oracles. Use this when the repository is primarily C or C++. | 5,158 |
+| `cwe-98-file-inclusion` | Untrusted input choosing a file or module to load and execute. Use this when the finding is CWE-98/829. | 5,407 |
+| `environment` | Prepare and repair a focused investigation environment using observed repository manifests and tool results. | 5,215 |
+| `investigate` | Load first. Trace and test an identified vulnerability with source evidence and bounded offline experiments. | 3,932 |
+| `lang-c-cpp` | C and C++ repositories: Make/CMake, linking a probe with gcc, memory-safety oracles. Use this when the repository is primarily C or C++. | 6,059 |
 | `lang-dotnet` | .NET repositories (C#, F#, VB): solutions, NuGet, console probes. Use this when the repository is primarily .NET; the image has no dotnet SDK. | 4,791 |
 | `lang-go` | Go repositories: modules, vendoring, in-package test probes. Use this when the repository is primarily Go; the image has no Go toolchain. | 4,915 |
 | `lang-java` | Java repositories: Maven/Gradle layout, entry points, direct-javac probes. Use this when the repository is primarily Java. | 3,927 |
@@ -82,6 +82,6 @@ checks frontmatter, required sections, size and the catalog budget.
 | `lang-ruby` | Ruby repositories: Bundler, Rails and Rack, in-process Rack probes. Use this when the repository is primarily Ruby; the image has no Ruby. | 4,366 |
 | `lang-rust` | Rust repositories: Cargo workspaces, offline builds, unsafe code. Use this when the repository is primarily Rust; the image has no Rust toolchain. | 5,214 |
 | `lang-shell` | Shell scripts (sh, bash): quoting, expansion sinks, xtrace. Use this when the finding is in a shell script, Makefile recipe, CI step or hook. | 4,914 |
-| `probe` | Load before writing or running any probe. Author and run a focused offline probe with controls that ends in the HARNESS_PROBE observation line. | 5,791 |
+| `probe` | Load before writing or running any probe. Author and run a focused offline probe with controls that ends in the HARNESS_PROBE observation line. | 6,880 |
 | `triage-unknown-cwe` | A weakness with no cwe-* skill: map it to a family, sink, guard and oracle, or show it is unobservable here. Use this when no cwe-* skill matches. | 5,163 |
 | `triage-unknown-language` | A language or toolchain with no lang-* skill: identify the runtime, read to the sink, fall back honestly. Use this when no lang-* skill matches. | 4,501 |

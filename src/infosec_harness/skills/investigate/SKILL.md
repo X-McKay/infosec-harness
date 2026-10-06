@@ -28,7 +28,11 @@ fails". This does not change the verdict rules below.
 - `likely_not_exploitable` needs a concrete blocking condition: the guard, encoding or
   configuration that stops the input, cited at its source line. An unexecuted path, missing
   dependency or timeout is not a blocker.
-- Both definitive labels also need a complete probe as defined in `probe`.
+- Both definitive labels also need a complete probe as defined in `probe`, which runs the
+  real target as built (a reimplementation or stubbed runtime is a stand-in: `inconclusive`)
+  and varies only caller-supplied inputs (see `probe`, "Real target, real inputs"). A probe
+  that edits the module search path, environment or installed files is disqualified and
+  cannot supersede an earlier probe.
 - `inconclusive` when prerequisites or evidence remain unresolved; say which.
 - A probe's `target_reached` means the real target entry point ran with the finding's input,
   including a guard rejecting it. It does not mean the sensitive sink ran or the attack

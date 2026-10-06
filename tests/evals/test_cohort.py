@@ -386,6 +386,28 @@ def test_keep_going_continues_only_after_terminal_agent_level_failure():
     assert not cohort.agent_level(deep)
 
 
+def test_invalid_model_citation_is_agent_level_but_generic_value_errors_are_not():
+    """Live run 12, case c-intoverflow-vulnerable: finalization refused a citation of a file
+    the agent wrote in the sandbox; the FileNotFoundError stopped the cohort with eight cases
+    unstarted. The typed refusal is the model's mistake; any untyped failure still stops."""
+    message = ("citation path 'probe.py' is not a file in the original snapshot; cite only "
+               "files that existed before your probes, or drop the citation")
+    assert cohort.agent_level(workflow_failure(
+        ("InvalidCitation", f"ActivityError: Activity task failed <- InvalidCitation: {message}")))
+    for kind in ("ValueError", "FileNotFoundError", "OSError"):
+        stop = workflow_failure(
+            (kind, f"ActivityError: Activity task failed <- {kind}: {message}"))
+        assert not cohort.agent_level(stop), kind
+    # The run-12 chain, verbatim in shape.
+    assert not cohort.agent_level(workflow_failure((
+        "FileNotFoundError",
+        "ActivityError: Activity task failed <- FileNotFoundError: FileNotFoundError: "
+        "[Errno 2] No such file or directory: '/state/sources/k/tree/probe.py'")))
+    # A citation path is model text: it can only fail closed, never widen the allowlist.
+    assert not cohort.agent_level(workflow_failure(
+        ("InvalidCitation", "ActivityError: x <- InvalidCitation: 'a <- OpenShellError: b'")))
+
+
 def test_keep_going_classifies_from_the_untruncated_chain_with_an_allowlist():
     # The shape the workflow writes: ActivityError around the named type, all links embedded.
     assert cohort.agent_level(workflow_failure(

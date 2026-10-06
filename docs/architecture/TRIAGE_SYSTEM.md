@@ -12,7 +12,10 @@ read/search/write, `execute.py` for execute and run_probe); `agents/evidence.py`
 observations and `agents/inference.py` carries model requests into the model sandbox.
 `agents/` holds exactly one investigator; the directory introduces no parallel orchestration.
 `workflows/investigation.py` prepares the workspace, runs the agent, validates its verdict
-against receipts and citations, and cleans up; `workflows/worker.py` builds the trusted worker
+against receipts and citations, and cleans up; the agent's output validator gets citation
+feedback from a read-only `check_citations` activity on the trusted worker (workflow code
+never reads the snapshot), gated by the `citation-feedback` patch marker so histories
+recorded before it replay unchanged; `workflows/worker.py` builds the trusted worker
 and its identity guard. `contracts.py` contains strict inputs and results. `api.py` projects
 Temporal state, including a bounded label-only view of run history, and serves operator report
 files from `reports_dir` read-only; it does not maintain a second job ledger. `evals/` holds corpus evaluation,
@@ -143,7 +146,8 @@ workflow and its cleanup is terminal. Failed workflows carry the outermost meani
 type and a typed cause chain, which the report records. With `--keep-going` the cohort
 continues only past a terminal failure classified from the raw, untruncated exception chain:
 the outermost cause must be agent-level (`UsageLimitExceeded`, `UnexpectedModelBehavior`,
-`ModelExecutorError`), every further link must be on an allowlist (those types, `ModelRetry`
+`ModelExecutorError`, or `InvalidCitation`: finalization refusing a model citation that
+names no line range of the original snapshot; a generic `ValueError` is not), every further link must be on an allowlist (those types, `ModelRetry`
 and Temporal's wrappers), and the chain text must name no cleanup, `ExecutionUnknown` or
 `OpenShellError`. Any other type, such as a timeout, RPC error or `WorkerIdentityMismatch`,
 stops the cohort. `--case` selects a diagnostic subset whose gates stay `not_checked`.

@@ -119,6 +119,12 @@ which must abort with an AddressSanitizer report. `--node` defaults to the pinne
 `.harness/mise`; `--python` defaults to the interpreter running the script and needs pytest.
 Java fixtures have no verification tests.
 
+On 2026-10-06 the investigator found a residual defect in a fixed variant: `nullderef-fixed`
+still dereferenced `None` when the payload was the JSON literal `null`, so its
+`potentially_exploitable` verdict was right. The ground truth was corrected (the fixture now
+rejects a non-object payload, its sink line moved to 12, and its verification test covers
+non-object payloads) rather than the verdict.
+
 ### Answer key
 
 **This table is the answer key. Never copy it, or any mapping from a directory to a verdict,

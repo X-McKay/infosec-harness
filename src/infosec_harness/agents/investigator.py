@@ -15,10 +15,11 @@ from pydantic_core import to_json
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 
-from infosec_harness.contracts import Evidence, Verdict, definitive_support
+from infosec_harness.contracts import Citation, Evidence, Verdict, definitive_support
 from infosec_harness.sandbox import OpenShell
 from infosec_harness.sandbox.executor import MAX_INVOCATION_BYTES
 from infosec_harness.tools import build_toolset
+from infosec_harness.workflows.snapshot import citation_feedback
 
 from .deps import InvestigationDeps
 from .evidence import retry_reasons
@@ -29,6 +30,12 @@ AGENT_NAME = "investigator"
 GUARDED_ACTIVITY_PREFIX = f"agent__{AGENT_NAME}__"
 # The packaged runtime skills, beside this subpackage.
 SKILLS = Path(__file__).parents[1] / "skills"
+# Citation feedback reads the snapshot on the trusted worker, never in workflow code: file
+# reads there are nondeterministic on replay and can stall the workflow task. The patch
+# marker keeps histories recorded before this check replaying without the activity.
+CITATION_ACTIVITY = "check_citations"
+CITATION_PATCH = "citation-feedback"
+CITATION_TIMEOUT = timedelta(minutes=2)
 
 
 class DurablePayloadLimit(AbstractCapability[InvestigationDeps]):
@@ -88,6 +95,24 @@ class DurablePayloadLimit(AbstractCapability[InvestigationDeps]):
         return args
 
 
+async def check_citations(deps: InvestigationDeps, citations: list[Citation]) -> list[str]:
+    """Bounded feedback for citations that name no line range of the original snapshot."""
+    if not citations:
+        return []
+    if not workflow.in_workflow():
+        return citation_feedback(deps.snapshot_path, citations)
+    if not workflow.patched(CITATION_PATCH):
+        return []
+    return await workflow.execute_activity(
+        CITATION_ACTIVITY,
+        args=[deps, citations],
+        result_type=list[str],
+        start_to_close_timeout=CITATION_TIMEOUT,
+        # Read-only, but a failure is the harness's (a missing snapshot): fail, do not retry.
+        retry_policy=RetryPolicy(maximum_attempts=1),
+    )
+
+
 async def validate_verdict(ctx: RunContext[InvestigationDeps], verdict: Verdict) -> Verdict:
     """Give deterministic feedback from tool returns; finalization still owns admission."""
     evidence = []
@@ -107,6 +132,9 @@ async def validate_verdict(ctx: RunContext[InvestigationDeps], verdict: Verdict)
             "Copy exact full Evidence.id values from execute/run_probe tool returns, including "
             "the tool-call suffix. Available IDs: " + ", ".join(sorted(known))
         )
+    # Every label: finalization refuses any citation outside the original snapshot.
+    if problems := await check_citations(ctx.deps, verdict.citations):
+        raise ModelRetry("; ".join(problems) + ".")
     if verdict.label == "inconclusive":
         return verdict
     evidence = [item for item in evidence if item.source_digest == ctx.deps.source_digest]
