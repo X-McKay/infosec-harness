@@ -125,6 +125,15 @@ still dereferenced `None` when the payload was the JSON literal `null`, so its
 rejects a non-object payload, its sink line moved to 12, and its verification test covers
 non-object payloads) rather than the verdict.
 
+In cohort 13 (2026-10-06, main `b1256fc`) the investigator found that `openredirect-fixed` was
+still an open redirect: `/\evil.v8k2m9.example/` has no scheme, no netloc and one leading
+slash, so it passed the relative-path guard, and browsers read the backslash as `/`, giving the
+external `//evil.v8k2m9.example/`. Its `potentially_exploitable` verdict was right. The fixture
+now refuses control characters and treats `\` as `/` before the slash checks (returning the
+normalised path); the vulnerable variant is unchanged, the fixed variant's sink line moved from
+22 to 25, and both variants gained verification tests (the fixed one covers backslash,
+control-character, protocol-relative and absolute payloads).
+
 ### Answer key
 
 **This table is the answer key. Never copy it, or any mapping from a directory to a verdict,

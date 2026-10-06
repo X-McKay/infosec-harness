@@ -1196,7 +1196,7 @@
         "expected_verdict": "likely_not_exploitable",
         "reachability": "neutralized",
         "sink_file": "app.py",
-        "sink_line": 22,
+        "sink_line": 25,
         "source": "next query parameter",
         "target_callable": "redirect_target"
       },
