@@ -45,7 +45,7 @@ checks frontmatter, required sections, size and the catalog budget.
 | `cwe-489-active-debug-code` | Debug modes, debug endpoints or test hooks reachable in production. Use this when the finding is CWE-489/11 or names debug code. | 4,906 |
 | `cwe-502-deserialization` | Untrusted bytes deserialized into objects. Use this when the finding is CWE-502 or names unsafe deserialization. | 2,633 |
 | `cwe-521-weak-password-requirements` | Registration or password-change paths that accept trivially weak passwords. Use this when the finding is CWE-521. | 3,827 |
-| `cwe-601-open-redirect` | Untrusted input choosing a redirect destination. Use this when the finding is CWE-601 or open redirect. | 4,546 |
+| `cwe-601-open-redirect` | Untrusted input choosing a redirect destination. Use this when the finding is CWE-601 or open redirect. | 4,794 |
 | `cwe-611-xxe` | Untrusted XML parsed with external entity or DTD resolution. Use this when the finding is CWE-611 or XXE. | 7,153 |
 | `cwe-643-xpath-injection` | Untrusted input built into an XPath or XQuery expression. Use this when the finding is CWE-643/91. | 4,477 |
 | `cwe-668-exposure-of-resource-to-wrong-sphere` | Files, directories or listings served to an audience that should not reach them. Use this when the finding is CWE-668/552/538. | 4,367 |
@@ -54,7 +54,7 @@ checks frontmatter, required sections, size and the catalog budget.
 | `cwe-732-incorrect-permission-assignment` | Files, directories or sockets created with overly broad permissions. Use this when the finding is CWE-732/276/277/278. | 4,438 |
 | `cwe-77-command-injection-generic` | Argument or option injection into a program started without a shell. Use this when the finding is CWE-77/88 and no shell parses the value. | 5,524 |
 | `cwe-78-os-command-injection` | Untrusted input reaching a shell command. Use this when the finding is CWE-78 or OS command injection. | 4,154 |
-| `cwe-787-out-of-bounds-write` | C/C++ writes past a buffer boundary. Use this when the finding is CWE-787/119/120/121/122/124. | 5,924 |
+| `cwe-787-out-of-bounds-write` | C/C++ writes past a buffer boundary. Use this when the finding is CWE-787/119/120/121/122/124. | 6,229 |
 | `cwe-79-xss` | Untrusted input reaching HTML markup unencoded (reflected or stored XSS). Use this when the finding is CWE-79. | 2,137 |
 | `cwe-798-hard-coded-credentials` | Credentials or keys embedded in source or stored recoverably. Use this when the finding is CWE-798/259/321/522. | 4,776 |
 | `cwe-835-infinite-loop` | Loops that may never terminate on some input. Use this when the finding is CWE-835. | 5,024 |
@@ -69,7 +69,7 @@ checks frontmatter, required sections, size and the catalog budget.
 | `cwe-943-nosql-injection` | NoSQL query or operator injection, such as MongoDB-style query objects. Use this when the finding is CWE-943. | 4,820 |
 | `cwe-98-file-inclusion` | Untrusted input choosing a file or module to load and execute. Use this when the finding is CWE-98/829. | 5,407 |
 | `environment` | Prepare and repair a focused investigation environment using observed repository manifests and tool results. | 5,215 |
-| `investigate` | Load first. Trace and test an identified vulnerability with source evidence and bounded offline experiments. | 3,932 |
+| `investigate` | Load first. Trace and test an identified vulnerability with source evidence and bounded offline experiments. | 4,162 |
 | `lang-c-cpp` | C and C++ repositories: Make/CMake, linking a probe with gcc, memory-safety oracles. Use this when the repository is primarily C or C++. | 6,059 |
 | `lang-dotnet` | .NET repositories (C#, F#, VB): solutions, NuGet, console probes. Use this when the repository is primarily .NET; the image has no dotnet SDK. | 4,791 |
 | `lang-go` | Go repositories: modules, vendoring, in-package test probes. Use this when the repository is primarily Go; the image has no Go toolchain. | 4,915 |
@@ -82,6 +82,6 @@ checks frontmatter, required sections, size and the catalog budget.
 | `lang-ruby` | Ruby repositories: Bundler, Rails and Rack, in-process Rack probes. Use this when the repository is primarily Ruby; the image has no Ruby. | 4,366 |
 | `lang-rust` | Rust repositories: Cargo workspaces, offline builds, unsafe code. Use this when the repository is primarily Rust; the image has no Rust toolchain. | 5,214 |
 | `lang-shell` | Shell scripts (sh, bash): quoting, expansion sinks, xtrace. Use this when the finding is in a shell script, Makefile recipe, CI step or hook. | 4,914 |
-| `probe` | Load before writing or running any probe. Author and run a focused offline probe with controls that ends in the HARNESS_PROBE observation line. | 6,880 |
+| `probe` | Load before writing or running any probe. Author and run a focused offline probe with controls that ends in the HARNESS_PROBE observation line. | 7,053 |
 | `triage-unknown-cwe` | A weakness with no cwe-* skill: map it to a family, sink, guard and oracle, or show it is unobservable here. Use this when no cwe-* skill matches. | 5,163 |
 | `triage-unknown-language` | A language or toolchain with no lang-* skill: identify the runtime, read to the sink, fall back honestly. Use this when no lang-* skill matches. | 4,501 |

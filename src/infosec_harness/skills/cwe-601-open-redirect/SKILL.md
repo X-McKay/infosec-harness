@@ -77,6 +77,9 @@ and `/\evil.com` are judged by their real host. No browser or network is needed.
   `evil.com/good.com`); judge by parsed authority.
 - Protocol-relative `//host` and backslash variants `/\host` or `\/\/host` are off-origin on many
   parsers; include them in the payload set.
+- Vary only the destination value the finding names as attacker-controlled (see `probe`, "Real
+  target, real inputs"). Changing the allowlist, base URL or other configuration the caller
+  supplies demonstrates caller misuse, not an open redirect.
 - An open redirect is often lower severity than injection; keep the finding's stated severity and
   scope, and note it is a redirect, not code execution.
 
