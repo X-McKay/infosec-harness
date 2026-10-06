@@ -4,8 +4,8 @@ import json
 
 import httpx
 import pytest
-from pydantic import ValidationError
 from openai import AsyncOpenAI
+from pydantic import ValidationError
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
