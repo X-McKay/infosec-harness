@@ -1,0 +1,1 @@
+exports.redirectTarget = destination => destination;

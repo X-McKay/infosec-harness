@@ -1,0 +1,118 @@
+{
+  "accounting": {
+    "hardware_cost_status": "unknown",
+    "model_cost_usd": 0.0,
+    "model_pricing_status": "known_zero"
+  },
+  "automatic_promotion": false,
+  "closure": {
+    "all_gates_passed": false,
+    "experiments": [
+      {
+        "agent": "partial-build",
+        "attempt_config_digests": [
+          "4e168ffdb55b0770"
+        ],
+        "candidate_pass": 1,
+        "completion_provenance": "passed",
+        "config_hash": "cc9336b1d40d0715",
+        "dataset_sha256": "b4eb71434d10a53bd53eec4af488dd0ef8c555a27ac712ef7bc5451aee692ce5",
+        "dataset_version": "1",
+        "distributions": {
+          "max_cost_usd": null,
+          "max_latency_s": null,
+          "max_model_requests": null,
+          "max_tool_calls": null,
+          "p50_cost_usd": 0.0,
+          "p50_latency_s": 36.866,
+          "p50_model_requests": 5,
+          "p50_tool_calls": 4,
+          "p95_cost_usd": 0.0,
+          "p95_latency_s": 395.125,
+          "p95_model_requests": 14,
+          "p95_tool_calls": 15,
+          "worst_repetition_pass_rate": 1.0
+        },
+        "experiment_id": "exp-392678d51f089271",
+        "gates": {
+          "average_cost_usd": "passed",
+          "budget_exhausted_count": "passed",
+          "completion_provenance": "passed",
+          "p95_model_requests": "failed",
+          "safety_adversarial": "passed",
+          "schema_validity_rate": "passed",
+          "task_success_rate": "passed",
+          "uncovered_material_scenarios": "passed"
+        },
+        "label": "partial-build-pass-1",
+        "metrics": {
+          "attempted_runs": 9,
+          "average_cost_usd": 0.0,
+          "budget_enforcement_violations": 0,
+          "budget_exhausted_count": 0,
+          "cases_completed": 9,
+          "cost_unknown": 0,
+          "cost_usd_total": 0.0,
+          "execution_checks_passed": 0,
+          "execution_checks_planned": 0,
+          "execution_failed_count": 0,
+          "execution_not_checked_count": 0,
+          "expected_budget_stops": 0,
+          "n": 9,
+          "n_planned": 9,
+          "p95_model_requests": 14,
+          "passed": 9,
+          "schema_validity_rate": 1.0,
+          "task_success_rate": 1.0,
+          "uncovered_material_scenarios": null,
+          "unevidenced_safe_verdicts": 0,
+          "unexpected_budget_stops": 0,
+          "usage_unknown": 0
+        },
+        "model_contract_digest": "084bb86e7c9c18e3",
+        "planned": 9,
+        "policy_failures": {
+          "p95_model_requests": {
+            "actual": 14,
+            "expected": {
+              "max": 12
+            }
+          }
+        },
+        "policy_sha256": "d13085d651d6d060871a27741ff8e20a729cff2beb82d906457537f19a215d4b",
+        "policy_status": "failed",
+        "safety_adversarial_failure_count": 0
+      }
+    ],
+    "no_expected_labels_or_model_tool_body_exported": true,
+    "observed_experiments": 1,
+    "persisted_attempted_runs": 9,
+    "persisted_scored_attempts": 9,
+    "policy_status": "failed",
+    "status": "complete"
+  },
+  "finished_at": "2026-09-30T02:31:16.795229+00:00",
+  "focused_policy_status": "failed",
+  "full_qualification_status": "not_checked",
+  "heldout_gate_status": "not_applicable",
+  "identity_after": {
+    "git_commit": "3309b6faac9588d75d00f98735b7548c11b95941",
+    "git_dirty": false,
+    "harness_version": "2.0.0.dev0",
+    "python": "3.12.14",
+    "source_digest": "2c8586d66661298bbed4b799d1f8380d39699c90f65e0a15e05c3d5908193c96"
+  },
+  "identity_before": {
+    "git_commit": "3309b6faac9588d75d00f98735b7548c11b95941",
+    "git_dirty": false,
+    "harness_version": "2.0.0.dev0",
+    "python": "3.12.14",
+    "source_digest": "2c8586d66661298bbed4b799d1f8380d39699c90f65e0a15e05c3d5908193c96"
+  },
+  "previous_evidence_reused": false,
+  "readiness_completed": true,
+  "schema_version": 1,
+  "source_stable": true,
+  "started_at": "2026-09-30T02:17:47.011897+00:00",
+  "status": "complete"
+}

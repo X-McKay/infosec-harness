@@ -1,0 +1,82 @@
+{
+  "release": "0.1.2",
+  "commit": "6648bd0c290efbc41ba131ee9831ee45cd431f94",
+  "release_base_url": "https://github.com/NVIDIA/OpenShell/releases/download/v0.1.2/",
+  "artifacts": {
+    "cli-macos-arm64": {
+      "component": "cli",
+      "os": "darwin",
+      "architecture": "arm64",
+      "filename": "openshell-aarch64-apple-darwin.tar.gz",
+      "sha256": "cdde7e92bd7eac664031cf171cfe80d29e7f122a6674917b25a4ce0bcbc33466"
+    },
+    "cli-linux-arm64": {
+      "component": "cli",
+      "os": "linux",
+      "architecture": "arm64",
+      "filename": "openshell-aarch64-unknown-linux-musl.tar.gz",
+      "sha256": "9880c5776688231d5242deb046cdee361734f94901b9123949a0baf29fdadd9e"
+    },
+    "cli-linux-x64": {
+      "component": "cli",
+      "os": "linux",
+      "architecture": "x86_64",
+      "filename": "openshell-x86_64-unknown-linux-musl.tar.gz",
+      "sha256": "7eb6917285331a09e3300266a0558616481a5e9927cae2612ea07c4045b6dd6f"
+    },
+    "gateway-linux-arm64": {
+      "component": "gateway",
+      "os": "linux",
+      "architecture": "arm64",
+      "filename": "openshell-gateway-aarch64-unknown-linux-gnu.tar.gz",
+      "sha256": "8ec1b6ca5b71ef5085fa51f3244d719a541e8f0d58cc569c7a0d6705b6204397"
+    },
+    "supervisor-linux-arm64": {
+      "component": "supervisor",
+      "os": "linux",
+      "architecture": "arm64",
+      "filename": "openshell-supervisor-aarch64-unknown-linux-gnu.tar.gz",
+      "sha256": "57328624479b29261cf1f9eeb847df867bac7deb3186bb36bfde07fdcd2a94f5"
+    },
+    "sandbox-linux-arm64": {
+      "component": "sandbox",
+      "os": "linux",
+      "architecture": "arm64",
+      "filename": "openshell-sandbox-aarch64-unknown-linux-musl.tar.gz",
+      "sha256": "4c68f2bc8e00a0a7d5d66d7bc2d836be6b255602a8f1b1650b4262c7935894b3"
+    },
+    "gateway-linux-x64": {
+      "component": "gateway",
+      "os": "linux",
+      "architecture": "x86_64",
+      "filename": "openshell-gateway-x86_64-unknown-linux-gnu.tar.gz",
+      "sha256": "218d887845b3a020ab7535c9985eb9c666d6938f144044957f8b82b42892aadb"
+    },
+    "supervisor-linux-x64": {
+      "component": "supervisor",
+      "os": "linux",
+      "architecture": "x86_64",
+      "filename": "openshell-supervisor-x86_64-unknown-linux-gnu.tar.gz",
+      "sha256": "801d717f4211b4c24449b08a47ce5571ff623ce993c10d44e133dbe2edc36611"
+    },
+    "sandbox-linux-x64": {
+      "component": "sandbox",
+      "os": "linux",
+      "architecture": "x86_64",
+      "filename": "openshell-sandbox-x86_64-unknown-linux-musl.tar.gz",
+      "sha256": "f07ad7177f4c3ff7743f89531eda36bb784c56b45b166f49c5a51fbcfa5274a6"
+    },
+    "sdk-wheel": {
+      "component": "sdk",
+      "os": "any",
+      "architecture": "any",
+      "filename": "openshell-0.1.2-py3-none-any.whl",
+      "sha256": "8c409da4f176d42418d92366fe201f47cceef2c0fa432bfbce2bf938649d59cf"
+    }
+  },
+  "oci_indexes": {
+    "gateway": "sha256:2fe4dad9118e14ab80a8258b545ea6e6cd74c3469e24ad4e6610f964d98913a2",
+    "supervisor": "sha256:d7b5264bb6bc56f4796e6fa3617b8e4a8d785be0b7293542efd8cc250b0fb67a",
+    "sandbox": "sha256:bf4797b6c511f2d8ba02955dbba4bf76c1f0dd6d83531420c5408d5f1fb9d72f"
+  }
+}

@@ -1,0 +1,926 @@
+{
+  "schema_version": 1,
+  "kind": "compact-sanitized-cross-phase-live-evidence-summary",
+  "not_single_source_release_comparison": true,
+  "release_eligible": false,
+  "release_eligibility_reasons": [
+    "cross-phase baseline uses distinct source identities",
+    "selected experiments record a dirty working tree",
+    "one or more unchanged release-policy gates failed"
+  ],
+  "defaults": {
+    "unchanged_by_live_validation": true,
+    "promotion_attempted": false,
+    "promotion_status": "not_promoted"
+  },
+  "source_identities": {
+    "original_fe7": "fe7cdbe56792a41366dd1f854da2b753ce033b9b8211bcce319364d7c285f6ae",
+    "reviewed_fb": "fb24546fba24e30f556bb01917b51b3667974a6e99b8b95021a7c7ccc663f2d3",
+    "final_e383": "e38343c1a8188f98dd4cc44f51d4645013aa6ce467ebe0af5bd0ac4c5208fa0e"
+  },
+  "base_full_suite_coverage": {
+    "invariant_valid": true,
+    "suite_count": 11,
+    "case_count": 118,
+    "suite_count_by_phase": {
+      "original-fe7": 6,
+      "reviewed-fb": 5
+    },
+    "case_count_by_phase": {
+      "original-fe7": 66,
+      "reviewed-fb": 52
+    },
+    "all_executions_complete": true,
+    "all_model_policies_passed": false,
+    "model_policy_failed_agents": [
+      "partial-build",
+      "context",
+      "probe-author",
+      "probe-repair",
+      "verdict"
+    ],
+    "usage": {
+      "case_attempt_records": 118,
+      "observed": 114,
+      "unknown": 4,
+      "observed_usage_coverage_rate": 0.9661,
+      "complete_usage_population": false
+    }
+  },
+  "cost_interpretation": {
+    "configured_model_pricing": "zero_priced",
+    "reported_token_cost_usd": 0.0,
+    "cost_gate_is_inert_for_nonzero_monetary_cost": true,
+    "provider_or_hardware_compute_cost_measured": false
+  },
+  "recon_scoring_provenance": {
+    "classification": "derived-deterministic-rescore",
+    "artifact_sha256": "fad41989d78ded67ceadd6a898902f713d237a2bfabd0365cb3bb96d2eab04b0",
+    "new_inference_performed": false,
+    "original_evidence_mutated": false,
+    "raw_v2": {
+      "experiment_id": "exp-92250624dd21a795",
+      "evaluator_version": "deterministic-agent-output-v2",
+      "n": 9,
+      "passed": 7,
+      "task_success_rate": 0.7778
+    },
+    "derived_v3": {
+      "evaluator_version": "deterministic-agent-output-v3",
+      "n": 9,
+      "passed": 9,
+      "task_success_rate": 1.0
+    },
+    "corrected_alias_count": 2,
+    "used_as_replacement_for_raw_118_case_baseline": false
+  },
+  "suites": [
+    {
+      "agent": "intake",
+      "phase": "original-fe7",
+      "source_digest": "fe7cdbe56792a41366dd1f854da2b753ce033b9b8211bcce319364d7c285f6ae",
+      "experiment_id": "exp-9d8600f538b18766",
+      "config_hash": "4b7af8260d426131",
+      "dataset_version": "1",
+      "agent_version": "1.0.0",
+      "evaluator_version": "deterministic-agent-output-v2",
+      "model": "gateway:Qwen3.6-35B-A3B-NVFP4",
+      "backend": "gateway",
+      "pricing": "zero_priced",
+      "execution": {
+        "status": "complete",
+        "recorded": 9,
+        "planned": 9
+      },
+      "metrics": {
+        "task_success_rate": 0.8889,
+        "schema_validity_rate": 1.0,
+        "p95_model_requests": 2,
+        "failure_categories": {
+          "wrong_answer": 1,
+          "budget_exhausted": 0,
+          "invalid_output": 0
+        }
+      },
+      "usage": {
+        "case_attempt_records": 9,
+        "usage_status_counts": {
+          "observed": 9
+        },
+        "observed_usage_coverage_rate": 1.0,
+        "complete_usage_population": true
+      },
+      "policy": {
+        "status": "passed",
+        "failed_checks": []
+      }
+    },
+    {
+      "agent": "recon",
+      "phase": "original-fe7",
+      "source_digest": "fe7cdbe56792a41366dd1f854da2b753ce033b9b8211bcce319364d7c285f6ae",
+      "experiment_id": "exp-92250624dd21a795",
+      "config_hash": "5e16c4f8da55d711",
+      "dataset_version": "1",
+      "agent_version": "1.0.0",
+      "evaluator_version": "deterministic-agent-output-v2",
+      "model": "gateway:Qwen3.6-35B-A3B-NVFP4",
+      "backend": "gateway",
+      "pricing": "zero_priced",
+      "execution": {
+        "status": "complete",
+        "recorded": 9,
+        "planned": 9
+      },
+      "metrics": {
+        "task_success_rate": 0.7778,
+        "schema_validity_rate": 1.0,
+        "p95_model_requests": 4,
+        "failure_categories": {
+          "wrong_answer": 2,
+          "budget_exhausted": 0,
+          "invalid_output": 0
+        }
+      },
+      "usage": {
+        "case_attempt_records": 9,
+        "usage_status_counts": {
+          "observed": 9
+        },
+        "observed_usage_coverage_rate": 1.0,
+        "complete_usage_population": true
+      },
+      "policy": {
+        "status": "passed",
+        "failed_checks": []
+      }
+    },
+    {
+      "agent": "env-planner",
+      "phase": "original-fe7",
+      "source_digest": "fe7cdbe56792a41366dd1f854da2b753ce033b9b8211bcce319364d7c285f6ae",
+      "experiment_id": "exp-983a46ac3a4556d4",
+      "config_hash": "bb1e194a5d9cae68",
+      "dataset_version": "1",
+      "agent_version": "1.0.0",
+      "evaluator_version": "deterministic-agent-output-v2",
+      "model": "gateway:Qwen3.6-35B-A3B-NVFP4",
+      "backend": "gateway",
+      "pricing": "zero_priced",
+      "execution": {
+        "status": "complete",
+        "recorded": 10,
+        "planned": 10
+      },
+      "metrics": {
+        "task_success_rate": 1.0,
+        "schema_validity_rate": 1.0,
+        "p95_model_requests": 6,
+        "failure_categories": {
+          "wrong_answer": 0,
+          "budget_exhausted": 0,
+          "invalid_output": 0
+        }
+      },
+      "usage": {
+        "case_attempt_records": 10,
+        "usage_status_counts": {
+          "observed": 10
+        },
+        "observed_usage_coverage_rate": 1.0,
+        "complete_usage_population": true
+      },
+      "policy": {
+        "status": "passed",
+        "failed_checks": []
+      }
+    },
+    {
+      "agent": "build-repair",
+      "phase": "original-fe7",
+      "source_digest": "fe7cdbe56792a41366dd1f854da2b753ce033b9b8211bcce319364d7c285f6ae",
+      "experiment_id": "exp-d6eb643f0d15e2c5",
+      "config_hash": "27a7771eaf59c67e",
+      "dataset_version": "1",
+      "agent_version": "1.0.0",
+      "evaluator_version": "deterministic-agent-output-v2",
+      "model": "gateway:Qwen3.6-35B-A3B-NVFP4",
+      "backend": "gateway",
+      "pricing": "zero_priced",
+      "execution": {
+        "status": "complete",
+        "recorded": 14,
+        "planned": 14
+      },
+      "metrics": {
+        "task_success_rate": 0.8571,
+        "schema_validity_rate": 1.0,
+        "p95_model_requests": 10,
+        "failure_categories": {
+          "wrong_answer": 2,
+          "budget_exhausted": 0,
+          "invalid_output": 0
+        }
+      },
+      "usage": {
+        "case_attempt_records": 14,
+        "usage_status_counts": {
+          "observed": 14
+        },
+        "observed_usage_coverage_rate": 1.0,
+        "complete_usage_population": true
+      },
+      "policy": {
+        "status": "passed",
+        "failed_checks": []
+      }
+    },
+    {
+      "agent": "partial-build",
+      "phase": "original-fe7",
+      "source_digest": "fe7cdbe56792a41366dd1f854da2b753ce033b9b8211bcce319364d7c285f6ae",
+      "experiment_id": "exp-04b976e8be240c8b",
+      "config_hash": "e48f5b64a8a3d7c1",
+      "dataset_version": "1",
+      "agent_version": "1.0.0",
+      "evaluator_version": "deterministic-agent-output-v2",
+      "model": "gateway:Qwen3.6-35B-A3B-NVFP4",
+      "backend": "gateway",
+      "pricing": "zero_priced",
+      "execution": {
+        "status": "complete",
+        "recorded": 9,
+        "planned": 9
+      },
+      "metrics": {
+        "task_success_rate": 0.3333,
+        "schema_validity_rate": 0.8889,
+        "p95_model_requests": 11,
+        "failure_categories": {
+          "wrong_answer": 5,
+          "budget_exhausted": 0,
+          "invalid_output": 1
+        }
+      },
+      "usage": {
+        "case_attempt_records": 9,
+        "usage_status_counts": {
+          "observed": 8,
+          "unknown": 1
+        },
+        "observed_usage_coverage_rate": 0.8889,
+        "complete_usage_population": false
+      },
+      "policy": {
+        "status": "failed",
+        "failed_checks": [
+          {
+            "kind": "hard_gate",
+            "metric": "schema_validity_rate",
+            "value": 0.8889,
+            "operator": "eq",
+            "limit": 1.0,
+            "passed": false
+          },
+          {
+            "kind": "threshold",
+            "metric": "task_success_rate",
+            "value": 0.3333,
+            "operator": "min",
+            "limit": 0.85,
+            "passed": false
+          }
+        ]
+      }
+    },
+    {
+      "agent": "context",
+      "phase": "original-fe7",
+      "source_digest": "fe7cdbe56792a41366dd1f854da2b753ce033b9b8211bcce319364d7c285f6ae",
+      "experiment_id": "exp-81a9e183c8ee3dfa",
+      "config_hash": "f58a9aee10b97e2a",
+      "dataset_version": "1",
+      "agent_version": "1.0.0",
+      "evaluator_version": "deterministic-agent-output-v2",
+      "model": "gateway:Qwen3.6-35B-A3B-NVFP4",
+      "backend": "gateway",
+      "pricing": "zero_priced",
+      "execution": {
+        "status": "complete",
+        "recorded": 15,
+        "planned": 15
+      },
+      "metrics": {
+        "task_success_rate": 0.8,
+        "schema_validity_rate": 0.8667,
+        "p95_model_requests": 6,
+        "failure_categories": {
+          "wrong_answer": 1,
+          "budget_exhausted": 0,
+          "invalid_output": 2
+        }
+      },
+      "usage": {
+        "case_attempt_records": 15,
+        "usage_status_counts": {
+          "observed": 13,
+          "unknown": 2
+        },
+        "observed_usage_coverage_rate": 0.8667,
+        "complete_usage_population": false
+      },
+      "policy": {
+        "status": "failed",
+        "failed_checks": [
+          {
+            "kind": "hard_gate",
+            "metric": "schema_validity_rate",
+            "value": 0.8667,
+            "operator": "eq",
+            "limit": 1.0,
+            "passed": false
+          },
+          {
+            "kind": "threshold",
+            "metric": "task_success_rate",
+            "value": 0.8,
+            "operator": "min",
+            "limit": 0.85,
+            "passed": false
+          }
+        ]
+      }
+    },
+    {
+      "agent": "probe-planner",
+      "phase": "reviewed-fb",
+      "source_digest": "fb24546fba24e30f556bb01917b51b3667974a6e99b8b95021a7c7ccc663f2d3",
+      "experiment_id": "exp-f74b46ba686df534",
+      "config_hash": "a6cb17a1505840dd",
+      "dataset_version": "1",
+      "agent_version": "1.0.0",
+      "evaluator_version": "deterministic-agent-output-v3",
+      "model": "gateway:Qwen3.6-35B-A3B-NVFP4",
+      "backend": "gateway",
+      "pricing": "zero_priced",
+      "execution": {
+        "status": "complete",
+        "recorded": 10,
+        "planned": 10
+      },
+      "metrics": {
+        "task_success_rate": 1.0,
+        "schema_validity_rate": 1.0,
+        "p95_model_requests": 2,
+        "failure_categories": {
+          "wrong_answer": 0,
+          "budget_exhausted": 0,
+          "invalid_output": 0
+        }
+      },
+      "usage": {
+        "case_attempt_records": 10,
+        "usage_status_counts": {
+          "observed": 10
+        },
+        "observed_usage_coverage_rate": 1.0,
+        "complete_usage_population": true
+      },
+      "policy": {
+        "status": "passed",
+        "failed_checks": []
+      }
+    },
+    {
+      "agent": "probe-author",
+      "phase": "reviewed-fb",
+      "source_digest": "fb24546fba24e30f556bb01917b51b3667974a6e99b8b95021a7c7ccc663f2d3",
+      "experiment_id": "exp-ccbb69ae8ff36e23",
+      "config_hash": "1143d491d21b3188",
+      "dataset_version": "1",
+      "agent_version": "1.0.0",
+      "evaluator_version": "deterministic-agent-output-v3",
+      "model": "gateway:Qwen3.6-35B-A3B-NVFP4",
+      "backend": "gateway",
+      "pricing": "zero_priced",
+      "execution": {
+        "status": "complete",
+        "recorded": 10,
+        "planned": 10
+      },
+      "metrics": {
+        "task_success_rate": 0.9,
+        "schema_validity_rate": 1.0,
+        "p95_model_requests": 14,
+        "failure_categories": {
+          "wrong_answer": 1,
+          "budget_exhausted": 0,
+          "invalid_output": 0
+        }
+      },
+      "usage": {
+        "case_attempt_records": 10,
+        "usage_status_counts": {
+          "observed": 10
+        },
+        "observed_usage_coverage_rate": 1.0,
+        "complete_usage_population": true
+      },
+      "policy": {
+        "status": "failed",
+        "failed_checks": [
+          {
+            "kind": "threshold",
+            "metric": "p95_model_requests",
+            "value": 14,
+            "operator": "max",
+            "limit": 12,
+            "passed": false
+          }
+        ]
+      }
+    },
+    {
+      "agent": "probe-diagnosis",
+      "phase": "reviewed-fb",
+      "source_digest": "fb24546fba24e30f556bb01917b51b3667974a6e99b8b95021a7c7ccc663f2d3",
+      "experiment_id": "exp-f0e40e2ce3f6dfb3",
+      "config_hash": "bd60efee4a2e3f9c",
+      "dataset_version": "2",
+      "agent_version": "1.0.0",
+      "evaluator_version": "deterministic-agent-output-v3",
+      "model": "gateway:Qwen3.6-35B-A3B-NVFP4",
+      "backend": "gateway",
+      "pricing": "zero_priced",
+      "execution": {
+        "status": "complete",
+        "recorded": 13,
+        "planned": 13
+      },
+      "metrics": {
+        "task_success_rate": 1.0,
+        "schema_validity_rate": 1.0,
+        "p95_model_requests": 1,
+        "failure_categories": {
+          "wrong_answer": 0,
+          "budget_exhausted": 0,
+          "invalid_output": 0
+        }
+      },
+      "usage": {
+        "case_attempt_records": 13,
+        "usage_status_counts": {
+          "observed": 13
+        },
+        "observed_usage_coverage_rate": 1.0,
+        "complete_usage_population": true
+      },
+      "policy": {
+        "status": "passed",
+        "failed_checks": []
+      }
+    },
+    {
+      "agent": "probe-repair",
+      "phase": "reviewed-fb",
+      "source_digest": "fb24546fba24e30f556bb01917b51b3667974a6e99b8b95021a7c7ccc663f2d3",
+      "experiment_id": "exp-3f7c18635b3c5d6a",
+      "config_hash": "024828e094dfde9c",
+      "dataset_version": "1",
+      "agent_version": "1.0.0",
+      "evaluator_version": "deterministic-agent-output-v3",
+      "model": "gateway:Qwen3.6-35B-A3B-NVFP4",
+      "backend": "gateway",
+      "pricing": "zero_priced",
+      "execution": {
+        "status": "complete",
+        "recorded": 10,
+        "planned": 10
+      },
+      "metrics": {
+        "task_success_rate": 1.0,
+        "schema_validity_rate": 1.0,
+        "p95_model_requests": 14,
+        "failure_categories": {
+          "wrong_answer": 0,
+          "budget_exhausted": 0,
+          "invalid_output": 0
+        }
+      },
+      "usage": {
+        "case_attempt_records": 10,
+        "usage_status_counts": {
+          "observed": 10
+        },
+        "observed_usage_coverage_rate": 1.0,
+        "complete_usage_population": true
+      },
+      "policy": {
+        "status": "failed",
+        "failed_checks": [
+          {
+            "kind": "threshold",
+            "metric": "p95_model_requests",
+            "value": 14,
+            "operator": "max",
+            "limit": 12,
+            "passed": false
+          }
+        ]
+      }
+    },
+    {
+      "agent": "verdict",
+      "phase": "reviewed-fb",
+      "source_digest": "fb24546fba24e30f556bb01917b51b3667974a6e99b8b95021a7c7ccc663f2d3",
+      "experiment_id": "exp-72fba35ebe1dec79",
+      "config_hash": "2bda80db261042c6",
+      "dataset_version": "1",
+      "agent_version": "1.0.0",
+      "evaluator_version": "deterministic-agent-output-v3",
+      "model": "gateway:Qwen3.6-35B-A3B-NVFP4",
+      "backend": "gateway",
+      "pricing": "zero_priced",
+      "execution": {
+        "status": "complete",
+        "recorded": 9,
+        "planned": 9
+      },
+      "metrics": {
+        "task_success_rate": 0.8889,
+        "schema_validity_rate": 0.8889,
+        "p95_model_requests": 2,
+        "failure_categories": {
+          "wrong_answer": 0,
+          "budget_exhausted": 0,
+          "invalid_output": 1
+        }
+      },
+      "usage": {
+        "case_attempt_records": 9,
+        "usage_status_counts": {
+          "observed": 8,
+          "unknown": 1
+        },
+        "observed_usage_coverage_rate": 0.8889,
+        "complete_usage_population": false
+      },
+      "policy": {
+        "status": "failed",
+        "failed_checks": [
+          {
+            "kind": "hard_gate",
+            "metric": "schema_validity_rate",
+            "value": 0.8889,
+            "operator": "eq",
+            "limit": 1.0,
+            "passed": false
+          }
+        ]
+      }
+    }
+  ],
+  "followups": {
+    "partial_build_1_0_1": {
+      "status": "complete",
+      "classification": "separate-post-fix-full-dataset",
+      "source_before": "e38343c1a8188f98dd4cc44f51d4645013aa6ce467ebe0af5bd0ac4c5208fa0e",
+      "source_after": "e38343c1a8188f98dd4cc44f51d4645013aa6ce467ebe0af5bd0ac4c5208fa0e",
+      "stable_source": true,
+      "experiment_id": "exp-77f3b7bfaaca7646",
+      "recorded_cases": 9,
+      "planned_cases": 9,
+      "expected_agent_version": "1.0.1",
+      "retroactively_replaces_original_fe7_result": false,
+      "mixed_load_timing": true,
+      "usage": {
+        "case_attempt_records": 9,
+        "usage_status_counts": {
+          "observed": 6,
+          "unknown": 3
+        },
+        "observed_usage_coverage_rate": 0.6667,
+        "complete_usage_population": false,
+        "complete_population_avg_tokens": null,
+        "observed_tokens_total": 213023.0,
+        "observed_avg_tokens": 35503.8,
+        "cost_status_counts": {
+          "known_zero": 9
+        }
+      },
+      "metrics": {
+        "task_success_rate": 0.6667,
+        "schema_validity_rate": 0.6667,
+        "p95_model_requests": 10,
+        "failure_categories": {
+          "wrong_answer": 0,
+          "budget_exhausted": 0,
+          "invalid_output": 3
+        }
+      },
+      "provenance": {
+        "source_digest": "e38343c1a8188f98dd4cc44f51d4645013aa6ce467ebe0af5bd0ac4c5208fa0e",
+        "git_commit": "6dbb09e7404c59e50c6503efc385a980816c10be",
+        "git_dirty": true,
+        "harness_version": "2.0.0.dev0",
+        "agent_version": "1.0.1",
+        "config_hash": "72b49056bcde420a",
+        "dataset_version": "1",
+        "model": "gateway:Qwen3.6-35B-A3B-NVFP4",
+        "model_pricing": "zero_priced",
+        "experiment_id": "exp-77f3b7bfaaca7646",
+        "evaluator_version": "deterministic-agent-output-v3"
+      },
+      "policy": {
+        "status": "failed",
+        "failed_checks": [
+          {
+            "kind": "hard_gate",
+            "metric": "schema_validity_rate",
+            "value": 0.6667,
+            "operator": "eq",
+            "limit": 1.0,
+            "passed": false
+          },
+          {
+            "kind": "threshold",
+            "metric": "task_success_rate",
+            "value": 0.6667,
+            "operator": "min",
+            "limit": 0.85,
+            "passed": false
+          }
+        ]
+      }
+    },
+    "invalid_output_forensics_v4": {
+      "status": "complete",
+      "classification": "private-nonrelease-diagnostic",
+      "source_before": "e38343c1a8188f98dd4cc44f51d4645013aa6ce467ebe0af5bd0ac4c5208fa0e",
+      "source_after": "e38343c1a8188f98dd4cc44f51d4645013aa6ce467ebe0af5bd0ac4c5208fa0e",
+      "stable_source": true,
+      "expected_case_count": 4,
+      "execution_snapshot": {
+        "experiment_count": 4,
+        "recorded_cases": 4,
+        "experiment_status_counts": {
+          "complete": 4
+        }
+      },
+      "usage": {
+        "case_attempt_records": 4,
+        "usage_status_counts": {
+          "observed": 3,
+          "unknown": 1
+        },
+        "observed_usage_coverage_rate": 0.75,
+        "complete_usage_population": false,
+        "complete_population_avg_tokens": null,
+        "observed_tokens_total": null,
+        "observed_avg_tokens": null,
+        "cost_status_counts": {
+          "known_zero": 4
+        }
+      },
+      "rerun_outcome_counts": {
+        "answered": 3,
+        "invalid_output": 1
+      },
+      "failure_evidence_artifacts": 1,
+      "typed_output_recorded": 3
+    },
+    "verdict_thinking_budget_calibration": {
+      "status": "terminal_incomplete",
+      "classification": "descriptive-nonpromotion-calibration",
+      "artifact": ".harness/validation/live-verdict-thinking-budget/run/comparison.json",
+      "artifact_sha256": "986b113089420a39d2c33a80f6c4c5a66e723678f4004968c1231c9985f2bb59",
+      "kind": "descriptive-live-thinking-token-budget-calibration",
+      "source_before": "e38343c1a8188f98dd4cc44f51d4645013aa6ce467ebe0af5bd0ac4c5208fa0e",
+      "source_after": "e38343c1a8188f98dd4cc44f51d4645013aa6ce467ebe0af5bd0ac4c5208fa0e",
+      "stable_source": true,
+      "experiment_id": null,
+      "recorded_cases": null,
+      "planned_cases": null,
+      "exit_code": null,
+      "complete": false,
+      "selected_candidate": 2048,
+      "groups_disjoint": true,
+      "promotion_attempted": false,
+      "promotion_eligible_reported": false,
+      "all_usage_observed": false,
+      "command_status": "complete",
+      "command_exit_code": 0,
+      "trial_summaries": [
+        {
+          "candidate": 512,
+          "driver_trial_status": "failed",
+          "experiment_id": "exp-85bf23fec94132b6",
+          "experiment_status": "truncated",
+          "scored_cases": 6,
+          "planned_cases": 7,
+          "correct_cases": 4,
+          "attempted_runs": 7,
+          "task_success_rate": 0.6667,
+          "schema_validity_rate": 0.6667,
+          "attempt_outcome_counts": {
+            "answered": 4,
+            "failed": 1,
+            "invalid_output": 2
+          },
+          "usage": {
+            "case_attempt_records": 7,
+            "usage_status_counts": {
+              "observed": 4,
+              "unknown": 3
+            },
+            "observed_usage_coverage_rate": 0.5714,
+            "complete_usage_population": false,
+            "complete_population_avg_tokens": null,
+            "observed_tokens_total": 24777.0,
+            "observed_avg_tokens": 6194.2,
+            "cost_status_counts": {
+              "known_zero": 7
+            }
+          }
+        },
+        {
+          "candidate": 2048,
+          "driver_trial_status": "complete",
+          "experiment_id": "exp-2a5587a2feffaefa",
+          "experiment_status": "complete",
+          "scored_cases": 7,
+          "planned_cases": 7,
+          "correct_cases": 7,
+          "attempted_runs": 7,
+          "task_success_rate": 1.0,
+          "schema_validity_rate": 1.0,
+          "attempt_outcome_counts": {
+            "answered": 7
+          },
+          "usage": {
+            "case_attempt_records": 7,
+            "usage_status_counts": {
+              "observed": 7
+            },
+            "observed_usage_coverage_rate": 1.0,
+            "complete_usage_population": true,
+            "complete_population_avg_tokens": 12692.6,
+            "observed_tokens_total": 88848.0,
+            "observed_avg_tokens": 12692.6,
+            "cost_status_counts": {
+              "known_zero": 7
+            }
+          }
+        }
+      ],
+      "held_out": {
+        "experiment_id": "exp-bac2aaa4b85180fa",
+        "experiment_status": "complete",
+        "scored_cases": 2,
+        "planned_cases": 2,
+        "correct_cases": 0,
+        "attempted_runs": 2,
+        "task_success_rate": 0.0,
+        "schema_validity_rate": 0.0,
+        "attempt_outcome_counts": {
+          "invalid_output": 2
+        },
+        "usage": {
+          "case_attempt_records": 2,
+          "usage_status_counts": {
+            "unknown": 2
+          },
+          "observed_usage_coverage_rate": 0.0,
+          "complete_usage_population": false,
+          "complete_population_avg_tokens": null,
+          "observed_tokens_total": 0.0,
+          "observed_avg_tokens": null,
+          "cost_status_counts": {
+            "known_zero": 2
+          }
+        }
+      },
+      "study_usage": {
+        "case_attempt_records": 16,
+        "usage_status_counts": {
+          "observed": 11,
+          "unknown": 5
+        },
+        "observed_usage_coverage_rate": 0.6875,
+        "complete_usage_population": false,
+        "complete_population_avg_tokens": null,
+        "observed_tokens_total": null,
+        "observed_avg_tokens": null,
+        "cost_status_counts": {
+          "known_zero": 16
+        }
+      }
+    },
+    "build_repair_diagnostics_v3": {
+      "status": "complete",
+      "classification": "private-nonrelease-diagnostic",
+      "artifact": ".harness/validation/live-approved/build-repair-diagnostics-v3/index.json",
+      "artifact_sha256": "be31ca80bb83e97504cffcba02a99cf2710e3281c8de9a032178c7c10e604fcb",
+      "kind": "live-build-repair-diagnostic-rerun",
+      "source_before": "e38343c1a8188f98dd4cc44f51d4645013aa6ce467ebe0af5bd0ac4c5208fa0e",
+      "source_after": "e38343c1a8188f98dd4cc44f51d4645013aa6ce467ebe0af5bd0ac4c5208fa0e",
+      "stable_source": true,
+      "experiment_id": "exp-2fc35202eaddbe38",
+      "recorded_cases": 2,
+      "planned_cases": null,
+      "exit_code": null,
+      "typed_output_complete": true,
+      "case_count": 2,
+      "typed_output_recorded_count": 2,
+      "coarse_check": {
+        "scored_cases": 2,
+        "planned_cases": 2,
+        "passed_cases": 0,
+        "task_success_rate": 0.0,
+        "schema_validity_rate": 1.0,
+        "p95_model_requests": 11,
+        "attempt_outcome_counts": {
+          "answered": 2
+        }
+      },
+      "usage": {
+        "case_attempt_records": 2,
+        "usage_status_counts": {
+          "observed": 2
+        },
+        "observed_usage_coverage_rate": 1.0,
+        "complete_usage_population": true,
+        "complete_population_avg_tokens": 46957.5,
+        "observed_tokens_total": 93915.0,
+        "observed_avg_tokens": 46957.5,
+        "cost_status_counts": {
+          "known_zero": 2
+        }
+      },
+      "failure_assessment": [
+        {
+          "count": 1,
+          "category": "model_contract_violation",
+          "finding": "invented an unrequested registry requirement"
+        },
+        {
+          "count": 1,
+          "category": "coarse_reduction_not_execution_proof",
+          "finding": "dependency-install tactic relies on a fixture-declared driver and uses an inconsistent prefix; a literal label mismatch does not prove execution failure"
+        }
+      ]
+    },
+    "post_live_resource_usage_separation_patch": {
+      "status": "validated",
+      "classification": "post-live-non-agent-accounting-change",
+      "included_in_e383_live_agent_evidence": false,
+      "alters_agent_prompts_configs_or_dataset_expectations": false,
+      "pytest": {
+        "artifact": ".harness/validation/pytest-final-commit.xml",
+        "artifact_sha256": "86faddd7ed4474b0c0fea741e9fc9a3346e08bd8326d7fce80c391fb5fa17647",
+        "tests": 1508,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "runtime": {
+        "artifact": ".harness/validation/runtime-provider-resource-separation.json",
+        "artifact_sha256": "e473176250a18898c930eed76f2e0e944f3094928371cbed03e66b8c38b8a2f1",
+        "verification_log": ".harness/validation/runtime-provider-resource-verified.log",
+        "verification_log_sha256": "63e5f5b4ffc870cf6344fdedafc21030c52c4af0c7292e7d7dc0b6854ec98712",
+        "batch_id": "batch-67a49dd5e77291c8",
+        "run_id": "6233c5f7b937ab672a8405ce",
+        "ledger_version": 2,
+        "budget_dimensions": [
+          "requests",
+          "tokens",
+          "cost_usd",
+          "tool_calls",
+          "agent_runs",
+          "execution_seconds"
+        ],
+        "invocations": 6,
+        "manifest_schema": 2,
+        "status": "passed"
+      }
+    }
+  },
+  "final_code_validation": {
+    "classification": "post-live-accounting-and-governance-checks",
+    "live_agent_evidence_source_unchanged": true,
+    "pytest": {
+      "artifact": ".harness/validation/pytest-final-governance.xml",
+      "artifact_sha256": "4dbddb401bf9f31842abe137769cdad8ca718451b271eaf56924ed4195b250f2",
+      "tests": 1519,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    "playbook_conformance": {
+      "status": "passed",
+      "existing_waiver": "AGENT029",
+      "artifact": ".harness/validation/playbook-final-corrected.log"
+    },
+    "last_code_change": "Derive individual risk-assessment versions from agent specs; no agent or inference behavior changes."
+  }
+}

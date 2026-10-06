@@ -1,101 +1,36 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
-# --- Local development (host) ---
 bootstrap:
-    uv sync --all-extras
+    uv sync --locked
 
 check:
-    uv run ruff check src tests
-    uv run python -m compileall -q src
-    HARNESS_MODEL_MODE=stub uv run harness agents validate
-
-test:
-    HARNESS_MODEL_MODE=stub uv run pytest
+    uv run --locked ruff check src tests scripts deploy/openshell/build_context.py
+    uv run --locked python -m compileall -q src scripts
 
 lint-fix:
-    uv run ruff check src tests --fix
+    uv run --locked ruff check src tests scripts deploy/openshell/build_context.py --fix
 
-# What a run costs in model round trips, prompt-cache prefix stability, and batch schedule.
-# All three are offline: no provider, no container, no credentials, seconds to run. Use them
-# before changing a read tool, a prompt's exploration procedure, or per-repo concurrency.
-measure:
-    HARNESS_MODEL_MODE=stub uv run python scripts/measure_exploration.py
-    HARNESS_MODEL_MODE=stub uv run python scripts/measure_cache_prefix.py
-    HARNESS_MODEL_MODE=stub uv run python scripts/measure_batch_schedule.py
+generated-check:
+    uv run --locked python scripts/check_api_schema.py
+    uv run --locked python scripts/generated.py --check
 
-# Conformance against the Agent / Multi-Agent Playbooks, via agentctl.
-# Needs agentctl: `uv tool install ./tools/agentctl` from the playbooks repo, or
-# `just conformance AGENTCTL=/path/to/playbooks` to use a checkout.
-conformance agentctl="":
-    uv run python scripts/conformance.py {{ if agentctl != "" { "--agentctl " + agentctl } else { "" } }}
+generated-sync:
+    uv run --locked python scripts/generated.py
 
-# Regenerate every derived governance artifact from its source of truth.
-governance:
-    uv run python scripts/gen_risk_assessments.py
-    uv run python scripts/gen_release_policies.py
-    uv run python scripts/gen_system_spec.py
-    uv run python scripts/restructure_skills.py
+regenerate: generated-sync
+    uv run --locked python -c "import json; from pathlib import Path; from infosec_harness.api import app; Path('ui/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n')"
+    cd ui && npm run gen:api
 
-# Regenerate the agent-spec JSON schema and the web OpenAPI client.
-agents-schema:
-    HARNESS_MODEL_MODE=stub uv run harness agents schema
+test *args:
+    uv run --locked pytest -m "not network" {{args}}
 
-openapi:
-    HARNESS_MODEL_MODE=stub uv run python -c "import json,infosec_harness.api.app as a; open('web/openapi.json','w').write(json.dumps(a.app.openapi(),indent=2))"
-    cd web && npm run gen:api
+test-network *args:
+    uv run --locked pytest -m network {{args}}
 
-# --- Offline demo (no Temporal, no Docker): full pipeline with stub models ---
-demo findings="examples/findings.sample.json":
-    HARNESS_MODEL_MODE=stub HARNESS_DATABASE_URL="sqlite+aiosqlite:///.harness/demo.db" \
-      uv run harness submit {{findings}} --local --label demo
+ui-build:
+    cd ui && npm ci && npm run build
 
-# Upgrade the demo database to the latest revision (adopts one built before migrations existed).
-migrate:
-    HARNESS_MODEL_MODE=stub HARNESS_DATABASE_URL="sqlite+aiosqlite:///.harness/demo.db" \
-      uv run harness migrate
-
-# --- Evals ---
-eval-run agent="probe-diagnosis":
-    HARNESS_MODEL_MODE=stub HARNESS_DATABASE_URL="sqlite+aiosqlite:///.harness/demo.db" \
-      uv run harness eval run {{agent}}
-
-# Every agent's dataset through its adapter, on the stub model — what CI runs. This proves the
-# datasets and adapters still load and score end to end; stub accuracy is meaningless and low,
-# so read nothing into the numbers.
-eval-adapters:
-    mkdir -p .harness
-    for dataset in src/infosec_harness/agents/*/evals/dataset.yaml; do \
-      agent="$(basename "$(dirname "$(dirname "$dataset")")")"; \
-      echo "--- $agent"; \
-      HARNESS_MODEL_MODE=stub HARNESS_DATABASE_URL="sqlite+aiosqlite:///.harness/demo.db" \
-        uv run harness eval run "$agent"; \
-    done
-
-# One agent's dataset against several models, printed side by side: accuracy, latency, cost.
-# Sequential on purpose — latency is one of the things being measured.
-eval-models agent="verdict" models="sonnet opus haiku":
-    uv run harness eval run {{agent}} {{ prepend("-m ", models) }}
-
-# Every stored experiment, newest first, with the model and the commit each measured.
-eval-results:
-    uv run harness eval results
-
-# Record an experiment as the committed baseline for its agent and model.
-eval-baseline experiment:
-    uv run harness eval baseline save {{experiment}}
-
-# --- Full stack ---
-up:
-    docker compose up --build
-
-down:
-    docker compose down -v
-
-worker:
-    uv run harness worker
-
-api:
-    uv run harness api
-
-web-build:
-    cd web && npm install && npm run build
+ui-check:
+    cd ui && npm run format:check
+    cd ui && npm run check:api
+    cd ui && npm run build

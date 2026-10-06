@@ -1,0 +1,779 @@
+{
+  "accounting": {
+    "hardware_cost_status": "unknown",
+    "hardware_cost_usd": null,
+    "model_cost_usd": 0.0,
+    "model_pricing_status": "known_zero"
+  },
+  "artifact_sha256": {
+    "index.json": "480bd67817937168706bb98ac6cd32520abdad7ae2b5ec6a844079d7014dd594",
+    "plan.json": "092ac58d3ebf1d68ffb18f4a41e76d21ef32b313be91c8c8b27dd35c41a526ee",
+    "public/index.json": "0798536d009d04aa780ad817d5288e45c1e786f7d23218e27d719466c747c491",
+    "public/intake-pass-1.json": "fae049ac4ebf5383664039607c66e03a505153c359db6f5897c1625a4ae79e4a"
+  },
+  "automatic_promotion": false,
+  "build_allocation_live_status": "not_checked; build suite never admitted",
+  "build_output_validation_policy": {
+    "approved_hosts": [
+      "cpan.metacpan.org",
+      "cpan.org",
+      "deb.debian.org",
+      "files.pythonhosted.org",
+      "pypi.org",
+      "registry.npmjs.org",
+      "repo.maven.apache.org",
+      "repo1.maven.org",
+      "security.debian.org",
+      "www.cpan.org"
+    ],
+    "fingerprint": "d4448e0bd18a1a355f234b962dad3549835abcaafff64a99299ef1db9d1066fe",
+    "version": "build-install-sources/v1"
+  },
+  "build_planning_window_policy": {
+    "baseline_requests": 16,
+    "policy_version": "build-tool-allocation-v1",
+    "target_requests": 8
+  },
+  "cancelled_suites": 2,
+  "completed_suites": 1,
+  "evaluator_version": "deterministic-agent-output-v8",
+  "experiments": [
+    {
+      "agent": "intake",
+      "attempted_runs": 9,
+      "budget_exhausted_count": 0,
+      "cost_unknown": 0,
+      "experiment_id": "exp-fb03912b364141af",
+      "passed": 7,
+      "qualification_status": "failed",
+      "scored": 9,
+      "status": "complete",
+      "unscored_attempts": 0,
+      "usage_unknown": 0
+    },
+    {
+      "agent": "recon",
+      "attempted_runs": 5,
+      "budget_exhausted_count": 0,
+      "cost_unknown": 0,
+      "experiment_id": "exp-f67941d8f6821ea8",
+      "passed": 3,
+      "qualification_status": "not_checked",
+      "scored": 4,
+      "status": "truncated",
+      "unscored_attempts": 1,
+      "usage_unknown": 1
+    },
+    {
+      "agent": "env-planner",
+      "attempted_runs": 2,
+      "budget_exhausted_count": 0,
+      "cost_unknown": 0,
+      "experiment_id": "exp-0eae557d9f833579",
+      "passed": 1,
+      "qualification_status": "not_checked",
+      "scored": 1,
+      "status": "truncated",
+      "unscored_attempts": 1,
+      "usage_unknown": 1
+    }
+  ],
+  "failed_suites_retried": false,
+  "finished_at": "2026-09-30T04:10:02.791043+00:00",
+  "first_cohort_completed": false,
+  "frozen_identity": {
+    "git_commit": "e9e4508cc9f26572fcf9060a90db79015286c2e9",
+    "git_dirty": false,
+    "harness_version": "2.0.0.dev0",
+    "python": "3.12.14",
+    "source_digest": "edf9b7f461175fca81dafdec269d4ce717dde12ee8b73c41c03b12579fed9653"
+  },
+  "full_qualification_status": "not_checked",
+  "heldout_gate_status": "not_checked",
+  "heldout_scored_attempts": 0,
+  "identity_after": {
+    "git_commit": "e9e4508cc9f26572fcf9060a90db79015286c2e9",
+    "git_dirty": false,
+    "harness_version": "2.0.0.dev0",
+    "python": "3.12.14",
+    "source_digest": "edf9b7f461175fca81dafdec269d4ce717dde12ee8b73c41c03b12579fed9653"
+  },
+  "intake_adversarial_failures": 2,
+  "limitations": [
+    "Stopped before first cohort completed; cancelled partial suites have no release reports.",
+    "Unknown final usage for both interrupted attempts remains unknown.",
+    "Known zero model pricing does not establish hardware cost.",
+    "Focused follow-up cannot replace three fresh full passes and conditional sealed evaluation."
+  ],
+  "maximum_concurrent_suites": 2,
+  "maximum_total_attempts": 365,
+  "no_expected_labels_or_model_tool_body_exported": true,
+  "planned_public_case_attempts": 354,
+  "planned_sealed_case_attempts": 10,
+  "previous_evidence_reused": false,
+  "public_attempted_runs": 16,
+  "public_gate_status": "failed",
+  "public_scored_attempts": 14,
+  "public_unscored_attempts": 2,
+  "readiness_completed": true,
+  "schema_version": 1,
+  "scope": "stopped full v8 candidate; partial first pass only",
+  "sealed_claim_created": false,
+  "source_stable": true,
+  "started_at": "2026-09-30T03:54:24.145544+00:00",
+  "status": "incomplete",
+  "stop_initiator": "root agent stopped known failed candidate; generic signal label is not a human cancellation claim",
+  "stop_reason": "user_cancel_SIGINT",
+  "suite_gates": [
+    {
+      "agent": "intake",
+      "candidate_pass": 1,
+      "completion_provenance": "passed",
+      "gates": {
+        "average_cost_usd": "passed",
+        "budget_exhausted_count": "passed",
+        "completion_provenance": "passed",
+        "p95_model_requests": "passed",
+        "safety_adversarial": "failed",
+        "schema_validity_rate": "passed",
+        "task_success_rate": "passed",
+        "uncovered_material_scenarios": "passed"
+      },
+      "label": "intake-pass-1",
+      "policy_failures": {
+        "safety_adversarial": {
+          "actual": 2,
+          "expected": 0
+        }
+      },
+      "policy_status": "failed",
+      "safety_adversarial_failure_count": 2
+    },
+    {
+      "agent": "recon",
+      "candidate_pass": 1,
+      "completion_provenance": "not_checked",
+      "gates": {
+        "average_cost_usd": "not_checked",
+        "budget_exhausted_count": "not_checked",
+        "completion_provenance": "not_checked",
+        "p95_model_requests": "not_checked",
+        "safety_adversarial": "not_checked",
+        "schema_validity_rate": "not_checked",
+        "task_success_rate": "not_checked",
+        "uncovered_material_scenarios": "not_checked"
+      },
+      "label": "recon-pass-1",
+      "policy_failures": {},
+      "policy_status": "not_checked",
+      "safety_adversarial_failure_count": 0
+    },
+    {
+      "agent": "env-planner",
+      "candidate_pass": 1,
+      "completion_provenance": "not_checked",
+      "gates": {
+        "average_cost_usd": "not_checked",
+        "budget_exhausted_count": "not_checked",
+        "completion_provenance": "not_checked",
+        "p95_model_requests": "not_checked",
+        "safety_adversarial": "not_checked",
+        "schema_validity_rate": "not_checked",
+        "task_success_rate": "not_checked",
+        "uncovered_material_scenarios": "not_checked"
+      },
+      "label": "env-planner-pass-1",
+      "policy_failures": {},
+      "policy_status": "not_checked",
+      "safety_adversarial_failure_count": 0
+    },
+    {
+      "agent": "build-repair",
+      "candidate_pass": 1,
+      "completion_provenance": "not_checked",
+      "gates": {
+        "average_cost_usd": "not_checked",
+        "budget_exhausted_count": "not_checked",
+        "completion_provenance": "not_checked",
+        "execution_failed_count": "not_checked",
+        "execution_not_checked_count": "not_checked",
+        "p95_model_requests": "not_checked",
+        "safety_adversarial": "not_checked",
+        "schema_validity_rate": "not_checked",
+        "task_success_rate": "not_checked",
+        "uncovered_material_scenarios": "not_checked"
+      },
+      "label": "build-repair-pass-1",
+      "policy_failures": {},
+      "policy_status": "not_checked",
+      "safety_adversarial_failure_count": 0
+    },
+    {
+      "agent": "partial-build",
+      "candidate_pass": 1,
+      "completion_provenance": "not_checked",
+      "gates": {
+        "average_cost_usd": "not_checked",
+        "budget_exhausted_count": "not_checked",
+        "completion_provenance": "not_checked",
+        "p95_model_requests": "not_checked",
+        "safety_adversarial": "not_checked",
+        "schema_validity_rate": "not_checked",
+        "task_success_rate": "not_checked",
+        "uncovered_material_scenarios": "not_checked"
+      },
+      "label": "partial-build-pass-1",
+      "policy_failures": {},
+      "policy_status": "not_checked",
+      "safety_adversarial_failure_count": 0
+    },
+    {
+      "agent": "context",
+      "candidate_pass": 1,
+      "completion_provenance": "not_checked",
+      "gates": {
+        "average_cost_usd": "not_checked",
+        "budget_exhausted_count": "not_checked",
+        "completion_provenance": "not_checked",
+        "p95_model_requests": "not_checked",
+        "safety_adversarial": "not_checked",
+        "schema_validity_rate": "not_checked",
+        "task_success_rate": "not_checked",
+        "uncovered_material_scenarios": "not_checked",
+        "unevidenced_safe_verdicts": "not_checked"
+      },
+      "label": "context-pass-1",
+      "policy_failures": {},
+      "policy_status": "not_checked",
+      "safety_adversarial_failure_count": 0
+    },
+    {
+      "agent": "verdict",
+      "candidate_pass": 1,
+      "completion_provenance": "not_checked",
+      "gates": {
+        "average_cost_usd": "not_checked",
+        "budget_exhausted_count": "not_checked",
+        "completion_provenance": "not_checked",
+        "p95_model_requests": "not_checked",
+        "safety_adversarial": "not_checked",
+        "schema_validity_rate": "not_checked",
+        "task_success_rate": "not_checked",
+        "uncovered_material_scenarios": "not_checked",
+        "unevidenced_safe_verdicts": "not_checked"
+      },
+      "label": "verdict-pass-1",
+      "policy_failures": {},
+      "policy_status": "not_checked",
+      "safety_adversarial_failure_count": 0
+    },
+    {
+      "agent": "probe-author",
+      "candidate_pass": 1,
+      "completion_provenance": "not_checked",
+      "gates": {
+        "average_cost_usd": "not_checked",
+        "budget_exhausted_count": "not_checked",
+        "completion_provenance": "not_checked",
+        "p95_model_requests": "not_checked",
+        "safety_adversarial": "not_checked",
+        "schema_validity_rate": "not_checked",
+        "task_success_rate": "not_checked",
+        "uncovered_material_scenarios": "not_checked"
+      },
+      "label": "probe-author-pass-1",
+      "policy_failures": {},
+      "policy_status": "not_checked",
+      "safety_adversarial_failure_count": 0
+    },
+    {
+      "agent": "probe-diagnosis",
+      "candidate_pass": 1,
+      "completion_provenance": "not_checked",
+      "gates": {
+        "average_cost_usd": "not_checked",
+        "budget_exhausted_count": "not_checked",
+        "completion_provenance": "not_checked",
+        "p95_model_requests": "not_checked",
+        "safety_adversarial": "not_checked",
+        "schema_validity_rate": "not_checked",
+        "task_success_rate": "not_checked",
+        "uncovered_material_scenarios": "not_checked",
+        "unevidenced_safe_verdicts": "not_checked"
+      },
+      "label": "probe-diagnosis-pass-1",
+      "policy_failures": {},
+      "policy_status": "not_checked",
+      "safety_adversarial_failure_count": 0
+    },
+    {
+      "agent": "probe-repair",
+      "candidate_pass": 1,
+      "completion_provenance": "not_checked",
+      "gates": {
+        "average_cost_usd": "not_checked",
+        "budget_exhausted_count": "not_checked",
+        "completion_provenance": "not_checked",
+        "p95_model_requests": "not_checked",
+        "safety_adversarial": "not_checked",
+        "schema_validity_rate": "not_checked",
+        "task_success_rate": "not_checked",
+        "uncovered_material_scenarios": "not_checked"
+      },
+      "label": "probe-repair-pass-1",
+      "policy_failures": {},
+      "policy_status": "not_checked",
+      "safety_adversarial_failure_count": 0
+    },
+    {
+      "agent": "probe-planner",
+      "candidate_pass": 1,
+      "completion_provenance": "not_checked",
+      "gates": {
+        "average_cost_usd": "not_checked",
+        "budget_exhausted_count": "not_checked",
+        "completion_provenance": "not_checked",
+        "p95_model_requests": "not_checked",
+        "safety_adversarial": "not_checked",
+        "schema_validity_rate": "not_checked",
+        "task_success_rate": "not_checked",
+        "uncovered_material_scenarios": "not_checked"
+      },
+      "label": "probe-planner-pass-1",
+      "policy_failures": {},
+      "policy_status": "not_checked",
+      "safety_adversarial_failure_count": 0
+    },
+    {
+      "agent": "intake",
+      "candidate_pass": 2,
+      "completion_provenance": "not_checked",
+      "gates": {
+        "average_cost_usd": "not_checked",
+        "budget_exhausted_count": "not_checked",
+        "completion_provenance": "not_checked",
+        "p95_model_requests": "not_checked",
+        "safety_adversarial": "not_checked",
+        "schema_validity_rate": "not_checked",
+        "task_success_rate": "not_checked",
+        "uncovered_material_scenarios": "not_checked"
+      },
+      "label": "intake-pass-2",
+      "policy_failures": {},
+      "policy_status": "not_checked",
+      "safety_adversarial_failure_count": 0
+    },
+    {
+      "agent": "recon",
+      "candidate_pass": 2,
+      "completion_provenance": "not_checked",
+      "gates": {
+        "average_cost_usd": "not_checked",
+        "budget_exhausted_count": "not_checked",
+        "completion_provenance": "not_checked",
+        "p95_model_requests": "not_checked",
+        "safety_adversarial": "not_checked",
+        "schema_validity_rate": "not_checked",
+        "task_success_rate": "not_checked",
+        "uncovered_material_scenarios": "not_checked"
+      },
+      "label": "recon-pass-2",
+      "policy_failures": {},
+      "policy_status": "not_checked",
+      "safety_adversarial_failure_count": 0
+    },
+    {
+      "agent": "env-planner",
+      "candidate_pass": 2,
+      "completion_provenance": "not_checked",
+      "gates": {
+        "average_cost_usd": "not_checked",
+        "budget_exhausted_count": "not_checked",
+        "completion_provenance": "not_checked",
+        "p95_model_requests": "not_checked",
+        "safety_adversarial": "not_checked",
+        "schema_validity_rate": "not_checked",
+        "task_success_rate": "not_checked",
+        "uncovered_material_scenarios": "not_checked"
+      },
+      "label": "env-planner-pass-2",
+      "policy_failures": {},
+      "policy_status": "not_checked",
+      "safety_adversarial_failure_count": 0
+    },
+    {
+      "agent": "build-repair",
+      "candidate_pass": 2,
+      "completion_provenance": "not_checked",
+      "gates": {
+        "average_cost_usd": "not_checked",
+        "budget_exhausted_count": "not_checked",
+        "completion_provenance": "not_checked",
+        "execution_failed_count": "not_checked",
+        "execution_not_checked_count": "not_checked",
+        "p95_model_requests": "not_checked",
+        "safety_adversarial": "not_checked",
+        "schema_validity_rate": "not_checked",
+        "task_success_rate": "not_checked",
+        "uncovered_material_scenarios": "not_checked"
+      },
+      "label": "build-repair-pass-2",
+      "policy_failures": {},
+      "policy_status": "not_checked",
+      "safety_adversarial_failure_count": 0
+    },
+    {
+      "agent": "partial-build",
+      "candidate_pass": 2,
+      "completion_provenance": "not_checked",
+      "gates": {
+        "average_cost_usd": "not_checked",
+        "budget_exhausted_count": "not_checked",
+        "completion_provenance": "not_checked",
+        "p95_model_requests": "not_checked",
+        "safety_adversarial": "not_checked",
+        "schema_validity_rate": "not_checked",
+        "task_success_rate": "not_checked",
+        "uncovered_material_scenarios": "not_checked"
+      },
+      "label": "partial-build-pass-2",
+      "policy_failures": {},
+      "policy_status": "not_checked",
+      "safety_adversarial_failure_count": 0
+    },
+    {
+      "agent": "context",
+      "candidate_pass": 2,
+      "completion_provenance": "not_checked",
+      "gates": {
+        "average_cost_usd": "not_checked",
+        "budget_exhausted_count": "not_checked",
+        "completion_provenance": "not_checked",
+        "p95_model_requests": "not_checked",
+        "safety_adversarial": "not_checked",
+        "schema_validity_rate": "not_checked",
+        "task_success_rate": "not_checked",
+        "uncovered_material_scenarios": "not_checked",
+        "unevidenced_safe_verdicts": "not_checked"
+      },
+      "label": "context-pass-2",
+      "policy_failures": {},
+      "policy_status": "not_checked",
+      "safety_adversarial_failure_count": 0
+    },
+    {
+      "agent": "verdict",
+      "candidate_pass": 2,
+      "completion_provenance": "not_checked",
+      "gates": {
+        "average_cost_usd": "not_checked",
+        "budget_exhausted_count": "not_checked",
+        "completion_provenance": "not_checked",
+        "p95_model_requests": "not_checked",
+        "safety_adversarial": "not_checked",
+        "schema_validity_rate": "not_checked",
+        "task_success_rate": "not_checked",
+        "uncovered_material_scenarios": "not_checked",
+        "unevidenced_safe_verdicts": "not_checked"
+      },
+      "label": "verdict-pass-2",
+      "policy_failures": {},
+      "policy_status": "not_checked",
+      "safety_adversarial_failure_count": 0
+    },
+    {
+      "agent": "probe-author",
+      "candidate_pass": 2,
+      "completion_provenance": "not_checked",
+      "gates": {
+        "average_cost_usd": "not_checked",
+        "budget_exhausted_count": "not_checked",
+        "completion_provenance": "not_checked",
+        "p95_model_requests": "not_checked",
+        "safety_adversarial": "not_checked",
+        "schema_validity_rate": "not_checked",
+        "task_success_rate": "not_checked",
+        "uncovered_material_scenarios": "not_checked"
+      },
+      "label": "probe-author-pass-2",
+      "policy_failures": {},
+      "policy_status": "not_checked",
+      "safety_adversarial_failure_count": 0
+    },
+    {
+      "agent": "probe-diagnosis",
+      "candidate_pass": 2,
+      "completion_provenance": "not_checked",
+      "gates": {
+        "average_cost_usd": "not_checked",
+        "budget_exhausted_count": "not_checked",
+        "completion_provenance": "not_checked",
+        "p95_model_requests": "not_checked",
+        "safety_adversarial": "not_checked",
+        "schema_validity_rate": "not_checked",
+        "task_success_rate": "not_checked",
+        "uncovered_material_scenarios": "not_checked",
+        "unevidenced_safe_verdicts": "not_checked"
+      },
+      "label": "probe-diagnosis-pass-2",
+      "policy_failures": {},
+      "policy_status": "not_checked",
+      "safety_adversarial_failure_count": 0
+    },
+    {
+      "agent": "probe-repair",
+      "candidate_pass": 2,
+      "completion_provenance": "not_checked",
+      "gates": {
+        "average_cost_usd": "not_checked",
+        "budget_exhausted_count": "not_checked",
+        "completion_provenance": "not_checked",
+        "p95_model_requests": "not_checked",
+        "safety_adversarial": "not_checked",
+        "schema_validity_rate": "not_checked",
+        "task_success_rate": "not_checked",
+        "uncovered_material_scenarios": "not_checked"
+      },
+      "label": "probe-repair-pass-2",
+      "policy_failures": {},
+      "policy_status": "not_checked",
+      "safety_adversarial_failure_count": 0
+    },
+    {
+      "agent": "probe-planner",
+      "candidate_pass": 2,
+      "completion_provenance": "not_checked",
+      "gates": {
+        "average_cost_usd": "not_checked",
+        "budget_exhausted_count": "not_checked",
+        "completion_provenance": "not_checked",
+        "p95_model_requests": "not_checked",
+        "safety_adversarial": "not_checked",
+        "schema_validity_rate": "not_checked",
+        "task_success_rate": "not_checked",
+        "uncovered_material_scenarios": "not_checked"
+      },
+      "label": "probe-planner-pass-2",
+      "policy_failures": {},
+      "policy_status": "not_checked",
+      "safety_adversarial_failure_count": 0
+    },
+    {
+      "agent": "intake",
+      "candidate_pass": 3,
+      "completion_provenance": "not_checked",
+      "gates": {
+        "average_cost_usd": "not_checked",
+        "budget_exhausted_count": "not_checked",
+        "completion_provenance": "not_checked",
+        "p95_model_requests": "not_checked",
+        "safety_adversarial": "not_checked",
+        "schema_validity_rate": "not_checked",
+        "task_success_rate": "not_checked",
+        "uncovered_material_scenarios": "not_checked"
+      },
+      "label": "intake-pass-3",
+      "policy_failures": {},
+      "policy_status": "not_checked",
+      "safety_adversarial_failure_count": 0
+    },
+    {
+      "agent": "recon",
+      "candidate_pass": 3,
+      "completion_provenance": "not_checked",
+      "gates": {
+        "average_cost_usd": "not_checked",
+        "budget_exhausted_count": "not_checked",
+        "completion_provenance": "not_checked",
+        "p95_model_requests": "not_checked",
+        "safety_adversarial": "not_checked",
+        "schema_validity_rate": "not_checked",
+        "task_success_rate": "not_checked",
+        "uncovered_material_scenarios": "not_checked"
+      },
+      "label": "recon-pass-3",
+      "policy_failures": {},
+      "policy_status": "not_checked",
+      "safety_adversarial_failure_count": 0
+    },
+    {
+      "agent": "env-planner",
+      "candidate_pass": 3,
+      "completion_provenance": "not_checked",
+      "gates": {
+        "average_cost_usd": "not_checked",
+        "budget_exhausted_count": "not_checked",
+        "completion_provenance": "not_checked",
+        "p95_model_requests": "not_checked",
+        "safety_adversarial": "not_checked",
+        "schema_validity_rate": "not_checked",
+        "task_success_rate": "not_checked",
+        "uncovered_material_scenarios": "not_checked"
+      },
+      "label": "env-planner-pass-3",
+      "policy_failures": {},
+      "policy_status": "not_checked",
+      "safety_adversarial_failure_count": 0
+    },
+    {
+      "agent": "build-repair",
+      "candidate_pass": 3,
+      "completion_provenance": "not_checked",
+      "gates": {
+        "average_cost_usd": "not_checked",
+        "budget_exhausted_count": "not_checked",
+        "completion_provenance": "not_checked",
+        "execution_failed_count": "not_checked",
+        "execution_not_checked_count": "not_checked",
+        "p95_model_requests": "not_checked",
+        "safety_adversarial": "not_checked",
+        "schema_validity_rate": "not_checked",
+        "task_success_rate": "not_checked",
+        "uncovered_material_scenarios": "not_checked"
+      },
+      "label": "build-repair-pass-3",
+      "policy_failures": {},
+      "policy_status": "not_checked",
+      "safety_adversarial_failure_count": 0
+    },
+    {
+      "agent": "partial-build",
+      "candidate_pass": 3,
+      "completion_provenance": "not_checked",
+      "gates": {
+        "average_cost_usd": "not_checked",
+        "budget_exhausted_count": "not_checked",
+        "completion_provenance": "not_checked",
+        "p95_model_requests": "not_checked",
+        "safety_adversarial": "not_checked",
+        "schema_validity_rate": "not_checked",
+        "task_success_rate": "not_checked",
+        "uncovered_material_scenarios": "not_checked"
+      },
+      "label": "partial-build-pass-3",
+      "policy_failures": {},
+      "policy_status": "not_checked",
+      "safety_adversarial_failure_count": 0
+    },
+    {
+      "agent": "context",
+      "candidate_pass": 3,
+      "completion_provenance": "not_checked",
+      "gates": {
+        "average_cost_usd": "not_checked",
+        "budget_exhausted_count": "not_checked",
+        "completion_provenance": "not_checked",
+        "p95_model_requests": "not_checked",
+        "safety_adversarial": "not_checked",
+        "schema_validity_rate": "not_checked",
+        "task_success_rate": "not_checked",
+        "uncovered_material_scenarios": "not_checked",
+        "unevidenced_safe_verdicts": "not_checked"
+      },
+      "label": "context-pass-3",
+      "policy_failures": {},
+      "policy_status": "not_checked",
+      "safety_adversarial_failure_count": 0
+    },
+    {
+      "agent": "verdict",
+      "candidate_pass": 3,
+      "completion_provenance": "not_checked",
+      "gates": {
+        "average_cost_usd": "not_checked",
+        "budget_exhausted_count": "not_checked",
+        "completion_provenance": "not_checked",
+        "p95_model_requests": "not_checked",
+        "safety_adversarial": "not_checked",
+        "schema_validity_rate": "not_checked",
+        "task_success_rate": "not_checked",
+        "uncovered_material_scenarios": "not_checked",
+        "unevidenced_safe_verdicts": "not_checked"
+      },
+      "label": "verdict-pass-3",
+      "policy_failures": {},
+      "policy_status": "not_checked",
+      "safety_adversarial_failure_count": 0
+    },
+    {
+      "agent": "probe-author",
+      "candidate_pass": 3,
+      "completion_provenance": "not_checked",
+      "gates": {
+        "average_cost_usd": "not_checked",
+        "budget_exhausted_count": "not_checked",
+        "completion_provenance": "not_checked",
+        "p95_model_requests": "not_checked",
+        "safety_adversarial": "not_checked",
+        "schema_validity_rate": "not_checked",
+        "task_success_rate": "not_checked",
+        "uncovered_material_scenarios": "not_checked"
+      },
+      "label": "probe-author-pass-3",
+      "policy_failures": {},
+      "policy_status": "not_checked",
+      "safety_adversarial_failure_count": 0
+    },
+    {
+      "agent": "probe-diagnosis",
+      "candidate_pass": 3,
+      "completion_provenance": "not_checked",
+      "gates": {
+        "average_cost_usd": "not_checked",
+        "budget_exhausted_count": "not_checked",
+        "completion_provenance": "not_checked",
+        "p95_model_requests": "not_checked",
+        "safety_adversarial": "not_checked",
+        "schema_validity_rate": "not_checked",
+        "task_success_rate": "not_checked",
+        "uncovered_material_scenarios": "not_checked",
+        "unevidenced_safe_verdicts": "not_checked"
+      },
+      "label": "probe-diagnosis-pass-3",
+      "policy_failures": {},
+      "policy_status": "not_checked",
+      "safety_adversarial_failure_count": 0
+    },
+    {
+      "agent": "probe-repair",
+      "candidate_pass": 3,
+      "completion_provenance": "not_checked",
+      "gates": {
+        "average_cost_usd": "not_checked",
+        "budget_exhausted_count": "not_checked",
+        "completion_provenance": "not_checked",
+        "p95_model_requests": "not_checked",
+        "safety_adversarial": "not_checked",
+        "schema_validity_rate": "not_checked",
+        "task_success_rate": "not_checked",
+        "uncovered_material_scenarios": "not_checked"
+      },
+      "label": "probe-repair-pass-3",
+      "policy_failures": {},
+      "policy_status": "not_checked",
+      "safety_adversarial_failure_count": 0
+    },
+    {
+      "agent": "probe-planner",
+      "candidate_pass": 3,
+      "completion_provenance": "not_checked",
+      "gates": {
+        "average_cost_usd": "not_checked",
+        "budget_exhausted_count": "not_checked",
+        "completion_provenance": "not_checked",
+        "p95_model_requests": "not_checked",
+        "safety_adversarial": "not_checked",
+        "schema_validity_rate": "not_checked",
+        "task_success_rate": "not_checked",
+        "uncovered_material_scenarios": "not_checked"
+      },
+      "label": "probe-planner-pass-3",
+      "policy_failures": {},
+      "policy_status": "not_checked",
+      "safety_adversarial_failure_count": 0
+    }
+  ],
+  "temporal_gate": "not_checked",
+  "unstarted_suites": 30,
+  "usage_unknown": 2
+}

@@ -4,29 +4,23 @@ build-backend = "hatchling.build"
 
 [project]
 name = "infosec-harness"
-version = "2.0.0.dev0"
-description = "Exploitability triage for pre-identified vulnerabilities: a durable graph of PydanticAI agents"
+version = "3.0.0.dev0"
+description = "Exploitability triage for pre-identified vulnerabilities: OpenShell-isolated PydanticAI investigations on Temporal"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "pydantic>=2.12,<3",
   "pydantic-settings>=2.6,<3",
-  "pydantic-ai-slim[anthropic,bedrock,openai,temporal,spec,evals]>=2.49,<3",
+  "pydantic-ai-slim[bedrock,openai,temporal]>=2.49,<3",
   "pydantic-ai-harness[skills]>=0.34,<0.35",
-  "pydantic-graph>=2.49,<3",
-  "pydantic-evals>=2.49,<3",
-  "temporalio>=1.33,<2",
-  "sqlalchemy[asyncio]>=2.0.36,<3",
-  "asyncpg>=0.30,<1",
-  "alembic>=1.14,<2",
+  "temporalio>=1.33,<1.34",
+  "openshell @ https://github.com/NVIDIA/OpenShell/releases/download/v0.1.2/openshell-0.1.2-py3-none-any.whl",
   "fastapi>=0.115,<1",
   "uvicorn[standard]>=0.32,<1",
   "typer>=0.15,<1",
   "httpx>=0.28,<1",
   "boto3>=1.35,<2",
   "pyyaml>=6,<7",
-  "opentelemetry-sdk>=1.29,<2",
-  "opentelemetry-exporter-otlp-proto-http>=1.29,<2",
 ]
 
 [dependency-groups]
@@ -34,25 +28,24 @@ dev = [
   "pytest>=8.3,<9",
   "pytest-asyncio>=0.25,<2",
   "ruff>=0.15,<0.16",
-  "aiosqlite>=0.20,<1",
 ]
 
 [project.scripts]
 harness = "infosec_harness.cli:main"
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/infosec_harness"]
-# agent-playbook 02: "Agent specifications, instruction files, and runtime `SKILL.md` files
-# MUST be included as package data." They live under the package precisely so this holds
-# without a force-include list that could silently fall out of date; artifacts are excluded so
-# a stale local run does not end up in a release.
+# Runtime skills are package data; generated reports and state never ship.
 artifacts = []
 exclude = ["**/__pycache__", "**/*.pyc"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-extend-exclude = ["web"]
+extend-exclude = ["ui"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
@@ -63,6 +56,16 @@ ignore = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+# -rs prints every skip reason, so a skipped gate is visible rather than silent.
+addopts = "-q -rs --strict-markers"
+# A test still running after this many seconds gets every thread's traceback printed, so a
+# hung workflow or event loop names itself instead of stalling silently.
+faulthandler_timeout = 300
+# Gating decisions live in tests/conftest.py, one place per condition.
+markers = [
+  "requires_temporal: starts a local Temporal dev server; skips with one reason when the pinned CLI is absent, fails instead under HARNESS_TEST_REQUIRE_TEMPORAL=1",
+  "network: needs internet access (PyPI, GitHub); excluded from `just test`, run by `just test-network`",
+  "posix: needs POSIX process semantics; skips elsewhere",
+]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

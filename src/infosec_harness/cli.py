@@ -1,276 +1,158 @@
-"""`harness` CLI: submit findings, inspect runs, run the worker/API, manage agent specs."""
-
-from __future__ import annotations
+"""Operator entry points for the single native investigation path."""
 
 import asyncio
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import typer
 
-from infosec_harness.domain.models import FindingInput
+from infosec_harness.config import get_settings, use_settings_file
 
-app = typer.Typer(add_completion=False, help="Exploitability triage harness")
-agents_app = typer.Typer(help="Agent spec tooling")
-eval_app = typer.Typer(help="Evaluations")
-baseline_app = typer.Typer(help="Accepted eval results, committed under evals/baselines/")
-app.add_typer(agents_app, name="agents")
-app.add_typer(eval_app, name="eval")
-eval_app.add_typer(baseline_app, name="baseline")
+app = typer.Typer(no_args_is_help=True)
 
 
-def _load_findings(path: Path) -> list[FindingInput]:
-    data = json.loads(path.read_text())
-    if isinstance(data, dict):
-        data = data.get("findings", [data])
-    return [FindingInput.model_validate(f) for f in data]
-
-
-@app.command()
-def submit(
-    findings: Path = typer.Argument(..., help="JSON file: a finding, a list, or {findings:[...]}"),
-    label: str = typer.Option("", help="Human label for the batch"),
-    local: bool = typer.Option(False, "--local", help="Run in-process without Temporal"),
+@app.callback()
+def configure(
+    settings: Path | None = typer.Option(
+        None, help="Frozen Settings JSON; HARNESS_* environment variables are then ignored."
+    ),
 ):
-    """Submit findings for triage and print the batch id."""
-    from infosec_harness.persistence import db
-    from infosec_harness.workflows import runner
+    """Investigate reported vulnerabilities through native OpenShell and Temporal."""
+    if settings is not None:
+        use_settings_file(settings)
 
-    items = _load_findings(findings)
 
-    async def _go():
-        await db.create_all()
-        if local:
-            batch_id, outputs = await runner.run_local(items, label=label)
-            for o in outputs:
-                typer.echo(f"  {o.finding.fingerprint}  {o.result.verdict.label.value:26} {o.result.priority.value}")
-        else:
-            batch_id = await runner.submit_via_temporal(items, label=label)
-        typer.echo(f"BATCH_ID={batch_id}")
-
-    asyncio.run(_go())
+def new_report(kind: str) -> Path:
+    # Timestamped by default; an existing report is still never overwritten.
+    return Path(".harness/reports") / f"{kind}-{datetime.now(UTC):%Y%m%dT%H%M%SZ}.json"
 
 
 @app.command()
-def runs(batch_id: str = typer.Option(None), verdict: str = typer.Option(None), limit: int = 50):
-    """List triage runs, highest priority first."""
-    from infosec_harness.persistence import store
+def api(host: str = "127.0.0.1", port: int = 8000):
+    """Serve the lightweight HTTP API."""
+    import uvicorn
 
-    rows = asyncio.run(store.list_runs(batch_id=batch_id, verdict=verdict, limit=limit))
-    for r in rows:
-        typer.echo(f"{r['id']}  {r['priority'] or '-':3} {(r['verdict'] or r['status']):26} "
-                   f"{r['cwe'] or '-':8} {r['title'][:50]}")
+    uvicorn.run("infosec_harness.api:app", host=host, port=port)
+
+
+@app.command()
+def worker(
+    task_queue: str | None = typer.Option(
+        None, help="Serve this task queue (for example, drain an owned eval queue)."
+    ),
+):
+    """Run the Temporal worker with native PydanticAI model/tool activities."""
+    from infosec_harness.api import connect
+    from infosec_harness.workflows.worker import create_worker
+
+    settings = get_settings()
+    if task_queue:
+        settings = settings.model_copy(update={"task_queue": task_queue})
+
+    async def serve():
+        runtime = create_worker(await connect(settings), settings)
+        await runtime.run()
+
+    asyncio.run(serve())
+
+
+@app.command()
+def submit(path: Path):
+    """Submit one Finding JSON document to Temporal."""
+    from infosec_harness.api import connect
+    from infosec_harness.api import submit as start
+    from infosec_harness.contracts import Finding
+
+    async def send():
+        return await start(Finding.model_validate_json(path.read_text()), await connect())
+
+    typer.echo(asyncio.run(send()).model_dump_json(indent=2))
 
 
 @app.command()
 def report(run_id: str):
-    """Print the full triage report for one run as JSON."""
-    from infosec_harness.persistence import store
+    """Read an investigation's current status and validated result."""
+    from infosec_harness.api import connect, run
 
-    detail = asyncio.run(store.get_run(run_id))
-    if detail is None:
-        raise typer.Exit(code=1)
-    typer.echo(json.dumps(detail, indent=2))
+    async def read():
+        return await run(run_id, await connect())
+
+    typer.echo(asyncio.run(read()).model_dump_json(indent=2))
+
+
+@app.command("eval")
+def evaluate(
+    manifest: Path = typer.Option(
+        Path("eval-corpus/manifest.json"), help="Corpus manifest with independent ground truth."
+    ),
+    output: Path | None = typer.Option(
+        None,
+        help="Report path, never overwritten. Default: .harness/reports/model-<UTC>.json "
+        "(diagnostic-<UTC>.json with --case).",
+    ),
+    allow_inference: bool = typer.Option(
+        False, help="Required: confirm that this run sends live model requests."
+    ),
+    owned_worker: bool = typer.Option(
+        False, help="Run a worker in this process on a fresh queue until owned cleanup ends."
+    ),
+    case: list[str] | None = typer.Option(
+        None, help="Diagnostic subset (repeatable); never qualifies a candidate."
+    ),
+    keep_going: bool = typer.Option(
+        False, help="Continue only after a terminal agent/model-level case failure."
+    ),
+):
+    """Run the paired corpus (or a diagnostic subset) once, preserving failures and unstarted cases."""
+    if not allow_inference:
+        raise typer.BadParameter("Live evaluation requires --allow-inference")
+    from infosec_harness.evals.cohort import evaluate_corpus
+
+    output = output or new_report("diagnostic" if case else "model")
+    result = asyncio.run(evaluate_corpus(
+        manifest, output, get_settings(), names=tuple(case or ()),
+        owned_worker=owned_worker, keep_going=keep_going,
+    ))
+    typer.echo(json.dumps(result, indent=2))
+    raise typer.Exit(0 if result["status"] == "passed" else 1)
 
 
 @app.command()
-def worker():
-    """Run the Temporal worker."""
-    from infosec_harness.workflows.worker import main
+def qualify(
+    output: Path | None = typer.Option(
+        None, help="Report path, never overwritten. Default: .harness/reports/openshell-<UTC>.json."
+    ),
+):
+    """Exercise actual native workspace/probe boundaries, without model calls."""
+    from infosec_harness.evals.qualification import qualify_runtime
 
-    main()
+    result = asyncio.run(qualify_runtime(output or new_report("openshell")))
+    typer.echo(json.dumps(result, indent=2))
+    raise typer.Exit(0 if result["status"] == "passed" else 1)
 
 
 @app.command()
-def api(host: str = "0.0.0.0", port: int = 8000):
-    """Run the FastAPI server."""
-    import uvicorn
-
-    uvicorn.run("infosec_harness.api.app:app", host=host, port=port)
-
-
-@app.command("init-db")
-def init_db():
-    """Create database tables (bootstrap; deployments use `harness migrate`)."""
-    from infosec_harness.persistence import db
-
-    asyncio.run(db.create_all())
-    typer.echo("database tables created")
-
-
-@app.command("migrate")
-def migrate():
-    """Migrate the database to the latest revision."""
-    from infosec_harness.persistence import db
-
-    typer.echo(f"database at revision {db.upgrade_to_head()}")
-
-
-@agents_app.command("validate")
-def agents_validate():
-    """Validate every agent.yaml against bindings, the capability allowlist, and cache rules."""
-    from infosec_harness.agents.registry import validate_all
-
-    problems = validate_all()
-    if problems:
-        for p in problems:
-            typer.echo(f"  - {p}")
-        raise typer.Exit(code=1)
-    typer.echo("all agent specs valid")
-
-
-@agents_app.command("schema")
-def agents_schema():
-    """Regenerate agents/agent_schema.json from the allowlisted capabilities."""
-    from infosec_harness.agents.registry import get_settings, json_schema
-
-    path = get_settings().agents_dir / "agent_schema.json"
-    path.write_text(json.dumps(json_schema(), indent=2) + "\n")
-    typer.echo(f"wrote {path}")
-
-
-@eval_app.command("run")
-def eval_run(
-    agent: str = typer.Argument(..., help="Agent name, or 'e2e' for the end-to-end corpus"),
-    model: list[str] = typer.Option(
-        None, "--model", "-m",
-        help="Model tier to run against (repeat to sweep and compare, e.g. -m sonnet -m opus)"),
-    overlay: Path = typer.Option(None, help="Experiment overlay YAML"),
-    repeat: int = typer.Option(1, help="Repetitions (LLM variance)"),
-    report: Path = typer.Option(None, help="Write an agentctl-compatible release report here"),
-    report_dir: Path = typer.Option(
-        None, help="With several --model, write one release report per model into this directory"),
+def replay(
+    run_id: str,
+    output: Path | None = typer.Option(
+        None, help="Also write the report here, never overwritten. Default: print only."
+    ),
 ):
-    """Run an agent's eval dataset and persist the experiment.
+    """Replay one recorded workflow history with no native or model dispatch."""
+    from infosec_harness._io import write_json
+    from infosec_harness.evals.cohort import replay_history
 
-    Pass --model more than once to run the same dataset against each model in turn and print
-    accuracy, latency and cost side by side. The runs are sequential: latency is one of the
-    things being measured, so letting them contend would make every number depend on how many
-    models were in the sweep.
-    """
-    from infosec_harness.evals.inert_gates import announce_inert_checks
-    from infosec_harness.evals.run import run_experiment, sweep_models
-
-    models = list(model or [])
-    if len(models) > 1:
-        asyncio.run(sweep_models(agent, models, overlay=overlay, repeat=repeat,
-                                 report_dir=report_dir))
-        return
-    exp_id = asyncio.run(run_experiment(agent, overlay=overlay, repeat=repeat, report=report,
-                                        model=models[0] if models else None))
-    if report is not None and report.exists():
-        # A threshold on a metric this run could not move looks like coverage and is none:
-        # say so next to the evidence, loudly, without changing the run's verdict.
-        announce_inert_checks(agent, report, echo=typer.echo)
-    typer.echo(f"EXPERIMENT_ID={exp_id}")
+    result = asyncio.run(replay_history(run_id, get_settings()))
+    if output:
+        write_json(output, result, exclusive=True)
+    typer.echo(json.dumps(result, indent=2))
+    raise typer.Exit(0 if result["status"] == "passed" else 1)
 
 
-@eval_app.command("results")
-def eval_results(
-    agent: str = typer.Option(None, help="Only this agent"),
-    commit: str = typer.Option(None, help="Only runs of this commit (prefix match)"),
-    limit: int = typer.Option(20, help="Most recent N experiments"),
-):
-    """List stored experiments with their model, commit and headline metrics."""
-    from infosec_harness.evals.run import list_experiments
-
-    asyncio.run(list_experiments(agent=agent, commit=commit, limit=limit))
-
-
-@eval_app.command("compare")
-def eval_compare(
-    experiments: list[str] = typer.Argument(
-        None, help="Two or more experiment ids; the first is the baseline"),
-    agent: str = typer.Option(None, help="Instead of ids, compare this agent's latest run per model"),
-    commit: str = typer.Option(None, help="With --agent, restrict to runs of this commit"),
-):
-    """Compare experiments on accuracy, latency and cost.
-
-    Either name the experiments, or pass --agent to line up that agent's most recent run for
-    each model it has been evaluated against.
-    """
-    from infosec_harness.evals.run import compare_experiments, compare_models_for
-
-    ids = list(experiments or [])
-    if agent:
-        asyncio.run(compare_models_for(agent, commit=commit))
-    elif len(ids) >= 2:
-        asyncio.run(compare_experiments(ids))
-    else:
-        raise typer.BadParameter("pass two or more experiment ids, or --agent <name>")
-
-
-@baseline_app.command("save")
-def baseline_save(
-    experiment: str = typer.Argument(..., help="Experiment id to record as the accepted result"),
-):
-    """Record an experiment as the committed baseline for its agent and model.
-
-    Refused for a truncated run or a dirty working tree: a baseline is a claim about a commit,
-    and one that names the wrong commit cannot be reproduced or bisected.
-    """
-    from infosec_harness.evals.run import save_baseline
-
-    asyncio.run(save_baseline(experiment))
-
-
-@baseline_app.command("list")
-def baseline_list(agent: str = typer.Option(None, help="Only this agent")):
-    """Show the committed baselines and whether the code has moved since each was measured."""
-    from infosec_harness.evals import baselines as baseline_store
-    from infosec_harness.evals.run import comparison_table
-
-    stored = baseline_store.load_all(agent)
-    if not stored:
-        typer.echo("no baselines recorded yet (`harness eval baseline save <experiment-id>`)")
-        return
-    for name in sorted({b.agent for b in stored}):
-        rows = [b for b in stored if b.agent == name]
-        typer.echo(f"\n{name}")
-        typer.echo(comparison_table([
-            {"label": b.model_tier, "experiment_id": b.experiment_id, "pricing": b.pricing,
-             "metrics": {**b.metrics, "distributions": b.distributions}} for b in rows]))
-        for b in rows:
-            note = baseline_store.staleness(b)
-            typer.echo(f"  {b.model_tier:<14} {b.git_commit[:12]}  {b.model_name}"
-                       + (f"  ! {note}" if note else ""))
-
-
-@eval_app.command("inert-gates")
-def eval_inert_gates(
-    report: Path = typer.Argument(..., help="An eval release report written by `eval run --report`"),
-    agent: str = typer.Option(None, help="Agent name; defaults to the report's own subject"),
-    policy: Path = typer.Option(None, help="Policy YAML; defaults to the agent's release-policy.yaml"),
-):
-    """Audit a release report: which of its policy's checks could not have failed?
-
-    Exit code is always 0 — inertness is evidence quality, not a gate (see
-    infosec_harness.evals.inert_gates).
-    """
-    from infosec_harness.evals.inert_gates import announce_inert_checks
-
-    name = agent or (json.loads(report.read_text()).get("agent") or "")
-    if not name and policy is None:
-        raise typer.BadParameter("report names no agent; pass --agent or --policy")
-    announce_inert_checks(name or "the subject", report, policy_path=policy, echo=typer.echo,
-                          once=False)
-
-
-@eval_app.command("corpus")
-def eval_corpus(
-    language: str = typer.Option("python", help="Corpus language, or 'all' to sweep every one"),
-    sandbox: bool = typer.Option(None, help="Force sandbox on/off"),
-    repeat: int = typer.Option(1, help="Passes over the corpus (LLM variance); prints the spread"),
-):
-    """Run the seeded ground-truth corpus end-to-end and score verdicts against truth."""
-    from infosec_harness.evals.run import score_corpus
-
-    asyncio.run(score_corpus(language=language, sandbox=sandbox, repeat=repeat))
+def main():
+    app()
 
 
 if __name__ == "__main__":
-    app()
-
-
-def main() -> None:
-    app()
+    main()

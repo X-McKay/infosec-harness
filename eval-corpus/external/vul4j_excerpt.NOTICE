@@ -1,5 +1,5 @@
 `vul4j_excerpt.csv` is an eight-row excerpt of the Vul4J dataset index, kept here so
-`tests/test_harvest.py` can exercise `scripts/harvest_vul4j.py` without the network. It is
+`tests/evals/test_harvest.py` can exercise `scripts/harvest_vul4j.py` without the network. It is
 not the corpus and nothing reads it at harvest time — `scripts/harvest_vul4j.py` fetches the
 live index instead, so that our copy of the dataset cannot silently go stale.
 
@@ -19,4 +19,4 @@ Licence: Creative Commons Attribution 4.0 International (CC-BY-4.0),
 Only the dataset is used. Vul4J's own source code is GPL-3.0 and is neither copied nor
 adapted anywhere in this repository. Columns Vul4J uses to pin a build environment
 (`compile_cmd`, `test_all_cmd`, `test_cmd`, `cmd_options`, `src_classes`, `test_classes`)
-are deliberately omitted: see docs/CORPUS_SOURCES.md.
+are deliberately omitted: see docs/evaluation/CORPUS_SOURCES.md.

@@ -1,0 +1,22 @@
+version: "quality-gates-v1"
+cases:
+  - name: py-workspace-narrow
+    group: qg1-partial-workspace
+    category: capability
+    repo: evals/heldout/quality-gates-v1/fixtures/partial-python
+    payload:
+      failed_spec: {base_image: "python:3.12-slim", install_commands: ["python -m pip install -r requirements-all.txt"], test_command: "python -m pytest -q {test_file}"}
+      build_result: {ok: false, log_tail: "native analytics wheel failed after the final full-build attempt"}
+      finding: {title: "Header injection", cwe: "CWE-113", severity: high, file_path: "services/web/header.py", start_line: 4}
+      finding_context: {summary: "caller value reaches the response header", reachability: reachable, reachability_rationale: "direct call", target_callable: make_header}
+    expected: partial
+  - name: js-workspace-narrow
+    group: qg1-partial-workspace
+    category: capability
+    repo: evals/heldout/quality-gates-v1/fixtures/partial-js
+    payload:
+      failed_spec: {base_image: "node:22-slim", install_commands: ["npm install"], test_command: "npm test -- {test_file}"}
+      build_result: {ok: false, log_tail: "unrelated browser workspace download timed out after the final attempt"}
+      finding: {title: "Unsafe redirect", cwe: "CWE-601", severity: medium, file_path: "packages/router/redirect.js", start_line: 2}
+      finding_context: {summary: "destination is returned to the caller", reachability: reachable, reachability_rationale: "exported function", target_callable: redirectTarget}
+    expected: partial

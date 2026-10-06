@@ -1,0 +1,177 @@
+{
+  "schema_version": 1,
+  "source": {
+    "commit": "c0234b056e1cd3ecb82b927d8103cf072ea8adb3",
+    "source_digest": "3af6db0c02e6310dbd70df7f346c291a910a4b0d6da0f11bce6452e7b21900a2",
+    "python": "3.12.14",
+    "production_agent_version": "1.0.2",
+    "production_request_limit": 4,
+    "production_runtime_unchanged": true,
+    "evidence_policy": "intake-evidence/v1",
+    "evaluator": "deterministic-agent-output-v10"
+  },
+  "baseline": {
+    "status": "complete",
+    "public_cases": 9,
+    "passed": 6,
+    "unknown_final_sdk_usage": 3,
+    "budget_stops": 0,
+    "request_limit": 6,
+    "overlay_sha256": "834c52218cea031f6d76e1ffad8b78a68d4ab4e60533b135e3a451d11ca45e41",
+    "effective_config_hash": "6458ccbbc095e5d5",
+    "effective_config_sha256": "6458ccbbc095e5d5ad42d8c46e6ef2c680938904f14493fc90b6f1c7b2dcf3a6",
+    "resolved_model": "gateway:Qwen3.6-35B-A3B-NVFP4",
+    "agent_spec_sha256": "39a68a0f21bdb3c2c8c0e10881cde0dab4b0354aae8cff0e83567ee6932b5da3",
+    "focused_gate": "failed",
+    "proposals_observed": 20,
+    "proposals_with_guard_violations": 14,
+    "quote_observation": "Every observed rejected quote matched only after whitespace normalization; normalization never granted acceptance."
+  },
+  "trials": [
+    {
+      "variant": "field-feedback",
+      "run": ".harness/validation/quality-gates/intake-feedback-v11-20260930T105208Z-yjycf9bh",
+      "overlay_sha256": "80ac3327785ebce39b9d9fc0d460b27d66634aeb72160116a6121bce45cdd0da",
+      "helper_sha256": "e4c762aa7ff88cb5ad47f211aa5a38acf44fe35918b34985e6ebe99aa4c82878",
+      "trial_evaluator": "deterministic-agent-output-v11-intake-field-feedback-v1",
+      "attempts": 3,
+      "scored": 2,
+      "scored_passed": 1,
+      "scored_failed": 1,
+      "cancelled_unscored": 1,
+      "unstarted": 6,
+      "unknown_final_sdk_usage": 2,
+      "observed_case_gate": "failed",
+      "run_stop": "root_SIGINT",
+      "candidate_release_gate": "not_checked",
+      "full_qualification": "not_checked",
+      "effective_config_hash": "6ea6f7a2f4eab07d",
+      "budget_stops": 0
+    },
+    {
+      "variant": "compact-prompt",
+      "run": ".harness/validation/quality-gates/intake-compact-v10-20260930T105944Z-qr7di6cu",
+      "overlay_sha256": "11609cde23b799fc3617ec4b9d0128ec827bc64905bbaeb63ff34e7e4cbb60ef",
+      "helper_sha256": "9e00560c858a3da1340f2d1c8dc1b65c5b397a1ffe171b7f1597371770225a3d",
+      "attempts": 8,
+      "scored": 7,
+      "scored_passed": 6,
+      "scored_failed": 1,
+      "cancelled_unscored": 1,
+      "unstarted": 1,
+      "unknown_final_sdk_usage": 2,
+      "observed_case_gate": "failed",
+      "run_stop": "root_SIGINT",
+      "candidate_release_gate": "not_checked",
+      "full_qualification": "not_checked",
+      "effective_config_hash": "b85f23f012a09165",
+      "budget_stops": 0
+    },
+    {
+      "variant": "worked-example",
+      "run": ".harness/validation/quality-gates/intake-worked-example-v10-20260930T110937Z-izbp7t1m",
+      "overlay_sha256": "126cf701ce31032914e2b5c24250b2a1d4dffc829e8fffd8d07d434ac14ebe0f",
+      "helper_sha256": "78f7b1eb1d94672309f967d96f035c4b9b61c66ad08c30320a219e032fe2d2fb",
+      "attempts": 4,
+      "scored": 3,
+      "scored_passed": 3,
+      "unscored_model_http_502": 1,
+      "unstarted": 5,
+      "unknown_final_sdk_usage": 1,
+      "run_stop": "self_stop_after_model_http_error",
+      "candidate_release_gate": "not_checked",
+      "full_qualification": "not_checked",
+      "effective_config_hash": "2e5d612579961d7f",
+      "budget_stops": 0
+    },
+    {
+      "variant": "worked-example-readiness-retry",
+      "run": ".harness/validation/quality-gates/intake-worked-example-v10-20260930T111640Z-cwl6zuow",
+      "overlay_sha256": "126cf701ce31032914e2b5c24250b2a1d4dffc829e8fffd8d07d434ac14ebe0f",
+      "helper_sha256": "78f7b1eb1d94672309f967d96f035c4b9b61c66ad08c30320a219e032fe2d2fb",
+      "readiness_status": "failed",
+      "readiness_http_status": 502,
+      "evaluation_cases_started": 0,
+      "candidate_release_gate": "not_checked",
+      "effective_config_hash": "2e5d612579961d7f"
+    }
+  ],
+  "independent_audit": {
+    "artifact": ".harness/validation/quality-gates/next-intake-field-diagnostics-candidate/closed-v10-independent-root.json",
+    "scope": "public-only diagnostic audit; no model/tool/output bodies exported",
+    "focused_gate": "failed",
+    "full_qualification": "not_checked",
+    "heldout": "not_applicable",
+    "temporal_replay": "not_checked",
+    "inference_performed_by_audit": false
+  },
+  "fallback_and_checks": {
+    "source_line_fallback": {
+      "configuration_id": "f14e052dbf73bc23",
+      "model_contract_digest": "fc66510067e571df",
+      "overlay_sha256": "547d402bb90b95eaac6960ab6686d18cb3cf665bc05fcd839bd102e5ea487b34",
+      "production_request_limit": 4,
+      "synthetic_mock_cases": 48,
+      "status": "passed",
+      "production_and_replay_evidence": "not_checked",
+      "live_quality": "not_checked"
+    },
+    "canonical_wire_tests": {
+      "tests": 5,
+      "status": "passed",
+      "intake_codec_test_sha256": "4e37ad7a6035be0f395cb01f27b0d88443c10af8b58afee277675319be1769c5",
+      "openai_setting_wire_test_sha256": "e168e717ae81d83d6eca09a366bff36ac26b930521e304a927afeb232c19d407",
+      "scope": "HTTPX MockTransport/client serialization only"
+    },
+    "selected_tests": {
+      "count": 90,
+      "status": "passed",
+      "failures": 0,
+      "errors": 0,
+      "skips": 0,
+      "python": "3.12.14"
+    },
+    "just_check": "passed",
+    "generated_check": "passed",
+    "dev_skills_check": "passed",
+    "git_diff_check": "passed",
+    "full_suite": "not_checked",
+    "current_live_qualification": "not_checked",
+    "production_request_four_requalification": "not_checked",
+    "all_354_public_gates": "not_checked",
+    "sealed_ten": {
+      "status": "not_checked",
+      "used": false
+    },
+    "bedrock_live": {
+      "status": "not_applicable",
+      "reason": "explicit owner exclusion"
+    },
+    "web_check": {
+      "status": "not_applicable",
+      "reason": "no web changes"
+    }
+  },
+  "portability": {
+    "production_changes": false,
+    "runtime_behavior_and_evaluator_policy_unchanged": true,
+    "checkpoint_source_identity_changes": "Documentation and tests change the checkout identity; measurements refer to frozen source c0234b056e1cd3ecb82b927d8103cf072ea8adb3.",
+    "ignored_local_artifacts": [
+      ".harness/validation/quality-gates/intake-fields-v10-20260930T102554Z-viv6qyom",
+      ".harness/validation/quality-gates/intake-feedback-v11-20260930T105208Z-yjycf9bh",
+      ".harness/validation/quality-gates/intake-compact-v10-20260930T105944Z-qr7di6cu",
+      ".harness/validation/quality-gates/intake-worked-example-v10-20260930T110937Z-izbp7t1m",
+      ".harness/validation/quality-gates/intake-worked-example-v10-20260930T111640Z-cwl6zuow",
+      ".harness/validation/quality-gates/next-intake-feedback-candidate",
+      ".harness/validation/quality-gates/next-intake-prompt-alternatives-candidate",
+      ".harness/validation/quality-gates/next-intake-source-lines-candidate",
+      ".harness/validation/quality-gates/next-intake-temperature-candidate"
+    ],
+    "limitation": "Controllers, overlays, and raw evaluation databases are ignored local artifacts and are not included in the checkout. This summary preserves reproducible metadata, but full replay requires those local artifacts."
+  },
+  "accounting": {
+    "configured_model_pricing": "known_zero",
+    "hardware_cost": "unknown",
+    "failed_and_interrupted_final_usage_not_inferred": true
+  }
+}

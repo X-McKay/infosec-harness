@@ -1,58 +1,62 @@
-# Ground-truth eval corpus (seeded starter set)
+# Independent paired corpus
 
-Small, self-contained apps with a **paired** design, across **Python, Java, JavaScript, and
-Perl**: for each (language, CWE), a `vulnerable` and a `fixed` variant of the same tiny app. The finding submitted for both variants is nearly
-identical; only the code differs, so the expected verdicts differ for the right reason.
-This is the cleanest ground-truth signal for the whole pipeline and for per-agent evals.
+The unchanged starter corpus contains 36 small Python, Java, JavaScript and Perl cases.
+`manifest.json` pairs findings with scoring truth. Only the finding and repository snapshot
+are submitted to the investigator; expected verdicts stay outside its sandbox.
 
-`manifest.json` lists each case with the submitted `finding` and the `truth` used for
-scoring (expected verdict, reachability, sink file/line, target callable). Truth is never
-shown to the agents.
+## Cases (36 total)
 
-## Cases (32 total)
+Each case name is `[<lang>-]<cwe>-<variant>` (Python cases are unprefixed). The manifest is checked by `tests/evals/test_cohort.py`.
 
-Each case name is `[<lang>-]<cwe>-<variant>` (Python cases are unprefixed).
+| Cases | Language | CWE | Toolchain |
+|---|---|---|---|
+| `sqli-vulnerable`, `sqli-fixed` | python | CWE-89 | pip / pytest |
+| `cmdi-vulnerable`, `cmdi-fixed` | python | CWE-78 | pip / pytest |
+| `pathtraversal-vulnerable`, `pathtraversal-fixed` | python | CWE-22 | pip / pytest |
+| `xss-vulnerable`, `xss-fixed` | python | CWE-79 | pip / pytest |
+| `codeinjection-vulnerable`, `codeinjection-fixed` | python | CWE-94 | pip / pytest |
+| `deserialization-vulnerable`, `deserialization-fixed` | python | CWE-502 | pip / pytest |
+| `xxe-vulnerable`, `xxe-fixed` | python | CWE-611 | pip / pytest |
+| `ssrf-vulnerable`, `ssrf-fixed` | python | CWE-918 | pip / pytest |
+| `unreachable` | python | CWE-89 | pip / pytest |
+| `testonly` | python | CWE-89 | pip / pytest |
+| `java-sqli-vulnerable`, `java-sqli-fixed` | java | CWE-89 | maven / junit5, release 17 |
+| `java-cmdi-vulnerable`, `java-cmdi-fixed` | java | CWE-78 | maven / junit5, release 17 |
+| `java-xxe-vulnerable`, `java-xxe-fixed` | java | CWE-611 | maven / **junit4**, source 1.7 |
+| `javascript-cmdi-vulnerable`, `javascript-cmdi-fixed` | javascript | CWE-78 | npm / jest, CommonJS |
+| `javascript-xss-vulnerable`, `javascript-xss-fixed` | javascript | CWE-79 | npm / jest, CommonJS |
+| `javascript-xssesm-vulnerable`, `javascript-xssesm-fixed` | javascript | CWE-79 | npm / vitest, ESM + TypeScript |
+| `perl-sqli-vulnerable`, `perl-sqli-fixed` | perl | CWE-89 | cpanm / Test::More |
+| `perl-cmdi-vulnerable`, `perl-cmdi-fixed` | perl | CWE-78 | cpanm / Test::More |
+| `perl-xss-vulnerable`, `perl-xss-fixed` | perl | CWE-79 | Module::Build / Test2::V0 |
 
-| Language (toolchain) | CWEs (paired vulnerable/fixed) |
-|---|---|
-| python (pip / pytest) | CWE-89 SQLi, CWE-78 cmdi, CWE-22 path traversal, CWE-79 XSS, CWE-94 code injection, CWE-502 deserialization, CWE-611 XXE, CWE-918 SSRF |
-| java (maven / junit5, release 17) | CWE-89 SQLi, CWE-78 cmdi |
-| java (maven / **junit4**, source 1.7) | CWE-611 XXE |
-| javascript (npm / jest) | CWE-78 cmdi, CWE-79 XSS |
-| perl (cpanm / Test::More) | CWE-89 SQLi, CWE-78 cmdi |
 
-Plus two Python edge cases: `unreachable` (sink present but only ever called with a constant
-query — context should mark it unreachable) and `testonly` (the flagged pattern is under
-`tests/` — the pre-filter should early-exit).
+## Run
 
-The two JVM rows are the point of the `java-xxe` pair. The seeded Java cases were all JUnit 5
-on `maven.compiler.release` 17, and of the 51 Maven entries harvested from Vul4J into
-`external/vul4j.json`, 50 are JUnit 4 and 14 declare Java 7 — so every Java case here used to
-exercise a recipe matching one harvested entry in 51. The framework decides the install
-commands, not just the probe: a JUnit 5 warm-up in a JUnit 4 project fails `test-compile` with
-`cannot find symbol: class Test` and no image is built at all.
+Configure the worker's approved local roots to include this directory, then run:
 
-Every case's ground truth includes the exact sink file/line and target callable, and
-`test_corpus.py` asserts `detect_stack` identifies the right language, build system, and test
-framework for each.
+```bash
+./dev eval [--settings settings.json]   # owned worker; .harness/reports/model-<UTC time>.json
+```
 
-Every Python case is written so its exploit condition is observable **offline**: probes have no
-egress, so the SSRF case is driven against a loopback listener the probe starts, and the XXE
-case's entity points at a marker file under the sandbox temp dir. The XXE pair uses
-stdlib `xml.sax` (`feature_external_ges` on/off) rather than a third-party parser so no case
-needs a dependency beyond `pytest`.
+`./dev eval` starts its own worker on a fresh task queue with the same configuration. A bare
+`harness eval --allow-inference` without `--owned-worker` instead needs a separately started
+worker with identical settings. See
+[qualification and evaluation](../deploy/openshell/README.md#qualification-and-evaluation).
 
-## How it's used
+The complete corpus runs through the normal Temporal/OpenShell investigation path, once
+per case. The report retains failures and unstarted cases. The packaged release policy
+(`src/infosec_harness/evals/release-policy.yaml`) requires at least 75% correct verdicts and
+zero unsafe negative verdicts. Inconclusive is not a
+correct negative. Native runtime and live model evidence must be qualified independently.
 
-- `infosec_harness.evals.corpus.load_corpus()` yields typed `CorpusCase`s (findings +
-  ground truth), with `repo_url` resolved to an absolute path.
-- End-to-end: run each `finding` through the pipeline and compare the verdict to
-  `expected_verdict` (per-class precision/recall; the false-negative rate on vulnerable
-  cases is the headline metric).
-- Per-agent: `context` recall is scored against `sink_file`/`sink_line`; `probe_author`
-  and `env_planner` are scored by execution (does it build, does the oracle fire on the
-  vulnerable variant and not the fixed one).
+The two unpaired Python cases (`unreachable`, `testonly`) exercise claims whose context
+should prevent exploitation. The SSRF and XXE cases can be tested offline with local
+listeners and files. Java includes JUnit 4/5 and old source levels; JavaScript includes
+CommonJS and ESM/TypeScript; Perl includes Test::More and Test2::V0. The agent must inspect
+and handle the actual build configuration through skills and tools.
 
-Adding a case: create `python/<case>/<variant>/` (app + `requirements.txt` + `tests/`) and
-add an entry to `manifest.json`. `tests/test_corpus.py` checks the manifest stays consistent
-with the code.
+`external/` retains historical harvested datasets and attribution. They are not accepted
+by this evaluator: they require remote-source and test-masking controls before use. The
+old stage-specific harvesting and scoring commands have been removed. Do not interpret
+this small seeded corpus as production-scale or independently held-out quality evidence.

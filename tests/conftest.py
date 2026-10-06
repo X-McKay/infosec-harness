@@ -1,35 +1,51 @@
+"""Deterministic tests use fake models and isolated state; Temporal tests use a real server."""
+import importlib
 import os
 import shutil
-import tempfile
+import sys
+import tomllib
+from pathlib import Path
 
-os.environ.setdefault("HARNESS_MODEL_MODE", "stub")
-os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
-# Isolated SQLite DB per test *process* (no Postgres needed).
-#
-# The pid is not decoration. These paths used to be fixed, which is fine for one run and wrong
-# the moment there are two: a second pytest on the same machine deleted the first one's database
-# out from under its open connections, and the first then failed with SQLite's "attempt to write
-# a readonly database" -- in a *different* test file from the one that had been writing. The
-# result looked exactly like a schema bug in whatever had most recently changed, and cost real
-# time to chase before the concurrent run was noticed. Concurrent sessions and worktrees are
-# normal here, so the isolation has to be real rather than assumed.
-_tmp = tempfile.gettempdir()
-_dbfile = os.path.join(_tmp, f"harness_test_{os.getpid()}.db")
-if os.path.exists(_dbfile):
-    os.remove(_dbfile)
-os.environ.setdefault("HARNESS_DATABASE_URL", f"sqlite+aiosqlite:///{_dbfile}")
+import pydantic_ai.models
+import pytest
 
-# Isolated recipe cache per test process. Without this a recipe written by one run silently
-# changes the next: prepare skips env-planner on a cache hit, so the trajectory report loses an
-# agent and the suite passes or fails depending on what a previous run happened to leave behind.
-_recipes = os.path.join(_tmp, f"harness_test_recipes_{os.getpid()}")
-shutil.rmtree(_recipes, ignore_errors=True)
-os.environ.setdefault("HARNESS_RECIPE_CACHE_DIR", _recipes)
+from infosec_harness.config import get_settings
+
+ROOT = Path(__file__).resolve().parents[1]
+pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
 
-def pytest_sessionfinish(session, exitstatus):
-    """Remove this process's scratch state. Without it, one file per run accumulates in /tmp."""
-    for path in (_dbfile, f"{_dbfile}-journal", f"{_dbfile}-wal", f"{_dbfile}-shm"):
-        if os.path.exists(path):
-            os.remove(path)
-    shutil.rmtree(_recipes, ignore_errors=True)
+@pytest.fixture(autouse=True)
+def isolated_settings(tmp_path, monkeypatch):
+    for key in tuple(os.environ):
+        if key.startswith("HARNESS_") and not key.startswith("HARNESS_TEST_"):
+            monkeypatch.delenv(key)
+    monkeypatch.setenv("HARNESS_WORKSPACE_DIR", str(tmp_path / "workspace"))
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+@pytest.fixture
+def temporal_cli():
+    found = shutil.which("temporal")
+    version = tomllib.loads((ROOT / ".mise.toml").read_text())["tools"]["http:temporal"]["version"]
+    managed = ROOT / ".harness/mise/installs/http-temporal" / version / "temporal"
+    if not found and managed.is_file():
+        found = str(managed)
+    if not found:
+        if os.environ.get("HARNESS_TEST_REQUIRE_TEMPORAL") == "1":
+            pytest.fail("Pinned Temporal CLI is required for durable qualification")
+        pytest.skip("Pinned Temporal CLI unavailable; durable qualification not checked")
+    return found
+
+
+def load_script(name: str):
+    """Import one trusted repository utility without shadowing installed packages."""
+    scripts = ROOT / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.append(str(scripts))
+    module = importlib.import_module(name)
+    if Path(module.__file__).resolve() != scripts / f"{name}.py":
+        raise ImportError(f"Unexpected utility module: {name}")
+    return module
