@@ -15,20 +15,29 @@ import math
 import os
 import re
 import stat
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated, Any, get_args
+from typing import Annotated, Any, TypedDict, cast, get_args
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
+from google.protobuf.internal.enum_type_wrapper import EnumTypeWrapper
 from pydantic import ValidationError
 from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
 from temporalio.api.common.v1 import Payloads
 from temporalio.api.enums.v1 import EventType, TimeoutType
+from temporalio.api.failure.v1 import Failure
+from temporalio.api.history.v1 import HistoryEvent
 from temporalio.api.workflowservice.v1 import GetSystemInfoRequest
-from temporalio.client import Client, WorkflowExecutionStatus
+from temporalio.client import (
+    Client,
+    WorkflowExecution,
+    WorkflowExecutionStatus,
+    WorkflowHandle,
+)
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.service import RPCError, RPCStatusCode, TLSConfig
 
@@ -53,6 +62,7 @@ from infosec_harness.contracts import (
     RunState,
     RunStatus,
     RunSummary,
+    VerdictLabel,
 )
 
 log = logging.getLogger(__name__)
@@ -80,8 +90,17 @@ def execution_timeout(limits: Limits) -> timedelta:
     return timedelta(seconds=limits.timeout_seconds + 600)
 
 
-def temporal_connection_options(settings: Settings) -> dict[str, Any]:
-    options: dict[str, Any] = {}
+class ConnectionOptions(TypedDict, total=False):
+    tls: TLSConfig | bool
+    api_key: str
+
+
+# The workflow is started by name, so its class (the handle's first parameter) is not imported.
+RunHandle = WorkflowHandle[Any, InvestigationResult]
+
+
+def temporal_connection_options(settings: Settings) -> ConnectionOptions:
+    options: ConnectionOptions = {}
     if settings.temporal_tls:
         if any(
             (
@@ -114,7 +133,7 @@ def temporal_connection_options(settings: Settings) -> dict[str, Any]:
     return options
 
 
-async def connect(settings=None) -> Client:
+async def connect(settings: Settings | None = None) -> Client:
     settings = settings or get_settings()
     return await Client.connect(
         settings.temporal_address,
@@ -124,8 +143,13 @@ async def connect(settings=None) -> Client:
     )
 
 
-async def start_investigation(client: Client, finding: Finding, settings, run_id: str,
-                              expected_identity: str | None = None):
+async def start_investigation(
+    client: Client,
+    finding: Finding,
+    settings: Settings,
+    run_id: str,
+    expected_identity: str | None = None,
+) -> RunHandle:
     """Start one fresh workflow ID; a duplicate is rejected rather than resent."""
     return await client.start_workflow(
         WORKFLOW,
@@ -143,7 +167,7 @@ async def start_investigation(client: Client, finding: Finding, settings, run_id
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.temporal = await connect()
     yield
 
@@ -152,7 +176,7 @@ app = FastAPI(title="InfoSec Harness", version="3.0.0.dev0", lifespan=lifespan)
 
 
 def temporal() -> Client:
-    return app.state.temporal
+    return cast(Client, app.state.temporal)
 
 
 TemporalClient = Annotated[Client, Depends(temporal)]
@@ -188,7 +212,7 @@ async def temporal_error(request: Request, exc: RPCError) -> JSONResponse:
     response_model=Health,
     responses={503: {"model": Health, "description": "Temporal is unreachable"}},
 )
-async def health(client: TemporalClient):
+async def health(client: TemporalClient) -> Health | JSONResponse:
     """Temporal connectivity only; sandbox, worker and model execution stay not_checked."""
     task_queue = get_settings().task_queue
     try:
@@ -258,11 +282,13 @@ async def runs(
     return RunPage(items=items, next_page_token=following)
 
 
-async def completed_verdicts(client: Client, page) -> dict[str, str]:
+async def completed_verdicts(
+    client: Client, page: Sequence[WorkflowExecution]
+) -> dict[str, VerdictLabel]:
     """Verdict labels for completed runs; a failed or slow result fetch leaves the run out."""
     gate = asyncio.Semaphore(VERDICT_CONCURRENCY)
 
-    async def verdict(entry) -> tuple[str, str | None]:
+    async def verdict(entry: WorkflowExecution) -> tuple[str, VerdictLabel | None]:
         async with gate:
             try:
                 handle = client.get_workflow_handle(
@@ -302,7 +328,7 @@ def run_status(status: WorkflowExecutionStatus | None) -> RunStatus:
     return next((known for known in RUN_STATUSES if known == name), "unknown")
 
 
-def run_handle(client: Client, run_id: str):
+def run_handle(client: Client, run_id: str) -> RunHandle:
     if not run_id.startswith(PREFIX) or len(run_id) > 100:
         raise HTTPException(404, "Investigation not found")
     return client.get_workflow_handle(run_id, result_type=InvestigationResult)
@@ -341,19 +367,19 @@ async def cancel(run_id: str, client: TemporalClient) -> CancelResult:
     return CancelResult(status=run_status(description.status))
 
 
-def bounded(value: Any, limit: int = MAX_LABEL_CHARS) -> str:
+def bounded(value: object, limit: int = MAX_LABEL_CHARS) -> str:
     """One printable line of at most ``limit`` characters."""
     return "".join(char if char.isprintable() else " " for char in str(value)[:limit])
 
 
-def enum_label(enum, value: int, prefix: str, default: str) -> str:
+def enum_label(enum: EnumTypeWrapper, value: int, prefix: str, default: str) -> str:
     try:
         return enum.Name(value).removeprefix(prefix).lower()
     except ValueError:
         return default
 
 
-def failure_type(failure) -> str:
+def failure_type(failure: Failure) -> str:
     """The failure's type, never its message: messages can carry untrusted output."""
     if failure.HasField("application_failure_info") and failure.application_failure_info.type:
         return failure.application_failure_info.type
@@ -402,7 +428,7 @@ TIMERS = (
 )
 
 
-def project_event(event, activities: dict[int, str]) -> RunEvent:
+def project_event(event: HistoryEvent, activities: dict[int, str]) -> RunEvent:
     """Map one history event to a kind and bounded labels; payloads are never copied."""
     kind_of = event.event_type
     label = enum_label(EventType, kind_of, "EVENT_TYPE_", "unknown")
@@ -506,12 +532,12 @@ def read_report(path: Path, limit: int) -> tuple[bytes, dict[str, Any]]:
     return data, document
 
 
-def text_field(document: dict, key: str, limit: int = 200) -> str | None:
+def text_field(document: dict[str, Any], key: str, limit: int = 200) -> str | None:
     value = document.get(key)
     return bounded(value, limit) if isinstance(value, str) else None
 
 
-def count_field(document: dict, key: str) -> int | None:
+def count_field(document: dict[str, Any], key: str) -> int | None:
     value = document.get(key)
     return value if type(value) is int and value >= 0 else None
 
@@ -609,7 +635,7 @@ def reports() -> ReportList:
         422: {"description": "Report is not a readable JSON object"},
     },
 )
-def report(name: str):
+def report(name: str) -> Response:
     """One report document, validated as a JSON object. Its content is untrusted data."""
     path = report_path(name)
     try:
