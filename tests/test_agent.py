@@ -237,6 +237,45 @@ async def test_cut_probe_output_is_truncated_evidence_and_never_qualifies():
     assert evidence.complete_verified_probe is False
 
 
+async def test_failed_build_tool_returns_environment_feedback_once():
+    """Live cohorts 7 and 8: after one failed mvn test the agent searched the filesystem and
+    looped on javac until the budget ended. A failed build tool now points at the recipe."""
+    shell = FakeOpenShell()
+    native_execute = shell.execute
+
+    async def execute(sandbox, command, **kwargs):
+        await native_execute(sandbox, command, **kwargs)
+        return CommandResult(1, "", "[ERROR] Could not resolve dependencies")
+
+    shell.execute = execute
+    seen = {}
+
+    def respond(messages, info):
+        if not shell.executions:
+            return ModelResponse(parts=[ToolCallPart(
+                "execute", {"command": "mvn test -Dtest=Probe"}, tool_call_id="build")])
+        if len(shell.executions) == 1:
+            returned = [part.content for message in messages if isinstance(message, ModelRequest)
+                        for part in message.parts
+                        if isinstance(part, ToolReturnPart) and part.tool_name == "execute"][-1]
+            seen["build"] = returned.model_dump()["observations"]
+            return ModelResponse(parts=[ToolCallPart(
+                "execute", {"command": "ls -la src"}, tool_call_id="list")])
+        returned = [part.content for message in messages if isinstance(message, ModelRequest)
+                    for part in message.parts
+                    if isinstance(part, ToolReturnPart) and part.tool_name == "execute"][-1]
+        seen["list"] = returned.model_dump()["observations"]
+        return final_response(info)
+
+    request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
+    deps = InvestigationDeps(run_id="run", sandbox=await shell.create("run"),
+                             source_digest="digest", snapshot_path="/fixture", request=request)
+    await build_agent(shell, FunctionModel(respond)).run("Inspect", deps=deps)
+    assert "environment skill" in seen["build"]["environment_feedback"]
+    assert "Do not search the filesystem" in seen["build"]["environment_feedback"]
+    assert "environment_feedback" not in seen["list"]  # a failed plain command is not a build
+
+
 async def test_probe_uses_fresh_offline_profile_and_cleans_up():
     shell = FakeOpenShell()
 

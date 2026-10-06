@@ -1,6 +1,7 @@
 """One investigator, packaged skills, and five small OpenShell tools."""
 
 import json
+import re
 from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
@@ -221,6 +222,10 @@ def command_budget(timeout: int) -> int:
     return max(timeout - TIMEOUT_MARGIN_SECONDS, 1)
 
 
+# Commands whose failure usually means missing environment setup, not a target behaviour.
+BUILD_TOOLS = re.compile(r"(?<![\w./-])(mvn|gradle|gradlew|npm|npx|yarn|pnpm|cpanm|cpan|javac|pip3?)(?![\w-])")
+
+
 def bounded(argv: list[str], timeout: int) -> list[str]:
     """Kill ``argv`` inside the sandbox before the native timeout; shared by every exec."""
     return ["/usr/bin/timeout", "--preserve-status", "-s", "KILL", str(command_budget(timeout)), *argv]
@@ -410,6 +415,16 @@ def build_agent(openshell: OpenShell, model: Model) -> Agent[InvestigationDeps, 
         if kind == "probe" and not observations and final_probe_line(result.stdout):
             # Feedback only: tool returns are excerpted, so record what the full stdout showed.
             observations["probe_line_rejected"] = True
+        if kind == "execute" and result.exit_code and BUILD_TOOLS.search(command):
+            # Live cohorts 7 and 8: after one failed build the agent searched the filesystem
+            # for jars and looped on javac. Point at the recipe before it improvises.
+            observations["environment_feedback"] = (
+                "Build or package tool failed. Follow the language skill's build recipe and the "
+                "environment skill before retrying: resolve dependencies once in the workspace "
+                "with the documented options, then run tests offline. Do not search the "
+                "filesystem for artifacts, use pip/curl for JVM or Perl dependencies, or rerun "
+                "the same failing command."
+            )
         if result.exit_code == KILLED_EXIT:
             observations["timeout_feedback"] = (
                 f"Killed (exit {KILLED_EXIT}) at the {command_budget(timeout)}s command "
@@ -433,7 +448,11 @@ def build_agent(openshell: OpenShell, model: Model) -> Agent[InvestigationDeps, 
 
     @tools.tool
     async def execute(ctx: RunContext[InvestigationDeps], command: str) -> Evidence:
-        """Execute a build or inspection command in the workspace OpenShell sandbox."""
+        """Execute a build or inspection command in the workspace OpenShell sandbox.
+
+        Run Maven, Gradle, npm or cpanm only as the language and environment skills describe;
+        output is bounded and a command killed at the budget returns exit 137.
+        """
         return await command_tool(ctx, command, ctx.deps.sandbox, "execute")
 
     @tools.tool
