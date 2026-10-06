@@ -21,6 +21,11 @@ HARNESS_DIR="$MAIN_DIR/.harness"
 ENV_FILE="$HARNESS_DIR/dev.env"
 RUN_DIR="$HARNESS_DIR/run"
 TEMPORAL_DB="$HARNESS_DIR/temporal/temporal.db"
+# The private native OpenShell runtime configuration, in order of preference: the layout
+# deploy/openshell/README.md prescribes, then the earlier default path. An explicit
+# HARNESS_OPENSHELL_CONFIG is used only when neither file exists.
+PRIVATE_OPENSHELL_CONFIG="$HARNESS_DIR/openshell/private/native-config.json"
+RUNTIME_OPENSHELL_CONFIG="$HARNESS_DIR/openshell/runtime.json"
 # The dev server's default namespace keeps closed histories for one day; keep them 30 days so
 # replay evidence survives. Export anything needed longer with ./dev export-history.
 TEMPORAL_RETENTION=720h
@@ -52,7 +57,10 @@ Commands:
   env             print shell lines putting the managed uv, just, node and temporal on PATH
   stop            stop the local Temporal, API and UI; keeps the database, VM and all data
 --settings FILE is accepted anywhere among the arguments of worker|qualify|eval|replay|export-history.
-Full mode requires explicit OpenShell configuration; see deploy/openshell/README.md.
+Full mode requires explicit OpenShell configuration; see deploy/openshell/README.md. Without
+--settings, worker|qualify|eval|replay read .harness/openshell/private/native-config.json, else
+.harness/openshell/runtime.json, else HARNESS_OPENSHELL_CONFIG; start, smoke and doctor report
+native qualification not_checked when none exists.
 From a git worktree every command uses the main checkout's .harness/; start the stack there.
 USAGE
 }
@@ -166,7 +174,26 @@ load_env() {
     [[ "$ROOT_DIR" != *[\"\\]* ]] || { echo "checkout path cannot be encoded as JSON" >&2; return 2; }
     export HARNESS_LOCAL_REPO_ROOTS="[\"$ROOT_DIR/eval-corpus\"]"
   fi
-  export HARNESS_OPENSHELL_CONFIG="${HARNESS_OPENSHELL_CONFIG:-$HARNESS_DIR/openshell/runtime.json}"
+}
+# Prints the OpenShell configuration a harness command reads; fails when none exists.
+openshell_config() {
+  local candidate
+  for candidate in "$PRIVATE_OPENSHELL_CONFIG" "$RUNTIME_OPENSHELL_CONFIG" \
+      "${HARNESS_OPENSHELL_CONFIG:-}"; do
+    if [[ -n "$candidate" && -f "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+no_openshell_config() {
+  local explicit="HARNESS_OPENSHELL_CONFIG is unset"
+  [[ -z "${HARNESS_OPENSHELL_CONFIG:-}" ]] ||
+    explicit="HARNESS_OPENSHELL_CONFIG=$HARNESS_OPENSHELL_CONFIG does not exist"
+  echo "No private OpenShell configuration: neither $PRIVATE_OPENSHELL_CONFIG nor"
+  echo "$RUNTIME_OPENSHELL_CONFIG exists, and $explicit."
+  echo "Create it as deploy/openshell/README.md describes, or pass --settings FILE."
 }
 harness() {
   # --settings is a global harness option; accept it anywhere among the verb's arguments.
@@ -185,9 +212,38 @@ harness() {
     esac
   done
   load_env
+  local config
+  if ((${#settings[@]})); then
+    echo "OpenShell configuration: openshell_config in ${settings[1]}" >&2
+  elif config="$(openshell_config)"; then
+    if [[ -n "${HARNESS_OPENSHELL_CONFIG:-}" && "$HARNESS_OPENSHELL_CONFIG" != "$config" ]]; then
+      echo "OpenShell configuration: $config (preferred over HARNESS_OPENSHELL_CONFIG=$HARNESS_OPENSHELL_CONFIG)" >&2
+    else
+      echo "OpenShell configuration: $config" >&2
+    fi
+    export HARNESS_OPENSHELL_CONFIG="$config"
+  else
+    case "$command" in
+      replay|export-history) ;;  # they read Temporal histories, not the native runtime
+      *) no_openshell_config >&2; return 2 ;;
+    esac
+  fi
   managed uv run --locked harness ${settings[@]+"${settings[@]}"} "$command" ${args[@]+"${args[@]}"}
 }
 qualify() { harness qualify "$@"; }
+# start, smoke and doctor: qualify the native boundaries when a private configuration exists;
+# otherwise say so and leave them not_checked instead of failing on a missing file.
+QUALIFIED=0
+qualify_if_configured() {
+  load_env
+  if openshell_config >/dev/null; then
+    qualify
+    QUALIFIED=1
+    return 0
+  fi
+  no_openshell_config
+  echo "Native OpenShell qualification: not_checked"
+}
 
 # Each local service runs in its own process group. Its pid file records the group leader's pid
 # and start time, so stop never signals a process that merely reused the pid.
@@ -324,8 +380,12 @@ case "$COMMAND" in
     else
       start_stack
       ready
-      qualify
-      echo "Control plane and OpenShell checked. Start a worker with ./dev worker."
+      qualify_if_configured
+      if ((QUALIFIED)); then
+        echo "Control plane and OpenShell checked. Start a worker with ./dev worker."
+      else
+        echo "Control plane checked. Configure native OpenShell, then run ./dev qualify."
+      fi
       echo "Live model inference: not_checked; configure an explicit provider before submitting."
     fi ;;
   check) managed just check "$@" ;;
@@ -337,8 +397,8 @@ case "$COMMAND" in
   export-history) harness export-history "$@" ;;
   status) status ;;
   logs) logs "$@" ;;
-  smoke) ready; qualify ;;
-  doctor) setup --check-only; if [[ "$PROFILE" == full ]]; then qualify; fi ;;
+  smoke) ready; qualify_if_configured ;;
+  doctor) setup --check-only; if [[ "$PROFILE" == full ]]; then qualify_if_configured; fi ;;
   stop)
     failed=0
     for name in ui api temporal; do stop_service "$name" || failed=1; done
