@@ -142,6 +142,14 @@ h1 {
     color: hsl(var(--muted-foreground));
     font-weight: 500;
   }
+  /* A first column that stays in view while a wide table scrolls sideways in its card. */
+  .data-table .sticky-column {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background: hsl(var(--card));
+    box-shadow: inset -1px 0 0 hsl(var(--border));
+  }
   /* Column headers stay on one line and sit on the header rule. */
   .data-table :where(thead th) {
     white-space: nowrap;

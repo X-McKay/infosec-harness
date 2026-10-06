@@ -187,6 +187,7 @@ export function Metrics() {
               title="Task success rate"
               description="Correct over planned cases per cohort. Columns below the policy minimum are red."
               points={ratePoints}
+              mutedLabel="Grey: the cohort has not finished; its rate is partial."
               format={(value) => percent(value, 0)}
               maximum={1}
               reference={

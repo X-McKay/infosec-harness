@@ -1,6 +1,9 @@
+import { Badge } from "@/components/ui/badge";
+import { CopyButton } from "@/components/ui/copy-button";
 import { integer } from "@/lib/format";
 import { runPath, shortHash, type ReplayReport } from "@/lib/reports";
-import { Section, StatusBadge } from "./common";
+import { verdictLabel, verdictVariant } from "@/lib/verdict";
+import { NotRecorded, Section, StatusBadge } from "./common";
 import { EvalLink } from "./links";
 
 /**
@@ -67,13 +70,24 @@ export function ReplayReportView({ report }: { report: ReplayReport }) {
                         </span>
                       )}
                     </td>
-                    <td className="font-mono text-xs">
+                    <td className="whitespace-nowrap font-mono text-xs">
                       {shortHash(history.history_sha256, 16) ?? "Unavailable"}
+                      {history.history_sha256 && (
+                        <CopyButton
+                          value={history.history_sha256}
+                          label="Copy history SHA-256"
+                          className="-my-1 ml-0.5"
+                        />
+                      )}
                     </td>
                     <td>
-                      {history.verdict
-                        ? history.verdict.replaceAll("_", " ")
-                        : "—"}
+                      {history.verdict ? (
+                        <Badge variant={verdictVariant(history.verdict)}>
+                          {verdictLabel(history.verdict)}
+                        </Badge>
+                      ) : (
+                        <NotRecorded />
+                      )}
                     </td>
                     <td className="max-w-md text-xs">
                       {history.failure_chain.length ? (
@@ -92,7 +106,7 @@ export function ReplayReportView({ report }: { report: ReplayReport }) {
                           ))}
                         </ol>
                       ) : (
-                        "—"
+                        <NotRecorded />
                       )}
                     </td>
                   </tr>

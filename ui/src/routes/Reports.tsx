@@ -8,6 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import {
   bytes,
   GateBadge,
+  NotRecorded,
   KindBadge,
   kindLabel,
   StatusBadge,
@@ -118,7 +119,9 @@ export function Reports() {
                     </caption>
                     <thead>
                       <tr>
-                        <th scope="col">Report</th>
+                        <th scope="col" className="sticky-column">
+                          Report
+                        </th>
                         <th scope="col">Status</th>
                         <th scope="col" className="whitespace-nowrap">
                           Commit / model
@@ -152,7 +155,7 @@ export function Reports() {
                           <tr key={report.name}>
                             <th
                               scope="row"
-                              className="font-normal text-foreground"
+                              className="sticky-column font-normal text-foreground"
                             >
                               <div className="flex flex-col items-start gap-1">
                                 {path ? (
@@ -175,22 +178,28 @@ export function Reports() {
                             </td>
                             <td className="text-xs">
                               <span className="font-mono">
-                                {shortHash(report.commit, 10) ?? "—"}
+                                {shortHash(report.commit, 10) ?? (
+                                  <NotRecorded />
+                                )}
                               </span>
                               <br />
                               <span className="text-muted-foreground">
-                                {report.model ?? "—"}
+                                {report.model ?? <NotRecorded />}
                               </span>
                             </td>
                             <td className="whitespace-nowrap text-right tabular-nums">
-                              {report.planned == null
-                                ? "—"
-                                : `${integer(report.completed)} / ${integer(report.planned)}`}
+                              {report.planned == null ? (
+                                <NotRecorded />
+                              ) : (
+                                `${integer(report.completed)} / ${integer(report.planned)}`
+                              )}
                             </td>
                             <td className="text-right tabular-nums">
-                              {report.task_success_rate == null
-                                ? "—"
-                                : percent(report.task_success_rate)}
+                              {report.task_success_rate == null ? (
+                                <NotRecorded />
+                              ) : (
+                                percent(report.task_success_rate)
+                              )}
                             </td>
                             <td
                               className={cn(
@@ -199,9 +208,11 @@ export function Reports() {
                                   "font-semibold text-red-700 dark:text-red-400",
                               )}
                             >
-                              {report.unsafe_negatives == null
-                                ? "—"
-                                : integer(report.unsafe_negatives)}
+                              {report.unsafe_negatives == null ? (
+                                <NotRecorded />
+                              ) : (
+                                integer(report.unsafe_negatives)
+                              )}
                             </td>
                             <td>
                               {gates.length ? (
@@ -219,7 +230,7 @@ export function Reports() {
                                   ))}
                                 </div>
                               ) : (
-                                <span className="text-muted-foreground">—</span>
+                                <NotRecorded />
                               )}
                             </td>
                             <td className="whitespace-nowrap text-xs">

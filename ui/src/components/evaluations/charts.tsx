@@ -232,6 +232,7 @@ export function SeriesChart({
   maximum,
   reference,
   counts = false,
+  mutedLabel,
 }: {
   title: string;
   description?: string;
@@ -241,6 +242,8 @@ export function SeriesChart({
   reference?: { value: number; label: string } | null;
   /** Whole-number data: the scale tops out at an even integer so every gridline is a count. */
   counts?: boolean;
+  /** What a grey (muted) column means, shown as a legend when any column is muted. */
+  mutedLabel?: string;
 }) {
   const highest = Math.max(
     maximum ?? 0,
@@ -396,6 +399,15 @@ export function SeriesChart({
                 newest
               </text>
             </svg>
+            {mutedLabel && points.some((point) => point.tone === "muted") && (
+              <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+                <span
+                  aria-hidden="true"
+                  className="inline-block h-2.5 w-2.5 shrink-0 rounded-sm bg-muted-foreground/50"
+                />
+                {mutedLabel}
+              </p>
+            )}
             <details className="mt-3 text-xs">
               <summary className="cursor-pointer text-muted-foreground">
                 View data table

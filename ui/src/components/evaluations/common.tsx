@@ -273,6 +273,16 @@ export function Section({
   );
 }
 
+/** A value the report does not record: a muted dash that reads "not recorded", never 0. */
+export function NotRecorded() {
+  return (
+    <span className="text-muted-foreground">
+      <span aria-hidden="true">—</span>
+      <span className="sr-only">not recorded</span>
+    </span>
+  );
+}
+
 export function Empty({ children }: { children: ReactNode }) {
   return <p className="empty">{children}</p>;
 }

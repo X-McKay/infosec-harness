@@ -178,7 +178,7 @@ export function InvestigationDetail() {
 
       {result ? (
         <>
-          <div className="grid gap-5 xl:grid-cols-[1.6fr_1fr]">
+          <div className="grid items-start gap-5 xl:grid-cols-[1.6fr_1fr]">
             <VerdictPanel result={result} />
             <Limitations limitations={result.limitations ?? []} />
           </div>
