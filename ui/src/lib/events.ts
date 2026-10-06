@@ -40,6 +40,22 @@ export function eventsUnavailable(error: unknown): boolean {
   return error instanceof ApiError && error.status === 404;
 }
 
+/**
+ * Temporal bookkeeping (workflow-task scheduling and activity starts, projected as "other");
+ * hidden by default so the timeline reads as activities and outcomes. Failures, timeouts and
+ * timers have their own kinds and are never bookkeeping.
+ */
+export const isBookkeeping = (event: RunEvent) => event.kind === "other";
+
+/** The failure label Temporal recorded for the run (e.g. a failure type), if it failed. */
+export function failureLabel(events: readonly RunEvent[]): string | null {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event.kind === "workflow_failed") return event.detail || null;
+  }
+  return null;
+}
+
 export const eventKindLabel = (kind: RunEventKind) => kind.replaceAll("_", " ");
 
 const isKind = (value: unknown): value is RunEventKind =>

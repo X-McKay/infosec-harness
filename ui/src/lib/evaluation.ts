@@ -31,6 +31,24 @@ const humanize = (key: string) =>
  * The three release gates in policy order, then any additional recorded gate. A gate absent
  * from the report is `not_checked`. The detail states the measurement against the policy.
  */
+/**
+ * `harness eval` rewrites its report after every case and stamps `finished_at` only when the
+ * cohort ends; a mid-run case failure already records `status: "failed"`. So a report without
+ * `finished_at`, without a recorded abort (`error_type`) and with cases still unstarted or
+ * starting is unfinished: still running, or interrupted before it could finish. Its figures
+ * are partial either way.
+ */
+export function cohortUnfinished(report: CohortReport): boolean {
+  if (report.status === "running") return true;
+  return (
+    !report.finished_at &&
+    !report.error_type &&
+    report.cases.some(
+      (item) => item.status === "unstarted" || item.status === "starting",
+    )
+  );
+}
+
 export function gateRows(report: CohortReport): GateRow[] {
   const keys = [
     ...GATE_ORDER,
@@ -56,8 +74,8 @@ export function gateRows(report: CohortReport): GateRow[] {
       detail = `${integer(unsafe)} recorded; policy maximum ${integer(maximum)}.`;
     if (status === "not_checked")
       detail += ` Not evaluated: ${
-        report.status === "running"
-          ? "the cohort is still running."
+        cohortUnfinished(report)
+          ? "the cohort has not finished."
           : "gates are evaluated only over the complete corpus."
       }${diagnostic}`;
     return {
@@ -477,6 +495,8 @@ export function headroomSummary(
     (retained != null && quota != null ? quota - retained : null);
   const margin =
     headroom != null && required != null ? headroom - required : null;
+  // Recorded reasons are sentences; drop their final period so it is not doubled.
+  const reason = budget.reason?.replace(/[.\s]+$/, "") || null;
   const observed = `${integer(retained)} of ${integer(quota)} admissions retained; ${integer(headroom)} free against ${integer(required)} required`;
   const summary =
     budget.status === "passed"
@@ -484,8 +504,8 @@ export function headroomSummary(
       : budget.status === "failed"
         ? retained != null
           ? `${observed}. Insufficient: no case was started.`
-          : `${budget.reason ?? "The occupancy observation failed"}${budget.error_type ? ` (${budget.error_type})` : ""}. No case was started.`
-        : `Not checked: ${budget.reason ?? "no read-only occupancy observation was recorded"}.`;
+          : `${reason ?? "The occupancy observation failed"}${budget.error_type ? ` (${budget.error_type})` : ""}. No case was started.`
+        : `Not checked: ${reason ?? "no read-only occupancy observation was recorded"}.`;
   return {
     status: budget.status,
     retained,

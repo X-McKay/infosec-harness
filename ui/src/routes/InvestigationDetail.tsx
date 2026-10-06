@@ -19,6 +19,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { failureLabel } from "@/lib/events";
 import { filterRuns, queueSearch, runNeighbors } from "@/lib/search";
 import { runActive, statusLabel, statusVariant } from "@/lib/status";
 import { verdictLabel, verdictVariant } from "@/lib/verdict";
@@ -132,6 +133,7 @@ export function InvestigationDetail() {
           {run.error !== run.status && (
             <p className="prose-text mt-1 text-muted-foreground">{run.error}</p>
           )}
+          <FailureCause runId={run.id} active={active} />
         </div>
       )}
 
@@ -158,6 +160,18 @@ export function InvestigationDetail() {
       <FindingCard run={run} />
     </div>
   );
+}
+
+/** The failure type Temporal recorded, from the same (shared) events query as the timeline. */
+function FailureCause({ runId, active }: { runId: string; active: boolean }) {
+  const events = useQuery(queries.events(runId, active)).data?.events;
+  const label = events ? failureLabel(events) : null;
+  return label ? (
+    <p className="mt-1 text-muted-foreground">
+      Temporal recorded the failure as{" "}
+      <span className="break-all font-mono text-foreground">{label}</span>.
+    </p>
+  ) : null;
 }
 
 function CancelButton({ runId }: { runId: string }) {

@@ -3,6 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import {
   breakdown,
   caseOutcome,
+  cohortUnfinished,
   gateRows,
   headroomSummary,
   measured,
@@ -38,13 +39,14 @@ export function CohortReportView({ report }: { report: CohortReport }) {
           it never qualifies a candidate, whatever its pass rate.
         </p>
       )}
-      {report.status === "running" && (
+      {cohortUnfinished(report) && (
         <p
           role="status"
           className="rounded-md border border-primary/30 bg-primary/5 p-3 text-xs"
         >
-          This cohort is still running. Figures cover the cases recorded so far
-          and refresh automatically.
+          This cohort has not finished: it is still running, or it was
+          interrupted before recording its end. Figures cover the cases recorded
+          so far and refresh automatically.
         </p>
       )}
       <Provenance report={report} />
@@ -281,6 +283,7 @@ function EstimateCard({ report }: { report: CohortReport }) {
 
 function SummaryTiles({ report }: { report: CohortReport }) {
   const success = successFraction(report);
+  const unfinished = cohortUnfinished(report);
   const unsafe = report.unsafe_negatives ?? unsafeNegativeCount(report.cases);
   const maximum = report.release_policy.maximum_unsafe_negatives;
   const durations = measured(report.cases, "duration");
@@ -300,16 +303,14 @@ function SummaryTiles({ report }: { report: CohortReport }) {
         label="Completed"
         value={`${integer(success.completed)} / ${integer(success.planned)}`}
         detail={
-          report.status === "running"
-            ? "Still running"
+          unfinished
+            ? "Not finished"
             : success.completed < success.planned
               ? "Incomplete corpus"
               : "All planned cases"
         }
         tone={
-          report.status !== "running" && success.completed < success.planned
-            ? "bad"
-            : undefined
+          !unfinished && success.completed < success.planned ? "bad" : undefined
         }
       />
       <Tile

@@ -5,6 +5,8 @@ import {
   eventKindLabel,
   eventsPath,
   eventsUnavailable,
+  failureLabel,
+  isBookkeeping,
   normalizeEvents,
 } from "./events.ts";
 
@@ -83,4 +85,48 @@ test("entries without a kind are dropped and counted; nothing is invented", () =
 
 test("kind labels are readable", () => {
   assert.equal(eventKindLabel("activity_timed_out"), "activity timed out");
+});
+
+test("only the other kind is bookkeeping; outcomes and timers never are", () => {
+  const event = (kind: Parameters<typeof eventKindLabel>[0]) => ({
+    at: "",
+    kind,
+    name: null,
+    detail: "",
+  });
+  assert.equal(isBookkeeping(event("other")), true);
+  for (const kind of [
+    "workflow_started",
+    "activity_scheduled",
+    "activity_completed",
+    "activity_failed",
+    "activity_timed_out",
+    "timer",
+    "workflow_completed",
+    "workflow_failed",
+    "workflow_cancelled",
+  ] as const)
+    assert.equal(isBookkeeping(event(kind)), false, kind);
+});
+
+// api.py project_event(): a failed workflow carries its failure type, e.g. UsageLimitExceeded.
+test("the failure label is the recorded workflow failure, never an activity failure", () => {
+  const at = "2026-10-06T07:21:41+00:00";
+  assert.equal(
+    failureLabel([
+      { at, kind: "activity_failed", name: "run", detail: "ApplicationError" },
+      { at, kind: "workflow_failed", name: null, detail: "UsageLimitExceeded" },
+    ]),
+    "UsageLimitExceeded",
+  );
+  assert.equal(
+    failureLabel([
+      { at, kind: "activity_failed", name: "run", detail: "ApplicationError" },
+    ]),
+    null,
+  );
+  assert.equal(
+    failureLabel([{ at, kind: "workflow_failed", name: null, detail: "" }]),
+    null,
+  );
 });

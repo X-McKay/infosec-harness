@@ -4,6 +4,7 @@ import {
   breakdown,
   caseMetrics,
   caseOutcome,
+  cohortUnfinished,
   failureClass,
   failureSummary,
   gateRows,
@@ -378,6 +379,11 @@ test("headroom summary states capacity plainly and never assumes sufficiency", (
   assert.equal(unconfigured.status, "not_checked");
   assert.equal(unconfigured.margin, null);
   assert.match(unconfigured.summary, /^Not checked: No read-only/);
+  // The recorded reason is a sentence; its period is not doubled.
+  assert.equal(
+    unconfigured.summary,
+    "Not checked: No read-only native occupancy command is configured.",
+  );
   // 20,000 quota with 12,000 retained leaves 8,000 against 6,480 required: margin 1,520.
   const passed = headroomSummary(
     budget({ status: "passed", retained: 12000, quota: 20000, headroom: 8000 }),
@@ -399,7 +405,10 @@ test("headroom summary states capacity plainly and never assumes sufficiency", (
       error_type: "TimeoutExpired",
     }),
   );
-  assert.match(broken.summary, /TimeoutExpired/);
+  assert.equal(
+    broken.summary,
+    "The occupancy command did not return a read-only observation (TimeoutExpired). No case was started.",
+  );
   assert.equal(broken.utilization, null);
 });
 
@@ -419,4 +428,51 @@ test("case sorting is stable and puts missing measurements last", () => {
   assert.equal(descending[0], "java-xxe-fixed");
   assert.equal(descending.at(-1), "perl-cmdi-fixed");
   assert.equal(sortCases(cases, "name")[0].name, "java-xxe-fixed");
+});
+
+// evals/cohort.py: a mid-run case failure writes status "failed" while later cases are still
+// unstarted; only the end of the cohort writes finished_at; an abort records error_type.
+test("a cohort without finished_at and with pending cases is unfinished, whatever its status", () => {
+  const cohort = (fields: Record<string, unknown>) =>
+    parseCohortReport({ version: 1, kind: "cohort", ...fields });
+  const midRun = cohort({
+    status: "failed",
+    cases: [
+      { name: "a", status: "failed" },
+      { name: "b", status: "starting" },
+      { name: "c", status: "unstarted" },
+    ],
+  });
+  assert.equal(cohortUnfinished(midRun), true);
+  assert.equal(
+    cohortUnfinished(cohort({ status: "running", cases: [] })),
+    true,
+  );
+  // The capacity pre-flight abort: every case unstarted, but the abort is recorded.
+  assert.equal(
+    cohortUnfinished(
+      cohort({
+        status: "failed",
+        error_type: "ValueError",
+        cases: [{ name: "a", status: "unstarted" }],
+      }),
+    ),
+    false,
+  );
+  // A stopped cohort (break after a failure) records finished_at with cases unstarted.
+  assert.equal(
+    cohortUnfinished(
+      cohort({
+        status: "failed",
+        finished_at: "2026-10-06T04:17:33+00:00",
+        cases: [
+          { name: "a", status: "failed" },
+          { name: "b", status: "unstarted" },
+        ],
+      }),
+    ),
+    false,
+  );
+  const rows = gateRows(midRun);
+  assert.match(rows[1].detail, /the cohort has not finished\./);
 });

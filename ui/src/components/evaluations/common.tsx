@@ -162,7 +162,7 @@ export function Field({
   return (
     <div className={className}>
       <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className={cn("break-all", mono && "font-mono text-xs")}>
+      <dd className={cn(mono ? "break-all font-mono text-xs" : "break-words")}>
         {children}
       </dd>
     </div>

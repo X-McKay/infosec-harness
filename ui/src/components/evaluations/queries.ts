@@ -1,4 +1,5 @@
 import { req } from "@/api/http";
+import { cohortUnfinished } from "@/lib/evaluation";
 import {
   parseReportDocument,
   parseReportSummaries,
@@ -34,11 +35,11 @@ export const reportQuery = (name: string) => ({
     const raw = await req<unknown>(path, { signal });
     return { raw, document: parseReportDocument(raw) };
   },
-  // A completed report never changes; a running cohort is rewritten after every case.
+  // A finished report never changes; an unfinished cohort is rewritten after every case.
   staleTime: Infinity,
   refetchInterval: (query: { state: { data?: LoadedReport } }) => {
     const document = query.state.data?.document;
-    return document?.shape === "cohort" && document.report.status === "running"
+    return document?.shape === "cohort" && cohortUnfinished(document.report)
       ? 5_000
       : false;
   },

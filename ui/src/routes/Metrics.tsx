@@ -12,6 +12,7 @@ import {
 import { EvalLink } from "@/components/evaluations/links";
 import { reportQuery, reportsQuery } from "@/components/evaluations/queries";
 import {
+  cohortUnfinished,
   gateRows,
   measured,
   percentile,
@@ -66,10 +67,14 @@ export function Metrics() {
   const minimum = policy?.minimum_task_success_rate ?? null;
   const maximum = policy?.maximum_unsafe_negatives ?? null;
 
-  const running = (cohort: Cohort) =>
-    (cohort.report?.status ?? cohort.summary.status) === "running";
+  // Unfinished cohorts are partial: unstarted cases count against their rate.
+  const unfinished = (cohort: Cohort) =>
+    cohort.report
+      ? cohortUnfinished(cohort.report)
+      : cohort.summary.status === "running" ||
+        (!!cohort.summary.started_at && !cohort.summary.finished_at);
   const label = (cohort: Cohort) =>
-    `${cohort.summary.name}${running(cohort) ? " (running, partial)" : ""}`;
+    `${cohort.summary.name}${unfinished(cohort) ? " (not finished, partial)" : ""}`;
   const rate = (cohort: Cohort) =>
     cohort.summary.task_success_rate ??
     (cohort.report ? successFraction(cohort.report).rate : null);
@@ -79,8 +84,8 @@ export function Metrics() {
       key: cohort.summary.name,
       label: label(cohort),
       value,
-      // A running cohort's rate is partial: unstarted cases count against it.
-      tone: running(cohort)
+      // An unfinished cohort's rate is partial: unstarted cases count against it.
+      tone: unfinished(cohort)
         ? "muted"
         : minimum != null && value != null && value < minimum
           ? "bad"
@@ -96,7 +101,7 @@ export function Metrics() {
       key: cohort.summary.name,
       label: label(cohort),
       value,
-      tone: value && !running(cohort) ? "bad" : "muted",
+      tone: value && !unfinished(cohort) ? "bad" : "muted",
     };
   });
   const completionPoints: SeriesPoint[] = cohorts.map((cohort) => {

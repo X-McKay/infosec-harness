@@ -210,13 +210,24 @@ export function Reports() {
                               )}
                             </td>
                             <td className="whitespace-nowrap text-xs">
-                              {timestamp(report.started_at)}
-                              <br />
-                              <span className="text-muted-foreground">
-                                {report.finished_at
-                                  ? timestamp(report.finished_at)
-                                  : "not finished"}
-                              </span>
+                              {report.started_at ? (
+                                <>
+                                  {timestamp(report.started_at)}
+                                  <br />
+                                  <span className="text-muted-foreground">
+                                    {report.finished_at
+                                      ? timestamp(report.finished_at)
+                                      : "not finished"}
+                                  </span>
+                                </>
+                              ) : (
+                                // Qualification and replay reports record no times.
+                                <span className="text-muted-foreground">
+                                  file written
+                                  <br />
+                                  {timestamp(report.modified_at)}
+                                </span>
+                              )}
                             </td>
                             <td className="whitespace-nowrap text-right text-xs tabular-nums">
                               {bytes(report.bytes)}

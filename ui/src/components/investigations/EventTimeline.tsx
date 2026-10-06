@@ -1,11 +1,19 @@
 import { useQuery } from "@tanstack/react-query";
-import { Clock3 } from "lucide-react";
+import { useState } from "react";
+import { CircleAlert, Clock3 } from "lucide-react";
 import { queries } from "@/api/queries";
 import { QueryState } from "@/components/QueryState";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { timestamp } from "@/lib/format";
-import { FAILURE_KINDS, eventKindLabel, eventsUnavailable } from "@/lib/events";
+import { cn } from "@/lib/utils";
+import {
+  FAILURE_KINDS,
+  eventKindLabel,
+  eventsUnavailable,
+  isBookkeeping,
+} from "@/lib/events";
 
 /** Temporal history projection; hidden entirely when the API answers 404 for this run. */
 export function EventTimeline({
@@ -16,8 +24,14 @@ export function EventTimeline({
   active: boolean;
 }) {
   const query = useQuery(queries.events(runId, active));
+  const [showAll, setShowAll] = useState(false);
   if (eventsUnavailable(query.error)) return null;
   const data = query.data;
+  const bookkeeping = data?.events.filter(isBookkeeping).length ?? 0;
+  const shown =
+    data && !showAll
+      ? data.events.filter((event) => !isBookkeeping(event))
+      : (data?.events ?? []);
   return (
     <Card>
       <CardHeader>
@@ -38,18 +52,48 @@ export function EventTimeline({
             Refresh failed · showing the last loaded events
           </p>
         )}
+        {!!bookkeeping && (
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+            <span>
+              {showAll
+                ? `All ${data?.events.length} recorded events`
+                : `${shown.length} of ${data?.events.length} events · ${bookkeeping} workflow-task and activity-start events hidden`}
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              aria-pressed={showAll}
+              onClick={() => setShowAll((value) => !value)}
+            >
+              {showAll ? "Hide bookkeeping" : "Show all events"}
+            </Button>
+          </div>
+        )}
         {data &&
-          (data.events.length ? (
-            <ol className="space-y-3">
-              {data.events.map((event, index) => (
+          (shown.length ? (
+            <ol className="max-h-[36rem] space-y-3 overflow-auto pr-2">
+              {shown.map((event, index) => (
                 <li key={index} className="flex gap-3 text-sm">
-                  <Clock3
-                    className="mt-0.5 h-4 w-4 shrink-0 text-primary"
-                    aria-hidden="true"
-                  />
+                  {FAILURE_KINDS.has(event.kind) ? (
+                    <CircleAlert
+                      className="mt-0.5 h-4 w-4 shrink-0 text-red-600 dark:text-red-400"
+                      aria-hidden="true"
+                    />
+                  ) : (
+                    <Clock3
+                      className="mt-0.5 h-4 w-4 shrink-0 text-primary"
+                      aria-hidden="true"
+                    />
+                  )}
                   <div className="min-w-0 space-y-1">
                     <p className="flex flex-wrap items-center gap-2">
-                      <span className="break-all font-medium">
+                      <span
+                        className={cn(
+                          "break-all font-medium",
+                          FAILURE_KINDS.has(event.kind) &&
+                            "text-red-700 dark:text-red-400",
+                        )}
+                      >
                         {event.name ?? eventKindLabel(event.kind)}
                       </span>
                       {event.name && (
@@ -76,7 +120,11 @@ export function EventTimeline({
               ))}
             </ol>
           ) : (
-            <p className="empty">No events recorded yet.</p>
+            <p className="empty">
+              {data.events.length
+                ? "Only workflow-task bookkeeping so far."
+                : "No events recorded yet."}
+            </p>
           ))}
         {data?.truncated && (
           <p className="text-xs text-muted-foreground">
