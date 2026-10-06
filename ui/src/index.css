@@ -83,21 +83,42 @@ h1 {
 .appearance-control {
   width: 8rem;
 }
-.field {
-  border: 1px solid hsl(var(--input));
-  background: hsl(var(--card));
-  color: hsl(var(--foreground));
-  border-radius: 0.4rem;
-  padding: 0.5rem 0.7rem;
-  font-size: 13px;
-  min-width: 0;
-}
-.form-label {
-  display: grid;
-  gap: 0.35rem;
-  font-size: 12px;
-  font-weight: 500;
-  color: hsl(var(--muted-foreground));
+/* Layered so utilities such as pl-8 or mt-2 can adjust these per use. */
+@layer components {
+  .field {
+    border: 1px solid hsl(var(--input));
+    background: hsl(var(--card));
+    color: hsl(var(--foreground));
+    border-radius: 0.4rem;
+    padding: 0.5rem 0.7rem;
+    font-size: 13px;
+    min-width: 0;
+  }
+  .form-label {
+    display: grid;
+    gap: 0.35rem;
+    font-size: 12px;
+    font-weight: 500;
+    color: hsl(var(--muted-foreground));
+  }
+  /* Untrusted command and probe output: plain text, wrapped, bounded and scrollable. */
+  .output {
+    margin: 0;
+    max-height: 24rem;
+    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    border-radius: 0.4rem;
+    background: hsl(var(--muted));
+    padding: 0.75rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .prose-text {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
 }
 .empty {
   color: hsl(var(--muted-foreground));
@@ -118,24 +139,6 @@ h1 {
   padding: 0.7rem 0.5rem;
   border-bottom: 1px solid hsl(var(--border));
   vertical-align: top;
-}
-/* Untrusted command and probe output: plain text, wrapped, bounded and scrollable. */
-.output {
-  margin: 0;
-  max-height: 24rem;
-  overflow: auto;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  border-radius: 0.4rem;
-  background: hsl(var(--muted));
-  padding: 0.75rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
-  line-height: 1.5;
-}
-.prose-text {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }
 *:focus-visible {
   outline: 2px solid hsl(var(--ring));
