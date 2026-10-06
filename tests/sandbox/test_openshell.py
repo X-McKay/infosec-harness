@@ -683,6 +683,64 @@ async def test_original_source_verification_provenance_is_bound_to_completed_pro
     assert not next(r for r in boundary.receipts("run") if r.operation_id == "probe:later").source_verified
 
 
+async def test_replayed_capture_never_certifies_an_operation_completed_after_it(adapter, tmp_path, monkeypatch):
+    """A worker can stop between saving the integrity capture and certifying it. Commands
+    that complete before the retry are not covered by that earlier capture."""
+    boundary, native = adapter
+    source = await boundary.create("run")
+    probe = await boundary.create("run", profile="probe", slot="activity")
+    original = tmp_path / "original"
+    original.mkdir()
+    (original / "source.py").write_bytes(b"original")
+    native.archive = source_archive(b"original")
+    await boundary.copy_workspace(source, probe, operation_id="copy", expected_source=original)
+    await boundary.execute(probe, "test source.py", operation_id="probe:before", timeout=3)
+    save = boundary._save
+
+    def crash_before_certifying(path, value, **kwargs):
+        if value.get("source_verified"):
+            raise OSError("worker stopped")
+        save(path, value, **kwargs)
+
+    monkeypatch.setattr(boundary, "_save", crash_before_certifying)
+    with pytest.raises(OSError, match="worker stopped"):
+        await boundary.verify_source(probe, original, operation_id="verify")
+    monkeypatch.setattr(boundary, "_save", save)
+    await boundary.execute(probe, "change source.py", operation_id="probe:after", timeout=3)
+    captures = len([r for r in native.execs if r.command[0] == "/usr/bin/tar"])
+    await boundary.verify_source(probe, original, operation_id="verify")
+    assert len([r for r in native.execs if r.command[0] == "/usr/bin/tar"]) == captures
+    verified = {r.operation_id: r.source_verified for r in boundary.receipts("run")}
+    assert verified["probe:before"] is True
+    assert verified["probe:after"] is False
+
+
+async def test_capture_saved_without_its_covered_set_certifies_nothing(adapter, tmp_path, monkeypatch):
+    """A capture written before the covered set was recorded cannot say what it covers."""
+    boundary, native = adapter
+    source = await boundary.create("run")
+    probe = await boundary.create("run", profile="probe", slot="activity")
+    original = tmp_path / "original"
+    original.mkdir()
+    (original / "source.py").write_bytes(b"original")
+    native.archive = source_archive(b"original")
+    await boundary.copy_workspace(source, probe, operation_id="copy", expected_source=original)
+    await boundary.execute(probe, "test source.py", operation_id="probe:before", timeout=3)
+    save = boundary._save
+
+    def legacy_capture(path, value, **kwargs):
+        if value.get("source_verified"):
+            raise OSError("worker stopped")
+        save(path, {k: v for k, v in value.items() if k != "covered_operations"}, **kwargs)
+
+    monkeypatch.setattr(boundary, "_save", legacy_capture)
+    with pytest.raises(OSError, match="worker stopped"):
+        await boundary.verify_source(probe, original, operation_id="verify")
+    monkeypatch.setattr(boundary, "_save", save)
+    await boundary.verify_source(probe, original, operation_id="verify")
+    assert not next(r for r in boundary.receipts("run") if r.operation_id == "probe:before").source_verified
+
+
 @pytest.mark.asyncio
 async def test_changed_original_executable_bit_prevents_probe_restore(adapter, tmp_path):
     boundary, native = adapter

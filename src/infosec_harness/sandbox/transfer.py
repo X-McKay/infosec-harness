@@ -109,9 +109,14 @@ class Transfer:
         return await self.execute(sandbox, [_PYTHON, "-I", "-c", unpack, destination, staged],
                                   operation_id=operation_id, timeout=60)
 
-    async def _snapshot(self, source: Sandbox, *, operation_id: str,
-                        expected_source: Path) -> tuple[bytes, Path, str]:
-        """Capture and compare source bytes; never extract repository code on the worker."""
+    async def _snapshot(self, source: Sandbox, *, operation_id: str, expected_source: Path,
+                        cover_operations: bool = False) -> tuple[bytes, Path, str]:
+        """Capture and compare source bytes; never extract repository code on the worker.
+
+        With ``cover_operations`` the intent records, before capture, the operations already
+        completed on ``source``: only those can be covered by this capture, including when
+        a later attempt replays it.
+        """
         self._owned(source)
         if source.profile not in ("workspace", "probe"):
             raise OpenShellError("model workload cannot provide a repository snapshot")
@@ -129,7 +134,10 @@ class Transfer:
                 if len(raw) != saved["size"] or hashlib.sha256(raw).hexdigest() != saved["sha256"]:
                     raise OpenShellError("persisted source snapshot integrity failed")
             else:
-                self._save(record, {"source": asdict(source), "operation_id": operation_id}, exclusive=True)
+                intent = {"source": asdict(source), "operation_id": operation_id}
+                if cover_operations:
+                    intent["covered_operations"] = self._completed_operations(source)
+                self._save(record, intent, exclusive=True)
                 try:
                     await self._corroborate(source, "source native identity changed")
                     result, raw = await asyncio.to_thread(self._stream, source,
@@ -138,8 +146,8 @@ class Transfer:
                     if result.exit_code or result.output_truncated:
                         raise OpenShellError("source snapshot capture failed")
                     atomic_write_bytes(archive, raw, sync_directory=True)
-                    self._save(record, {"source": asdict(source), "operation_id": operation_id,
-                        "sha256": hashlib.sha256(raw).hexdigest(), "size": len(raw)})
+                    self._save(record, {**intent, "sha256": hashlib.sha256(raw).hexdigest(),
+                                        "size": len(raw)})
                 except BaseException:
                     await self._close_owned(source)
                     raise
@@ -207,15 +215,21 @@ class Transfer:
         if probe.profile != "probe":
             raise OpenShellError("post-execution integrity checks require an offline probe")
         raw, record, original_digest = await self._snapshot(probe, operation_id=operation_id,
-                                                          expected_source=expected_source)
-        if json.loads(record.read_bytes()).get("source_verified"):
+            expected_source=expected_source, cover_operations=True)
+        saved = json.loads(record.read_bytes())
+        if saved.get("source_verified"):
             return
+        # Only operations completed before the capture began. A capture saved without that
+        # set (before it was recorded) certifies nothing rather than guessing.
+        covered = saved.get("covered_operations", [])
+        self._save(record, {**saved, "expected_source_digest": original_digest,
+                            "source_verified": True, "verified_operations": covered})
+
+    def _completed_operations(self, sandbox: Sandbox) -> list[str]:
+        """Operation ids with a completed receipt on this exact native sandbox."""
         operations = []
         for path in (self.config.state_dir / "operations").glob("*.json"):
             saved = json.loads(path.read_bytes())
-            if saved["sandbox"]["id"] == probe.id and "result" in saved:
+            if saved["sandbox"]["id"] == sandbox.id and "result" in saved:
                 operations.append(saved["operation_id"])
-        self._save(record, {"source": asdict(probe), "operation_id": operation_id,
-            "sha256": hashlib.sha256(raw).hexdigest(), "size": len(raw),
-            "expected_source_digest": original_digest, "source_verified": True,
-            "verified_operations": operations})
+        return sorted(operations)
