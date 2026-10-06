@@ -21,9 +21,8 @@ HARNESS_DIR="$MAIN_DIR/.harness"
 ENV_FILE="$HARNESS_DIR/dev.env"
 RUN_DIR="$HARNESS_DIR/run"
 TEMPORAL_DB="$HARNESS_DIR/temporal/temporal.db"
-# The private native OpenShell runtime configuration, in order of preference: the layout
-# deploy/openshell/README.md prescribes, then the earlier default path. An explicit
-# HARNESS_OPENSHELL_CONFIG is used only when neither file exists.
+# The private native OpenShell runtime configuration when HARNESS_OPENSHELL_CONFIG is unset:
+# the layout deploy/openshell/README.md prescribes, then the earlier default path.
 PRIVATE_OPENSHELL_CONFIG="$HARNESS_DIR/openshell/private/native-config.json"
 RUNTIME_OPENSHELL_CONFIG="$HARNESS_DIR/openshell/runtime.json"
 # The dev server's default namespace keeps closed histories for one day; keep them 30 days so
@@ -58,9 +57,10 @@ Commands:
   stop            stop the local Temporal, API and UI; keeps the database, VM and all data
 --settings FILE is accepted anywhere among the arguments of worker|qualify|eval|replay|export-history.
 Full mode requires explicit OpenShell configuration; see deploy/openshell/README.md. Without
---settings, worker|qualify|eval|replay read .harness/openshell/private/native-config.json, else
-.harness/openshell/runtime.json, else HARNESS_OPENSHELL_CONFIG; start, smoke and doctor report
-native qualification not_checked when none exists.
+--settings, worker|qualify|eval|replay read HARNESS_OPENSHELL_CONFIG when it is set, else
+.harness/openshell/private/native-config.json, else .harness/openshell/runtime.json. Without
+one (or when the variable names a missing file) worker, qualify and eval refuse, and start,
+smoke and doctor report native qualification not_checked.
 From a git worktree every command uses the main checkout's .harness/; start the stack there.
 USAGE
 }
@@ -175,12 +175,18 @@ load_env() {
     export HARNESS_LOCAL_REPO_ROOTS="[\"$ROOT_DIR/eval-corpus\"]"
   fi
 }
-# Prints the OpenShell configuration a harness command reads; fails when none exists.
+# Prints the OpenShell configuration a harness command reads: an explicit
+# HARNESS_OPENSHELL_CONFIG (never passed over, even when missing), else the first existing
+# default. Fails when there is none.
 openshell_config() {
   local candidate
-  for candidate in "$PRIVATE_OPENSHELL_CONFIG" "$RUNTIME_OPENSHELL_CONFIG" \
-      "${HARNESS_OPENSHELL_CONFIG:-}"; do
-    if [[ -n "$candidate" && -f "$candidate" ]]; then
+  if [[ -n "${HARNESS_OPENSHELL_CONFIG:-}" ]]; then
+    [[ -f "$HARNESS_OPENSHELL_CONFIG" ]] || return 1
+    printf '%s\n' "$HARNESS_OPENSHELL_CONFIG"
+    return 0
+  fi
+  for candidate in "$PRIVATE_OPENSHELL_CONFIG" "$RUNTIME_OPENSHELL_CONFIG"; do
+    if [[ -f "$candidate" ]]; then
       printf '%s\n' "$candidate"
       return 0
     fi
@@ -188,11 +194,12 @@ openshell_config() {
   return 1
 }
 no_openshell_config() {
-  local explicit="HARNESS_OPENSHELL_CONFIG is unset"
-  [[ -z "${HARNESS_OPENSHELL_CONFIG:-}" ]] ||
-    explicit="HARNESS_OPENSHELL_CONFIG=$HARNESS_OPENSHELL_CONFIG does not exist"
-  echo "No private OpenShell configuration: neither $PRIVATE_OPENSHELL_CONFIG nor"
-  echo "$RUNTIME_OPENSHELL_CONFIG exists, and $explicit."
+  if [[ -n "${HARNESS_OPENSHELL_CONFIG:-}" ]]; then
+    echo "No OpenShell configuration: HARNESS_OPENSHELL_CONFIG=$HARNESS_OPENSHELL_CONFIG does not exist."
+  else
+    echo "No private OpenShell configuration: HARNESS_OPENSHELL_CONFIG is unset and neither"
+    echo "$PRIVATE_OPENSHELL_CONFIG nor $RUNTIME_OPENSHELL_CONFIG exists."
+  fi
   echo "Create it as deploy/openshell/README.md describes, or pass --settings FILE."
 }
 harness() {
@@ -216,11 +223,7 @@ harness() {
   if ((${#settings[@]})); then
     echo "OpenShell configuration: openshell_config in ${settings[1]}" >&2
   elif config="$(openshell_config)"; then
-    if [[ -n "${HARNESS_OPENSHELL_CONFIG:-}" && "$HARNESS_OPENSHELL_CONFIG" != "$config" ]]; then
-      echo "OpenShell configuration: $config (preferred over HARNESS_OPENSHELL_CONFIG=$HARNESS_OPENSHELL_CONFIG)" >&2
-    else
-      echo "OpenShell configuration: $config" >&2
-    fi
+    echo "OpenShell configuration: $config" >&2
     export HARNESS_OPENSHELL_CONFIG="$config"
   else
     case "$command" in

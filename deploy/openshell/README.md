@@ -140,7 +140,7 @@ committed. VM state itself lives under `~/.cache/ih/<checkout-id>/`.
 | `openshell/*.tar`, `openshell/executor-context/` | Workspace and executor image build outputs |
 | `openshell/gateway-build/` | Patched-gateway `src/`, `vendor/` and `out/` |
 | `openshell/private/` | Gateway config, PKI, runtime JSON (`native-config.json`), policies, logs and private reports; `0700`/`0600` |
-| `openshell/runtime.json` | Earlier runtime JSON location, read only when `openshell/private/native-config.json` is absent |
+| `openshell/runtime.json` | Earlier runtime JSON location, read only when `HARNESS_OPENSHELL_CONFIG` is unset and `openshell/private/native-config.json` is absent |
 | `openshell/private/live-eval-*/` | One cohort's frozen `settings.json`, reports, logs and diagnostics |
 | `workspace/` | Worker source snapshots (`HARNESS_WORKSPACE_DIR`) |
 | `reports/` | Timestamped `openshell-*` (qualify) and `model-*` (eval) reports |
@@ -243,10 +243,11 @@ Four optional runtime JSON bounds have defaults: `max_output_bytes` (262144),
 260 kB, and larger output becomes unknown execution. `command_timeout_seconds` in the worker's
 limits must not exceed `max_timeout_seconds`.
 
-Without `--settings`, `./dev worker|qualify|eval|replay` read
-`.harness/openshell/private/native-config.json`, else `.harness/openshell/runtime.json` (both
-in the main checkout), else the file an explicit `HARNESS_OPENSHELL_CONFIG` names, and print
-the path they chose; worker, qualify and eval refuse when none exists. A settings file
+Without `--settings`, `./dev worker|qualify|eval|replay` read the file an explicit
+`HARNESS_OPENSHELL_CONFIG` names (failing plainly if it is missing, never passing it over),
+else `.harness/openshell/private/native-config.json`, else `.harness/openshell/runtime.json`
+(both in the main checkout), and print the path they chose; worker, qualify and eval refuse
+when there is none. A settings file
 names the runtime JSON in `openshell_config`. Invoked directly, `harness` reads
 `HARNESS_OPENSHELL_CONFIG`, defaulting to `.harness/openshell/runtime.json`.
 

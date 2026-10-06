@@ -65,11 +65,12 @@ proxy or control-plane container: nothing runs in a container except OpenShell w
 trusted image builds on the managed VM's Docker daemon.
 
 Full mode requires the native runtime described in [OpenShell setup](deploy/openshell/README.md).
-Its closing qualification reads the private runtime configuration
-`.harness/openshell/private/native-config.json`, else `.harness/openshell/runtime.json`, else
-the file `HARNESS_OPENSHELL_CONFIG` names, and prints which one it chose. With none of them,
-`./dev` says so and reports native qualification `not_checked`; `./dev worker`, `qualify` and
-`eval` refuse with the same message. Qualification fails if the boundary cannot be
+Its closing qualification reads the runtime configuration an explicit `HARNESS_OPENSHELL_CONFIG`
+names, else `.harness/openshell/private/native-config.json`, else
+`.harness/openshell/runtime.json`, and prints which one it chose. A set variable is never
+passed over: if its file is missing, that is reported. With no configuration, `./dev` says so
+and reports native qualification `not_checked`; `./dev worker`, `qualify` and `eval` refuse
+with the same message. Qualification fails if the boundary cannot be
 demonstrated; it never silently substitutes Docker, a stub agent or a public model. The
 checkout-managed Linux VM and its image-building Docker daemon are provisioning
 infrastructure; investigation commands always go through OpenShell. A full evaluation cohort exceeds the pinned gateway's admission quota and needs the
@@ -111,7 +112,7 @@ ones `./dev status` prints; the entries attach to the processes `./dev` started.
 
 Set operator configuration in the worker environment. No provider credentials belong in
 that environment: provision them in OpenShell's model profile. `HARNESS_OPENSHELL_CONFIG` is
-needed only when neither default configuration path above exists.
+optional when the configuration is at one of the default paths above; when set, it wins.
 
 ```bash
 export HARNESS_OPENSHELL_CONFIG=/absolute/path/to/native-config.json   # optional, see above

@@ -376,39 +376,48 @@ def test_readiness_is_bounded_and_loopback_only(capsys):
         setup.readiness("http://example.com", closed, closed, deadline_seconds=0)
 
 
-@pytest.mark.parametrize("layout", ["private", "runtime", "explicit", "none"])
+@pytest.mark.parametrize("layout", ["explicit", "explicit-missing", "private", "runtime", "none"])
 def test_harness_commands_resolve_the_private_openshell_configuration(checkouts, tmp_path,
                                                                       layout):
-    """Private layout first, then runtime.json, then an explicit HARNESS_OPENSHELL_CONFIG."""
+    """An explicit HARNESS_OPENSHELL_CONFIG first, then the private layout, then runtime.json."""
     run, log = stubbed_dev(checkouts["main"], tmp_path)
     harness = checkouts["harness"]
     explicit = tmp_path / "operator" / "explicit.json"
-    expected = None
-    if layout in ("private", "runtime", "explicit"):
+    env = {}
+    if layout.startswith("explicit"):
+        env["HARNESS_OPENSHELL_CONFIG"] = str(explicit)
+        # Both defaults exist: an explicit setting still wins, and is never passed over.
+        private_config(harness, "runtime.json")
+        private_config(harness)
+    if layout == "explicit":
         explicit.parent.mkdir()
         explicit.write_text("{}")
-    if layout in ("private", "runtime"):
-        expected = private_config(harness, "runtime.json")
-    if layout == "private":
-        expected = private_config(harness)
-    if layout == "explicit":
         expected = explicit
+    elif layout == "private":
+        private_config(harness, "runtime.json")
+        expected = private_config(harness)
+    elif layout == "runtime":
+        expected = private_config(harness, "runtime.json")
+    else:
+        expected = None
 
     for verb in ("qualify", "eval", "replay"):
         args = ("replay", "investigate-v11-x") if verb == "replay" else (verb,)
-        result = run(*args, HARNESS_OPENSHELL_CONFIG=str(explicit))
+        result = run(*args, **env)
         call = f"uv run --locked harness {' '.join(args)}"
         if expected is not None:
             assert result.returncode == 0, result.stderr
-            assert f"OpenShell configuration: {expected}" in result.stderr
+            assert f"OpenShell configuration: {expected}\n" in result.stderr
             assert f"[config={expected}]" in log.read_text().split(call, 1)[1].split("\n", 1)[0]
         elif verb == "replay":  # reads Temporal histories only; still runs
             assert result.returncode == 0, result.stderr
             assert call in log.read_text()
         else:
             assert result.returncode == 2
-            assert "No private OpenShell configuration" in result.stderr
-            assert f"HARNESS_OPENSHELL_CONFIG={explicit} does not exist" in result.stderr
+            if layout == "explicit-missing":
+                assert f"HARNESS_OPENSHELL_CONFIG={explicit} does not exist" in result.stderr
+            else:
+                assert "HARNESS_OPENSHELL_CONFIG is unset" in result.stderr
             assert "Traceback" not in result.stderr and call not in log.read_text()
 
     # A frozen settings file names its own configuration; nothing is resolved or refused.
@@ -418,13 +427,11 @@ def test_harness_commands_resolve_the_private_openshell_configuration(checkouts,
     assert "harness --settings frozen.json qualify" in log.read_text()
 
     # smoke (like start and doctor) qualifies only when a configuration exists.
-    smoke = run("smoke", HARNESS_OPENSHELL_CONFIG=str(explicit))
+    smoke = run("smoke", **env)
     assert smoke.returncode == 0, smoke.stderr
-    if layout == "none":
+    if expected is None:
         assert "Native OpenShell qualification: not_checked" in smoke.stdout
         assert "harness qualify" not in log.read_text()
-        unset = run("smoke")
-        assert unset.returncode == 0 and "HARNESS_OPENSHELL_CONFIG is unset" in unset.stdout
     else:
         assert "not_checked" not in smoke.stdout
         assert log.read_text().count(f"harness qualify [config={expected}]") == 2

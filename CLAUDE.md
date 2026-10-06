@@ -48,9 +48,9 @@ just ui-check                 # formatting, generated types, tests and productio
 ```
 
 Full setup requires the explicit OpenShell configuration described in
-`deploy/openshell/README.md`; `./dev` reads `.harness/openshell/private/native-config.json`,
-else `.harness/openshell/runtime.json`, else `HARNESS_OPENSHELL_CONFIG`, and without one
-reports native qualification `not_checked`. There is no default model endpoint or public
+`deploy/openshell/README.md`; `./dev` reads an explicit `HARNESS_OPENSHELL_CONFIG`, else
+`.harness/openshell/private/native-config.json`, else `.harness/openshell/runtime.json`, and
+without one reports native qualification `not_checked`. There is no default model endpoint or public
 fallback. The managed Lima VM's Docker daemon (plain runc) builds trusted workload images;
 agent execution always uses OpenShell. Never weaken a boundary to get setup or qualification
 to pass. Offline mode leaves native OpenShell and live inference `not_checked`.
