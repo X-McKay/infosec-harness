@@ -131,6 +131,31 @@ with a `.ts` extension for anything imported at runtime; the `@/` alias resolves
 and TypeScript. Type-only imports are erased and may omit the extension. Avoid TypeScript-only
 runtime syntax (enums, namespaces, parameter properties) in those modules.
 
+## End-to-end tests
+
+Playwright specs in `e2e/` drive the production bundle (`npm run build`, then `vite preview`
+on `127.0.0.1:4173`) in Chromium, as three projects: `desktop` (1280×800), `dark` (dark color
+scheme) and `mobile` (Pixel 7). Every default test answers `/api/*` from the synthetic JSON
+fixtures in `e2e/fixtures/` (`e2e/support/mock-api.ts`), freezes the clock at
+2026-10-05 12:00 UTC, and fails on any console error, uncaught page error or request that
+leaves the preview origin. No default test reaches a real API.
+
+```bash
+npx playwright install chromium   # once; downloads into the user's Playwright cache
+npm run e2e                       # type-check e2e/, then every project
+npm run e2e -- --project desktop run-detail # a subset; any Playwright arguments
+npm run e2e:ui                    # interactive runner
+E2E_REUSE_SERVER=1 npm run e2e    # reuse a preview already serving this build on 4173
+E2E_LIVE_API_URL=http://127.0.0.1:8000 npm run e2e -- --project desktop live-smoke
+```
+
+`just ui-e2e` runs the same from the repository root. The live smoke spec is skipped unless
+`E2E_LIVE_API_URL` is set; it forwards only GET requests to that API (list, one run, reports,
+health) and aborts anything else. Report fixtures come from `e2e/fixtures/generate-reports.mjs`;
+edit and rerun it rather than the JSON. A test that exposes a UI defect stays in the suite as
+`test.fixme` with the defect in its annotation until the UI is fixed. The HTML report is written
+to `playwright-report/` and failure artifacts to `test-results/` (both ignored).
+
 ## Deployment
 
 The `Dockerfile` pins Node and nginx by version and index digest. `nginx.conf` proxies `/api/`
