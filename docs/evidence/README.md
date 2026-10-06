@@ -20,5 +20,6 @@ configuration and each gate as `passed`, `failed`, `not_checked` or justified
 | [2026-10-02-broker-full-eval](2026-10-02-broker-full-eval/README.md) | Full brokered evaluation and follow-up candidates |
 | [2026-10-04-broker-qualification-checkpoint](2026-10-04-broker-qualification-checkpoint/README.md) | Latest assembled broker qualification measurements |
 | [2026-10-04-ui-qualification-dashboard](2026-10-04-ui-qualification-dashboard/README.md) | Qualification dashboard validation |
+| [2026-10-05-release-qualification](2026-10-05-release-qualification/README.md) | First `harness eval release` on the dev VM at 6020811: 10 of 11 agents pass, build-repair fails schema validity on one case |
 | [2026-10-05-astra-simplification](2026-10-05-astra-simplification/README.md) | Simplification review, behavioral changes, recovery and deterministic validation |
 | [2026-10-05-native-transition](2026-10-05-native-transition/README.md) | Native OpenShell, PydanticAI and Temporal transition: checkpoints, failed live candidates, the gateway quota patch and live cohorts on the patched gateway |

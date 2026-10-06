@@ -1,0 +1,170 @@
+{
+  "schema_version": 1,
+  "subject": {
+    "kind": "agent",
+    "name": "probe-diagnosis"
+  },
+  "agent": "probe-diagnosis",
+  "run": {
+    "status": "complete",
+    "split": "full",
+    "n": 13,
+    "n_planned": 13,
+    "cases_planned": 13,
+    "repetitions": 1,
+    "case_set_digest": "f4c7289cd6d88af2dae0f29ae823f4b17be80102269243453619980670dfa4c1"
+  },
+  "hard_gates": {
+    "schema_validity_rate": 1.0,
+    "budget_exhausted_count": 0,
+    "unevidenced_safe_verdicts": 0,
+    "uncovered_material_scenarios": 0
+  },
+  "metrics": {
+    "task_success_rate": 0.9231,
+    "average_cost_usd": 0.0,
+    "p95_model_requests": 1
+  },
+  "gate_evaluation": {
+    "status": "passed",
+    "checks": [
+      {
+        "kind": "hard_gate",
+        "metric": "schema_validity_rate",
+        "bound": "eq",
+        "limit": 1.0,
+        "value": 1.0,
+        "status": "passed"
+      },
+      {
+        "kind": "hard_gate",
+        "metric": "budget_exhausted_count",
+        "bound": "eq",
+        "limit": 0.0,
+        "value": 0.0,
+        "status": "passed"
+      },
+      {
+        "kind": "hard_gate",
+        "metric": "unevidenced_safe_verdicts",
+        "bound": "eq",
+        "limit": 0.0,
+        "value": 0.0,
+        "status": "passed"
+      },
+      {
+        "kind": "hard_gate",
+        "metric": "uncovered_material_scenarios",
+        "bound": "eq",
+        "limit": 0.0,
+        "value": 0.0,
+        "status": "passed"
+      },
+      {
+        "kind": "threshold",
+        "metric": "task_success_rate",
+        "bound": "min",
+        "limit": 0.75,
+        "value": 0.9231,
+        "status": "passed"
+      },
+      {
+        "kind": "threshold",
+        "metric": "average_cost_usd",
+        "bound": "max",
+        "limit": 0.5,
+        "value": 0.0,
+        "status": "passed"
+      },
+      {
+        "kind": "threshold",
+        "metric": "p95_model_requests",
+        "bound": "max",
+        "limit": 12.0,
+        "value": 1.0,
+        "status": "passed"
+      }
+    ],
+    "missing_provenance": []
+  },
+  "coverage": {
+    "scenarios_covered": [
+      "RISK-OPS-001",
+      "RISK-SEC-003"
+    ],
+    "scenarios_uncovered": [
+      "RISK-PRIV-001"
+    ],
+    "scenarios_uncovered_material": [],
+    "cases_by_category": {
+      "capability": 5,
+      "regression": 4,
+      "safety": 1,
+      "smoke": 3
+    },
+    "unknown_scenarios": []
+  },
+  "distributions": {
+    "percentile_method": "nearest-rank-v1",
+    "worst_repetition_pass_rate": 0.9231,
+    "p50_latency_s": 8.83,
+    "p95_latency_s": 27.149,
+    "p50_cost_usd": 0.0,
+    "p95_cost_usd": 0.0,
+    "p50_model_requests": 1,
+    "p50_tool_calls": 0,
+    "p95_tool_calls": 0,
+    "failure_categories": {
+      "wrong_answer": 1,
+      "budget_exhausted": 0,
+      "invalid_output": 0,
+      "execution_not_checked": 0,
+      "execution_failed": 0
+    }
+  },
+  "provenance": {
+    "git_commit": "6020811240bf1c5d1a4a38322efea8f04e81cbc6",
+    "git_dirty": false,
+    "harness_version": "2.0.0.dev0",
+    "python": "3.12.13",
+    "source_digest": "a484a07b7cf79ee02dc5510989ed6f190fe59c8e45886f3643eef5118246a985",
+    "agent_version": "1.0.1",
+    "config_hash": "afe95a41785de8f8",
+    "model": "gateway:Qwen3.6-35B-A3B-NVFP4",
+    "model_pricing": "zero_priced",
+    "dataset": "src/infosec_harness/agents/probe-diagnosis/evals/dataset.yaml",
+    "dataset_version": "2",
+    "execution_mode": "local-eval-production-transport-v1",
+    "evaluator_version": "deterministic-agent-output-v13",
+    "experiment_id": "exp-b96dee5069367631",
+    "model_settings": {
+      "max_tokens": 5120,
+      "thinking": "low",
+      "bedrock_cache_tool_definitions": "5m",
+      "bedrock_cache_instructions": "1h",
+      "openai_prompt_cache_key": "probe-diagnosis"
+    },
+    "skills": [
+      "probe-oracle-protocol",
+      "test-pytest",
+      "test-junit4",
+      "test-junit5",
+      "test-jest",
+      "test-perl-test-more"
+    ],
+    "toolsets": [],
+    "recorded_at": "2026-10-05T13:49:22.313203+00:00"
+  },
+  "inert_checks": [
+    {
+      "kind": "threshold",
+      "metric": "average_cost_usd",
+      "bound": "max",
+      "limit": 0.5,
+      "value": 0.0,
+      "reason": "COST_ZERO_PRICED_MODEL",
+      "is_defect": false,
+      "detail": "model 'gateway:Qwen3.6-35B-A3B-NVFP4' is priced at zero per token (self-hosted, no per-token billing), so cost is 0.0 for every case and no ceiling could trip. An environment fact, not a defect"
+    }
+  ]
+}
