@@ -16,7 +16,7 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="min-w-0">
       <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="mt-1 break-all text-sm">{children}</dd>
+      <dd className="mt-1 break-words text-sm">{children}</dd>
     </div>
   );
 }
@@ -64,12 +64,12 @@ export function Runtime() {
                   </Badge>
                 </Row>
                 <Row label="Generation">
-                  <span className="font-mono">
+                  <span className="break-all font-mono">
                     {health.generation ?? "Not reported"}
                   </span>
                 </Row>
                 <Row label="Task queue">
-                  <span className="font-mono">
+                  <span className="break-all font-mono">
                     {health.taskQueue ?? "Not reported"}
                   </span>
                 </Row>
@@ -99,12 +99,13 @@ export function Runtime() {
           <CardContent className="space-y-4">
             <dl className="grid gap-4 sm:grid-cols-2">
               <Row label="API base">
-                <span className="font-mono">
+                <span className="break-all font-mono">
                   {apiBase(window.location.origin)}
                 </span>
               </Row>
               <Row label="Refresh">
-                List 5 s · active investigation 3 s · health 30 s
+                List 5 s · active investigation 3 s · reports 15 s · unfinished
+                cohort 5 s · health 30 s
               </Row>
             </dl>
             <label className="form-label max-w-[12rem]">

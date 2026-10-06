@@ -138,7 +138,7 @@ export function EvidenceCard({
                 ? `Not a complete, source-verified probe: ${gaps.join("; ")}.`
                 : "Recorded values meet the complete, source-verified probe rule. The claims themselves remain self-reported."}
             </p>
-            <div className="overflow-auto">
+            <div className="relative overflow-auto">
               <table className="data-table">
                 <caption className="sr-only">
                   Recorded probe observations for {evidence.id}

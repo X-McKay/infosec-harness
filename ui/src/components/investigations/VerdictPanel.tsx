@@ -137,7 +137,7 @@ export function VerdictPanel({ result }: { result: Result }) {
         <section className="space-y-2">
           <h4 className="text-sm font-semibold">Source citations</h4>
           {citations.length ? (
-            <div className="overflow-auto">
+            <div className="relative overflow-auto">
               <table className="data-table">
                 <thead>
                   <tr>

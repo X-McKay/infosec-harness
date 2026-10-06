@@ -74,7 +74,7 @@ export function QualificationReportView({
         description="A check left not checked was never reached: an earlier step failed or the run stopped."
       >
         {report.profiles.length ? (
-          <div className="overflow-auto">
+          <div className="relative overflow-auto">
             <table className="data-table">
               <caption className="sr-only">
                 Qualification checks by sandbox profile

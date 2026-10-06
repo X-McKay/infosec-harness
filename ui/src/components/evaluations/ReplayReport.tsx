@@ -16,7 +16,7 @@ export function ReplayReportView({ report }: { report: ReplayReport }) {
       action={<StatusBadge status={report.status} />}
     >
       {report.histories.length ? (
-        <div className="overflow-auto">
+        <div className="relative overflow-auto">
           <table className="data-table">
             <caption className="sr-only">Replayed workflow histories</caption>
             <thead>

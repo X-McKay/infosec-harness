@@ -89,7 +89,11 @@ export function Qualification() {
             )}
             <StatusBadge status={latest.status} />
             <span className="text-xs text-muted-foreground">
-              {latest.started_at ? timestamp(latest.started_at) : ""}
+              {latest.started_at
+                ? timestamp(latest.started_at)
+                : latest.modified_at
+                  ? `file written ${timestamp(latest.modified_at)}`
+                  : ""}
             </span>
           </div>
           {!document && (

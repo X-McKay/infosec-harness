@@ -16,7 +16,7 @@ export function JsonTree({
   label?: string;
 }) {
   return (
-    <div className="overflow-auto rounded-md border bg-muted/30 p-3 font-mono text-xs leading-relaxed">
+    <div className="relative overflow-auto rounded-md border bg-muted/30 p-3 font-mono text-xs leading-relaxed">
       <Node name={label} value={value} depth={0} open />
     </div>
   );

@@ -105,7 +105,7 @@ export function Reports() {
           <Card>
             <CardContent className="p-0">
               {shown.length ? (
-                <div className="overflow-auto">
+                <div className="relative overflow-auto">
                   <table className="data-table">
                     <caption className="sr-only">
                       Recorded reports, newest first

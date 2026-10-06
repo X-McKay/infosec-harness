@@ -85,12 +85,12 @@ export function FailureList({ cases }: { cases: CohortCase[] }) {
                       ))}
                     </ol>
                   ) : (
-                    <p className="mt-2 text-xs text-muted-foreground">
+                    <p className="mt-2 break-words text-xs text-muted-foreground">
                       No cause chain was recorded.
                     </p>
                   )}
                   {item.receipts && (
-                    <p className="mt-2 text-xs text-muted-foreground">
+                    <p className="mt-2 break-words text-xs text-muted-foreground">
                       Local receipts:{" "}
                       {item.receipts.status.replaceAll("_", " ")}
                       {item.receipts.count != null &&

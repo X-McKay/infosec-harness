@@ -50,7 +50,7 @@ export function CohortReportView({ report }: { report: CohortReport }) {
         </p>
       )}
       <Provenance report={report} />
-      <div className="grid gap-5 lg:grid-cols-2">
+      <div className="grid gap-5 xl:grid-cols-2">
         <Section
           title="Release gates"
           description="Evaluated by the harness over the complete corpus only. Not checked means no evidence, never a pass."
@@ -406,7 +406,7 @@ function BreakdownCard({
       description="Correct over planned cases in each group. Unstarted and failed cases count against the rate, as in the cohort gate."
     >
       {rows.length ? (
-        <div className="overflow-auto">
+        <div className="relative overflow-auto">
           <table className="data-table">
             <caption className="sr-only">{title}</caption>
             <thead>
@@ -494,7 +494,7 @@ function PairTable({ report }: { report: CohortReport }) {
       }
     >
       {shown.length ? (
-        <div className="overflow-auto">
+        <div className="relative overflow-auto">
           <table className="data-table">
             <caption className="sr-only">
               Vulnerable and fixed case outcomes side by side

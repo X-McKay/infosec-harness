@@ -199,6 +199,7 @@ export function Metrics() {
               description="Vulnerable cases judged not exploitable. The policy allows none above its maximum."
               points={unsafePoints}
               format={(value) => integer(value)}
+              counts
               maximum={1}
               reference={
                 maximum != null
@@ -211,6 +212,7 @@ export function Metrics() {
               description="Completed cases in front of the planned corpus size. A short column is an incomplete cohort, which cannot pass."
               points={completionPoints}
               format={(value) => integer(value)}
+              counts
             />
             <SeriesChart
               title="Median case duration"

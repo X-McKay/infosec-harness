@@ -129,7 +129,7 @@ export function CaseTable({ cases }: { cases: CohortCase[] }) {
         </span>
       </div>
       {rows.length ? (
-        <div className="overflow-auto">
+        <div className="relative overflow-auto">
           <table className="data-table">
             <caption className="sr-only">
               Cohort cases; column headers sort the table

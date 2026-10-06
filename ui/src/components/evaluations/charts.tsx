@@ -79,7 +79,7 @@ export function CaseHistogram({
                     x="42"
                     y={134 - fraction * 100}
                     textAnchor="end"
-                    fontSize="10"
+                    fontSize="12"
                     fill="currentColor"
                     className="text-muted-foreground"
                   >
@@ -128,7 +128,7 @@ export function CaseHistogram({
               <text
                 x="48"
                 y="153"
-                fontSize="10"
+                fontSize="12"
                 fill="currentColor"
                 className="text-muted-foreground"
               >
@@ -138,7 +138,7 @@ export function CaseHistogram({
                 x="500"
                 y="153"
                 textAnchor="end"
-                fontSize="10"
+                fontSize="12"
                 fill="currentColor"
                 className="text-muted-foreground"
               >
@@ -148,7 +148,7 @@ export function CaseHistogram({
                 x="274"
                 y="173"
                 textAnchor="middle"
-                fontSize="10"
+                fontSize="12"
                 fill="currentColor"
                 className="text-muted-foreground"
               >
@@ -159,7 +159,7 @@ export function CaseHistogram({
                 y="80"
                 textAnchor="middle"
                 transform="rotate(-90 10 80)"
-                fontSize="10"
+                fontSize="12"
                 fill="currentColor"
                 className="text-muted-foreground"
               >
@@ -222,7 +222,7 @@ export type SeriesPoint = {
 
 /**
  * One column per report, oldest on the left. A missing value leaves an explicit gap marked
- * "n/a" rather than a zero-height bar.
+ * "n/a" rather than a zero-height bar; a recorded zero is labelled with its value.
  */
 export function SeriesChart({
   title,
@@ -231,6 +231,7 @@ export function SeriesChart({
   format = number,
   maximum,
   reference,
+  counts = false,
 }: {
   title: string;
   description?: string;
@@ -238,13 +239,16 @@ export function SeriesChart({
   format?: Format;
   maximum?: number;
   reference?: { value: number; label: string } | null;
+  /** Whole-number data: the scale tops out at an even integer so every gridline is a count. */
+  counts?: boolean;
 }) {
-  const ceiling = Math.max(
+  const highest = Math.max(
     maximum ?? 0,
     reference?.value ?? 0,
     ...points.map((point) => Math.max(point.value ?? 0, point.total ?? 0)),
     1e-9,
   );
+  const ceiling = counts ? Math.max(2, Math.ceil(highest / 2) * 2) : highest;
   const slot = 440 / Math.max(1, points.length);
   const y = (value: number) => 130 - (value / ceiling) * 100;
   return (
@@ -278,7 +282,7 @@ export function SeriesChart({
                     x="42"
                     y={134 - fraction * 100}
                     textAnchor="end"
-                    fontSize="10"
+                    fontSize="12"
                     fill="currentColor"
                     className="text-muted-foreground"
                   >
@@ -301,16 +305,17 @@ export function SeriesChart({
                         className="fill-muted-foreground/20"
                       />
                     )}
-                    {point.value == null ? (
+                    {point.value == null || point.value === 0 ? (
+                      // A recorded zero is labelled so it never reads as a missing value.
                       <text
                         x={x + width / 2}
                         y="126"
                         textAnchor="middle"
-                        fontSize="9"
+                        fontSize="11"
                         fill="currentColor"
                         className="text-muted-foreground"
                       >
-                        n/a
+                        {point.value == null ? "n/a" : format(0)}
                       </text>
                     ) : (
                       <rect
@@ -363,7 +368,7 @@ export function SeriesChart({
                     x="500"
                     y={y(reference.value) - 4}
                     textAnchor="end"
-                    fontSize="10"
+                    fontSize="12"
                     fill="currentColor"
                     className="text-foreground"
                   >
@@ -374,7 +379,7 @@ export function SeriesChart({
               <text
                 x="52"
                 y="150"
-                fontSize="10"
+                fontSize="12"
                 fill="currentColor"
                 className="text-muted-foreground"
               >
@@ -384,7 +389,7 @@ export function SeriesChart({
                 x="500"
                 y="150"
                 textAnchor="end"
-                fontSize="10"
+                fontSize="12"
                 fill="currentColor"
                 className="text-muted-foreground"
               >

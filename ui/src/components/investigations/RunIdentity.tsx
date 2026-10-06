@@ -65,7 +65,7 @@ export function RunIdentity({ result }: { result: Result }) {
               <summary className="cursor-pointer text-xs font-medium">
                 Dependencies ({dependencies.length})
               </summary>
-              <div className="mt-2 max-h-72 overflow-auto">
+              <div className="relative mt-2 max-h-72 overflow-auto">
                 <table className="data-table">
                   <thead>
                     <tr>

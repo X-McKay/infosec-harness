@@ -197,7 +197,7 @@ export function GateTable({
   caption: string;
 }) {
   return (
-    <div className="overflow-auto">
+    <div className="relative overflow-auto">
       <table className="data-table">
         <caption className="sr-only">{caption}</caption>
         <thead>

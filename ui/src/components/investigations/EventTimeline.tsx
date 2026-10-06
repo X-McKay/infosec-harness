@@ -71,7 +71,7 @@ export function EventTimeline({
         )}
         {data &&
           (shown.length ? (
-            <ol className="max-h-[36rem] space-y-3 overflow-auto pr-2">
+            <ol className="relative max-h-[36rem] space-y-3 overflow-auto pr-2">
               {shown.map((event, index) => (
                 <li key={index} className="flex gap-3 text-sm">
                   {FAILURE_KINDS.has(event.kind) ? (
