@@ -9,6 +9,7 @@ import tarfile
 import threading
 import uuid
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -480,6 +481,15 @@ def archive(member):
     return stream.getvalue()
 
 
+def original_of(tmp_path, member: tarfile.TarInfo) -> Path:
+    """The original source directory that ``archive(member)`` captures unchanged."""
+    original = tmp_path / "original"
+    original.mkdir()
+    if member.isfile() and not member.name.startswith(("/", "..")):
+        (original / member.name).write_bytes(b"x" * member.size)
+    return original
+
+
 def source_archive(content, *, include_original=True, mode=0o644):
     stream = io.BytesIO()
     with tarfile.open(fileobj=stream, mode="w") as tar:
@@ -495,7 +505,7 @@ def source_archive(content, *, include_original=True, mode=0o644):
 
 
 @pytest.mark.asyncio
-async def test_archive_over_one_gateway_message_is_restored_in_parts(adapter):
+async def test_archive_over_one_gateway_message_is_restored_in_parts(adapter, tmp_path):
     """Live 2026-10-05: a 2.6 MB Java workspace restore failed because the pinned gateway
     decodes at most 1 MiB per gRPC message. Parts stay under that bound, each is its own
     receipt, and the final extraction runs inside the sandbox from the staged file."""
@@ -507,7 +517,9 @@ async def test_archive_over_one_gateway_message_is_restored_in_parts(adapter):
     member = tarfile.TarInfo("vendor.jar")
     member.size = 2 * _PART_BYTES + 1
     native.archive = archive(member)
-    await boundary.copy_workspace(source, probe, operation_id="copy-activity")
+    original = original_of(tmp_path, member)
+    await boundary.copy_workspace(source, probe, operation_id="copy-activity",
+                                  expected_source=original)
     parts = [r for r in native.execs if "open('ab')" in " ".join(r.command)]
     unpack = [r for r in native.execs if "extractall" in " ".join(r.command)]
     assert len(parts) == 3 and all(len(r.stdin) <= _PART_BYTES for r in parts)
@@ -515,24 +527,28 @@ async def test_archive_over_one_gateway_message_is_restored_in_parts(adapter):
     assert len(unpack) == 1 and unpack[0].stdin == b"" and "unlink" in " ".join(unpack[0].command)
     assert all(r.sandbox == probe.name for r in parts + unpack)
     before = len(native.execs)
-    await boundary.copy_workspace(source, probe, operation_id="copy-activity")
+    await boundary.copy_workspace(source, probe, operation_id="copy-activity",
+                                  expected_source=original)
     assert len(native.execs) == before  # every part and the extraction replay from receipts
 
 
 @pytest.mark.asyncio
-async def test_large_native_snapshot_enters_probe_without_host_extraction(adapter):
+async def test_large_native_snapshot_enters_probe_without_host_extraction(adapter, tmp_path):
     boundary, native = adapter
     source = await boundary.create("run")
     probe = await boundary.create("run", profile="probe", slot="activity")
     member = tarfile.TarInfo("package.py")
     member.size = 524288
     native.archive = archive(member)
-    await boundary.copy_workspace(source, probe, operation_id="copy-activity")
+    original = original_of(tmp_path, member)
+    await boundary.copy_workspace(source, probe, operation_id="copy-activity",
+                                  expected_source=original)
     capture = [request for request in native.execs if request.command[0] == "/usr/bin/tar"]
     restore = [request for request in native.execs if "extractall" in " ".join(request.command)]
     assert len(capture) == 1 and len(restore) == 1
     assert restore[0].stdin == native.archive and restore[0].sandbox == probe.name
-    await boundary.copy_workspace(source, probe, operation_id="copy-activity")
+    await boundary.copy_workspace(source, probe, operation_id="copy-activity",
+                                  expected_source=original)
     assert len(native.execs) == 2
     assert not (boundary.config.state_dir / "package.py").exists()
 
@@ -541,7 +557,7 @@ async def test_large_native_snapshot_enters_probe_without_host_extraction(adapte
     ("/etc/secret", tarfile.REGTYPE), ("link", tarfile.SYMTYPE), ("hard", tarfile.LNKTYPE),
     ("pipe", tarfile.FIFOTYPE)])
 @pytest.mark.asyncio
-async def test_hostile_archive_is_not_restored_or_extracted_on_host(adapter, name, kind):
+async def test_hostile_archive_is_not_restored_or_extracted_on_host(adapter, tmp_path, name, kind):
     boundary, native = adapter
     source = await boundary.create("run")
     probe = await boundary.create("run", profile="probe", slot="activity")
@@ -549,8 +565,10 @@ async def test_hostile_archive_is_not_restored_or_extracted_on_host(adapter, nam
     member.type = kind
     member.linkname = "/etc/passwd" if kind in (tarfile.SYMTYPE, tarfile.LNKTYPE) else ""
     native.archive = archive(member)
+    original = original_of(tmp_path, member)
     with pytest.raises(UnsafeSnapshotMetadata, match="unsafe archive"):
-        await boundary.copy_workspace(source, probe, operation_id="copy-activity")
+        await boundary.copy_workspace(source, probe, operation_id="copy-activity",
+                                  expected_source=original)
     assert len(native.execs) == 1
 
 

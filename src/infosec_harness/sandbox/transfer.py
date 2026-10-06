@@ -110,7 +110,7 @@ class Transfer:
                                   operation_id=operation_id, timeout=60)
 
     async def _snapshot(self, source: Sandbox, *, operation_id: str,
-                        expected_source: Path | None) -> tuple[bytes, Path, str | None]:
+                        expected_source: Path) -> tuple[bytes, Path, str]:
         """Capture and compare source bytes; never extract repository code on the worker."""
         self._owned(source)
         if source.profile not in ("workspace", "probe"):
@@ -165,30 +165,29 @@ class Transfer:
             except tarfile.TarError:
                 raise OpenShellError("source snapshot is not a valid archive") from None
             original_files = {}
-            if expected_source is not None:
-                if not expected_source.is_dir() or expected_source.is_symlink():
-                    raise OpenShellError("original source snapshot must be a regular directory")
-                total = 0
-                for original in sorted(expected_source.rglob("*")):
-                    if original.is_symlink() or not (original.is_file() or original.is_dir()):
-                        raise OpenShellError("original source snapshot contains unsafe file types")
-                    if original.is_file():
-                        total += original.stat().st_size
-                        if total > self.config.max_transfer_bytes or len(original_files) >= 65536:
-                            raise OpenShellError("original source snapshot exceeds bound")
-                        with original.open("rb") as stream:
-                            content_digest = _sha256(stream)
-                        name = PurePosixPath(original.relative_to(expected_source).as_posix())
-                        identity = (content_digest, original.stat().st_mode & 0o111)
-                        original_files[str(name)] = identity
-                        if archived_files.get(name) != identity:
-                            # The name comes from the immutable snapshot, not from the model.
-                            raise OpenShellError(
-                                f"workspace changed or deleted original source: {name}")
-            return raw, record, _digest(original_files) if expected_source is not None else None
+            if not expected_source.is_dir() or expected_source.is_symlink():
+                raise OpenShellError("original source snapshot must be a regular directory")
+            total = 0
+            for original in sorted(expected_source.rglob("*")):
+                if original.is_symlink() or not (original.is_file() or original.is_dir()):
+                    raise OpenShellError("original source snapshot contains unsafe file types")
+                if original.is_file():
+                    total += original.stat().st_size
+                    if total > self.config.max_transfer_bytes or len(original_files) >= 65536:
+                        raise OpenShellError("original source snapshot exceeds bound")
+                    with original.open("rb") as stream:
+                        content_digest = _sha256(stream)
+                    name = PurePosixPath(original.relative_to(expected_source).as_posix())
+                    identity = (content_digest, original.stat().st_mode & 0o111)
+                    original_files[str(name)] = identity
+                    if archived_files.get(name) != identity:
+                        # The name comes from the immutable snapshot, not from the model.
+                        raise OpenShellError(
+                            f"workspace changed or deleted original source: {name}")
+            return raw, record, _digest(original_files)
 
     async def copy_workspace(self, source: Sandbox, probe: Sandbox, *, operation_id: str,
-                             expected_source: Path | None = None) -> str:
+                             expected_source: Path) -> str:
         self._owned(probe)
         if source.profile != "workspace" or probe.profile != "probe" or source.run_id != probe.run_id:
             raise OpenShellError("source snapshots may only enter this investigation's offline probe")
