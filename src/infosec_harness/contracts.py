@@ -7,6 +7,13 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+# The workflow generation: a breaking workflow change bumps it, which also renames the default
+# task queue and the run-id prefix, so old workers and histories drain separately.
+GENERATION = "v11"
+# Report bounds shared by the verdict contract and the workflow that writes the report.
+MAX_EVIDENCE_IDS = 10
+MAX_SUMMARY_CHARS = 12_000
+
 
 class Contract(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -57,12 +64,12 @@ class Citation(Contract):
 
 class Verdict(Contract):
     label: Literal["potentially_exploitable", "likely_not_exploitable", "inconclusive"]
-    summary: str = Field(min_length=1, max_length=12_000)
-    evidence_ids: list[str] = Field(default_factory=list, max_length=10)
+    summary: str = Field(min_length=1, max_length=MAX_SUMMARY_CHARS)
+    evidence_ids: list[str] = Field(default_factory=list, max_length=MAX_EVIDENCE_IDS)
     citations: list[Citation] = Field(default_factory=list, max_length=30)
     # Earlier complete probes the investigator disowns as flawed; each must predate the
     # cited probe and the summary must explain the flaw. They stay in the report.
-    superseded_evidence_ids: list[str] = Field(default_factory=list, max_length=10)
+    superseded_evidence_ids: list[str] = Field(default_factory=list, max_length=MAX_EVIDENCE_IDS)
 
 
 # The HARNESS_PROBE claims: four prerequisites and the observation they qualify.

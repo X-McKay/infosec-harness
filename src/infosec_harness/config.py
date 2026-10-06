@@ -7,7 +7,7 @@ from typing import Literal
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from infosec_harness.contracts import Limits
+from infosec_harness.contracts import GENERATION, Limits
 
 
 class Settings(BaseSettings):
@@ -17,7 +17,7 @@ class Settings(BaseSettings):
 
     temporal_address: str = "localhost:7233"
     temporal_namespace: str = "default"
-    task_queue: str = "investigate-v11"
+    task_queue: str = f"investigate-{GENERATION}"
     temporal_tls: bool = False
     temporal_tls_ca_file: Path | None = None
     temporal_tls_client_cert: Path | None = None

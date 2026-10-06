@@ -32,6 +32,7 @@ from temporalio.service import RPCError, RPCStatusCode, TLSConfig
 
 from infosec_harness.config import Settings, get_settings
 from infosec_harness.contracts import (
+    GENERATION,
     Finding,
     Health,
     InvestigationRequest,
@@ -47,8 +48,7 @@ from infosec_harness.contracts import (
 )
 
 WORKFLOW = "InvestigationWorkflow"
-GENERATION = "v11"
-PREFIX = "investigate-v11-"
+PREFIX = f"investigate-{GENERATION}-"
 RPC_TIMEOUT = timedelta(seconds=10)
 PAGE_SIZE = 50
 # Run-list verdicts: bounded concurrency, a short per-run RPC and an overall deadline.
