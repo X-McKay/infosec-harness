@@ -1,7 +1,6 @@
 ---
 name: cwe-352-csrf
-description: Recognize state-changing requests that accept ambient credentials without an anti-forgery check, and define a cross-origin request oracle.
-  Use this when the finding is CWE-352 or a cookie-authenticated handler changes state without a token or origin check.
+description: State-changing requests on ambient credentials without an anti-forgery check. Use this when the finding is CWE-352 or CSRF.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -58,6 +57,8 @@ obtain the session cookie, as a browser would hold it.
 
 - `target_reached`: the real handler (with its middleware chain) received the forged request,
   including when it answers 403.
+- `oracle_valid`: the forged request carries only the ambient session and attacker fields, no
+  token and a foreign `Origin`.
 - `vulnerability_observed`: the victim's state in the probe's store changed to the
   attacker's nonce value.
 - `positive_control`: the same change submitted the legitimate way (with the token the

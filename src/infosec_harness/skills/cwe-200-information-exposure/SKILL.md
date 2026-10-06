@@ -1,7 +1,6 @@
 ---
 name: cwe-200-information-exposure
-description: Recognize sensitive values or internals leaking into responses, errors and logs, and define
-  a planted-marker oracle. Use this when the finding is CWE-200, 209, 215, 532, 201 or 359.
+description: Sensitive values or internals leaking into responses, errors or logs. Use this when the finding is CWE-200/201/209/215/359/532.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -64,6 +63,8 @@ the target's real logger rather than replacing the logger.
 
 - `target_reached`: the real handler ran with the triggering input, whether it returned the
   details, a generic error or a success response.
+- `oracle_valid`: the nonce was planted where the target keeps the secret, and the check reads
+  the response or the target's real logger.
 - `vulnerability_observed`: the nonce, or a traceback marker (`Traceback (most recent call
   last)`, `at com.`, a source path from the repository), appears in the response body,
   headers or the captured log line from the target call.

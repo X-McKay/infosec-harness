@@ -1,7 +1,6 @@
 ---
 name: cwe-601-open-redirect
-description: Recognize open-redirect sinks where untrusted input chooses a redirect destination and
-  define a deterministic destination oracle. Use this when the finding is CWE-601 or input sets a redirect target.
+description: Untrusted input choosing a redirect destination. Use this when the finding is CWE-601 or open redirect.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -51,6 +50,7 @@ result onto `HARNESS_PROBE` (see `probe`):
 
 - `target_reached`: the real function ran with the external payload and produced or rejected a
   destination.
+- `oracle_valid`: the destination is judged by its parsed authority, not by substring.
 - `vulnerability_observed`: the destination the target emits has the foreign host/origin (its
   authority is `evil.<nonce>.example`), rather than being forced relative or rejected.
 - `positive_control`: a trivial `Location: <payload>` built directly shows the foreign authority,

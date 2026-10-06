@@ -1,7 +1,6 @@
 ---
 name: cwe-208-observable-timing-discrepancy
-description: Recognize secret comparisons that leak through timing, and define a conservative structural oracle that stays inconclusive without a plain equality on secrets.
-  Use this when the finding is CWE-208 or a secret is compared in non-constant time.
+description: Secret comparisons that leak through timing. Use this when the finding is CWE-208 or a secret is compared in non-constant time.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -28,7 +27,7 @@ metadata:
 
 - `cwe-347-improper-verification-of-signature` wins when the signature check is absent or
   forgeable; a timing leak only matters once the check otherwise works.
-- `cwe-307` compounds this: a timing oracle needs many attempts. Report the attempt limit
+- `cwe-307-improper-restriction-of-authentication-attempts` compounds this: a timing oracle needs many attempts. Report the attempt limit
   through that skill.
 
 ## Procedure
@@ -88,5 +87,5 @@ timing measurement as supporting context, never as the oracle.
 - Usually `inconclusive`: name the non-constant comparison and that remote measurability and
   attempt volume are unestablished.
 - `potentially_exploitable` only when the sink is a plain `==` on a secret, attacker-controlled
-  and measurable, with attempts unlimited (cross-reference `cwe-307`).
+  and measurable, with attempts unlimited (cross-reference `cwe-307-improper-restriction-of-authentication-attempts`).
 - `likely_not_exploitable`: cite the constant-time primitive on the sink line.

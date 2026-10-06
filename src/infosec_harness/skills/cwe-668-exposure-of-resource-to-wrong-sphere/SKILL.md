@@ -1,7 +1,6 @@
 ---
 name: cwe-668-exposure-of-resource-to-wrong-sphere
-description: Recognize files, directories and listings served to an audience that should not reach them,
-  and define a loopback static-server oracle. Use this when the finding is CWE-668, CWE-552 or CWE-538.
+description: Files, directories or listings served to an audience that should not reach them. Use this when the finding is CWE-668/552/538.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -57,6 +56,7 @@ unique nonce, and start the target's real handler on `127.0.0.1` with an ephemer
 
 - `target_reached`: the real handler answered the request for the private file or directory
   (any status).
+- `oracle_valid`: the planted file holds the nonce at the path the request names.
 - `vulnerability_observed`: the response body contains the nonce, or the directory response
   lists the planted file name.
 - `positive_control`: reading the planted file directly in the probe yields the nonce, and the

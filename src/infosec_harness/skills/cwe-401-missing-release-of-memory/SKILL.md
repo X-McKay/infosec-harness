@@ -1,7 +1,6 @@
 ---
 name: cwe-401-missing-release-of-memory
-description: Recognize memory and handle/descriptor leaks and define a bounded-iteration growth oracle.
-  Use this when the finding is CWE-401/772/775 or a resource is acquired on a path that never releases it.
+description: Memory, handle or descriptor leaks on a path that never releases. Use this when the finding is CWE-401/772/775.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -27,7 +26,7 @@ file descriptors / handles).
 ## When another skill also applies
 
 - `cwe-400-uncontrolled-resource-consumption`: a single huge allocation. **This skill wins** when
-  the hazard is *accumulation across calls* (each call leaks a bounded amount); `cwe-400` wins when
+  the hazard is *accumulation across calls* (each call leaks a bounded amount); `cwe-400-uncontrolled-resource-consumption` wins when
   one call sizes the resource from input.
 - `cwe-416-use-after-free`: freed-then-used. **That skill wins** when there is a use after free;
   this one is about never freeing at all.

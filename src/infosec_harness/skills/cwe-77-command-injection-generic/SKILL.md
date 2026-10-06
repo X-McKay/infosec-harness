@@ -1,7 +1,6 @@
 ---
 name: cwe-77-command-injection-generic
-description: Recognize argument and option injection into a program started without a shell, and
-  define an inert option oracle. Use this when the finding is CWE-77 or CWE-88 and no shell parses the value.
+description: Argument or option injection into a program started without a shell. Use this when the finding is CWE-77/88 and no shell parses the value.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -54,6 +53,8 @@ that runs a further command. Map the result onto `HARNESS_PROBE` (see `probe`):
 
 - `target_reached`: the real function built and launched (or refused) the argv with the
   option-shaped value. A program exiting non-zero after parsing still counts.
+- `oracle_valid`: the option is inert, accepted by the sandbox's copy of the program, and
+  touches only a probe path.
 - `vulnerability_observed`: the option's effect appears: the marker file exists, or the output
   shows the option's signature rather than the normal result for a file with that name.
 - `positive_control`: the same program run directly by the probe with the option as an argv

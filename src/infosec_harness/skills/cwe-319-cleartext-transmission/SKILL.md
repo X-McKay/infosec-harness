@@ -1,7 +1,6 @@
 ---
 name: cwe-319-cleartext-transmission
-description: Recognize sensitive data sent or stored without encryption, and define a loopback capture oracle.
-  Use this when the finding is CWE-319, CWE-311, CWE-312 or CWE-313, or credentials or secrets travel over an unencrypted channel.
+description: Secrets or credentials sent or stored without encryption. Use this when the finding is CWE-319/311/312/313.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -51,6 +50,7 @@ nonce secret. For storage findings, run the real write and read the resulting fi
 observation is on loopback or sandbox files.
 
 - `target_reached`: the real send or write function ran with the nonce secret.
+- `oracle_valid`: the listener or file read records the exact bytes the target sent or stored.
 - `vulnerability_observed`: the nonce appears verbatim in the captured bytes or the stored
   file.
 - `positive_control`: the probe sends the nonce over the same plain channel directly and the

@@ -1,7 +1,6 @@
 ---
 name: cwe-400-uncontrolled-resource-consumption
-description: Recognize unbounded resource consumption (memory, CPU, expansion/decompression bombs) and
-  define a growth-ratio oracle on small inputs. Use this when the finding is CWE-400/770/789/409/776.
+description: Unbounded memory or CPU use, including decompression and expansion bombs. Use this when the finding is CWE-400/770/789/409/776.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -31,7 +30,7 @@ attacker-controlled size), CWE-409 (decompression bombs), and CWE-776 (entity-ex
 - `cwe-1333-regex-denial-of-service` and `cwe-835-infinite-loop` are the specific CPU cases. **They
   win** for backtracking and non-termination respectively; keep this skill for size/volume growth.
 - `cwe-611-xxe`: an entity bomb is parsed by an XML parser. **This skill wins** when the hazard is
-  expansion volume (CWE-776); `cwe-611` wins when the hazard is external-entity file/SSRF access.
+  expansion volume (CWE-776); `cwe-611-xxe` wins when the hazard is external-entity file/SSRF access.
 
 ## Procedure
 

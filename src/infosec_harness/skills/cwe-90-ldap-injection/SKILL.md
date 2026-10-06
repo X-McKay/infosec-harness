@@ -1,7 +1,6 @@
 ---
 name: cwe-90-ldap-injection
-description: Recognize LDAP search-filter and DN injection and define an in-memory directory oracle.
-  Use this when the finding is CWE-90 or untrusted input is built into an LDAP filter or DN.
+description: Untrusted input built into an LDAP search filter or DN. Use this when the finding is CWE-90.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -50,6 +49,8 @@ such as `*` or `*)(uid=*` for `(uid=<value>)`. Map the result onto `HARNESS_PROB
 
 - `target_reached`: the real search function ran with the payload and built or rejected the
   filter, including when escaping turns it into a literal that matches nothing.
+- `oracle_valid`: a real filter parser searches the seeded entries and the payload matches the
+  filter context.
 - `vulnerability_observed`: the entry the intended filter excludes is returned, or the parsed
   filter tree shows extra assertions the value introduced.
 - `positive_control`: the equivalent concatenated filter, parsed/searched directly with the

@@ -1,7 +1,6 @@
 ---
 name: cwe-1021-clickjacking
-description: Recognize missing frame protections on state-changing pages and define a response-header
-  oracle. Use this when the finding is CWE-1021 or names clickjacking or UI redressing.
+description: Pages that can be framed without X-Frame-Options or CSP frame-ancestors. Use this when the finding is CWE-1021, clickjacking or UI redressing.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -51,6 +50,7 @@ target's real application on `127.0.0.1` with an ephemeral port and request the 
 standard-library client. No browser is needed.
 
 - `target_reached`: the real route returned a response (any status).
+- `oracle_valid`: the check reads the real response headers for the sensitive route.
 - `vulnerability_observed`: the response for the sensitive page has neither
   `X-Frame-Options` (`DENY`/`SAMEORIGIN`) nor a CSP `frame-ancestors` directive restricting
   framing.

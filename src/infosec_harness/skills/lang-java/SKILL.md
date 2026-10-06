@@ -1,10 +1,9 @@
 ---
 name: lang-java
-description: 'Conventions for reading Java repositories: Maven and Gradle layout, entry points, and
-  JUnit tests. Use this when the repository is primarily Java.'
+description: 'Java repositories: Maven/Gradle layout, entry points, direct-javac probes. Use this when the repository is primarily Java.'
 metadata:
   owner: appsec
-  version: 1.1.0
+  version: 1.2.0
 ---
 
 # Java repositories
@@ -67,6 +66,16 @@ into a directory literally named `?`):
   `go-offline` fails, read the first error and fix that cause (the `environment` skill covers
   the trust store); do not search the filesystem for jars, do not use `pip` or `curl`, and do
   not rerun the same failing command.
+
+## When the toolchain is absent
+
+The workspace image ships OpenJDK 17 and Maven; Gradle and other JDK versions are not in
+it. Verify with `command -v javac java`, and `mvn` only when the dependency route needs it. If
+the compiler, a build tool or a dependency the target cannot compile without is missing and
+`environment` cannot provide it, do not fetch it and do not rewrite the target in another
+language: a rewrite is a stand-in that cannot support a `HARNESS_PROBE` observation. Return
+`inconclusive`, name the exact missing tool as a limitation in the verdict summary, and record
+what reading established.
 
 ## Completion criteria
 

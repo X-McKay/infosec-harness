@@ -1,7 +1,6 @@
 ---
 name: cwe-1321-prototype-pollution
-description: Recognize JavaScript merge, extend and set-by-path code that lets keys reach a shared
-  prototype, and define a restore-after oracle. Use this when the finding is CWE-1321.
+description: JavaScript merge, extend or set-by-path code that lets keys reach a shared prototype. Use this when the finding is CWE-1321.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -58,6 +57,8 @@ deletes the property from `Object.prototype` so later checks and the runner are 
   `JSON.parse('{"__proto__":{"harness_<nonce>":true}}')` (or the path form
   `"__proto__.harness_<nonce>"` / `"constructor.prototype.harness_<nonce>"`), whether it
   copied, skipped or rejected the key.
+- `oracle_valid`: the property name is unique to this run, absent before the call and removed
+  in `finally`.
 - `vulnerability_observed`: `({}).harness_<nonce> === true` after the call.
 - `positive_control`: assigning `Object.prototype.harness_<nonce> = true` directly in the
   probe makes the check fire; then delete it and confirm `({}).harness_<nonce>` is undefined.

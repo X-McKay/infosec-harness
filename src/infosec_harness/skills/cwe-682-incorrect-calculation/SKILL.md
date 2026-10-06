@@ -1,7 +1,6 @@
 ---
 name: cwe-682-incorrect-calculation
-description: Recognize incorrect calculations and precision loss and define a business-logic oracle with
-  controls. Use this when the finding is CWE-682/1339 or a computed value is wrong for valid input.
+description: Wrong calculations and precision loss in business logic. Use this when the finding is CWE-682/1339.
 metadata:
   owner: appsec
   version: 1.0.0

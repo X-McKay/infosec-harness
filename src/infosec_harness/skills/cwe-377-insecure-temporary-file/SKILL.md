@@ -1,7 +1,6 @@
 ---
 name: cwe-377-insecure-temporary-file
-description: Recognize predictable or racy temporary file creation and define a pre-created-path oracle
-  confined to a probe directory. Use this when the finding is CWE-377, 379, 59 or 61.
+description: Predictable or racy temporary file creation. Use this when the finding is CWE-377/379/59/61.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -59,6 +58,7 @@ fixed-path or check-then-open window you can reproduce deterministically.
 
 - `target_reached`: the real function ran and attempted its temp-file write in the probe
   directory, including when it raised `FileExistsError` or chose a new name.
+- `oracle_valid`: the decoy sits at the path predicted from source, inside the probe directory.
 - `vulnerability_observed`: after the call, a probe-owned decoy file (pre-created at the
   predicted path, or the target of a link pre-created there) contains the target's output.
 - `positive_control`: a plain non-exclusive `open(predicted, "w")` in the probe writes through

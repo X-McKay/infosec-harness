@@ -1,7 +1,6 @@
 ---
 name: cwe-116-improper-output-encoding
-description: Recognize missing or wrong output encoding for a non-HTML context and define a
-  context-aware encoding oracle. Use this when the finding is CWE-116 or CWE-838 and output is not HTML body.
+description: Missing or wrong output encoding for a non-HTML context. Use this when the finding is CWE-116/838 and the output is not an HTML body.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -58,6 +57,8 @@ substring:
 Map onto `HARNESS_PROBE` (see `probe`):
 
 - `target_reached`: the real output function ran with the payload and produced or rejected output.
+- `oracle_valid`: the output is parsed with a real parser for its context and the payload
+  matches that context.
 - `vulnerability_observed`: parsing the output shows the injected structure (extra key, extra field,
   extra parameter).
 - `positive_control`: the same unencoded assembly yields the broken structure, proving the parser check works.

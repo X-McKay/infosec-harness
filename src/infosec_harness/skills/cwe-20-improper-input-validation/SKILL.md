@@ -1,7 +1,6 @@
 ---
 name: cwe-20-improper-input-validation
-description: Recognize a generic input-validation finding and route it to the specific sink skill,
-  defining an oracle only when the consequence is observable. Use this when the finding is CWE-20.
+description: Generic input-validation findings; routes to the specific sink skill. Use this when the finding is CWE-20.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -32,7 +31,7 @@ Follow the unvalidated value to what it reaches, and let that skill win:
   evaluator → `cwe-94-code-injection`; markup → `cwe-79-xss`; a URL fetch →
   `cwe-918-ssrf`; a filesystem path → `cwe-22-path-traversal`; a deserializer →
   `cwe-502-deserialization`; an XML parser → `cwe-611-xxe`.
-- Drives a buffer write/read → `cwe-787` / `cwe-125`; an index/size/divisor →
+- Drives a buffer write/read → `cwe-787-out-of-bounds-write` / `cwe-125-out-of-bounds-read`; an index/size/divisor →
   `cwe-190-integer-overflow`; a dereference of a missing value →
   `cwe-476-null-pointer-dereference`.
 - Sizes/repeats work → `cwe-400-uncontrolled-resource-consumption`; a regex →

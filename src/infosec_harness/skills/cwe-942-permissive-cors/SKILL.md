@@ -1,7 +1,6 @@
 ---
 name: cwe-942-permissive-cors
-description: Recognize permissive cross-origin policies and missing origin checks, and define a loopback
-  oracle with an untrusted Origin header. Use this when the finding is CWE-942, CWE-346 or CWE-1385.
+description: Permissive CORS policies and missing origin checks. Use this when the finding is CWE-942/346/1385.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -51,6 +50,8 @@ the response with the victim's credentials.** Start the target's real server or 
 
 - `target_reached`: the real handler answered the request carrying
   `Origin: http://untrusted.invalid` (any status).
+- `oracle_valid`: the request carries an untrusted `.invalid` Origin and the check reads both
+  CORS headers together.
 - `vulnerability_observed`: the response has `Access-Control-Allow-Origin` equal to the
   untrusted origin (or `null` when `Origin: null` is sent) together with
   `Access-Control-Allow-Credentials: true`. A WebSocket handshake answered with `101` for the

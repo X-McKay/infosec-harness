@@ -1,7 +1,6 @@
 ---
 name: cwe-16-security-misconfiguration
-description: Recognize insecure defaults and security-relevant configuration, route to a specific skill
-  where one exists, and define a default-configuration oracle. Use this when the finding is CWE-16 or CWE-1188.
+description: Insecure defaults and security configuration; routes to a specific skill where one exists. Use this when the finding is CWE-16/1188.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -63,6 +62,8 @@ overrides, then observe the behaviour directly:
 Map onto `HARNESS_PROBE`:
 
 - `target_reached`: the real component was constructed and exercised with defaults.
+- `oracle_valid`: the component was built through its real factory with no overrides, and the
+  check reads the attribute that decides the behaviour.
 - `vulnerability_observed`: the observed attribute or behaviour is the insecure one.
 - `positive_control`: the component deliberately configured insecurely through its own
   options shows the insecure value, proving the check reads the right attribute.

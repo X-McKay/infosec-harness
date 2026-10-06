@@ -1,7 +1,6 @@
 ---
 name: cwe-434-unrestricted-file-upload
-description: Recognize unrestricted file upload where an untrusted name or type lets a dangerous file
-  be stored or served, and define a storage oracle. Use this when the finding is CWE-434 or CWE-73.
+description: Uploads whose untrusted name or type lets a dangerous file be stored or served. Use this when the finding is CWE-434/73.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -53,6 +52,8 @@ dangerous for the app's stated rule, such as `shell.<ext>` with content carrying
 content/extension mismatch). Inspect the stored file. Map onto `HARNESS_PROBE` (see `probe`):
 
 - `target_reached`: the real upload handler ran with the dangerous upload and stored or rejected it.
+- `oracle_valid`: the upload's extension or type is one the application's own rule should
+  reject.
 - `vulnerability_observed`: a file with the dangerous extension/type and the nonce content exists in
   the storage directory after the call.
 - `positive_control`: writing the dangerous file directly to the storage dir succeeds, proving the

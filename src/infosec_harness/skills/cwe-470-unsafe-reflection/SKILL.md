@@ -1,7 +1,6 @@
 ---
 name: cwe-470-unsafe-reflection
-description: Recognize class, module or function names chosen by untrusted input and define a probe-
-  owned marker oracle. Use this when the finding is CWE-470 or input drives dynamic dispatch.
+description: Class, module or function names chosen by untrusted input. Use this when the finding is CWE-470 or input drives dynamic dispatch.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -59,6 +58,8 @@ the original source tree's files) whose only effect is creating `/tmp/harness_ca
 
 - `target_reached`: the real dispatcher ran with the out-of-set name, including when it
   rejected it.
+- `oracle_valid`: the chosen callable is outside the intended set and has a distinguishable
+  result or canary.
 - `vulnerability_observed`: the out-of-set callable's distinguishing result was returned, or
   the canary exists after the target call and did not before.
 - `positive_control`: invoking the same callable directly in the probe yields the result or

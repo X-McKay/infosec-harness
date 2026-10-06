@@ -1,7 +1,6 @@
 ---
 name: lang-go
-description: 'Conventions for Go repositories: modules, vendoring, in-package test probes and cgo.
-  Use this when the repository is primarily Go; the workspace image has no Go toolchain by default.'
+description: 'Go repositories: modules, vendoring, in-package test probes. Use this when the repository is primarily Go; the image has no Go toolchain.'
 metadata:
   owner: appsec
   version: 1.0.0

@@ -1,7 +1,6 @@
 ---
 name: cwe-1236-formula-injection
-description: Recognize CSV/spreadsheet formula injection where exported fields begin with a formula
-  trigger, and define a deterministic trigger oracle. Use this when the finding is CWE-1236.
+description: CSV or spreadsheet exports whose cells can begin with a formula trigger. Use this when the finding is CWE-1236 or CSV injection.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -49,6 +48,8 @@ a trigger, such as `=1+191` (or `@SUM(1+191)`, `+1+191`, `-1+191`), tagged with 
 `=CONCAT("h","<nonce>")`. Map the result onto `HARNESS_PROBE` (see `probe`):
 
 - `target_reached`: the real export function ran with the trigger-leading value and produced the file.
+- `oracle_valid`: the export is parsed with a real CSV reader and the check reads each cell's
+  leading character.
 - `vulnerability_observed`: the parsed cell still begins with a trigger character (`=`, `+`, `-`, `@`,
   or a leading tab/CR before one) — i.e. a spreadsheet would evaluate it.
 - `positive_control`: a raw export of the trigger value (no neutralization) yields a cell that still

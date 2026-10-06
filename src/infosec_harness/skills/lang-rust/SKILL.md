@@ -1,7 +1,6 @@
 ---
 name: lang-rust
-description: 'Conventions for Rust repositories: Cargo workspaces, offline builds, example-binary probes
-  and unsafe code. Use this when the repository is primarily Rust; the workspace image has no Rust toolchain by default.'
+description: 'Rust repositories: Cargo workspaces, offline builds, unsafe code. Use this when the repository is primarily Rust; the image has no Rust toolchain.'
 metadata:
   owner: appsec
   version: 1.0.0

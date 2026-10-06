@@ -1,7 +1,6 @@
 ---
 name: triage-unknown-language
-description: 'Procedure for a repository in a language or toolchain with no lang-* skill: identify the
-  runtime, read to the sink, decide what can execute, define an oracle, fall back honestly. Use this when no lang-* skill matches.'
+description: 'A language or toolchain with no lang-* skill: identify the runtime, read to the sink, fall back honestly. Use this when no lang-* skill matches.'
 metadata:
   owner: appsec
   version: 1.0.0

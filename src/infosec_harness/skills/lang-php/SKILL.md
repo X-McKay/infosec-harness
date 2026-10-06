@@ -1,7 +1,6 @@
 ---
 name: lang-php
-description: 'Conventions for PHP repositories: Composer autoload, front controllers, superglobals and
-  CLI probes. Use this when the repository is primarily PHP; the workspace image has no PHP runtime by default.'
+description: 'PHP repositories: Composer, front controllers, superglobals, CLI probes. Use this when the repository is primarily PHP; the image has no PHP.'
 metadata:
   owner: appsec
   version: 1.0.0

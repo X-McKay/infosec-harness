@@ -1,7 +1,6 @@
 ---
 name: cwe-917-expression-language-injection
-description: Recognize expression-language injection (EL, OGNL, SpEL, MVEL) and define an inert
-  arithmetic oracle. Use this when the finding is CWE-917 or untrusted input is evaluated as an expression.
+description: Expression-language injection (EL, OGNL, SpEL, MVEL). Use this when the finding is CWE-917.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -55,6 +54,8 @@ runs a command, reads a file or touches the network. Map the result onto `HARNES
 
 - `target_reached`: the real evaluator entry point received the payload, including when it treats
   it as data or rejects it.
+- `oracle_valid`: the expression uses the engine's delimiters and its result is absent from the
+  input text.
 - `vulnerability_observed`: the computed result (`1337`, `h<nonce>`) appears in the target's
   output or state.
 - `positive_control`: the same engine run directly by the probe on the payload yields the result,

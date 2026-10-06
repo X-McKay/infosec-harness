@@ -1,7 +1,6 @@
 ---
 name: cwe-489-active-debug-code
-description: Recognize debug modes, debug endpoints and leftover test hooks reachable in production, and
-  define a loopback oracle. Use this when the finding is CWE-489 or CWE-11 or names debug code.
+description: Debug modes, debug endpoints or test hooks reachable in production. Use this when the finding is CWE-489/11 or names debug code.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -60,6 +59,8 @@ route or parameter with the standard-library client. Observe a debug-only marker
 response from the debug route, a traceback page, a state dump, or a check skipped.
 
 - `target_reached`: the real application handled the request, including a 404 or 401.
+- `oracle_valid`: the app runs with shipped defaults, no developer variables set, and the
+  marker is debug-only.
 - `vulnerability_observed`: the debug-only marker appears in the response to the
   unauthenticated request under the default configuration.
 - `positive_control`: the same request with the debug feature explicitly enabled through the

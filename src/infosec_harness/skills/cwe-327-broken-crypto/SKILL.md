@@ -1,7 +1,6 @@
 ---
 name: cwe-327-broken-crypto
-description: Recognize broken or weak cryptographic algorithms, modes, key sizes and unsalted password hashing, and define an oracle that shows the algorithm actually used.
-  Use this when the finding is CWE-327, CWE-328, CWE-326, CWE-916, CWE-759 or CWE-760, or code hashes passwords or encrypts data.
+description: Weak cryptographic algorithms, modes, key sizes or unsalted password hashing. Use this when the finding is CWE-327/328/326/916/759/760.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -68,6 +67,8 @@ reimplement the target's function and test your copy.
 Map the result onto `HARNESS_PROBE`:
 
 - `target_reached`: the real hash, store or encrypt function ran with the probe's input.
+- `oracle_valid`: the check inspects the real function's output for the specific weak
+  construction, not a reimplementation.
 - `vulnerability_observed`: the real output matched the weak construction above.
 - `positive_control`: the probe's own weak construction (for example `hashlib.md5`, or AES
   in ECB) shows the pattern, proving the detector works.

@@ -1,7 +1,6 @@
 ---
 name: lang-dotnet
-description: 'Conventions for .NET repositories (C#, F#, VB): solutions, NuGet restore, console-project
-  probes and ASP.NET Core. Use this when the repository is primarily .NET; the workspace image has no dotnet SDK by default.'
+description: '.NET repositories (C#, F#, VB): solutions, NuGet, console probes. Use this when the repository is primarily .NET; the image has no dotnet SDK.'
 metadata:
   owner: appsec
   version: 1.0.0

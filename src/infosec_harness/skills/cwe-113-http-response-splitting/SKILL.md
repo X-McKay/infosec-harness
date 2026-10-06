@@ -1,7 +1,6 @@
 ---
 name: cwe-113-http-response-splitting
-description: Recognize CRLF injection into HTTP headers and logs (response splitting, log forging)
-  and define a deterministic CRLF oracle. Use this when the finding is CWE-113, CWE-93 or CWE-117.
+description: CRLF injection into HTTP headers or logs (response splitting, log forging). Use this when the finding is CWE-113/93/117.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -53,6 +52,8 @@ produced — never a parsed header dict, which hides the split. Map the result o
 
 - `target_reached`: the real writer ran with the CRLF-bearing value and emitted or rejected the
   header/log line.
+- `oracle_valid`: the check inspects the raw bytes the target produced, not a parsed header
+  map.
 - `vulnerability_observed`: the raw output contains `\r\n` followed by the injected header/line
   with the nonce as a separate record.
 - `positive_control`: the same assembly performed directly with the CRLF payload yields the split,

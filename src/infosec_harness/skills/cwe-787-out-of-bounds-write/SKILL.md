@@ -1,7 +1,6 @@
 ---
 name: cwe-787-out-of-bounds-write
-description: Recognize out-of-bounds write sinks in C/C++ and define a sanitizer-or-crash oracle on
-  bounded input. Use this when the finding is CWE-787/119/120/121/122/124 or a copy writes past a buffer.
+description: C/C++ writes past a buffer boundary. Use this when the finding is CWE-787/119/120/121/122/124.
 metadata:
   owner: appsec
   version: 1.0.0

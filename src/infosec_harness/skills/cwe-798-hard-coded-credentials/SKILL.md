@@ -1,7 +1,6 @@
 ---
 name: cwe-798-hard-coded-credentials
-description: Recognize credentials and keys embedded in source or stored recoverably, and distinguish one the authentication path accepts from a string that only looks like one.
-  Use this when the finding is CWE-798, CWE-259, CWE-321 or CWE-522, or a secret literal appears near a login or key use.
+description: Credentials or keys embedded in source or stored recoverably. Use this when the finding is CWE-798/259/321/522.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -56,6 +55,8 @@ A string that looks like a password is not evidence; acceptance is.
 
 - `target_reached`: the real login, verifier or decryptor ran with the literal as the
   credential or key, including when it rejects it.
+- `oracle_valid`: the literal comes from source, and any configuration uses different
+  probe-chosen values.
 - `vulnerability_observed`: the literal authenticated (session or success returned), or a
   token signed or ciphertext produced with the literal is accepted or decrypted by the target.
 - `positive_control`: a credential the probe provisions through the target's real

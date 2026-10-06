@@ -1,7 +1,6 @@
 ---
 name: cwe-835-infinite-loop
-description: Recognize loops that fail to terminate on some input and define a terminates-vs-does-not
-  oracle bounded by timeout. Use this when the finding is CWE-835 or a loop may never exit.
+description: Loops that may never terminate on some input. Use this when the finding is CWE-835.
 metadata:
   owner: appsec
   version: 1.0.0

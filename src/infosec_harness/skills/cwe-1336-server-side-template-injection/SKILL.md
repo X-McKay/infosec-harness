@@ -1,7 +1,6 @@
 ---
 name: cwe-1336-server-side-template-injection
-description: Recognize server-side template injection where untrusted input is the template, and
-  define an inert arithmetic oracle. Use this when the finding is CWE-1336 or user input is rendered as a template.
+description: 'Server-side template injection: untrusted input becomes the template itself. Use this when the finding is CWE-1336.'
 metadata:
   owner: appsec
   version: 1.0.0
@@ -57,6 +56,8 @@ method that runs a command, reads a file or opens a socket. Map the result onto 
 
 - `target_reached`: the real render entry point received the payload as template source, including
   when a sandbox or data-only path refuses to evaluate it.
+- `oracle_valid`: the payload uses the engine's own delimiters and its computed result is
+  absent from the input.
 - `vulnerability_observed`: the computed result (`1337`) appears in the rendered output.
 - `positive_control`: the same engine rendering that payload directly yields the result, proving
   the engine and delimiters are right.

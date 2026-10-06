@@ -1,7 +1,6 @@
 ---
 name: cwe-643-xpath-injection
-description: Recognize XPath and XQuery predicate injection and define a deterministic node oracle.
-  Use this when the finding is CWE-643 or CWE-91 and untrusted input is built into an XPath expression.
+description: Untrusted input built into an XPath or XQuery expression. Use this when the finding is CWE-643/91.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -17,7 +16,7 @@ metadata:
 
 ## Do not use this skill when
 
-- The query language is SQL, LDAP or a NoSQL store — use `cwe-89`, `cwe-90` or `cwe-943`.
+- The query language is SQL, LDAP or a NoSQL store — use `cwe-89-sql-injection`, `cwe-90-ldap-injection` or `cwe-943-nosql-injection`.
 - The untrusted XML is parsed with entities, not queried — use `cwe-611-xxe`.
 
 ## When another skill also applies
@@ -51,6 +50,8 @@ evaluator (not a stub). Use a widening payload matched to the quoting context, s
 
 - `target_reached`: the real query function ran with the payload and built or rejected the
   expression, including when escaping makes it match nothing.
+- `oracle_valid`: the document holds one intended and one secret node, and the payload matches
+  the quoting context.
 - `vulnerability_observed`: the node the intended predicate excludes (the secret node) is
   returned, or the compiled expression shows the operator the value introduced.
 - `positive_control`: the equivalent concatenated expression, evaluated directly with the

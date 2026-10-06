@@ -1,7 +1,6 @@
 ---
 name: cwe-915-mass-assignment
-description: Recognize request data bound wholesale onto model attributes, and define a protected-
-  attribute oracle. Use this when the finding is CWE-915 or CWE-913 or names mass assignment.
+description: Request data bound wholesale onto model attributes. Use this when the finding is CWE-915/913 or mass assignment.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -51,6 +50,8 @@ update function with a body containing an allowed field plus the protected one.
 
 - `target_reached`: the real update function ran with the body, whether it applied, ignored
   or rejected the protected key.
+- `oracle_valid`: the protected attribute starts at its safe value and is read back through the
+  target's own getter or store.
 - `vulnerability_observed`: the protected attribute holds the caller's value afterwards.
 - `positive_control`: setting the attribute directly in the probe changes it and the check
   fires, proving the check reads the right field.

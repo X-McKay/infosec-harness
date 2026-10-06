@@ -1,7 +1,6 @@
 ---
 name: cwe-295-improper-certificate-validation
-description: Recognize TLS clients that skip or weaken certificate and hostname verification, and define a loopback TLS oracle with a probe-generated self-signed certificate.
-  Use this when the finding is CWE-295 or a client disables verification.
+description: TLS clients that skip or weaken certificate or hostname verification. Use this when the finding is CWE-295.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -53,6 +52,8 @@ point the real client at it. Everything stays on loopback; no external host is c
 
 - `target_reached`: the real client function ran against the loopback HTTPS URL, including
   when it raises a verification error.
+- `oracle_valid`: the loopback server presents a certificate a correct client must reject, and
+  serves the nonce.
 - `vulnerability_observed`: the client returned the server's nonce, meaning it accepted the
   untrusted self-signed certificate.
 - `positive_control`: a deliberately non-verifying client (the probe's own, with verification

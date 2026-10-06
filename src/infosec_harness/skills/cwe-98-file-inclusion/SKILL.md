@@ -1,7 +1,6 @@
 ---
 name: cwe-98-file-inclusion
-description: Recognize local and remote file inclusion where untrusted input chooses a module or file
-  to load and execute, and define an inclusion oracle. Use this when the finding is CWE-98 or CWE-829.
+description: Untrusted input choosing a file or module to load and execute. Use this when the finding is CWE-98/829.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -52,6 +51,8 @@ that file through its untrusted selector (a path, or a name plus an attacker-inf
 Map onto `HARNESS_PROBE` (see `probe`):
 
 - `target_reached`: the real loader ran with the attacker selector and loaded or refused a target.
+- `oracle_valid`: the planted file lies outside the intended set and its marker did not exist
+  before.
 - `vulnerability_observed`: the planted file's effect occurred (the marker exists, or the loaded
   module exposes the nonce), proving an out-of-set file executed.
 - `positive_control`: importing/executing the planted file directly produces the effect, proving the

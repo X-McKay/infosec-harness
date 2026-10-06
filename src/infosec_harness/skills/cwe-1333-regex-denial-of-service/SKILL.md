@@ -1,7 +1,6 @@
 ---
 name: cwe-1333-regex-denial-of-service
-description: Recognize catastrophic-backtracking regexes and define a two-size timing oracle with
-  strict caps. Use this when the finding is CWE-1333 (ReDoS) or untrusted input is matched by a regex.
+description: Regexes that backtrack catastrophically on untrusted input (ReDoS). Use this when the finding is CWE-1333 or a regex matches untrusted input.
 metadata:
   owner: appsec
   version: 1.0.0

@@ -1,7 +1,6 @@
 ---
 name: cwe-330-insufficient-randomness
-description: Recognize security values drawn from predictable generators, and define an oracle that reproduces a token from a seeded or predictable source.
-  Use this when the finding is CWE-330, CWE-338, CWE-340 or CWE-1241, or tokens, ids, keys or nonces come from a non-cryptographic RNG.
+description: Security tokens, ids, keys or nonces from a predictable generator. Use this when the finding is CWE-330/338/340/1241.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -63,6 +62,8 @@ Never claim predictability from the API name alone; demonstrate it.
 Map the result onto `HARNESS_PROBE`:
 
 - `target_reached`: the real token function ran under the controlled seed or clock.
+- `oracle_valid`: the prediction uses only what an attacker has: the seed, the clock or earlier
+  tokens.
 - `vulnerability_observed`: the independently predicted value equals the target's output.
 - `positive_control`: a probe-owned call to the same weak generator under the same seed is
   reproducible, proving the prediction method works.

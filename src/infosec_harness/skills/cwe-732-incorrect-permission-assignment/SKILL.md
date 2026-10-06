@@ -1,7 +1,6 @@
 ---
 name: cwe-732-incorrect-permission-assignment
-description: Recognize files, directories and sockets created with overly broad modes and define a stat
-  oracle. Use this when the finding is CWE-732, CWE-276, CWE-277 or CWE-278.
+description: Files, directories or sockets created with overly broad permissions. Use this when the finding is CWE-732/276/277/278.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -56,6 +55,8 @@ resource must not have.** Run the target in a directory the probe creates, set a
 `stat` the created path.
 
 - `target_reached`: the real function ran and created (or attempted to create) the resource.
+- `oracle_valid`: a known umask was set before the call and `stat` reads the path the target
+  created.
 - `vulnerability_observed`: `stat` shows `S_IWOTH` or `S_IWGRP`, or `S_IROTH`/`S_IRGRP` for a
   secret, on the resource the target created.
 - `positive_control`: a file the probe creates with mode `0o666` under umask `0` shows the bit

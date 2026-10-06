@@ -1,7 +1,6 @@
 ---
 name: cwe-125-out-of-bounds-read
-description: Recognize out-of-bounds read sinks in C/C++ and define a sanitizer-or-canary oracle on
-  bounded input. Use this when the finding is CWE-125/126/127 or a read crosses a buffer boundary.
+description: C/C++ reads past a buffer boundary. Use this when the finding is CWE-125/126/127 or an index or length can exceed the buffer.
 metadata:
   owner: appsec
   version: 1.0.0

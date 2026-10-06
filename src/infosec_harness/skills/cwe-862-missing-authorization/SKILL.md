@@ -1,7 +1,6 @@
 ---
 name: cwe-862-missing-authorization
-description: Recognize missing or incorrect authorization and insecure direct object references, and define a two-principal oracle.
-  Use this when the finding is CWE-862, CWE-863 or CWE-639, or an authenticated caller can reach another principal's object.
+description: Missing or wrong authorization and insecure direct object references. Use this when the finding is CWE-862/863/639.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -60,6 +59,8 @@ session or token mechanism, or pass Alice as the principal exactly as the real c
 
 - `target_reached`: the real handler ran for Alice with Bob's object id, including when it
   answers 403 or 404.
+- `oracle_valid`: two principals each own an object with a distinct nonce, and Alice
+  authenticates as the real caller does.
 - `vulnerability_observed`: Bob's nonce appears in the response, or Bob's object changed in
   the store after Alice's request.
 - `positive_control`: Alice requesting her own object gets her nonce, proving the oracle sees

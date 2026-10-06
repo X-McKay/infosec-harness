@@ -1,7 +1,6 @@
 ---
 name: cwe-287-improper-authentication
-description: Recognize authentication checks that can be skipped, short-circuited or bypassed, and define an in-process login oracle.
-  Use this when the finding is CWE-287, CWE-306, CWE-620 or CWE-640, or a protected action runs without proof of identity.
+description: Authentication checks that can be skipped or bypassed. Use this when the finding is CWE-287/306/620/640 or an action runs without proof of identity.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -61,6 +60,8 @@ starts, with a probe-created account whose password is a nonce.
 
 - `target_reached`: the real login, middleware or handler ran with the finding-shaped request
   (missing, empty, wrong or malformed credential), including when it rejects it.
+- `oracle_valid`: success is read from the target's own return value or state for a
+  probe-created account.
 - `vulnerability_observed`: that request obtained the protected result (session issued,
   password changed, admin data returned) as observed through the target's own return value or
   state in the probe's store.

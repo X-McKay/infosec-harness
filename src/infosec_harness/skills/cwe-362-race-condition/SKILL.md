@@ -1,7 +1,6 @@
 ---
 name: cwe-362-race-condition
-description: Recognize race conditions and TOCTOU and define an interleaving oracle that stays
-  inconclusive when it cannot force the race. Use this when the finding is CWE-362/367/366/364.
+description: Race conditions and TOCTOU gaps between a check and a use. Use this when the finding is CWE-362/364/366/367.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -27,7 +26,7 @@ and CWE-364 (signal-handler race).
 ## When another skill also applies
 
 - `cwe-416-use-after-free`: a freed-then-used object across threads. **This skill wins** when the
-  bug requires interleaving; `cwe-416` wins for a single-threaded ordering defect.
+  bug requires interleaving; `cwe-416-use-after-free` wins for a single-threaded ordering defect.
 - `cwe-22-path-traversal` / file sinks: a TOCTOU often targets a file. **This skill wins** when the
   hazard is the check/use *window*; the sink skill defines what the window lets through.
 

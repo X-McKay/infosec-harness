@@ -1,7 +1,6 @@
 ---
 name: lang-c-cpp
-description: 'Conventions for C and C++ repositories: Make/CMake layout, linking a probe against the
-  target with gcc, and memory-safety oracles. Use this when the repository is primarily C or C++.'
+description: 'C and C++ repositories: Make/CMake, linking a probe with gcc, memory-safety oracles. Use this when the repository is primarily C or C++.'
 metadata:
   owner: appsec
   version: 1.0.0

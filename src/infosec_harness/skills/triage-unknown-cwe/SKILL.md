@@ -1,7 +1,6 @@
 ---
 name: triage-unknown-cwe
-description: 'Procedure for a CWE or vulnerability description with no cwe-* skill: map it to a family,
-  derive sink, guard and an observable oracle with controls, or show it is not observable here. Use this when no cwe-* skill matches.'
+description: 'A weakness with no cwe-* skill: map it to a family, sink, guard and oracle, or show it is unobservable here. Use this when no cwe-* skill matches.'
 metadata:
   owner: appsec
   version: 1.0.0

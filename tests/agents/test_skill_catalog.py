@@ -19,22 +19,28 @@ SKILL_NAMES = frozenset(path.parent.name for path in SKILL_FILES)
 
 # The largest skill before the language-coverage work was 4,854 bytes (probe); the largest
 # new one is 5,279 bytes (lang-rust). 7 KiB is the smallest round ceiling that leaves
-# headroom over both (about 36% over the largest).
+# headroom over both (about 36% over the largest). The tested XXE recipe (cwe-611-xxe) was
+# condensed to 7,153 bytes to fit; its code blocks are the verified ones, so grow it by
+# moving prose out, not by raising this ceiling.
 MAX_SKILL_BYTES = 7 * 1024
 MAX_DESCRIPTION_CHARS = 400
 # The deferred-capability catalog the model sees before loading any skill: one
-# "- name: description" line per skill. Measured at 4,827 characters over 25 skills on
-# 2026-10-06; the ceiling is 2.5 times that.
+# "- name: description" line per skill, rendered into the prefix of every model request.
+# Measured at 4,827 characters over 25 skills on 2026-10-06; the ceiling is 2.5 times that.
+# At 75 skills the descriptions as first written rendered 16,680 characters (about 4,170
+# tokens at 4 characters per token: 21k to 146k of a case's 600k-token budget over the
+# observed 5 to 35 requests). They were tightened to 11,133 characters (about 2,780 tokens,
+# 14k to 97k per case), so the ceiling stands; new skills must fit their descriptions in it.
 CATALOG_BUDGET_CHARS = 12_067
 
-# Language skills written with the toolchain-absent rule; the four older ones lack it.
-LANGUAGE_SKILLS_WITH_ABSENT_RULE = frozenset({
-    "lang-c-cpp", "lang-dotnet", "lang-go", "lang-jvm-other", "lang-php", "lang-ruby",
-    "lang-rust", "lang-shell",
-})
+# Every language skill says what to do without its toolchain.
+LANGUAGE_SKILLS = frozenset(name for name in SKILL_NAMES if name.startswith("lang-"))
 # The workspace image ships none of these toolchains, so each skill leads with that check.
 TOOLCHAIN_NOT_IN_IMAGE = frozenset({"lang-dotnet", "lang-go", "lang-php", "lang-ruby", "lang-rust"})
 TRIAGE_SKILLS = frozenset({"triage-unknown-cwe", "triage-unknown-language"})
+
+# Loaded by name from the agent instructions, so they need no "Use this when" trigger.
+WORKFLOW_SKILLS = frozenset({"environment", "investigate", "probe"})
 
 # Known gaps in skills that predate these rules (ratchets: remove an entry once fixed).
 WITHOUT_METADATA = frozenset({"environment", "investigate", "probe"})
@@ -97,7 +103,7 @@ def test_every_skill_directory_holds_a_skill_and_the_named_groups_exist():
     children = {path.name for path in SKILLS.iterdir() if path.is_dir()}
     assert children == SKILL_NAMES, "a skill directory without SKILL.md is silently ignored"
     named = (
-        LANGUAGE_SKILLS_WITH_ABSENT_RULE | TOOLCHAIN_NOT_IN_IMAGE | TRIAGE_SKILLS
+        TOOLCHAIN_NOT_IN_IMAGE | TRIAGE_SKILLS | WORKFLOW_SKILLS
         | WITHOUT_METADATA | WITHOUT_VERDICT_GUIDANCE | set(SANCTIONED_INSTALL)
     )
     assert named <= SKILL_NAMES, f"stale names in this module: {sorted(named - SKILL_NAMES)}"
@@ -111,6 +117,8 @@ def test_frontmatter_names_its_directory_and_describes_when_to_use_it(path):
     description = frontmatter.get("description")
     assert isinstance(description, str) and description.strip()
     assert len(description) < MAX_DESCRIPTION_CHARS, f"{len(description)} characters"
+    if path.parent.name not in WORKFLOW_SKILLS:
+        assert "Use this when" in description, "the catalog line must say when to load it"
     assert body.strip()
     metadata = frontmatter.get("metadata")
     if path.parent.name in WITHOUT_METADATA:
@@ -161,10 +169,10 @@ def test_cwe_skill_has_the_oracle_sections(path):
     assert required <= present, sorted(required - present)
 
 
-NEW_LANGUAGE = by_name(LANGUAGE_SKILLS_WITH_ABSENT_RULE)
+LANGUAGE = by_name(LANGUAGE_SKILLS)
 
 
-@pytest.mark.parametrize("path", NEW_LANGUAGE, ids=ids(NEW_LANGUAGE))
+@pytest.mark.parametrize("path", LANGUAGE, ids=ids(LANGUAGE))
 def test_language_skill_says_what_to_do_without_its_toolchain(path):
     frontmatter, body = split(path)
     assert "Use this when" in frontmatter["description"]
@@ -176,16 +184,6 @@ def test_language_skill_says_what_to_do_without_its_toolchain(path):
         first = headings(body)[0]
         assert first == "First: check the toolchain", first
         assert "does **not** include" in section(body, first)
-
-
-def test_older_language_skills_without_the_absent_rule_are_known():
-    older = {name for name in SKILL_NAMES if name.startswith("lang-")}
-    older -= LANGUAGE_SKILLS_WITH_ABSENT_RULE
-    assert older == {"lang-java", "lang-javascript", "lang-perl", "lang-python"}
-    for path in by_name(older):
-        assert section(split(path)[1], "When the toolchain is absent") is None, (
-            f"{path.parent.name} gained the section: add it to LANGUAGE_SKILLS_WITH_ABSENT_RULE"
-        )
 
 
 @pytest.mark.parametrize("path", by_name(TRIAGE_SKILLS), ids=ids(by_name(TRIAGE_SKILLS)))

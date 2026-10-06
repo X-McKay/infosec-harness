@@ -1,7 +1,6 @@
 ---
 name: cwe-943-nosql-injection
-description: Recognize NoSQL query and operator injection (MongoDB-style, JSON query objects) and
-  define a deterministic result oracle. Use this when the finding is CWE-943 or untrusted input shapes a NoSQL query.
+description: NoSQL query or operator injection, such as MongoDB-style query objects. Use this when the finding is CWE-943.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -54,6 +53,8 @@ intended scalar query returns and one it must not. Use an operator payload such 
 
 - `target_reached`: the real query function ran with the payload and built or rejected the query,
   including when a scalar coercion flattens it to a literal.
+- `oracle_valid`: the store honours query operators and seeds one included and one excluded
+  document.
 - `vulnerability_observed`: the document the intended scalar query excludes is returned, or the
   built query object shows the attacker's operator key.
 - `positive_control`: the equivalent query built directly with the operator payload returns the

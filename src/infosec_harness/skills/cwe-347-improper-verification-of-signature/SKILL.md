@@ -1,7 +1,6 @@
 ---
 name: cwe-347-improper-verification-of-signature
-description: Recognize tokens and messages whose signature is skipped, trusted by type, or verifiable with an attacker-known key, and define a forgery oracle.
-  Use this when the finding is CWE-347 or a JWT or signed payload is accepted without sound verification.
+description: Tokens or messages accepted without sound signature verification, such as JWT alg confusion. Use this when the finding is CWE-347.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -63,6 +62,8 @@ the real verifier.** Build the forged token inside the probe using only attacker
 Map the result onto `HARNESS_PROBE`:
 
 - `target_reached`: the real verifier ran on the forged token, including when it rejects it.
+- `oracle_valid`: the forged token was built from attacker knowledge only, without the signing
+  secret.
 - `vulnerability_observed`: the target accepted the forged token and exposed its attacker-chosen
   claim (for example `role=admin`).
 - `positive_control`: a genuinely signed token (with the real secret the probe provisions for

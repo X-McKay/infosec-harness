@@ -1,7 +1,6 @@
 ---
 name: cwe-676-dangerous-function
-description: Recognize calls to inherently risky functions, route them to the matching weakness, and
-  decide exploitability from the call's inputs, not its name. Use this when the finding is CWE-676 or CWE-242.
+description: Calls to inherently risky functions such as strcpy or gets; routes to the real weakness. Use this when the finding is CWE-676/242.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -55,6 +54,8 @@ its dangerous behaviour** (for example, a format directive interpreted, a length
 detected, a deprecated parser accepting an input the safe one refuses).
 
 - `target_reached`: the real entry point ran with the attacker-shaped value.
+- `oracle_valid`: the check observes the specific dangerous behaviour, not only that the
+  function was called.
 - `vulnerability_observed`: the dangerous behaviour was observed in the target's output or
   state.
 - `positive_control`: the same function called directly with the same value shows the

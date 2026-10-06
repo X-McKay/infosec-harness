@@ -1,7 +1,6 @@
 ---
 name: cwe-476-null-pointer-dereference
-description: Recognize null/None/undefined dereferences from unchecked external values and define a
-  deterministic oracle. Use this when the finding is CWE-476/690 or a missing value is dereferenced.
+description: Null, None or undefined dereferences of unchecked external values. Use this when the finding is CWE-476/690.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -29,7 +28,7 @@ same shape is an unchecked `None`/`null`/`undefined` from external input.
 ## When another skill also applies
 
 - `cwe-20-improper-input-validation` is the generic router. **This skill wins** once the
-  observable consequence is a null dereference; use `cwe-20` only to decide routing.
+  observable consequence is a null dereference; use `cwe-20-improper-input-validation` only to decide routing.
 - `cwe-416-use-after-free` also fires when a freed pointer is nulled then used. **That skill wins**
   when the address is a freed object; this one when the value is genuinely null.
 

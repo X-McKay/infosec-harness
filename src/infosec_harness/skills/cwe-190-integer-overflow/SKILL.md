@@ -1,7 +1,6 @@
 ---
 name: cwe-190-integer-overflow
-description: Recognize integer overflow, truncation, bad conversions, unchecked indices and divide-by-
-  zero, and define a deterministic oracle. Use this when the finding is CWE-190/191/680/681/129/369.
+description: Integer overflow, truncation, conversion errors, unchecked indices and divide-by-zero. Use this when the finding is CWE-190/191/680/681/129/369.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -23,7 +22,7 @@ overflow), CWE-681 (incorrect numeric-type conversion / truncation / sign change
 ## Do not use this skill when
 
 - The out-of-bounds access itself is the finding and the arithmetic is incidental — use
-  `cwe-787`/`cwe-125` (but cite 190 as the source).
+  `cwe-787-out-of-bounds-write`/`cwe-125-out-of-bounds-read` (but cite 190 as the source).
 - The result is a wrong business figure with no overflow/truncation — use
   `cwe-682-incorrect-calculation`.
 
@@ -56,7 +55,7 @@ Condition: **the operation produced a value outside its true mathematical range 
 was then used.** Use small, specific boundary inputs — `SIZE_MAX`, `INT_MAX`, `INT_MIN`, `0`,
 `-1`, `len`, `len+1` — never a loop that counts up to overflow. Observe the *consequence*:
 
-- **Size/length (CWE-680):** the wrapped size yields a short allocation; pair with `cwe-787` for
+- **Size/length (CWE-680):** the wrapped size yields a short allocation; pair with `cwe-787-out-of-bounds-write` for
   the write, or observe the allocation size directly (requested N vs actual capacity).
 - **Index (CWE-129):** a negative or wrapped index reaches an access; observe whether the access
   is in bounds.

@@ -1,7 +1,6 @@
 ---
 name: cwe-307-improper-restriction-of-authentication-attempts
-description: Recognize login, OTP and recovery checks without attempt limits, lockout or backoff, and define a bounded repeated-attempt oracle.
-  Use this when the finding is CWE-307 or a credential check can be called repeatedly without throttling.
+description: Login, OTP or recovery checks without attempt limits, lockout or backoff. Use this when the finding is CWE-307.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -55,6 +54,8 @@ small: the oracle is about the absence of a limit, not about guessing a real sec
 
 - `target_reached`: the real authentication entry point ran for each attempt, including
   attempts it rejected or throttled.
+- `oracle_valid`: N is fixed in advance above the threshold read from source, and any
+  time-based guard runs on an injected clock.
 - `vulnerability_observed`: all N wrong attempts were evaluated (none refused as locked or
   throttled) and attempt N+1 with the correct password succeeded without delay.
 - `positive_control`: the correct password on a fresh account succeeds, proving success is

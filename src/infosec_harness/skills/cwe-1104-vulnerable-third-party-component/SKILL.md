@@ -1,7 +1,6 @@
 ---
 name: cwe-1104-vulnerable-third-party-component
-description: Assess a dependency flagged as vulnerable using offline version evidence and a reachable call
-  path, defaulting to inconclusive. Use this when the finding is CWE-1104, CWE-937 or CWE-1035.
+description: A dependency flagged as vulnerable by version; exploitability needs a reachable call path. Use this when the finding is CWE-1104/937/1035.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -66,7 +65,8 @@ observation when it reproduces the behaviour offline.
 - `target_reached`: the repository's call site ran with attacker-shaped input and reached
   the installed package.
 - `vulnerability_observed`: the weakness-class oracle fired.
-- `positive_control` / `negative_control`: as the weakness-class skill defines them.
+- `oracle_valid`, `positive_control`, `negative_control`: as the weakness-class skill defines
+  them.
 
 If no offline reproduction is possible, do not fabricate one; report version and reachability
 in the summary and return `inconclusive`.

@@ -1,7 +1,6 @@
 ---
 name: lang-jvm-other
-description: 'Conventions for Kotlin, Scala, Groovy and Gradle-built JVM repositories: what builds here,
-  calling them from a Java probe, language-specific sinks. Use this when a JVM repository is not plain Java on Maven.'
+description: Kotlin, Scala, Groovy and Gradle-built JVM repositories. Use this when a JVM repository is not plain Java on Maven.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -46,9 +45,9 @@ planning, and read `lang-java` for the Maven and `JAVA_TOOL_OPTIONS` conventions
   the classpath to a file with
   `mvn -o -q -Dmaven.repo.local=/workspace/repo/.m2 dependency:build-classpath -Dmdep.outputFile=.harness-build/cp.txt`.
 - **Gradle projects** need a Gradle distribution. `./gradlew` downloads one from
-  `distributionUrl`; try it at most once in the workspace with
-  `GRADLE_USER_HOME=/workspace/repo/.harness-home/gradle`. If the policy denies the download,
-  stop: that is a limitation, not something to route around.
+  `distributionUrl`: that is an `environment` decision under the operator's policy, tried at
+  most once in the workspace with `GRADLE_USER_HOME=/workspace/repo/.harness-home/gradle`. If
+  the policy denies the download, stop: that is a limitation, not something to route around.
 - **sbt and standalone compilers** are absent; there is no route to them here.
 
 ## Compile and run a probe

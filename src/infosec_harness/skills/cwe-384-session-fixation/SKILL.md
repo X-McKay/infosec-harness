@@ -1,7 +1,6 @@
 ---
 name: cwe-384-session-fixation
-description: Recognize session identifiers that survive login, never expire, or lack protective cookie flags, and define a session-identity oracle.
-  Use this when the finding is CWE-384, CWE-613, CWE-614 or CWE-1004, or a session id is reused across a privilege change.
+description: Session ids that survive login, never expire or lack protective cookie flags. Use this when the finding is CWE-384/613/614/1004.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -57,6 +56,8 @@ after login** (CWE-384), or **an identifier that should be dead still authentica
 
 - `target_reached`: the real login ran with a pre-planted or pre-login session id, including
   when it rejects or replaces that id.
+- `oracle_valid`: the pre-login id was planted before login and is presented unchanged
+  afterwards.
 - `vulnerability_observed`: after the victim logs in, a request presenting the pre-login id
   receives the victim's authenticated response, or the id equals the post-login id.
   For CWE-613: the id still authenticates after logout or after a fixed clock passes expiry.

@@ -1,7 +1,6 @@
 ---
 name: cwe-416-use-after-free
-description: Recognize use-after-free, double-free and related lifetime sinks in C/C++ and define a
-  sanitizer-or-poison oracle. Use this when the finding is CWE-416/415/825 or freed memory is used.
+description: C/C++ use-after-free, double free and dangling pointers. Use this when the finding is CWE-416/415/825.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -19,7 +18,7 @@ Covers CWE-415 (double free) and CWE-825 (expired pointer / dangling dereference
 
 ## Do not use this skill when
 
-- The pointer was never freed but is out of bounds — use `cwe-787`/`cwe-125`.
+- The pointer was never freed but is out of bounds — use `cwe-787-out-of-bounds-write`/`cwe-125-out-of-bounds-read`.
 - The pointer is `NULL`/`None` rather than dangling — use `cwe-476-null-pointer-dereference`.
 - The concern is a leak (memory never freed), not freed-then-used — use
   `cwe-401-missing-release-of-memory`.

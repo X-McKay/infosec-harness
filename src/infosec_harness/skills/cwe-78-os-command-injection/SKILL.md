@@ -1,10 +1,9 @@
 ---
 name: cwe-78-os-command-injection
-description: Recognize OS command injection sources, sinks, and sanitizers, and define a canary oracle.
-  Use this when the finding is CWE-78 or untrusted input reaches a shell.
+description: Untrusted input reaching a shell command. Use this when the finding is CWE-78 or OS command injection.
 metadata:
   owner: appsec
-  version: 2.0.0
+  version: 2.0.1
 ---
 
 # CWE-78: OS command injection
@@ -19,7 +18,8 @@ metadata:
 
 - The value reaches a SQL driver — use `cwe-89-sql-injection`.
 - The value is evaluated as program source — use `cwe-94-code-injection`.
-- The call already uses an argument vector with no shell.
+- The call already uses an argument vector with no shell; option injection into that
+  program is `cwe-77-command-injection-generic`.
 
 ## When another skill also applies
 
@@ -46,6 +46,8 @@ destructive action. Map the result onto `HARNESS_PROBE` (see `probe`):
 
 - `target_reached`: the real function ran with the payload and built or rejected the command,
   including when an allowlist refuses the value or the command fails.
+- `oracle_valid`: the payload matches the sink's quoting context and the canary did not exist
+  before.
 - `vulnerability_observed`: the canary exists after the target call and did not before.
 - `positive_control`: the command string the sink line would build with that payload, run
   directly through `sh -c`, creates a separate canary. This proves the payload fits the

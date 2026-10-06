@@ -1,7 +1,6 @@
 ---
 name: cwe-521-weak-password-requirements
-description: Recognize registration and password-change paths that accept trivially weak passwords, and define a policy oracle against the real validator.
-  Use this when the finding is CWE-521 or a password policy is missing, client-side only, or bypassable.
+description: Registration or password-change paths that accept trivially weak passwords. Use this when the finding is CWE-521.
 metadata:
   owner: appsec
   version: 1.0.0
@@ -27,7 +26,7 @@ metadata:
 - `cwe-307-improper-restriction-of-authentication-attempts` makes weak passwords
   exploitable online. **This skill wins** for whether the weak password is accepted; report
   the attempt limit through that skill.
-- `cwe-620` (unverified password change) belongs to `cwe-287-improper-authentication`.
+- CWE-620 (unverified password change) belongs to `cwe-287-improper-authentication`.
 
 ## Procedure
 
@@ -50,6 +49,8 @@ taken from real credential dumps.
 
 - `target_reached`: the real registration or change entry point ran with the weak password,
   including when its validator rejects it.
+- `oracle_valid`: persistence is checked through the real login or the probe's store, not the
+  validator's return alone.
 - `vulnerability_observed`: the weak password was persisted, observed by logging in with it
   through the real login or by reading the probe's store.
 - `positive_control`: a strong random password through the same path is accepted and can

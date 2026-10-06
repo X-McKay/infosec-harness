@@ -1,7 +1,6 @@
 ---
 name: lang-ruby
-description: 'Conventions for Ruby repositories: Bundler, Rails and Rack layout, in-process Rack probes
-  and Ruby truthiness. Use this when the repository is primarily Ruby; the workspace image has no Ruby by default.'
+description: 'Ruby repositories: Bundler, Rails and Rack, in-process Rack probes. Use this when the repository is primarily Ruby; the image has no Ruby.'
 metadata:
   owner: appsec
   version: 1.0.0

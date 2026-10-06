@@ -1,7 +1,6 @@
 ---
 name: lang-shell
-description: 'Conventions for shell scripts (sh, bash): interpreters, quoting, expansion sinks and xtrace
-  observation. Use this when the finding is in a shell script, Makefile recipe, CI step or hook.'
+description: 'Shell scripts (sh, bash): quoting, expansion sinks, xtrace. Use this when the finding is in a shell script, Makefile recipe, CI step or hook.'
 metadata:
   owner: appsec
   version: 1.0.0
