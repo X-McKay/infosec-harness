@@ -20,7 +20,9 @@ test.describe("investigations list", () => {
   const table = (page: import("@playwright/test").Page) =>
     page.getByRole("table", { name: /Investigations on this page/ });
   const bodyRows = (page: import("@playwright/test").Page) =>
-    table(page).getByRole("row").filter({ has: page.getByRole("cell") });
+    table(page)
+      .getByRole("row")
+      .filter({ has: page.getByRole("cell") });
 
   test("lists every run on the first page with status, verdict and elapsed time", async ({
     page,
@@ -61,7 +63,9 @@ test.describe("investigations list", () => {
     await expect(bodyRows(page)).toHaveCount(1);
     await expect(table(page)).toContainText("XML external entity");
     await expect(
-      page.getByText("1 of 6 on this page match · filters apply to the loaded page"),
+      page.getByText(
+        "1 of 6 on this page match · filters apply to the loaded page",
+      ),
     ).toBeVisible();
 
     await tile("Failed").click();
@@ -70,7 +74,9 @@ test.describe("investigations list", () => {
   });
 
   test("search matches title, id, CWE and repository", async ({ page }) => {
-    const search = page.getByRole("searchbox", { name: "Search investigations" });
+    const search = page.getByRole("searchbox", {
+      name: "Search investigations",
+    });
     await search.fill("CWE-89");
     await expect(page).toHaveURL(/[?&]q=CWE-89/);
     await expect(bodyRows(page)).toHaveCount(1);
@@ -99,7 +105,9 @@ test.describe("investigations list", () => {
 
   test("verdict filter keeps only matching verdicts", async ({ page }) => {
     const verdicts = page.getByRole("group", { name: "Verdict filter" });
-    await verdicts.getByRole("button", { name: "potentially exploitable" }).click();
+    await verdicts
+      .getByRole("button", { name: "potentially exploitable" })
+      .click();
     await expect(page).toHaveURL(/[?&]verdict=potentially_exploitable/);
     await expect(
       verdicts.getByRole("button", { name: "potentially exploitable" }),
@@ -107,7 +115,9 @@ test.describe("investigations list", () => {
     await expect(bodyRows(page)).toHaveCount(1);
     await expect(table(page)).toContainText("Command injection");
 
-    await verdicts.getByRole("button", { name: "likely not exploitable" }).click();
+    await verdicts
+      .getByRole("button", { name: "likely not exploitable" })
+      .click();
     await expect(bodyRows(page)).toHaveCount(1);
     await expect(table(page)).toContainText("SQL injection");
 
@@ -119,13 +129,18 @@ test.describe("investigations list", () => {
     page,
     api,
   }) => {
-    const previous = page.getByRole("button", { name: "Previous", exact: true });
+    const previous = page.getByRole("button", {
+      name: "Previous",
+      exact: true,
+    });
     const next = page.getByRole("button", { name: "Next", exact: true });
     await expect(previous).toBeDisabled();
     await next.click();
     await expect(page).toHaveURL(/[?&]page=tok-page-2/);
     await expect(bodyRows(page)).toHaveCount(2);
-    await expect(table(page)).toContainText("Deserialization of session cookie");
+    await expect(table(page)).toContainText(
+      "Deserialization of session cookie",
+    );
     // terminated is grouped with failed
     await expect(
       page
@@ -134,7 +149,9 @@ test.describe("investigations list", () => {
     ).toHaveText(/Failed\s*1/);
     await expect(next).toBeDisabled();
     expect(
-      api.calls("GET", "/api/runs").some((call) => call.search === "?page_token=tok-page-2"),
+      api
+        .calls("GET", "/api/runs")
+        .some((call) => call.search === "?page_token=tok-page-2"),
     ).toBe(true);
 
     await previous.click();
@@ -145,7 +162,10 @@ test.describe("investigations list", () => {
   test("a row opens its investigation and the detail steps through the page", async ({
     page,
   }) => {
-    await bodyRows(page).filter({ hasText: "SQL injection" }).getByRole("link").click();
+    await bodyRows(page)
+      .filter({ hasText: "SQL injection" })
+      .getByRole("link")
+      .click();
     await expect(page).toHaveURL(/\/runs\/investigate-v11-fixed-0002/);
     await expect(
       page.getByRole("heading", {
@@ -153,7 +173,9 @@ test.describe("investigations list", () => {
         name: "SQL injection in report search (fixed revision)",
       }),
     ).toBeVisible();
-    const nav = page.getByRole("navigation", { name: "Investigation navigation" });
+    const nav = page.getByRole("navigation", {
+      name: "Investigation navigation",
+    });
     await expect(nav).toContainText("Investigation 4 of 6 on this list page");
     await nav.getByRole("link", { name: "Next" }).click();
     await expect(page).toHaveURL(/\/runs\/investigate-v11-exploitable-0001/);
@@ -163,10 +185,17 @@ test.describe("investigations list", () => {
   });
 
   test("an API failure shows an error with a retry", async ({ page, api }) => {
-    api.on("GET", /^\/api\/runs$/, { status: 503, body: { detail: "Workflow service unavailable" } });
+    api.on("GET", /^\/api\/runs$/, {
+      status: 503,
+      body: { detail: "Workflow service unavailable" },
+    });
     await page.reload();
     const alert = page.getByRole("alert");
-    await expect(alert).toContainText("503 Workflow service unavailable", { timeout: 10_000 });
-    await expect(alert.getByRole("button", { name: "Try again" })).toBeVisible();
+    await expect(alert).toContainText("503 Workflow service unavailable", {
+      timeout: 10_000,
+    });
+    await expect(
+      alert.getByRole("button", { name: "Try again" }),
+    ).toBeVisible();
   });
 });

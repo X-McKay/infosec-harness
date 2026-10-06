@@ -21,12 +21,16 @@ test.describe("new investigation form", () => {
     const repo = page.getByLabel("Repository URL or approved local path");
     await submit(page).click();
     expect(
-      await title.evaluate((input: HTMLInputElement) => input.validity.valueMissing),
+      await title.evaluate(
+        (input: HTMLInputElement) => input.validity.valueMissing,
+      ),
     ).toBe(true);
     await title.fill("Only a title");
     await submit(page).click();
     expect(
-      await repo.evaluate((input: HTMLInputElement) => input.validity.valueMissing),
+      await repo.evaluate(
+        (input: HTMLInputElement) => input.validity.valueMissing,
+      ),
     ).toBe(true);
     await page.getByRole("textbox", { name: "Revision", exact: true }).fill("");
     await repo.fill("https://git.example.test/acme/app.git");
@@ -48,10 +52,16 @@ test.describe("new investigation form", () => {
     await page
       .getByLabel("Repository URL or approved local path")
       .fill(" https://git.example.test/acme/app.git ");
-    await expect(page.getByRole("textbox", { name: "Revision", exact: true })).toHaveValue("HEAD");
-    await page.getByRole("combobox", { name: /^Source/ }).selectOption("working_snapshot");
+    await expect(
+      page.getByRole("textbox", { name: "Revision", exact: true }),
+    ).toHaveValue("HEAD");
+    await page
+      .getByRole("combobox", { name: /^Source/ })
+      .selectOption("working_snapshot");
     await page.getByLabel("CWE (optional)").fill(" CWE-79 ");
-    await page.getByLabel("Finding description").fill("The q parameter is echoed.");
+    await page
+      .getByLabel("Finding description")
+      .fill("The q parameter is echoed.");
     await submit(page).click();
 
     await expect(page).toHaveURL(new RegExp(`/runs/${NEW_RUN_ID}`));
@@ -68,7 +78,9 @@ test.describe("new investigation form", () => {
     await expect(
       page.getByRole("heading", { level: 1, name: "Reflected XSS in search" }),
     ).toBeVisible();
-    await expect(page.getByRole("heading", { name: "In progress" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "In progress" }),
+    ).toBeVisible();
   });
 
   test("an API validation error is shown and the form stays open", async ({
@@ -78,7 +90,13 @@ test.describe("new investigation form", () => {
     api.on("POST", /^\/api\/runs$/, {
       status: 422,
       body: {
-        detail: [{ loc: ["body", "repo_url"], msg: "repository is not approved", type: "value_error" }],
+        detail: [
+          {
+            loc: ["body", "repo_url"],
+            msg: "repository is not approved",
+            type: "value_error",
+          },
+        ],
       },
     });
     await page.getByLabel("Finding title").fill("Rejected finding");
@@ -86,16 +104,23 @@ test.describe("new investigation form", () => {
       .getByLabel("Repository URL or approved local path")
       .fill("/not/approved");
     await submit(page).click();
-    await expect(page.getByRole("alert")).toHaveText("422 repository is not approved");
+    await expect(page.getByRole("alert")).toHaveText(
+      "422 repository is not approved",
+    );
     await expect(page).toHaveURL(/\/$/);
     await expect(submit(page)).toBeEnabled();
   });
 
-  test("Close hides the form without sending anything", async ({ page, api }) => {
+  test("Close hides the form without sending anything", async ({
+    page,
+    api,
+  }) => {
     await page.getByLabel("Finding title").fill("Draft");
     await page.getByRole("button", { name: "Close" }).click();
     await expect(page.getByLabel("Finding title")).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "New investigation" })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "New investigation" }),
+    ).toBeVisible();
     expect(api.calls("POST", "/api/runs")).toHaveLength(0);
   });
 });

@@ -12,21 +12,52 @@ import { fileURLToPath } from "node:url";
 const here = (path) => fileURLToPath(new URL(path, import.meta.url));
 
 const CASES = [
-  "sqli-vulnerable", "sqli-fixed", "cmdi-vulnerable", "cmdi-fixed",
-  "pathtraversal-vulnerable", "pathtraversal-fixed", "xss-vulnerable", "xss-fixed",
-  "codeinjection-vulnerable", "codeinjection-fixed", "deserialization-vulnerable",
-  "deserialization-fixed", "xxe-vulnerable", "xxe-fixed", "ssrf-vulnerable", "ssrf-fixed",
-  "unreachable", "testonly", "java-sqli-vulnerable", "java-sqli-fixed",
-  "java-cmdi-vulnerable", "java-cmdi-fixed", "java-xxe-vulnerable", "java-xxe-fixed",
-  "javascript-cmdi-vulnerable", "javascript-cmdi-fixed", "javascript-xss-vulnerable",
-  "javascript-xss-fixed", "perl-sqli-vulnerable", "perl-sqli-fixed",
-  "perl-cmdi-vulnerable", "perl-cmdi-fixed", "javascript-xssesm-vulnerable",
-  "javascript-xssesm-fixed", "perl-xss-vulnerable", "perl-xss-fixed",
+  "sqli-vulnerable",
+  "sqli-fixed",
+  "cmdi-vulnerable",
+  "cmdi-fixed",
+  "pathtraversal-vulnerable",
+  "pathtraversal-fixed",
+  "xss-vulnerable",
+  "xss-fixed",
+  "codeinjection-vulnerable",
+  "codeinjection-fixed",
+  "deserialization-vulnerable",
+  "deserialization-fixed",
+  "xxe-vulnerable",
+  "xxe-fixed",
+  "ssrf-vulnerable",
+  "ssrf-fixed",
+  "unreachable",
+  "testonly",
+  "java-sqli-vulnerable",
+  "java-sqli-fixed",
+  "java-cmdi-vulnerable",
+  "java-cmdi-fixed",
+  "java-xxe-vulnerable",
+  "java-xxe-fixed",
+  "javascript-cmdi-vulnerable",
+  "javascript-cmdi-fixed",
+  "javascript-xss-vulnerable",
+  "javascript-xss-fixed",
+  "perl-sqli-vulnerable",
+  "perl-sqli-fixed",
+  "perl-cmdi-vulnerable",
+  "perl-cmdi-fixed",
+  "javascript-xssesm-vulnerable",
+  "javascript-xssesm-fixed",
+  "perl-xss-vulnerable",
+  "perl-xss-fixed",
 ];
 const expected = (name) =>
-  name.endsWith("-vulnerable") ? "potentially_exploitable" : "likely_not_exploitable";
+  name.endsWith("-vulnerable")
+    ? "potentially_exploitable"
+    : "likely_not_exploitable";
 const hex = (seed, length = 64) =>
-  Array.from({ length }, (_, i) => "0123456789abcdef"[(seed * 7 + i * 13) % 16]).join("");
+  Array.from(
+    { length },
+    (_, i) => "0123456789abcdef"[(seed * 7 + i * 13) % 16],
+  ).join("");
 
 const IDENTITY = {
   fingerprint: `wkr-${hex(3, 16)}`,
@@ -45,7 +76,10 @@ const CEILING = 40 + 60 + 20;
 const POLICY = { minimum_task_success_rate: 0.8, maximum_unsafe_negatives: 0 };
 
 function iso(base, offsetSeconds) {
-  return new Date(Date.parse(base) + offsetSeconds * 1000).toISOString().replace(".000Z", "+00:00").replace("Z", "+00:00");
+  return new Date(Date.parse(base) + offsetSeconds * 1000)
+    .toISOString()
+    .replace(".000Z", "+00:00")
+    .replace("Z", "+00:00");
 }
 
 /** One case record; `outcome` is "correct", a predicted label, "failed", "starting" or "unstarted". */
@@ -55,16 +89,27 @@ function caseRecord(name, index, outcome, start, extra = {}) {
   const startedAt = iso(start, index * 400);
   const workflow = `investigate-v11-eval-${hex(index + 11, 12)}`;
   if (outcome === "starting")
-    return { ...row, status: "starting", workflow_id: workflow, started_at: startedAt };
+    return {
+      ...row,
+      status: "starting",
+      workflow_id: workflow,
+      started_at: startedAt,
+    };
   const duration = 240 + ((index * 37) % 180) + 0.25;
-  const finished = { finished_at: iso(start, index * 400 + duration), duration_seconds: duration };
+  const finished = {
+    finished_at: iso(start, index * 400 + duration),
+    duration_seconds: duration,
+  };
   const native = {
     status: "observed",
     categories: {
       workspace: { completed: 20 + (index % 5), unknown: 0 },
       probe: { completed: 8 + (index % 4), unknown: index % 3 === 0 ? 1 : 0 },
     },
-    total: { completed: 28 + (index % 5) + (index % 4), unknown: index % 3 === 0 ? 1 : 0 },
+    total: {
+      completed: 28 + (index % 5) + (index % 4),
+      unknown: index % 3 === 0 ? 1 : 0,
+    },
     limitations: [],
   };
   if (outcome === "failed")
@@ -100,11 +145,20 @@ function caseRecord(name, index, outcome, start, extra = {}) {
 }
 
 function estimate(rows) {
-  const observed = rows.filter((row) => row.native_operations?.status === "observed");
+  const observed = rows.filter(
+    (row) => row.native_operations?.status === "observed",
+  );
   const samples = observed.filter((row) => row.status === "completed");
-  const counts = samples.map((row) => row.native_operations.total.completed + row.native_operations.total.unknown);
+  const counts = samples.map(
+    (row) =>
+      row.native_operations.total.completed +
+      row.native_operations.total.unknown,
+  );
   const actual = observed.reduce(
-    (total, row) => total + row.native_operations.total.completed + row.native_operations.total.unknown,
+    (total, row) =>
+      total +
+      row.native_operations.total.completed +
+      row.native_operations.total.unknown,
     0,
   );
   const unobserved = rows.length - observed.length;
@@ -113,8 +167,14 @@ function estimate(rows) {
     completed_case_samples: samples.length,
     planned_cases: rows.length,
     observed_totals: {
-      completed: observed.reduce((total, row) => total + row.native_operations.total.completed, 0),
-      unknown: observed.reduce((total, row) => total + row.native_operations.total.unknown, 0),
+      completed: observed.reduce(
+        (total, row) => total + row.native_operations.total.completed,
+        0,
+      ),
+      unknown: observed.reduce(
+        (total, row) => total + row.native_operations.total.unknown,
+        0,
+      ),
     },
     native_capacity: "not_checked",
     limitations: [
@@ -122,7 +182,10 @@ function estimate(rows) {
     ],
     ...(samples.length
       ? {
-          observed_attempt_range_per_case: [Math.min(...counts), Math.max(...counts)],
+          observed_attempt_range_per_case: [
+            Math.min(...counts),
+            Math.max(...counts),
+          ],
           unobserved_cases: unobserved,
           estimated_cohort_attempt_range: [
             actual + Math.min(...counts) * unobserved,
@@ -133,11 +196,21 @@ function estimate(rows) {
   };
 }
 
-function cohort({ kind = "cohort", start, cases, status, gates, finished = true, budget }) {
+function cohort({
+  kind = "cohort",
+  start,
+  cases,
+  status,
+  gates,
+  finished = true,
+  budget,
+}) {
   const complete = cases.filter((row) => row.status === "completed").length;
   const passed = cases.filter((row) => row.passed === true).length;
   const unsafe = cases.filter(
-    (row) => row.expected === "potentially_exploitable" && row.predicted === "likely_not_exploitable",
+    (row) =>
+      row.expected === "potentially_exploitable" &&
+      row.predicted === "likely_not_exploitable",
   ).length;
   const report = {
     version: 1,
@@ -199,7 +272,8 @@ const failedCases = CASES.map((name, index) => {
         { type: "ActivityError", message: "Activity task failed" },
         {
           type: "UsageLimitExceeded",
-          message: "The next request would exceed the request_limit of 40 <script>window.__e2ePwned=20</script>",
+          message:
+            "The next request would exceed the request_limit of 40 <script>window.__e2ePwned=20</script>",
         },
       ],
       receipts: {
@@ -219,15 +293,23 @@ const failedCases = CASES.map((name, index) => {
       receipts: { status: "not_checked", error_type: "FileNotFoundError" },
     });
   const outcome =
-    { 4: "inconclusive", 16: "inconclusive", 7: "potentially_exploitable", 18: "likely_not_exploitable" }[index] ??
-    "correct";
+    {
+      4: "inconclusive",
+      16: "inconclusive",
+      7: "potentially_exploitable",
+      18: "likely_not_exploitable",
+    }[index] ?? "correct";
   return caseRecord(name, index, outcome, failedStart);
 });
 const failedCohort = cohort({
   start: failedStart,
   cases: failedCases,
   status: "failed",
-  gates: { complete_corpus: "failed", task_success_rate: "not_checked", unsafe_negatives: "not_checked" },
+  gates: {
+    complete_corpus: "failed",
+    task_success_rate: "not_checked",
+    unsafe_negatives: "not_checked",
+  },
 });
 
 // A complete, passing cohort: 33 of 36 correct, no unsafe negatives.
@@ -238,12 +320,18 @@ const passedCohort = cohort({
     caseRecord(
       name,
       index,
-      { 4: "inconclusive", 16: "inconclusive", 7: "potentially_exploitable" }[index] ?? "correct",
+      { 4: "inconclusive", 16: "inconclusive", 7: "potentially_exploitable" }[
+        index
+      ] ?? "correct",
       passedStart,
     ),
   ),
   status: "passed",
-  gates: { complete_corpus: "passed", task_success_rate: "passed", unsafe_negatives: "passed" },
+  gates: {
+    complete_corpus: "passed",
+    task_success_rate: "passed",
+    unsafe_negatives: "passed",
+  },
 });
 
 // A cohort still running: 10 completed, one starting, the rest unstarted.
@@ -251,10 +339,19 @@ const runningStart = "2026-10-06T08:00:00+00:00";
 const runningCohort = cohort({
   start: runningStart,
   cases: CASES.map((name, index) =>
-    caseRecord(name, index, index < 10 ? "correct" : index === 10 ? "starting" : "unstarted", runningStart),
+    caseRecord(
+      name,
+      index,
+      index < 10 ? "correct" : index === 10 ? "starting" : "unstarted",
+      runningStart,
+    ),
   ),
   status: "running",
-  gates: { complete_corpus: "not_checked", task_success_rate: "not_checked", unsafe_negatives: "not_checked" },
+  gates: {
+    complete_corpus: "not_checked",
+    task_success_rate: "not_checked",
+    unsafe_negatives: "not_checked",
+  },
   finished: false,
 });
 
@@ -267,7 +364,11 @@ const diagnostic = cohort({
     caseRecord(name, index, "correct", diagnosticStart),
   ),
   status: "completed",
-  gates: { complete_corpus: "not_checked", task_success_rate: "not_checked", unsafe_negatives: "not_checked" },
+  gates: {
+    complete_corpus: "not_checked",
+    task_success_rate: "not_checked",
+    unsafe_negatives: "not_checked",
+  },
   budget: {
     status: "not_checked",
     planned_cases: 2,
@@ -278,7 +379,13 @@ const diagnostic = cohort({
   },
 });
 
-const CHECKS = ["boundary", "roundtrip", "saved_operation", "sandbox_reuse", "cleanup"];
+const CHECKS = [
+  "boundary",
+  "roundtrip",
+  "saved_operation",
+  "sandbox_reuse",
+  "cleanup",
+];
 const qualification = {
   version: 1,
   status: "passed",
@@ -303,7 +410,13 @@ const olderQualification = {
   error_type: "OpenShellError",
   cleanup_error_type: "TimeoutError",
   profiles: {
-    workspace: { boundary: "passed", roundtrip: "failed", saved_operation: "not_checked", sandbox_reuse: "not_checked", cleanup: "not_checked" },
+    workspace: {
+      boundary: "passed",
+      roundtrip: "failed",
+      saved_operation: "not_checked",
+      sandbox_reuse: "not_checked",
+      cleanup: "not_checked",
+    },
   },
 };
 const replay = {
@@ -315,13 +428,48 @@ const replay = {
 };
 
 const documents = [
-  ["model-20261006T080000Z.json", "model", runningCohort, "2026-10-06T08:40:00+00:00"],
-  ["diagnostic-20261005T150000Z.json", "diagnostic", diagnostic, "2026-10-05T15:20:00+00:00"],
-  ["replay-20261005T110000Z.json", "replay", replay, "2026-10-05T11:00:30+00:00"],
-  ["openshell-20261005T100000Z.json", "openshell", qualification, "2026-10-05T10:05:00+00:00"],
-  ["model-20261005T090000Z.json", "model", failedCohort, "2026-10-05T12:20:00+00:00"],
-  ["model-20261004T090000Z.json", "model", passedCohort, "2026-10-04T13:00:00+00:00"],
-  ["openshell-20261001T100000Z.json", "openshell", olderQualification, "2026-10-01T10:05:00+00:00"],
+  [
+    "model-20261006T080000Z.json",
+    "model",
+    runningCohort,
+    "2026-10-06T08:40:00+00:00",
+  ],
+  [
+    "diagnostic-20261005T150000Z.json",
+    "diagnostic",
+    diagnostic,
+    "2026-10-05T15:20:00+00:00",
+  ],
+  [
+    "replay-20261005T110000Z.json",
+    "replay",
+    replay,
+    "2026-10-05T11:00:30+00:00",
+  ],
+  [
+    "openshell-20261005T100000Z.json",
+    "openshell",
+    qualification,
+    "2026-10-05T10:05:00+00:00",
+  ],
+  [
+    "model-20261005T090000Z.json",
+    "model",
+    failedCohort,
+    "2026-10-05T12:20:00+00:00",
+  ],
+  [
+    "model-20261004T090000Z.json",
+    "model",
+    passedCohort,
+    "2026-10-04T13:00:00+00:00",
+  ],
+  [
+    "openshell-20261001T100000Z.json",
+    "openshell",
+    olderQualification,
+    "2026-10-01T10:05:00+00:00",
+  ],
 ];
 
 const text = (value) => (typeof value === "string" ? value : null);
@@ -348,7 +496,9 @@ function summary(name, kind, document, modified) {
   };
 }
 
-const items = documents.map(([name, kind, document, modified]) => summary(name, kind, document, modified));
+const items = documents.map(([name, kind, document, modified]) =>
+  summary(name, kind, document, modified),
+);
 // A file the API could not parse: listed with status "unreadable", detail answers 422.
 items.push({
   name: "legacy-broken.json",
@@ -358,4 +508,7 @@ items.push({
   status: "unreadable",
   gates: {},
 });
-writeFileSync(here("./reports-index.json"), `${JSON.stringify({ items, truncated: false }, null, 2)}\n`);
+writeFileSync(
+  here("./reports-index.json"),
+  `${JSON.stringify({ items, truncated: false }, null, 2)}\n`,
+);

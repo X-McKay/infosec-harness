@@ -23,15 +23,19 @@ test.describe("run detail: potentially exploitable", () => {
     page,
   }) => {
     await expect(page.getByText("Investigation · finished")).toBeVisible();
-    await expect(page.getByText("investigate-v11-exploitable-0001", { exact: true })).toBeVisible();
+    await expect(
+      page.getByText("investigate-v11-exploitable-0001", { exact: true }),
+    ).toBeVisible();
     const verdict = page.locator("div.rounded-lg", {
       has: page.getByRole("heading", { name: "Verdict", exact: true }),
     });
-    await expect(verdict.getByText("potentially exploitable", { exact: true })).toBeVisible();
+    await expect(
+      verdict.getByText("potentially exploitable", { exact: true }),
+    ).toBeVisible();
     await expect(verdict).toContainText("Admitted with source citations");
-    await expect(page.getByRole("region", { name: "Verdict summary" })).toContainText(
-      "observed the injected marker command",
-    );
+    await expect(
+      page.getByRole("region", { name: "Verdict summary" }),
+    ).toContainText("observed the injected marker command");
     const citations = verdict.getByRole("table");
     await expect(citations.getByRole("row")).toHaveCount(3);
     await expect(citations).toContainText("app/handlers/extract.py");
@@ -46,8 +50,12 @@ test.describe("run detail: potentially exploitable", () => {
   test("cited, uncited evidence and the probe observation table", async ({
     page,
   }) => {
-    const cited = page.getByRole("listitem").filter({ hasText: "probe-cmdi-1" });
-    await expect(cited).toContainText("vulnerability observed (self-reported): true");
+    const cited = page
+      .getByRole("listitem")
+      .filter({ hasText: "probe-cmdi-1" });
+    await expect(cited).toContainText(
+      "vulnerability observed (self-reported): true",
+    );
     await expect(cited).toContainText("complete, source-verified");
 
     const probe = evidenceCard(page, "probe-cmdi-1");
@@ -68,7 +76,9 @@ test.describe("run detail: potentially exploitable", () => {
       "Vulnerability observed",
       "Source verified",
     ]) {
-      const row = observations.getByRole("row", { name: new RegExp(`^${claim}`) });
+      const row = observations.getByRole("row", {
+        name: new RegExp(`^${claim}`),
+      });
       await expect(row.getByRole("cell").first()).toHaveText("true");
     }
     await expect(
@@ -81,7 +91,9 @@ test.describe("run detail: potentially exploitable", () => {
 
     const command = evidenceCard(page, "cmd-grep-1");
     await expect(command.getByText("not cited", { exact: true })).toBeVisible();
-    await expect(command.getByText("output truncated", { exact: true })).toBeVisible();
+    await expect(
+      command.getByText("output truncated", { exact: true }),
+    ).toBeVisible();
     await expect(command.getByRole("table")).toHaveCount(0);
 
     // Selecting a cited id moves focus to its card.
@@ -95,12 +107,18 @@ test.describe("run detail: potentially exploitable", () => {
     const probe = evidenceCard(page, "probe-cmdi-1");
     const summary = probe.locator("summary", { hasText: "stdout" });
     await expect(summary).toContainText(/\d+ lines · 206 characters/);
-    await expect(probe.getByText("positive control: marker written")).toHaveCount(0);
+    await expect(
+      probe.getByText("positive control: marker written"),
+    ).toHaveCount(0);
     await summary.click();
-    await expect(probe.getByText(/positive control: marker written/)).toBeVisible();
+    await expect(
+      probe.getByText(/positive control: marker written/),
+    ).toBeVisible();
     await expect(probe).toContainText("stderr: no output recorded");
     await summary.click();
-    await expect(probe.getByText("positive control: marker written")).toHaveCount(0);
+    await expect(
+      probe.getByText("positive control: marker written"),
+    ).toHaveCount(0);
   });
 
   test("the stdout summary counts newline-terminated output's lines", async ({
@@ -131,7 +149,9 @@ test.describe("run detail: potentially exploitable", () => {
     await expect(identity).toContainText("example-model-2026-09");
     await expect(identity).toContainText("wkr-5d6e7f80");
     await identity.getByText("Dependencies (2)").click();
-    await expect(identity.getByRole("cell", { name: "temporalio" })).toBeVisible();
+    await expect(
+      identity.getByRole("cell", { name: "temporalio" }),
+    ).toBeVisible();
 
     const usage = page.locator("div.rounded-lg", {
       has: page.getByRole("heading", { name: "Usage", exact: true }),
@@ -143,7 +163,9 @@ test.describe("run detail: potentially exploitable", () => {
       "input tokens",
       "output tokens",
     ]);
-    await expect(usage.getByRole("row", { name: /input tokens/ })).toContainText("51,200");
+    await expect(
+      usage.getByRole("row", { name: /input tokens/ }),
+    ).toContainText("51,200");
   });
 
   test("timeline lists events and says when the API truncated it", async ({
@@ -153,16 +175,25 @@ test.describe("run detail: potentially exploitable", () => {
       has: page.getByRole("heading", { name: "Event timeline" }),
     });
     await expect(timeline.getByRole("listitem")).toHaveCount(6);
+    await expect(timeline).toContainText(
+      "6 of 7 events · 1 workflow-task and activity-start events hidden",
+    );
     await expect(timeline.getByRole("listitem").first()).toContainText(
       "InvestigationWorkflow",
     );
     await expect(timeline.getByRole("listitem").first()).toContainText(
-      "workflow_started",
+      "workflow started",
     );
     await expect(timeline).toContainText("exit 0");
     await expect(timeline).toContainText(
       "The API bounded this timeline; not every recorded event is shown.",
     );
+    await timeline.getByRole("button", { name: "Show all events" }).click();
+    await expect(timeline.getByRole("listitem")).toHaveCount(7);
+    await expect(timeline).toContainText("workflow_task_scheduled");
+    await expect(
+      timeline.getByRole("button", { name: "Hide bookkeeping" }),
+    ).toHaveAttribute("aria-pressed", "true");
     // A terminal run shows no cancel control.
     await expect(
       page.getByRole("button", { name: "Cancel investigation" }),
@@ -179,9 +210,13 @@ test("run detail: likely not exploitable with a superseded probe", async ({
   ).toBeVisible();
 
   const superseded = evidenceCard(page, "probe-sqli-1");
-  await expect(superseded.getByText("superseded", { exact: true })).toBeVisible();
+  await expect(
+    superseded.getByText("superseded", { exact: true }),
+  ).toBeVisible();
   await expect(superseded.getByText("cited", { exact: true })).toHaveCount(0);
-  await expect(superseded).toContainText("The investigator disowned this probe");
+  await expect(superseded).toContainText(
+    "The investigator disowned this probe",
+  );
   await expect(superseded.getByText("exit 1", { exact: true })).toBeVisible();
   await expect(superseded).toContainText(
     "Not a complete, source-verified probe: exit code 1;",
@@ -195,7 +230,9 @@ test("run detail: likely not exploitable with a superseded probe", async ({
   const cited = evidenceCard(page, "probe-sqli-2");
   await expect(cited.getByText("cited", { exact: true })).toBeVisible();
   await expect(
-    cited.getByRole("table").getByRole("row", { name: /^Vulnerability observed/ }),
+    cited
+      .getByRole("table")
+      .getByRole("row", { name: /^Vulnerability observed/ }),
   ).toContainText("false");
 
   await expect(
@@ -207,9 +244,7 @@ test("run detail: likely not exploitable with a superseded probe", async ({
     page.getByText("Worker identity", { exact: true }),
   ).toBeVisible();
   await expect(page.getByText("Not recorded", { exact: true })).toBeVisible();
-  await expect(
-    page.getByText("The API bounded this timeline"),
-  ).toHaveCount(0);
+  await expect(page.getByText("The API bounded this timeline")).toHaveCount(0);
 });
 
 test("run detail: a failed run shows its error and hides a missing timeline", async ({
@@ -218,25 +253,83 @@ test("run detail: a failed run shows its error and hides a missing timeline", as
 }) => {
   await page.goto("/runs/investigate-v11-failed-0004");
   const alert = page.getByRole("alert");
-  await expect(alert).toContainText("The investigation ended without a report (failed).");
+  await expect(alert).toContainText(
+    "The investigation ended without a report (failed).",
+  );
   await expect(alert).toContainText(
     "Activity task failed: OpenShellError: sandbox admission refused",
   );
   await expect(page.getByRole("heading", { name: "No report" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Verdict" })).toHaveCount(0);
   await expect
-    .poll(() => api.calls("GET", "/api/runs/investigate-v11-failed-0004/events").length)
+    .poll(
+      () =>
+        api.calls("GET", "/api/runs/investigate-v11-failed-0004/events").length,
+    )
     .toBeGreaterThan(0);
-  await expect(page.getByRole("heading", { name: "Event timeline" })).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "Finding as submitted" })).toBeVisible();
-  await expect(page.getByText("working snapshot", { exact: false })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Event timeline" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "Finding as submitted" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("working snapshot", { exact: false }),
+  ).toBeVisible();
+});
+
+test("run detail: a failed run names the failure type Temporal recorded", async ({
+  page,
+  api,
+}) => {
+  api.on("GET", /^\/api\/runs\/investigate-v11-failed-0004\/events$/, {
+    body: {
+      run_id: "investigate-v11-failed-0004",
+      events: [
+        {
+          at: "2026-10-05T09:00:00+00:00",
+          kind: "workflow_started",
+          name: "InvestigationWorkflow",
+          detail: "",
+        },
+        {
+          at: "2026-10-05T09:02:00+00:00",
+          kind: "activity_failed",
+          name: "run_probe",
+          detail: "OpenShellError",
+        },
+        {
+          at: "2026-10-05T09:02:05+00:00",
+          kind: "workflow_failed",
+          name: null,
+          detail: "UsageLimitExceeded",
+        },
+      ],
+      truncated: false,
+    },
+  });
+  await page.goto("/runs/investigate-v11-failed-0004");
+  await expect(page.getByRole("alert")).toContainText(
+    "Temporal recorded the failure as UsageLimitExceeded.",
+  );
+  const timeline = page.locator("div.rounded-lg", {
+    has: page.getByRole("heading", { name: "Event timeline" }),
+  });
+  await expect(timeline.getByRole("listitem")).toHaveCount(3);
+  await expect(timeline.getByRole("listitem").nth(1)).toContainText(
+    "activity failed",
+  );
 });
 
 test.describe("run detail: cancelling a running investigation", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/runs/investigate-v11-running-0003");
-    await expect(page.getByRole("heading", { name: "In progress" })).toBeVisible();
-    await expect(page.getByText("running", { exact: true }).first()).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "In progress" }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("running", { exact: true }).first(),
+    ).toBeVisible();
   });
 
   test("dismissing the confirmation sends nothing", async ({ page, api }) => {
@@ -259,7 +352,9 @@ test.describe("run detail: cancelling a running investigation", () => {
     await expect(
       page.getByRole("button", { name: "Cancellation requested" }),
     ).toBeDisabled();
-    expect(api.calls("POST", "/api/runs/investigate-v11-running-0003/cancel")).toHaveLength(1);
+    expect(
+      api.calls("POST", "/api/runs/investigate-v11-running-0003/cancel"),
+    ).toHaveLength(1);
   });
 
   test("a running run's timeline is shown without a truncation note", async ({
@@ -290,5 +385,7 @@ test("an unknown route shows the page-not-found view", async ({ page }) => {
   await expect(
     page.getByRole("heading", { level: 1, name: "Page not found" }),
   ).toBeVisible();
-  await expect(page.getByRole("link", { name: "Back to investigations" })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Back to investigations" }),
+  ).toBeVisible();
 });

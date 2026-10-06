@@ -85,7 +85,8 @@ export class MockApi {
       body,
     });
     const override = this.overrides.find(
-      (item) => item.method === request.method() && item.path.test(url.pathname),
+      (item) =>
+        item.method === request.method() && item.path.test(url.pathname),
     );
     const reply = override
       ? await override.handler(request, url)
@@ -109,7 +110,8 @@ export class MockApi {
       if (method === "GET") {
         const token = url.searchParams.get("page_token");
         if (!token) return { body: fixture("runs-page-1.json") };
-        if (token === "tok-page-2") return { body: fixture("runs-page-2.json") };
+        if (token === "tok-page-2")
+          return { body: fixture("runs-page-2.json") };
         return { status: 400, body: { detail: "Invalid page token" } };
       }
     }

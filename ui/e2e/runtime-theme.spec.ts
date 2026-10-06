@@ -5,7 +5,9 @@ test.describe("runtime", () => {
     page,
   }) => {
     await page.goto("/runtime");
-    await expect(page.getByRole("heading", { level: 1, name: "Runtime" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { level: 1, name: "Runtime" }),
+    ).toBeVisible();
     const health = page.locator("div.rounded-lg", {
       has: page.getByRole("heading", { name: "API health" }),
     });
@@ -17,33 +19,61 @@ test.describe("runtime", () => {
     await expect(field("Generation")).toHaveText("v11");
     await expect(field("Task queue")).toHaveText("investigate-v11");
     await expect(field("Native OpenShell runtime")).toHaveText("not checked");
-    await expect(page.getByText("generation v11", { exact: true })).toBeVisible();
+    await expect(
+      page.getByText("generation v11", { exact: true }),
+    ).toBeVisible();
     await expect(page.getByText("http://127.0.0.1:4173/api")).toBeVisible();
     await expect(health).toContainText(
       "It does not establish model availability, provider credentials or sandbox isolation",
     );
     // Sidebar summary
-    const sidebar = page.getByRole("status").filter({ hasText: "Native runtime" });
+    const sidebar = page
+      .getByRole("status")
+      .filter({ hasText: "Native runtime" });
     await expect(sidebar).toContainText("control plane ready");
     await expect(sidebar).toContainText("Native runtime: not checked");
   });
 
   test("shows the Temporal connectivity the API reports", async ({ page }) => {
-    test.fixme(
-      true,
-      "UI defect: GET /api/health reports `temporal: true` (a boolean in the Health schema), " +
-        "but src/lib/runtime.ts reads it with text(), so /runtime shows Temporal as " +
-        "'Not reported' and the sidebar omits its Temporal line.",
-    );
     await page.goto("/runtime");
     const health = page.locator("div.rounded-lg", {
       has: page.getByRole("heading", { name: "API health" }),
     });
-    const temporal = health
-      .locator("dt", { hasText: /^Temporal$/ })
-      .locator("xpath=following-sibling::dd");
-    await expect(temporal).not.toHaveText("Not reported");
-    await expect(page.getByText(/^Temporal: /)).toBeVisible();
+    await expect(
+      health
+        .locator("dt", { hasText: /^Temporal$/ })
+        .locator("xpath=following-sibling::dd"),
+    ).toHaveText("reachable");
+    await expect(page.getByText("Temporal: reachable")).toBeVisible();
+  });
+
+  test("an unreachable Temporal is reported as such, never as ready", async ({
+    page,
+    api,
+  }) => {
+    // The API answers 503 with the Health body when Temporal is unreachable.
+    api.on("GET", /^\/api\/health$/, {
+      status: 503,
+      body: {
+        status: "temporal_unavailable",
+        temporal: false,
+        runtime: "not_checked",
+        generation: "v11",
+        task_queue: "investigate-v11",
+      },
+    });
+    await page.goto("/runtime");
+    const health = page.locator("div.rounded-lg", {
+      has: page.getByRole("heading", { name: "API health" }),
+    });
+    const field = (label: string) =>
+      health
+        .locator("dt", { hasText: new RegExp(`^${label}$`) })
+        .locator("xpath=following-sibling::dd");
+    await expect(field("Status")).toHaveText("temporal unavailable");
+    await expect(field("Temporal")).toHaveText("unreachable");
+    await expect(page.getByText("Temporal: unreachable")).toBeVisible();
+    await expect(page.getByText("control plane ready")).toHaveCount(0);
   });
 
   test("an unhealthy API is reported, not inferred", async ({ page, api }) => {
@@ -52,7 +82,9 @@ test.describe("runtime", () => {
       body: { detail: "Workflow service unavailable" },
     });
     await page.goto("/runtime");
-    await expect(page.getByText("API unavailable")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("API unavailable")).toBeVisible({
+      timeout: 10_000,
+    });
     await expect(page.getByRole("alert")).toContainText("503");
   });
 });
@@ -63,7 +95,9 @@ test.describe("appearance", () => {
 
   test("follows the system preference by default", async ({ page }, info) => {
     await page.goto("/");
-    await expect(page.getByRole("combobox", { name: "Appearance" })).toHaveValue("system");
+    await expect(
+      page.getByRole("combobox", { name: "Appearance" }),
+    ).toHaveValue("system");
     expect(await isDark(page)).toBe(info.project.name === "dark");
   });
 
@@ -75,14 +109,16 @@ test.describe("appearance", () => {
     await page.reload();
     await expect(select).toHaveValue("dark");
     expect(await isDark(page)).toBe(true);
-    expect(await page.evaluate(() => localStorage.getItem("harness-theme"))).toBe("dark");
+    expect(
+      await page.evaluate(() => localStorage.getItem("harness-theme")),
+    ).toBe("dark");
 
     await select.selectOption("light");
     await expect.poll(() => isDark(page)).toBe(false);
     await page.goto("/runtime");
-    await expect(page.getByRole("combobox", { name: "Appearance" }).first()).toHaveValue(
-      "light",
-    );
+    await expect(
+      page.getByRole("combobox", { name: "Appearance" }).first(),
+    ).toHaveValue("light");
     expect(await isDark(page)).toBe(false);
   });
 });
