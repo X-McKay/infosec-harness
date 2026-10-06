@@ -3,7 +3,6 @@
 from datetime import timedelta
 from pathlib import Path
 
-from pydantic import BaseModel
 from pydantic_ai import Agent, AgentRetries, ModelRetry, RunContext
 from pydantic_ai.capabilities import AbstractCapability, ValidatedToolArgs
 from pydantic_ai.durable_exec.temporal import TemporalDurability, TemporalRunContext
@@ -16,16 +15,12 @@ from pydantic_core import to_json
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 
-from infosec_harness.contracts import (
-    Evidence,
-    InvestigationRequest,
-    Verdict,
-    WorkerIdentity,
-    definitive_support,
-)
-from infosec_harness.sandbox import OpenShell, Sandbox
+from infosec_harness.contracts import Evidence, Verdict, definitive_support
+from infosec_harness.sandbox import OpenShell
 from infosec_harness.sandbox.executor import MAX_INVOCATION_BYTES
+from infosec_harness.tools import build_toolset
 
+from .deps import InvestigationDeps
 from .evidence import retry_reasons
 
 MAX_HISTORY_BYTES = 32 * 1024 * 1024
@@ -34,15 +29,6 @@ AGENT_NAME = "investigator"
 GUARDED_ACTIVITY_PREFIX = f"agent__{AGENT_NAME}__"
 # The packaged runtime skills, beside this subpackage.
 SKILLS = Path(__file__).parents[1] / "skills"
-
-
-class InvestigationDeps(BaseModel):
-    run_id: str
-    sandbox: Sandbox
-    source_digest: str
-    snapshot_path: str
-    request: InvestigationRequest
-    worker_identity: WorkerIdentity | None = None
 
 
 class DurablePayloadLimit(AbstractCapability[InvestigationDeps]):
@@ -135,9 +121,7 @@ async def validate_verdict(ctx: RunContext[InvestigationDeps], verdict: Verdict)
 
 
 def build_agent(openshell: OpenShell, model: Model) -> Agent[InvestigationDeps, Verdict]:
-    # The tools are typed by InvestigationDeps above, so they import this module.
-    from infosec_harness.tools import build_toolset
-
+    """The investigator over ``openshell`` tools and ``model``, durable under Temporal."""
     tools = build_toolset(openshell)
 
     # Model activities inherit this config (the library merges model_activity_config on top).

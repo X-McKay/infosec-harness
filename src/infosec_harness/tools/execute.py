@@ -3,12 +3,13 @@
 import re
 from dataclasses import replace
 from pathlib import Path
+from typing import Literal
 
 from pydantic_ai import RunContext
 from pydantic_ai.toolsets import FunctionToolset
 
+from infosec_harness.agents.deps import InvestigationDeps
 from infosec_harness.agents.evidence import final_probe_line, parse_probe_observations
-from infosec_harness.agents.investigator import InvestigationDeps
 from infosec_harness.contracts import Evidence
 from infosec_harness.sandbox import (
     CommandResult,
@@ -134,7 +135,7 @@ async def command_tool(
     ctx: RunContext[InvestigationDeps],
     command: str,
     sandbox: Sandbox,
-    kind: str,
+    kind: Literal["execute", "probe"],
 ) -> Evidence:
     identity = operation_id(ctx, kind)
     timeout = ctx.deps.request.limits.command_timeout_seconds

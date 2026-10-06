@@ -2,8 +2,9 @@
 
 from typing import Literal
 
-from pydantic_ai.messages import ModelResponse
-from pydantic_ai.models import Model
+from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.models import Model, ModelRequestParameters
+from pydantic_ai.settings import ModelSettings
 from temporalio import activity
 
 from infosec_harness.sandbox import OpenShell
@@ -49,7 +50,12 @@ class OpenShellModel(Model):
     def system(self) -> str:
         return "openshell"
 
-    async def request(self, messages, model_settings, model_request_parameters) -> ModelResponse:
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
         # Native PydanticAI durability owns this activity's stable identity and history.
         # Production inference without Temporal is deliberately unavailable.
         info = activity.info()

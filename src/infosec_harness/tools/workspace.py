@@ -1,11 +1,12 @@
 """The read, search and write tools: confined repository file access inside the workspace."""
 
 import json
+from typing import Literal
 
 from pydantic_ai import RunContext
 from pydantic_ai.toolsets import FunctionToolset
 
-from infosec_harness.agents.investigator import InvestigationDeps
+from infosec_harness.agents.deps import InvestigationDeps
 from infosec_harness.sandbox import OpenShell
 
 from .execute import bounded, operation_id
@@ -99,7 +100,10 @@ def excerpt(text: str) -> str:
 
 
 async def file_tool(
-    openshell: OpenShell, ctx: RunContext[InvestigationDeps], action: str, **values
+    openshell: OpenShell,
+    ctx: RunContext[InvestigationDeps],
+    action: Literal["read", "search", "write"],
+    **values: str | int,
 ) -> str:
     timeout = ctx.deps.request.limits.command_timeout_seconds
     result = await openshell.execute(
