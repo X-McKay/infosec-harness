@@ -15,9 +15,13 @@ export const Table = ({
 export const TableHeader = (
   p: React.HTMLAttributes<HTMLTableSectionElement>,
 ) => <thead className="[&_tr]:border-b" {...p} />;
-export const TableBody = (p: React.HTMLAttributes<HTMLTableSectionElement>) => (
-  <tbody className="[&_tr:last-child]:border-0" {...p} />
-);
+export const TableBody = React.forwardRef<
+  HTMLTableSectionElement,
+  React.HTMLAttributes<HTMLTableSectionElement>
+>((p, ref) => (
+  <tbody ref={ref} className="[&_tr:last-child]:border-0" {...p} />
+));
+TableBody.displayName = "TableBody";
 export const TableRow = ({
   className,
   ...props

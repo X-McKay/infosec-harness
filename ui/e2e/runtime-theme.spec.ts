@@ -1,4 +1,17 @@
+import type { Page } from "@playwright/test";
 import { expect, test } from "./support/test";
+
+/**
+ * The phone header shows only the runtime summary line; the rest of the health summary sits
+ * behind its disclosure button. The sidebar (768px and wider) always shows every line.
+ */
+async function openRuntimeDetails(page: Page) {
+  const toggle = page.getByRole("button", { name: "Runtime details" });
+  if (await toggle.isVisible()) {
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  }
+}
 
 test.describe("runtime", () => {
   test("shows what the health endpoint reports and keeps the runtime not checked", async ({
@@ -44,6 +57,7 @@ test.describe("runtime", () => {
         .locator("dt", { hasText: /^Temporal$/ })
         .locator("xpath=following-sibling::dd"),
     ).toHaveText("reachable");
+    await openRuntimeDetails(page);
     await expect(page.getByText("Temporal: reachable")).toBeVisible();
   });
 
@@ -72,6 +86,7 @@ test.describe("runtime", () => {
         .locator("xpath=following-sibling::dd");
     await expect(field("Status")).toHaveText("temporal unavailable");
     await expect(field("Temporal")).toHaveText("unreachable");
+    await openRuntimeDetails(page);
     await expect(page.getByText("Temporal: unreachable")).toBeVisible();
     await expect(page.getByText("control plane ready")).toHaveCount(0);
   });

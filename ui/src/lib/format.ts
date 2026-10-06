@@ -31,6 +31,19 @@ export const percent = (value: number | null | undefined, digits = 1) =>
   value == null ? UNAVAILABLE : `${(value * 100).toFixed(digits)}%`;
 
 /**
+ * A repository URL or local path shortened for a list row: the scheme is dropped and anything
+ * longer than `keep` segments keeps only its last `keep`, behind "…/". Text only; the full
+ * value stays on the detail view and in search.
+ */
+export function shortLocation(value: string, keep = 3): string {
+  const bare = value
+    .replace(/^[a-z][a-z0-9+.-]*:\/\//i, "")
+    .replace(/\/+$/, "");
+  const parts = bare.split("/").filter(Boolean);
+  return parts.length > keep ? `…/${parts.slice(-keep).join("/")}` : bare;
+}
+
+/**
  * Lines in recorded output as a reader counts them: a final line break ends the last line
  * rather than starting an empty one, so "a\nb\n" is two lines. CRLF counts as one break.
  */

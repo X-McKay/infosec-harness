@@ -10,7 +10,7 @@ import {
   Tile,
 } from "@/components/evaluations/common";
 import { EvalLink } from "@/components/evaluations/links";
-import { reportQuery, reportsQuery } from "@/api/queries";
+import { REPORTS_REFRESH_MS, reportQuery, reportsQuery } from "@/api/queries";
 import {
   cohortUnfinished,
   gateRows,
@@ -145,6 +145,7 @@ export function Metrics() {
               list.isFetching || details.some((query) => query.isFetching)
             }
             stale={list.isError && !!list.data}
+            live={REPORTS_REFRESH_MS}
           />
           <Button
             variant="outline"

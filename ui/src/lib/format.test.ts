@@ -8,6 +8,7 @@ import {
   number,
   percent,
   seconds,
+  shortLocation,
   timestamp,
 } from "./format.ts";
 
@@ -43,6 +44,23 @@ test("recorded timestamps use locale formatting and missing or malformed values 
   assert.equal(timestamp(value), new Date(value).toLocaleString());
   assert.equal(timestamp(value, "time"), new Date(value).toLocaleTimeString());
   assert.equal(timestamp(0), new Date(0).toLocaleString());
+});
+
+test("short locations keep the last segments of long paths and URLs", () => {
+  assert.equal(
+    shortLocation("/Users/al/src/eval-corpus/perl/cmdi/fixed"),
+    "…/perl/cmdi/fixed",
+  );
+  assert.equal(
+    shortLocation("https://github.com/acme/billing"),
+    "github.com/acme/billing",
+  );
+  assert.equal(
+    shortLocation("https://git.example.com/group/sub/repo.git/"),
+    "…/group/sub/repo.git",
+  );
+  assert.equal(shortLocation("repo"), "repo");
+  assert.equal(shortLocation(""), "");
 });
 
 test("line counts treat a final line break as the end of the last line", () => {

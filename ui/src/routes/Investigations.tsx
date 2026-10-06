@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { Plus, Search } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { queries } from "@/api/queries";
+import { LIST_REFRESH_MS, queries } from "@/api/queries";
 import { Freshness, QueryState } from "@/components/QueryState";
 import { NewInvestigationForm } from "@/components/investigations/NewInvestigationForm";
 import { Badge } from "@/components/ui/badge";
@@ -16,7 +16,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { duration, timestamp } from "@/lib/format";
+import { duration, shortLocation, timestamp } from "@/lib/format";
+import { nextRowIndex, typingTarget } from "@/lib/keyboard";
 import {
   filterRuns,
   hasFilters,
@@ -34,6 +35,8 @@ import { VERDICT_LABELS, verdictLabel, verdictVariant } from "@/lib/verdict";
 import { elapsedSeconds, statusCounts } from "@/lib/workflow";
 import { cn } from "@/lib/utils";
 
+const ROW_LINK = "a[data-row-link]";
+
 export function Investigations() {
   const search = useSearch({ from: "/" });
   const navigate = useNavigate({ from: "/" });
@@ -41,6 +44,15 @@ export function Investigations() {
   // Tokens of the pages before this one, for Previous; the API pages forward only.
   const [previousPages, setPreviousPages] = useState<string[]>([]);
   const searchBox = useRef<HTMLInputElement>(null);
+  // The URL keeps the trimmed query; the box keeps what was typed, so spaces between words
+  // survive while typing. An outside change (Clear filters, history) resets the box.
+  const [draft, setDraft] = useState(search.q ?? "");
+  useEffect(() => {
+    setDraft((current) =>
+      current.trim() === (search.q ?? "") ? current : (search.q ?? ""),
+    );
+  }, [search.q]);
+  const rowsRef = useRef<HTMLTableSectionElement>(null);
   const query = useQuery({
     ...queries.runs(search.page ?? ""),
     placeholderData: (previous) => previous,
@@ -59,28 +71,53 @@ export function Investigations() {
   const clearFilters = () =>
     update({ q: undefined, status: undefined, verdict: undefined });
 
-  // "/" focuses the search box, as in most list views.
+  /**
+   * "/" focuses the search box; j and k (and the arrow, Home and End keys once a row has
+   * focus) move between rows; Enter opens the focused row's investigation through its link.
+   */
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
-      if (
-        event.key === "/" &&
-        !event.metaKey &&
-        !event.ctrlKey &&
-        !target?.closest("input, textarea, select, [contenteditable]")
-      ) {
+      if (target === searchBox.current) {
+        if (event.key === "ArrowDown") {
+          const first = rowsRef.current?.querySelector<HTMLElement>(ROW_LINK);
+          if (first) {
+            event.preventDefault();
+            first.focus();
+          }
+        } else if (event.key === "Escape") searchBox.current?.blur();
+        return;
+      }
+      if (typingTarget(event, target)) return;
+      if (event.key === "/") {
         event.preventDefault();
         searchBox.current?.focus();
+        return;
       }
+      const links = [
+        ...(rowsRef.current?.querySelectorAll<HTMLElement>(ROW_LINK) ?? []),
+      ];
+      const row = target?.closest("tr[data-run-row]");
+      const current = row ? links.findIndex((link) => row.contains(link)) : -1;
+      const next = nextRowIndex(event.key, current, links.length);
+      if (next == null) return;
+      event.preventDefault();
+      links[next].focus();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  const runLink = (run: RunListItem) => ({
+    to: "/runs/$runId" as const,
+    params: { runId: run.id },
+    search: { ...search, from_queue: true },
+  });
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5 md:space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
+        <div className="min-w-0">
           <p className="eyebrow">Triage workspace</p>
           <h1>Investigations</h1>
           <p className="mt-2 text-sm text-muted-foreground">
@@ -88,18 +125,11 @@ export function Investigations() {
             to see its verdict, the evidence behind it and its limitations.
           </p>
         </div>
-        <div className="flex flex-col items-end gap-2">
-          {!creating && (
-            <Button onClick={() => setCreating(true)}>
-              <Plus className="h-4 w-4" aria-hidden="true" /> New investigation
-            </Button>
-          )}
-          <Freshness
-            at={query.dataUpdatedAt}
-            fetching={query.isFetching}
-            stale={query.isError && !!page}
-          />
-        </div>
+        {!creating && (
+          <Button onClick={() => setCreating(true)}>
+            <Plus className="h-4 w-4" aria-hidden="true" /> New investigation
+          </Button>
+        )}
       </div>
 
       {creating && (
@@ -117,7 +147,7 @@ export function Investigations() {
       )}
 
       <div
-        className="grid grid-cols-2 gap-3 md:grid-cols-4"
+        className="grid grid-cols-4 gap-2 md:gap-3"
         role="group"
         aria-label="Status filter"
       >
@@ -130,14 +160,14 @@ export function Investigations() {
               aria-pressed={selected}
               onClick={() => update({ status: selected ? undefined : status })}
               className={cn(
-                "rounded-lg border bg-card p-4 text-left shadow-sm transition-colors hover:bg-muted/50",
+                "min-w-0 rounded-lg border bg-card p-2.5 text-left shadow-sm transition-colors hover:bg-muted/50 md:p-4",
                 selected && "border-primary ring-1 ring-primary",
               )}
             >
-              <span className="block text-xs text-muted-foreground">
+              <span className="block truncate text-[11px] text-muted-foreground md:text-xs">
                 {STATUS_FILTER_LABELS[status]}
               </span>
-              <span className="mt-1 block text-2xl font-semibold tabular-nums">
+              <span className="mt-0.5 block text-xl font-semibold tabular-nums md:mt-1 md:text-2xl">
                 {page ? counts[status] : "–"}
               </span>
             </button>
@@ -146,7 +176,7 @@ export function Investigations() {
       </div>
 
       <Card>
-        <CardContent className="flex flex-wrap items-center gap-3 pt-4">
+        <CardContent className="flex flex-wrap items-center gap-3 p-3 md:p-4">
           <label className="relative flex min-w-[220px] flex-1 items-center">
             <Search
               className="pointer-events-none absolute left-2.5 h-4 w-4 text-muted-foreground"
@@ -157,11 +187,13 @@ export function Investigations() {
               type="search"
               className="field w-full pl-8"
               aria-label="Search investigations"
+              aria-keyshortcuts="/"
               placeholder="Search title, id, CWE, repository…  ( / )"
-              value={search.q ?? ""}
-              onChange={(event) =>
-                update({ q: event.target.value || undefined }, true)
-              }
+              value={draft}
+              onChange={(event) => {
+                setDraft(event.target.value);
+                update({ q: event.target.value.trim() || undefined }, true);
+              }}
             />
           </label>
           <div
@@ -190,13 +222,21 @@ export function Investigations() {
       </Card>
 
       <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
-        <p className="text-muted-foreground">
-          {page
-            ? filtered
-              ? `${visible.length} of ${items.length} on this page match · filters apply to the loaded page`
-              : `${items.length} on this page`
-            : "Loading investigations…"}
-        </p>
+        <div className="min-w-0 space-y-1">
+          <p className="text-muted-foreground">
+            {page
+              ? filtered
+                ? `${visible.length} of ${items.length} on this page match · filters apply to the loaded page`
+                : `${items.length} on this page`
+              : "Loading investigations…"}
+          </p>
+          <Freshness
+            at={query.dataUpdatedAt}
+            fetching={query.isFetching}
+            stale={query.isError && !!page}
+            live={LIST_REFRESH_MS}
+          />
+        </div>
         <div className="flex gap-2">
           {search.page && !previousPages.length && (
             <Button
@@ -247,20 +287,29 @@ export function Investigations() {
       {page && (
         <Card>
           <CardContent className="p-0">
-            <Table>
+            <Table className="table-fixed md:table-auto">
               <caption className="sr-only">
-                Investigations on this page; select a title to open one
+                Investigations on this page; select a title to open one. Press j
+                or k to move between rows and Enter to open one.
               </caption>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Verdict</TableHead>
+                  <TableHead className="hidden w-px md:table-cell">
+                    Status
+                  </TableHead>
+                  <TableHead className="hidden w-px md:table-cell">
+                    Verdict
+                  </TableHead>
                   <TableHead>Investigation</TableHead>
-                  <TableHead>Started</TableHead>
-                  <TableHead className="text-right">Elapsed</TableHead>
+                  <TableHead className="hidden w-px md:table-cell">
+                    Started
+                  </TableHead>
+                  <TableHead className="w-20 text-right md:w-px">
+                    Elapsed
+                  </TableHead>
                 </TableRow>
               </TableHeader>
-              <TableBody>
+              <TableBody ref={rowsRef}>
                 {visible.length === 0 && (
                   <TableRow>
                     <TableCell colSpan={5} className="empty">
@@ -291,68 +340,91 @@ export function Investigations() {
                     </TableCell>
                   </TableRow>
                 )}
-                {visible.map((run) => (
-                  <TableRow
-                    key={run.id}
-                    className="cursor-pointer"
-                    onClick={(event) => {
-                      if ((event.target as HTMLElement).closest("a, button"))
-                        return;
-                      void navigate({
-                        to: "/runs/$runId",
-                        params: { runId: run.id },
-                        search: { ...search, from_queue: true },
-                      });
-                    }}
-                  >
-                    <TableCell>
-                      <Badge variant={statusVariant(run.status)}>
-                        {statusLabel(run.status)}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      {run.verdict ? (
-                        <Badge variant={verdictVariant(run.verdict)}>
-                          {verdictLabel(run.verdict)}
-                        </Badge>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="max-w-[520px]">
-                      <Link
-                        to="/runs/$runId"
-                        params={{ runId: run.id }}
-                        search={{ ...search, from_queue: true }}
-                        className="font-medium hover:underline"
-                      >
-                        {run.title}
-                      </Link>
-                      <p className="mt-0.5 break-all text-xs text-muted-foreground">
-                        <span className="font-mono">{run.id}</span>
-                        {run.cwe && <> · {run.cwe}</>}
-                        {run.repo_url && <> · {run.repo_url}</>}
-                      </p>
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                      {timestamp(run.started_at)}
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap text-right font-mono text-xs">
-                      {duration(
-                        elapsedSeconds(
-                          run.started_at,
-                          run.closed_at,
-                          runActive(run.status),
-                          query.dataUpdatedAt,
-                        ),
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {visible.map((run) => {
+                  const status = (
+                    <Badge variant={statusVariant(run.status)}>
+                      {statusLabel(run.status)}
+                    </Badge>
+                  );
+                  const verdict = run.verdict ? (
+                    <Badge variant={verdictVariant(run.verdict)}>
+                      {verdictLabel(run.verdict)}
+                    </Badge>
+                  ) : null;
+                  return (
+                    <TableRow
+                      key={run.id}
+                      data-run-row=""
+                      className="cursor-pointer focus-within:bg-muted/60"
+                      onClick={(event) => {
+                        if ((event.target as HTMLElement).closest("a, button"))
+                          return;
+                        void navigate(runLink(run));
+                      }}
+                    >
+                      <TableCell className="hidden align-top md:table-cell">
+                        {status}
+                      </TableCell>
+                      <TableCell className="hidden align-top md:table-cell">
+                        {verdict ?? (
+                          <span className="text-xs text-muted-foreground">
+                            <span aria-hidden="true">—</span>
+                            <span className="sr-only">No verdict</span>
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell className="min-w-0 align-top md:max-w-[560px]">
+                        <Link
+                          {...runLink(run)}
+                          data-row-link=""
+                          className="rounded-sm font-medium hover:underline"
+                        >
+                          {run.title}
+                        </Link>
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5 md:hidden">
+                          {status}
+                          {verdict}
+                          <span className="text-xs text-muted-foreground">
+                            {timestamp(run.started_at)}
+                          </span>
+                        </div>
+                        <p className="mt-1 truncate font-mono text-xs text-muted-foreground">
+                          {run.id}
+                        </p>
+                        {(run.cwe || run.repo_url) && (
+                          <p className="truncate text-xs text-muted-foreground">
+                            {run.cwe}
+                            {run.cwe && run.repo_url && " · "}
+                            {run.repo_url && shortLocation(run.repo_url)}
+                          </p>
+                        )}
+                      </TableCell>
+                      <TableCell className="hidden whitespace-nowrap align-top text-xs text-muted-foreground md:table-cell">
+                        {timestamp(run.started_at)}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap text-right align-top font-mono text-xs tabular-nums">
+                        {duration(
+                          elapsedSeconds(
+                            run.started_at,
+                            run.closed_at,
+                            runActive(run.status),
+                            query.dataUpdatedAt,
+                          ),
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </CardContent>
         </Card>
+      )}
+      {page && visible.length > 0 && (
+        <p className="hidden text-xs text-muted-foreground md:block">
+          Keyboard: <kbd>j</kbd> / <kbd>k</kbd> or <kbd>↑</kbd> / <kbd>↓</kbd>{" "}
+          move between rows · <kbd>Enter</kbd> opens · <kbd>/</kbd> searches
+        </p>
       )}
       {page && counts.unknown > 0 && (
         <p className="text-xs text-muted-foreground">

@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState, type ReactNode } from "react";
+import { useNavigate, useSearch } from "@tanstack/react-router";
+import { useMemo, type ReactNode } from "react";
 import { Freshness, QueryState } from "@/components/QueryState";
+import { Breakable } from "@/components/ui/breakable";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -11,7 +13,7 @@ import {
   StatusBadge,
 } from "@/components/evaluations/common";
 import { EvalLink } from "@/components/evaluations/links";
-import { reportsQuery } from "@/api/queries";
+import { REPORTS_REFRESH_MS, reportsQuery } from "@/api/queries";
 import { integer, percent, timestamp } from "@/lib/format";
 import {
   REPORT_KINDS,
@@ -30,7 +32,10 @@ const GATE_SHORT: Record<string, string> = {
 /** Every report `harness eval|qualify|replay` wrote, newest first. */
 export function Reports() {
   const query = useQuery(reportsQuery());
-  const [kind, setKind] = useState<ReportKind | "">("");
+  const { kind } = useSearch({ from: "/reports" });
+  const navigate = useNavigate({ from: "/reports" });
+  const setKind = (next: ReportKind | undefined) =>
+    void navigate({ search: next ? { kind: next } : {} });
   const reports = useMemo(() => query.data?.items ?? [], [query.data]);
   const counts = useMemo(() => {
     const result = new Map<ReportKind, number>();
@@ -77,7 +82,7 @@ export function Reports() {
               role="group"
               aria-label="Filter by report kind"
             >
-              <FilterButton active={!kind} onClick={() => setKind("")}>
+              <FilterButton active={!kind} onClick={() => setKind(undefined)}>
                 All · {reports.length}
               </FilterButton>
               {REPORT_KINDS.filter((item) => counts.get(item)).map((item) => (
@@ -94,6 +99,7 @@ export function Reports() {
               at={query.dataUpdatedAt}
               fetching={query.isFetching}
               stale={query.isError}
+              live={REPORTS_REFRESH_MS}
             />
           </div>
           {query.data.truncated && (
@@ -114,7 +120,9 @@ export function Reports() {
                       <tr>
                         <th scope="col">Report</th>
                         <th scope="col">Status</th>
-                        <th scope="col">Commit / model</th>
+                        <th scope="col" className="whitespace-nowrap">
+                          Commit / model
+                        </th>
                         <th scope="col" className="text-right">
                           Completed
                         </th>
@@ -125,8 +133,13 @@ export function Reports() {
                           Unsafe neg.
                         </th>
                         <th scope="col">Gates</th>
-                        <th scope="col">Started · finished</th>
-                        <th scope="col" className="text-right">
+                        <th scope="col" className="whitespace-nowrap">
+                          Started · finished
+                        </th>
+                        <th
+                          scope="col"
+                          className="hidden text-right min-[1440px]:table-cell"
+                        >
                           Size
                         </th>
                       </tr>
@@ -145,13 +158,13 @@ export function Reports() {
                                 {path ? (
                                   <EvalLink
                                     href={path}
-                                    className="break-all font-mono font-medium text-primary hover:underline"
+                                    className="font-mono font-medium text-primary hover:underline"
                                   >
-                                    {report.name}
+                                    <Breakable>{report.name}</Breakable>
                                   </EvalLink>
                                 ) : (
-                                  <span className="break-all font-mono">
-                                    {report.name}
+                                  <span className="font-mono">
+                                    <Breakable>{report.name}</Breakable>
                                   </span>
                                 )}
                                 <KindBadge kind={report.kind} />
@@ -229,7 +242,7 @@ export function Reports() {
                                 </span>
                               )}
                             </td>
-                            <td className="whitespace-nowrap text-right text-xs tabular-nums">
+                            <td className="hidden whitespace-nowrap text-right text-xs tabular-nums min-[1440px]:table-cell">
                               {bytes(report.bytes)}
                             </td>
                           </tr>

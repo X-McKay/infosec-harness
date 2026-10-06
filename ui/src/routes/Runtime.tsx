@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { queries } from "@/api/queries";
+import { HEALTH_REFRESH_MS, queries } from "@/api/queries";
 import { Freshness, QueryState } from "@/components/QueryState";
 import { ThemeSelect } from "@/components/ThemeProvider";
 import { Badge } from "@/components/ui/badge";
@@ -43,6 +43,7 @@ export function Runtime() {
         at={query.dataUpdatedAt}
         fetching={query.isFetching}
         stale={query.isError && !!health}
+        live={HEALTH_REFRESH_MS}
       />
       <QueryState
         loading={query.isPending}

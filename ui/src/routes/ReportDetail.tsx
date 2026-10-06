@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Freshness, QueryState } from "@/components/QueryState";
+import { Breakable } from "@/components/ui/breakable";
 import { Button } from "@/components/ui/button";
 import { CohortReportView } from "@/components/evaluations/CohortReport";
 import { JsonTree } from "@/components/evaluations/JsonTree";
@@ -7,8 +8,10 @@ import { QualificationReportView } from "@/components/evaluations/QualificationR
 import { ReplayReportView } from "@/components/evaluations/ReplayReport";
 import { Section } from "@/components/evaluations/common";
 import { EvalLink } from "@/components/evaluations/links";
-import { reportQuery } from "@/api/queries";
+import { UNFINISHED_COHORT_REFRESH_MS, reportQuery } from "@/api/queries";
+import { cohortUnfinished } from "@/lib/evaluation";
 import { isReportName, type ReportDocument } from "@/lib/reports";
+import type { CaseFilters } from "@/lib/search";
 
 const EYEBROWS: Record<ReportDocument["shape"], string> = {
   cohort: "Cohort evaluation",
@@ -18,7 +21,16 @@ const EYEBROWS: Record<ReportDocument["shape"], string> = {
 };
 
 /** One recorded report, rendered by its shape; an unrecognised shape falls back to a tree. */
-export function ReportDetail({ name }: { name: string }) {
+export function ReportDetail({
+  name,
+  caseFilters,
+  onCaseFilters,
+}: {
+  name: string;
+  /** Case-table filters from the URL; local state when absent. */
+  caseFilters?: CaseFilters;
+  onCaseFilters?: (filters: CaseFilters) => void;
+}) {
   const valid = isReportName(name);
   const query = useQuery({ ...reportQuery(name), enabled: valid });
   const loaded = query.data;
@@ -32,7 +44,9 @@ export function ReportDetail({ name }: { name: string }) {
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div className="min-w-0">
           <p className="eyebrow">{eyebrow}</p>
-          <h1 className="break-all font-mono">{name}</h1>
+          <h1 className="font-mono">
+            <Breakable>{name}</Breakable>
+          </h1>
           <EvalLink
             href="/reports"
             className="text-xs text-muted-foreground hover:underline"
@@ -46,6 +60,12 @@ export function ReportDetail({ name }: { name: string }) {
               at={loaded ? query.dataUpdatedAt : undefined}
               fetching={query.isFetching}
               stale={query.isError && !!loaded}
+              live={
+                document?.shape === "cohort" &&
+                cohortUnfinished(document.report)
+                  ? UNFINISHED_COHORT_REFRESH_MS
+                  : false
+              }
             />
             <Button
               variant="outline"
@@ -74,7 +94,11 @@ export function ReportDetail({ name }: { name: string }) {
         />
       )}
       {document?.shape === "cohort" && (
-        <CohortReportView report={document.report} />
+        <CohortReportView
+          report={document.report}
+          caseFilters={caseFilters}
+          onCaseFilters={onCaseFilters}
+        />
       )}
       {document?.shape === "qualification" && (
         <QualificationReportView report={document.report} />
