@@ -1,3 +1,5 @@
+import asyncio
+import os
 import sys
 
 import pytest
@@ -5,7 +7,6 @@ import pytest
 from infosec_harness.sandbox.process import run_bounded
 
 
-@pytest.mark.asyncio
 async def test_timeout_is_reported_and_output_bound_keeps_tail():
     result = await run_bounded(
         [sys.executable, "-c", "import sys; sys.stdout.write('a' * 50 + 'END')"],
@@ -20,7 +21,6 @@ async def test_timeout_is_reported_and_output_bound_keeps_tail():
     assert slow.timed_out and slow.exit_code is None
 
 
-@pytest.mark.asyncio
 async def test_child_receives_only_the_explicit_environment(monkeypatch):
     monkeypatch.setenv("IH_AMBIENT_SECRET", "must-not-leak")
     result = await run_bounded(
@@ -32,9 +32,6 @@ async def test_child_receives_only_the_explicit_environment(monkeypatch):
 
 
 async def test_cancellation_reaps_child_before_it_can_mutate(tmp_path):
-    import asyncio
-    import os
-
     ready, late = tmp_path / "ready", tmp_path / "late"
     script = "import pathlib,os,time;pathlib.Path(os.environ['READY']).write_text(str(os.getpid()));time.sleep(1);pathlib.Path(os.environ['LATE']).write_text('bad')"
     task = asyncio.create_task(

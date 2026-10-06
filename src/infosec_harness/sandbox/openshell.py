@@ -28,7 +28,6 @@ from infosec_harness._io import atomic_write_bytes
 
 from .execution import (
     _PYTHON,
-    Execution,
     ExecutionUnknown,
     OpenShellError,
     OwnershipRecord,
@@ -44,6 +43,8 @@ from .execution import (
 from .process import finish, run_bounded
 from .transfer import Transfer
 
+# The native ownership label, independent of the workflow generation: live sandboxes and saved
+# records carry it, so changing it would orphan them.
 _OWNER = "infosec-harness.v3"
 # The dedicated-daemon inspector: bounded time and output for one ps/inspect call.
 _INSPECTION_TIMEOUT_S = 20
@@ -226,6 +227,11 @@ def _ownership(sandbox: Sandbox, *, closed: bool = False) -> OwnershipRecord:
     return {"sandbox": _sandbox_record(sandbox), "closed": closed}
 
 
+def _valid_timestamp(value: Any) -> bool:
+    """A protobuf Timestamp within its documented range (years 1..9999)."""
+    return -62135596800 <= value.seconds <= 253402300799 and 0 <= value.nanos <= 999999999
+
+
 def _directory(path: Path) -> None:
     missing = []
     parent = path
@@ -302,7 +308,7 @@ print(json.dumps({'uid':os.getuid(),'nnp':s['NoNewPrivs'].strip(),
 """
 
 
-class OpenShell(Execution, Transfer):
+class OpenShell(Transfer):
     """The pinned native adapter: lifecycle here, exec and transfer from the mixins."""
 
     def __init__(self, config: OpenShellConfig) -> None:
@@ -336,7 +342,7 @@ class OpenShell(Execution, Transfer):
         atomic_write_bytes(path, json.dumps(value, sort_keys=True).encode(),
                            exclusive=exclusive, sync_directory=True)
 
-    def _spec(self, profile: ProfileName):
+    def _spec(self, profile: ProfileName) -> Any:
         from google.protobuf.json_format import ParseDict
 
         config = self.config.profiles.get(profile)
@@ -380,13 +386,12 @@ class OpenShell(Execution, Transfer):
                 if failed:
                     raise OpenShellError("package egress must use exact hosts and enforced read-only "
                         f"REST; profile {profile} rule {rule_name} endpoint {index} fails: {failed}")
-        spec = self._pb.SandboxSpec(
+        return self._pb.SandboxSpec(
             template=self._pb.SandboxTemplate(image=config.image,
                 resources={"limits": {"cpu": config.cpu, "memory": config.memory}}),
             policy=policy, providers=[config.provider] if config.provider else [],
             command=[_PYTHON, "-c", "import time; time.sleep(2147483647)"], tty=False,
         )
-        return spec
 
     async def _rpc(self, what: str, call: Callable[..., Any], *args: Any,
                    missing_ok: bool = False, **kwargs: Any) -> Any:
@@ -611,13 +616,10 @@ class OpenShell(Execution, Transfer):
                     status = response.status
                     receipt = status.receipt
                     desired = receipt.desired
-                    def valid_time(t: Any) -> bool:
-                        return (-62135596800 <= t.seconds <= 253402300799
-                                and 0 <= t.nanos <= 999999999)
                     if (not status.HasField("receipt") or not receipt.HasField("desired")
                             or not receipt.HasField("persisted_time")
-                            or not valid_time(receipt.persisted_time)
-                            or any(status.HasField(field) and not valid_time(getattr(status, field))
+                            or not _valid_timestamp(receipt.persisted_time)
+                            or any(status.HasField(field) and not _valid_timestamp(getattr(status, field))
                                    for field in ("observed_time", "evaluated_time"))
                             or not receipt.receipt_id or not receipt.mutation_id
                             or receipt.workspace != self.config.workspace

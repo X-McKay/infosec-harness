@@ -38,7 +38,7 @@ class ProcessResult:
 
 
 class _Tail:
-    def __init__(self, limit: int):
+    def __init__(self, limit: int) -> None:
         self.limit, self.data, self.truncated = limit, bytearray(), False
 
     def add(self, chunk: bytes) -> None:

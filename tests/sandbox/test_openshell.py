@@ -169,7 +169,6 @@ def adapter(tmp_path, monkeypatch):
     return boundary, native
 
 
-@pytest.mark.asyncio
 async def test_native_create_and_exec_receipt_replay(adapter):
     boundary, native = adapter
     sandbox = await boundary.create("run")
@@ -190,7 +189,6 @@ async def test_native_create_and_exec_receipt_replay(adapter):
     }
 
 
-@pytest.mark.asyncio
 async def test_repeated_model_admission_reuses_qualification_without_replaying_commands(adapter):
     boundary, native = adapter
     sandbox = await boundary.create("run", profile="model")
@@ -207,7 +205,6 @@ async def test_repeated_model_admission_reuses_qualification_without_replaying_c
     assert [request.request_id for request in native.execs] == command_ids
 
 
-@pytest.mark.asyncio
 async def test_unknown_admission_closes_instead_of_resending_observation(adapter):
     boundary, native = adapter
     native.next_code = None
@@ -219,7 +216,6 @@ async def test_unknown_admission_closes_instead_of_resending_observation(adapter
     assert not native.resources and not boundary.receipts("run")
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("exit_code", [None, 124])
 async def test_exec_unknown_is_fenced_across_worker_restart(adapter, monkeypatch, exit_code):
     boundary, native = adapter
@@ -242,7 +238,6 @@ async def test_exec_unknown_is_fenced_across_worker_restart(adapter, monkeypatch
     assert len(native.execs) == 1
 
 
-@pytest.mark.asyncio
 async def test_operation_id_cannot_change_request(adapter):
     boundary, native = adapter
     sandbox = await boundary.create("run")
@@ -252,7 +247,6 @@ async def test_operation_id_cannot_change_request(adapter):
     assert len(native.execs) == 1
 
 
-@pytest.mark.asyncio
 async def test_completed_receipt_replays_after_cleanup(adapter):
     boundary, native = adapter
     sandbox = await boundary.create("run")
@@ -262,7 +256,6 @@ async def test_completed_receipt_replays_after_cleanup(adapter):
     assert len(native.execs) == 1
 
 
-@pytest.mark.asyncio
 async def test_output_overflow_cancels_rpc_and_closes_sandbox(adapter):
     boundary, native = adapter
     sandbox = await boundary.create("run")
@@ -283,7 +276,6 @@ async def test_output_overflow_cancels_rpc_and_closes_sandbox(adapter):
     ("null_device_major", 0), ("null_device_minor", 5),
     ("sockets_absent", False), ("credentials_absent", False), ("memory", "max"),
     ("cpu", "max 100000")])
-@pytest.mark.asyncio
 async def test_unconfined_workload_is_deleted_before_handle_return(adapter, field, value):
     boundary, native = adapter
     native.proof[field] = value
@@ -293,7 +285,6 @@ async def test_unconfined_workload_is_deleted_before_handle_return(adapter, fiel
     assert not native.execs
 
 
-@pytest.mark.asyncio
 async def test_missing_discriminating_native_filesystem_proof_refuses_workload(adapter):
     boundary, native = adapter
     native.proof.pop("shared_tmp_denied")
@@ -314,7 +305,6 @@ def test_only_explicit_null_sink_is_allowed_outside_workspace(adapter, writes):
         boundary._spec("workspace")
 
 
-@pytest.mark.asyncio
 async def test_cleanup_failure_does_not_skip_other_owned_sandboxes(adapter, monkeypatch):
     boundary, native = adapter
     first = await boundary.create("run")
@@ -332,7 +322,6 @@ async def test_cleanup_failure_does_not_skip_other_owned_sandboxes(adapter, monk
     assert native.deleted == [other.name] and first.name in native.resources
 
 
-@pytest.mark.asyncio
 async def test_outer_mount_fence_requires_observation(adapter, monkeypatch):
     boundary, native = adapter
     original = boundary._inspection_call
@@ -351,7 +340,6 @@ async def test_outer_mount_fence_requires_observation(adapter, monkeypatch):
     assert len(native.deleted) == 1 and not native.execs
 
 
-@pytest.mark.asyncio
 async def test_close_idempotent_and_never_deletes_replacement(adapter):
     boundary, native = adapter
     sandbox = await boundary.create("run")
@@ -365,7 +353,6 @@ async def test_close_idempotent_and_never_deletes_replacement(adapter):
     assert native.deleted == [sandbox.name]
 
 
-@pytest.mark.asyncio
 async def test_closed_run_cannot_reacquire_or_execute(adapter):
     boundary, native = adapter
     sandbox = await boundary.create("run")
@@ -376,7 +363,6 @@ async def test_closed_run_cannot_reacquire_or_execute(adapter):
         await boundary.execute(sandbox, "true", operation_id="activity", timeout=3)
 
 
-@pytest.mark.asyncio
 async def test_cancelled_create_finishes_ownership_record_and_native_cleanup(adapter, monkeypatch):
     boundary, native = adapter
     original = native.CreateSandbox
@@ -469,7 +455,6 @@ async def test_repeatedly_cancelled_exec_still_closes_its_sandbox(adapter, monke
     assert saved["closed"]
 
 
-@pytest.mark.asyncio
 async def test_unexpected_workspace_provider_is_rejected(adapter, monkeypatch):
     boundary, native = adapter
 
@@ -484,7 +469,6 @@ async def test_unexpected_workspace_provider_is_rejected(adapter, monkeypatch):
     assert len(native.deleted) == 1 and not native.execs
 
 
-@pytest.mark.asyncio
 async def test_forged_handle_cannot_execute(adapter):
     boundary, native = adapter
     sandbox = await boundary.create("run")
@@ -534,7 +518,6 @@ def test_native_package_policy_uses_automatic_tls_and_exclusive_l7_rules(adapter
             boundary._spec("workspace")
 
 
-@pytest.mark.asyncio
 async def test_model_cannot_receive_source_and_source_symlinks_rejected(adapter, tmp_path):
     boundary, _ = adapter
     model = await boundary.create("model-run", profile="model")
@@ -578,7 +561,6 @@ def source_archive(content, *, include_original=True, mode=0o644):
     return stream.getvalue()
 
 
-@pytest.mark.asyncio
 async def test_archive_over_one_gateway_message_is_restored_in_parts(adapter, tmp_path):
     """Live 2026-10-05: a 2.6 MB Java workspace restore failed because the pinned gateway
     decodes at most 1 MiB per gRPC message. Parts stay under that bound, each is its own
@@ -606,7 +588,6 @@ async def test_archive_over_one_gateway_message_is_restored_in_parts(adapter, tm
     assert len(native.execs) == before  # every part and the extraction replay from receipts
 
 
-@pytest.mark.asyncio
 async def test_large_native_snapshot_enters_probe_without_host_extraction(adapter, tmp_path):
     boundary, native = adapter
     source = await boundary.create("run")
@@ -630,7 +611,6 @@ async def test_large_native_snapshot_enters_probe_without_host_extraction(adapte
 @pytest.mark.parametrize("name,kind", [("../host.py", tarfile.REGTYPE),
     ("/etc/secret", tarfile.REGTYPE), ("link", tarfile.SYMTYPE), ("hard", tarfile.LNKTYPE),
     ("pipe", tarfile.FIFOTYPE)])
-@pytest.mark.asyncio
 async def test_hostile_archive_is_not_restored_or_extracted_on_host(adapter, tmp_path, name, kind):
     boundary, native = adapter
     source = await boundary.create("run")
@@ -647,7 +627,6 @@ async def test_hostile_archive_is_not_restored_or_extracted_on_host(adapter, tmp
 
 
 @pytest.mark.parametrize("content,include_original", [(b"changed", True), (b"", False)])
-@pytest.mark.asyncio
 async def test_changed_or_deleted_original_source_prevents_probe_restore(adapter, tmp_path, content, include_original):
     boundary, native = adapter
     source = await boundary.create("run")
@@ -662,7 +641,6 @@ async def test_changed_or_deleted_original_source_prevents_probe_restore(adapter
     assert not boundary.receipts("run")
 
 
-@pytest.mark.asyncio
 async def test_original_source_verification_provenance_is_bound_to_completed_probe_operations(adapter, tmp_path):
     boundary, native = adapter
     source = await boundary.create("run")
@@ -745,7 +723,6 @@ async def test_capture_saved_without_its_covered_set_certifies_nothing(adapter, 
     assert not next(r for r in boundary.receipts("run") if r.operation_id == "probe:before").source_verified
 
 
-@pytest.mark.asyncio
 async def test_changed_original_executable_bit_prevents_probe_restore(adapter, tmp_path):
     boundary, native = adapter
     source = await boundary.create("run")
@@ -791,7 +768,6 @@ def provider_ready_adapter(adapter, monkeypatch):
     return boundary, native, ready, calls
 
 
-@pytest.mark.asyncio
 async def test_provider_pending_to_exact_ready_precedes_exec(adapter, monkeypatch):
     boundary, native, ready, calls = provider_ready_adapter(adapter, monkeypatch)
 
@@ -809,7 +785,6 @@ async def test_provider_pending_to_exact_ready_precedes_exec(adapter, monkeypatc
     assert boundary._record("provider-readiness", sandbox.id).exists()
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("defect", ["superseded", "stale", "empty", "wrong-owner", "malformed",
     "failed", "withheld", "revoked", "unknown"])
 async def test_provider_readiness_fails_closed(adapter, monkeypatch, defect):
@@ -843,7 +818,6 @@ async def test_provider_readiness_fails_closed(adapter, monkeypatch, defect):
     assert native.deleted and not native.execs and not native.observations
 
 
-@pytest.mark.asyncio
 async def test_provider_readiness_cancellation_cleans_owned_sandbox(adapter, monkeypatch):
     boundary, native, ready, calls = provider_ready_adapter(adapter, monkeypatch)
 
@@ -862,7 +836,6 @@ async def test_provider_readiness_cancellation_cleans_owned_sandbox(adapter, mon
     assert native.deleted and not native.execs
 
 
-@pytest.mark.asyncio
 async def test_provider_readiness_timeout_is_bounded_and_cleans_up(adapter, monkeypatch):
     boundary, native, ready, calls = provider_ready_adapter(adapter, monkeypatch)
     boundary.config = boundary.config.model_copy(update={"ready_timeout_seconds": 1})
@@ -878,7 +851,6 @@ async def test_provider_readiness_timeout_is_bounded_and_cleans_up(adapter, monk
     assert native.deleted and not native.execs
 
 
-@pytest.mark.asyncio
 async def test_provider_status_not_requested_for_unattached_workspace(adapter, monkeypatch):
     boundary, native = adapter
 
@@ -909,7 +881,6 @@ def rpc_failure(status="UNAVAILABLE"):
     return Failure()
 
 
-@pytest.mark.asyncio
 async def test_provider_readiness_rpc_error_discloses_only_status_code(adapter, monkeypatch):
     boundary, native, _, _ = provider_ready_adapter(adapter, monkeypatch)
     sentinel = SENTINEL
@@ -925,7 +896,6 @@ async def test_provider_readiness_rpc_error_discloses_only_status_code(adapter, 
     assert native.deleted and not native.execs
 
 
-@pytest.mark.asyncio
 async def test_ordinary_nonzero_exit_is_a_completed_replayable_receipt(adapter):
     boundary, native = adapter
     sandbox = await boundary.create("run")
@@ -939,7 +909,6 @@ async def test_ordinary_nonzero_exit_is_a_completed_replayable_receipt(adapter):
     assert len(native.execs) == 1
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("change", ["missing", "admission", "process", "restart", "container"])
 async def test_qualification_reuse_requires_unchanged_lifecycle(adapter, monkeypatch, change):
     boundary, native = adapter
@@ -971,7 +940,6 @@ async def test_qualification_reuse_requires_unchanged_lifecycle(adapter, monkeyp
     assert native.deleted == [sandbox.name]
 
 
-@pytest.mark.asyncio
 async def test_qualification_reuse_tolerates_routine_resource_version_bump(adapter):
     """Native status writes bump resource_version between audit and reuse (observed live,
     2026-10-05, 9 -> 10 after one exec); the lifecycle proof must not treat that as drift."""
@@ -983,7 +951,6 @@ async def test_qualification_reuse_tolerates_routine_resource_version_bump(adapt
     assert native.deleted == []
 
 
-@pytest.mark.asyncio
 async def test_qualification_reuse_tolerates_mount_order_but_not_mount_changes(adapter, monkeypatch):
     """docker inspect lists Mounts in varying order (observed live, 2026-10-05: the fence
     digest of one running sandbox flipped between two values). Order must not count as
@@ -1013,7 +980,6 @@ async def test_qualification_reuse_tolerates_mount_order_but_not_mount_changes(a
     assert native.deleted == [sandbox.name]
 
 
-@pytest.mark.asyncio
 async def test_qualification_reuse_survives_adapter_restart(adapter, monkeypatch):
     boundary, native = adapter
     sandbox = await boundary.create("run")
@@ -1023,7 +989,6 @@ async def test_qualification_reuse_survives_adapter_restart(adapter, monkeypatch
     assert len(native.observations) == 1
 
 
-@pytest.mark.asyncio
 async def test_reused_qualification_still_rejects_new_provider_attachment(adapter, monkeypatch):
     boundary, native = adapter
     sandbox = await boundary.create("run")
@@ -1036,7 +1001,6 @@ async def test_reused_qualification_still_rejects_new_provider_attachment(adapte
     assert len(native.observations) == 1 and native.deleted == [sandbox.name]
 
 
-@pytest.mark.asyncio
 async def test_incomplete_qualification_is_never_audited_again(adapter):
     boundary, native = adapter
     sandbox = await boundary.create("run")
@@ -1080,7 +1044,6 @@ def inspector(tmp_path, body: str) -> OpenShell:
         return OpenShell(config)
 
 
-@pytest.mark.asyncio
 async def test_inspector_gets_exact_arguments_and_explicit_environment(tmp_path, monkeypatch):
     monkeypatch.setenv("IH_AMBIENT_SECRET", "must-not-leak")
     boundary = inspector(tmp_path, 'printf "%s|%s|%s" "$LIMA_HOME" "${IH_AMBIENT_SECRET:-}" "$*"')
@@ -1088,7 +1051,6 @@ async def test_inspector_gets_exact_arguments_and_explicit_environment(tmp_path,
     assert output == f"{tmp_path / 'lima'}||--host unix:///dedicated/docker.sock ps -a -q"
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(("body", "message"), [
     ("echo partial; exit 1", "inspection unavailable"),
     ("head -c 2097153 /dev/zero | tr '\\0' x", "output bound"),
@@ -1099,7 +1061,6 @@ async def test_inspector_failure_modes_fail_closed(tmp_path, body, message):
         await inspector(tmp_path, body)._inspection_call(["inspect", "x"])
 
 
-@pytest.mark.asyncio
 async def test_inspector_timeout_kills_its_whole_process_group(tmp_path, monkeypatch):
     """A slow inspector (limactl, then ssh, then docker) fails closed and leaves no descendant."""
     import os

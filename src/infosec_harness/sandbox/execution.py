@@ -1,10 +1,9 @@
 """Native exec behind a durable receipt fence: the sandbox handle, results and errors.
 
 The lowest layer of the adapter. ``Execution`` is mixed into
-:class:`~infosec_harness.sandbox.openshell.OpenShell` and relies on its lifecycle methods
-(``_owned``, ``_corroborate``, ``close``, ``_record``, ``_save``): the intent of every command
-is saved before dispatch, a completed receipt is replayed, and an interrupted dispatch is
-never resent. OpenShell's generated gRPC bindings are used for exec because the SDK
+:class:`~infosec_harness.sandbox.openshell.OpenShell` and relies on its state and lifecycle
+methods, declared on the mixin (``Native`` below): the intent of every command is saved before
+dispatch, a completed receipt is replayed, and an interrupted dispatch is never resent. OpenShell's generated gRPC bindings are used for exec because the SDK
 convenience iterator retains an unbounded copy of stdout and stderr.
 """
 
@@ -14,10 +13,13 @@ import asyncio
 import hashlib
 import json
 import uuid
-from collections.abc import Iterator, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Literal, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypedDict
+
+if TYPE_CHECKING:
+    from .openshell import OpenShellConfig
 
 ProfileName = Literal["workspace", "probe", "model"]
 _PYTHON = "/usr/local/bin/python"
@@ -48,6 +50,14 @@ class SourceChanged(OpenShellError):
 
 @dataclass(frozen=True)
 class Sandbox:
+    """A handle to one owned native sandbox.
+
+    ``run_id``, ``profile`` and ``slot`` (a caller-chosen key, e.g. one probe's operation id)
+    form the ownership key: one sandbox per triple and workspace. ``id`` is the native id,
+    empty only in the record of a create that may not have completed; ``name`` is the
+    native name, which a replacement could reuse, so the id is rechecked before use.
+    """
+
     id: str
     run_id: str
     name: str
@@ -172,7 +182,23 @@ def _status(error: BaseException) -> str:
     return getattr(status, "name", "UNKNOWN")
 
 
-class Execution:
+class Native:
+    """What the mixins use from ``OpenShell`` (declarations only; no runtime effect)."""
+
+    config: OpenShellConfig
+    _pb: Any  # Pinned generated protobuf module (openshell_pb2).
+    _stub: Any  # Pinned generated gRPC stub.
+    _scope: Any  # datamodel_pb2.WorkspaceSelector
+    _locks: dict[str, asyncio.Lock]
+    _record: Callable[[str, str], Path]
+    _save: Callable[..., None]
+    _owned: Callable[[Sandbox], None]
+    _corroborate: Callable[[Sandbox, str], Awaitable[None]]
+    _close_owned: Callable[[Sandbox, BaseException], Awaitable[None]]
+    close: Callable[[Sandbox], Awaitable[None]]
+
+
+class Execution(Native):
     """Bounded native exec with replayable receipts; a mixin of ``OpenShell``."""
 
     def _stream(self, sandbox: Sandbox, command: Sequence[str], timeout: int,
@@ -203,9 +229,8 @@ class Execution:
                     target = stdout if payload == "stdout" else stderr
                     chunk = getattr(event, payload).data
                     if len(chunk) > limit - len(stdout) - len(stderr):
-                        # Cancel the native RPC on overflow; the caller closes the
+                        # The native RPC is cancelled below; the caller closes the
                         # workload rather than assuming cancellation killed the process.
-                        stream.cancel()
                         raise ExecutionUnknown("command output exceeded the boundary limit")
                     target.extend(chunk)
                 elif payload == "exit":

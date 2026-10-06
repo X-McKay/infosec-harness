@@ -19,6 +19,7 @@ from infosec_harness._io import atomic_write_bytes
 from .execution import (
     _PYTHON,
     CommandResult,
+    Execution,
     ExecutionUnknown,
     OpenShellError,
     Sandbox,
@@ -59,7 +60,7 @@ def _path(path: str) -> str:
     return path
 
 
-class Transfer:
+class Transfer(Execution):
     """Repository upload, probe workspace copies and source verification; a mixin of ``OpenShell``."""
 
     async def upload(self, sandbox: Sandbox, source: Path, destination: str) -> None:
