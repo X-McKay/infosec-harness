@@ -212,9 +212,52 @@ async def test_failed_build_tool_returns_environment_feedback_once():
     deps = InvestigationDeps(run_id="run", sandbox=await shell.create("run"),
                              source_digest="digest", snapshot_path="/fixture", request=request)
     await build_agent(shell, FunctionModel(respond)).run("Inspect", deps=deps)
+    # `mvn test` now routes to the Maven-specific pointer at the direct-javac recipe.
     assert "environment skill" in seen["build"]["environment_feedback"]
-    assert "Do not search the filesystem" in seen["build"]["environment_feedback"]
+    assert "javac" in seen["build"]["environment_feedback"]
+    assert "mvn test" in seen["build"]["environment_feedback"]
     assert "environment_feedback" not in seen["list"]  # a failed plain command is not a build
+
+
+@pytest.mark.parametrize(
+    "command, exit_code, truncated, expected",
+    [
+        # Maven-specific pointer: mvn test however it exits, overflowing mvn, failed mvn
+        # without a local repo.
+        ("mvn test -Dtest=Probe", 1, False, "mvn"),
+        ("mvn -o -Dmaven.repo.local=/workspace/repo/.m2 test", 0, False, "mvn"),
+        ("mvn -q -Dmaven.repo.local=/workspace/repo/.m2 compile", 0, True, "mvn"),
+        ("mvn -q compile", 1, False, "mvn"),
+        # Failed mvn WITH a local repo is a plain build failure, not the mvn-flood case.
+        ("mvn -o -Dmaven.repo.local=/workspace/repo/.m2 compile", 1, False, "build"),
+        # Other build tools point at the recipe only when they fail.
+        ("npm ci", 1, False, "build"),
+        ("npm ci", 0, False, None),
+        ("javac -d out Foo.java", 1, False, "build"),
+        # A passing mvn compile and overflowing non-mvn output are not flagged.
+        ("mvn -o -Dmaven.repo.local=/workspace/repo/.m2 compile", 0, False, None),
+        ("cat big.log", 0, True, None),
+        # A plain command is never a build, and the word "test" alone is not mvn test.
+        ("ls -la src", 1, False, None),
+        ("pytest test_sink.py", 0, False, None),
+    ],
+)
+def test_environment_feedback_triggers(command, exit_code, truncated, expected):
+    from infosec_harness.tools.execute import (
+        _BUILD_FEEDBACK,
+        _MVN_FEEDBACK,
+        environment_feedback,
+    )
+
+    feedback = environment_feedback(command, exit_code, truncated)
+    if expected is None:
+        assert feedback is None
+    elif expected == "mvn":
+        assert feedback == _MVN_FEEDBACK
+        assert "javac" in feedback and "mvn test" in feedback
+    else:
+        assert feedback == _BUILD_FEEDBACK
+        assert "Do not search the filesystem" in feedback
 
 
 async def test_probe_uses_fresh_offline_profile_and_cleans_up():

@@ -54,6 +54,19 @@ on another are not parsed and count as no observation. Emit the line with a JSON
 
 Never report a control you did not execute. Values are self-reported claims, not proof.
 
+## When the positive control fails
+
+A `positive_control: false` means the oracle itself is broken, not that the target is safe:
+your deliberately-triggered case did not make the oracle fire, so the check cannot tell
+`vulnerability_observed: false` from a missed detection. **Stop after two attempts.** Do not
+spend the budget iterating payload variants against a check that cannot pass. Instead
+re-examine the oracle: confirm the marker/nonce you write is the exact string you search for
+(a fixed literal written but a random nonce searched is the classic bug), that the positive
+control is the simplest entity-resolving parser rather than one with hand-toggled flags, and
+that the target entry point and input shape match the real signature. If two attempts leave
+the positive control `false`, record `inconclusive` and state the oracle limitation rather
+than continuing. The same applies when the target run cannot be reached at all.
+
 ## Use the result
 
 - A complete probe exits 0 with untruncated output, is source-verified, and reports the four
