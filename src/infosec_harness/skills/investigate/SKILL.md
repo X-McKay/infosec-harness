@@ -16,6 +16,11 @@ unreachable target, crash or timeout may establish a limitation without establis
 exploitability. Files written for experiments are sandbox fixtures; they do not establish
 behavior of the original source without a supported connection.
 
+When a probe's positive control will not fire, the oracle is broken, not the target: stop
+after two attempts, re-examine the oracle, and record `inconclusive` with the limitation
+rather than spending the budget on more variants — see `probe`, "When the positive control
+fails". This does not change the verdict rules below.
+
 ## Verdicts
 
 - `potentially_exploitable` needs a concrete attacker path: what the attacker controls, how it
