@@ -285,7 +285,7 @@ async def test_output_overflow_cancels_rpc_and_closes_sandbox(adapter):
 async def test_unconfined_workload_is_deleted_before_handle_return(adapter, field, value):
     boundary, native = adapter
     native.proof[field] = value
-    with pytest.raises(OpenShellError, match="confinement"):
+    with pytest.raises(OpenShellError, match=f"confinement was not established: {field}$"):
         await boundary.create("run")
     assert len(native.deleted) == 1
     assert not native.execs
@@ -295,7 +295,7 @@ async def test_unconfined_workload_is_deleted_before_handle_return(adapter, fiel
 async def test_missing_discriminating_native_filesystem_proof_refuses_workload(adapter):
     boundary, native = adapter
     native.proof.pop("shared_tmp_denied")
-    with pytest.raises(OpenShellError, match="confinement"):
+    with pytest.raises(OpenShellError, match="confinement was not established: shared_tmp_denied$"):
         await boundary.create("run")
     assert len(native.deleted) == 1 and not native.execs
 
@@ -308,7 +308,7 @@ def test_only_explicit_null_sink_is_allowed_outside_workspace(adapter, writes):
     document = json.loads(path.read_bytes())
     document["filesystem"]["read_write"] = writes
     path.write_text(json.dumps(document))
-    with pytest.raises(OpenShellError, match="confined writes"):
+    with pytest.raises(OpenShellError, match="confined writes.*profile workspace fails: read_write$"):
         boundary._spec("workspace")
 
 
@@ -344,7 +344,7 @@ async def test_outer_mount_fence_requires_observation(adapter, monkeypatch):
         return raw
 
     monkeypatch.setattr(boundary, "_inspection_call", unsafe)
-    with pytest.raises(OpenShellError, match="outer workload fence"):
+    with pytest.raises(OpenShellError, match="outer workload fence failed: mounts$"):
         await boundary.create("run")
     assert len(native.deleted) == 1 and not native.execs
 
@@ -526,7 +526,9 @@ def test_native_package_policy_uses_automatic_tls_and_exclusive_l7_rules(adapter
         observed = spec.policy.network_policies["packages"].endpoints[0]
         assert observed.enforcement == 1 and observed.tls == 0
     else:
-        with pytest.raises(OpenShellError, match="package egress"):
+        failed = "tls" if tls else "access"
+        with pytest.raises(OpenShellError,
+                           match=f"package egress.*rule packages endpoint 0 fails: {failed}$"):
             boundary._spec("workspace")
 
 
@@ -1250,3 +1252,61 @@ async def test_failed_close_keeps_the_admission_failure(adapter, monkeypatch):
     with pytest.raises(OpenShellError, match="confinement") as caught:
         await boundary.create("run")
     assert caught.value.__notes__ == ["owned sandbox close failed: OpenShellError"]
+
+
+@pytest.mark.parametrize("section,key,value,failed", [
+    ("process", "run_as_user", "0", "run_as_user"),
+    ("landlock", "compatibility", "best_effort", "landlock_hard_requirement"),
+    ("filesystem", "include_workdir", True, "workdir_excluded"),
+])
+def test_policy_refusal_names_each_failed_check(adapter, section, key, value, failed):
+    boundary, _ = adapter
+    path = boundary.config.profiles["probe"].policy
+    document = json.loads(path.read_bytes())
+    document[section][key] = value
+    document["network_policies"] = {"packages": {"endpoints": [{"host": "pypi.org", "port": 443,
+        "protocol": "rest", "enforcement": "enforce", "rules": [{"allow": {"method": "GET"}}]}]}}
+    path.write_text(json.dumps(document))
+    with pytest.raises(OpenShellError, match=f"profile probe fails: {failed}, egress_denied$"):
+        boundary._spec("probe")
+
+
+@pytest.mark.parametrize("change,failed", [
+    (lambda host, workload: host.update(Runtime="runsc"), "runtime"),
+    (lambda host, workload: host.update(PidsLimit=0), "pids_limit"),
+    (lambda host, workload: host.update(Privileged=True, NetworkMode="host"),
+     "network_mode, unprivileged"),
+    (lambda host, workload: workload.update(Image="sha256:" + "f" * 64), "workload_image"),
+])
+async def test_outer_fence_refusal_names_each_failed_check(adapter, monkeypatch, change, failed):
+    boundary, native = adapter
+    original = boundary._inspection_call
+
+    async def altered(args):
+        raw = await original(args)
+        if args[0] == "inspect":
+            values = json.loads(raw)
+            change(values[0]["HostConfig"], values[0])
+            return json.dumps(values)
+        return raw
+
+    monkeypatch.setattr(boundary, "_inspection_call", altered)
+    with pytest.raises(OpenShellError, match=f"outer workload fence failed: {failed}$"):
+        await boundary.create("run")
+    assert len(native.deleted) == 1 and not native.execs
+
+
+async def test_admission_refusal_names_each_failed_check(adapter, monkeypatch):
+    boundary, native = adapter
+    original = native.GetSandbox
+
+    def unready(request, timeout):
+        response = original(request, timeout)
+        response.sandbox.status.phase = pb.SANDBOX_PHASE_PROVISIONING
+        response.sandbox.status.configuration_activated = False
+        return response
+
+    monkeypatch.setattr(native, "GetSandbox", unready)
+    with pytest.raises(OpenShellError,
+                       match="admission mismatch: phase, configuration_activated$"):
+        await boundary.create("run")

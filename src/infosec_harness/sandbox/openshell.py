@@ -178,6 +178,47 @@ def _changed_paths(saved: Any, fresh: Any, path: str = "", limit: int = 8) -> li
     return [] if saved == fresh else [path or "."]
 
 
+def _failed(checks: dict[str, bool]) -> str:
+    """The names of the failed checks (never the observed values), or "" when all pass."""
+    return ", ".join(name for name, passed in checks.items() if not passed)
+
+
+# Every fact the confinement probe must report, by key. A missing key or a value of the
+# wrong shape fails that check. Thresholds come from the profile.
+_PROOF_FLAGS = ("filesystem_denied", "shared_tmp_denied", "symlink_escape_denied",
+                "workspace_writable", "network_denied", "sockets_absent", "credentials_absent",
+                "null_sink_verified")
+
+
+def _cpu_fraction(value: str) -> float:
+    quota, period = (int(v) for v in value.split())
+    return quota / period
+
+
+def _proof_checks(proof: Any, profile: Profile) -> dict[str, bool]:
+    expected: dict[str, Callable[[Any], bool]] = {
+        "uid": lambda v: v == 65532,
+        "nnp": lambda v: v == "1",
+        "seccomp": lambda v: v == "2",
+        "caps": lambda v: v == 0,
+        "shared_tmp_mode": lambda v: v == 0o1777,
+        "null_device_major": lambda v: type(v) is int and v == 1,
+        "null_device_minor": lambda v: type(v) is int and v == 3,
+        **{flag: (lambda v: v is True) for flag in _PROOF_FLAGS},
+        "memory": lambda v: 0 < int(v) <= profile.memory_bytes,
+        "cpu": lambda v: 0 < _cpu_fraction(v) <= profile.cpu_cores,
+    }
+    if not isinstance(proof, dict):
+        return {"proof": False}
+    checks = {}
+    for key, check in expected.items():
+        try:
+            checks[key] = key in proof and bool(check(proof[key]))
+        except (ValueError, TypeError, AttributeError, ZeroDivisionError):
+            checks[key] = False
+    return checks
+
+
 def _directory(path: Path) -> None:
     missing = []
     parent = path
@@ -306,23 +347,32 @@ class OpenShell(Execution, Transfer):
                     if isinstance(value, str) and not value.startswith(prefix):
                         endpoint[field] = prefix + value.upper()
         policy = ParseDict(authored, self._policy_pb.SandboxPolicy())
-        if (policy.landlock.compatibility != "hard_requirement"
-                or policy.process.run_as_user != "65532"
-                or policy.process.run_as_group != "65532"
-                or policy.filesystem.include_workdir
-                or set(policy.filesystem.read_write) != {"/workspace", "/tmp", "/dev/null"}
-                or (profile != "workspace" and policy.network_policies)):
-            raise OpenShellError("profile must require Landlock, nonroot, confined writes and deny egress")
-        for rule in policy.network_policies.values():
-            for endpoint in rule.endpoints:
-                if (not endpoint.host or "*" in endpoint.host
-                        or endpoint.protocol != "rest"
-                        or endpoint.enforcement != self._policy_pb.NETWORK_ENFORCEMENT_MODE_ENFORCE
-                        or endpoint.tls != self._policy_pb.NETWORK_TLS_MODE_UNSPECIFIED
-                        or not endpoint.rules
-                        or endpoint.access != self._policy_pb.NETWORK_ACCESS_PRESET_UNSPECIFIED
-                        or any(r.allow.method not in ("GET", "HEAD") for r in endpoint.rules)):
-                    raise OpenShellError("package egress must use exact hosts and enforced read-only REST")
+        failed = _failed({
+            "landlock_hard_requirement": policy.landlock.compatibility == "hard_requirement",
+            "run_as_user": policy.process.run_as_user == "65532",
+            "run_as_group": policy.process.run_as_group == "65532",
+            "workdir_excluded": not policy.filesystem.include_workdir,
+            "read_write": set(policy.filesystem.read_write) == {"/workspace", "/tmp", "/dev/null"},
+            "egress_denied": profile == "workspace" or not policy.network_policies,
+        })
+        if failed:
+            raise OpenShellError("profile must require Landlock, nonroot, confined writes and deny "
+                                 f"egress; profile {profile} fails: {failed}")
+        pb = self._policy_pb
+        for rule_name, rule in policy.network_policies.items():
+            for index, endpoint in enumerate(rule.endpoints):
+                failed = _failed({
+                    "exact_host": bool(endpoint.host) and "*" not in endpoint.host,
+                    "protocol": endpoint.protocol == "rest",
+                    "enforcement": endpoint.enforcement == pb.NETWORK_ENFORCEMENT_MODE_ENFORCE,
+                    "tls": endpoint.tls == pb.NETWORK_TLS_MODE_UNSPECIFIED,
+                    "rules": bool(endpoint.rules),
+                    "access": endpoint.access == pb.NETWORK_ACCESS_PRESET_UNSPECIFIED,
+                    "read_only_methods": all(r.allow.method in ("GET", "HEAD") for r in endpoint.rules),
+                })
+                if failed:
+                    raise OpenShellError("package egress must use exact hosts and enforced read-only "
+                        f"REST; profile {profile} rule {rule_name} endpoint {index} fails: {failed}")
         spec = self._pb.SandboxSpec(
             template=self._pb.SandboxTemplate(image=config.image,
                 resources={"limits": {"cpu": config.cpu, "memory": config.memory}}),
@@ -450,18 +500,24 @@ class OpenShell(Execution, Transfer):
                       *, initial: bool = False) -> None:
         observed = (await self._get(sandbox.name)).sandbox
         admission = observed.status.configuration_admission
-        if (observed.metadata.id != sandbox.id or observed.metadata.resource_version <= 0
-                or not admission.instance_id or admission.config_revision <= 0
-                or not admission.policy_hash or not observed.status.main_process_instance_id
-                or dict(observed.metadata.labels) != labels
-                or observed.status.phase != self._pb.SANDBOX_PHASE_READY
-                or admission.state != self._pb.CONFIGURATION_ADMISSION_STATE_ACCEPTED
-                or not observed.status.configuration_activated
-                or observed.spec.template.image != spec.template.image
-                or observed.spec.policy != spec.policy
-                or list(observed.spec.providers) != list(spec.providers)
-                or observed.spec.template.resources != spec.template.resources):
-            raise OpenShellError("native sandbox identity, policy or admission mismatch")
+        failed = _failed({
+            "id": observed.metadata.id == sandbox.id,
+            "resource_version": observed.metadata.resource_version > 0,
+            "admission_instance": bool(admission.instance_id),
+            "config_revision": admission.config_revision > 0,
+            "policy_hash": bool(admission.policy_hash),
+            "main_process": bool(observed.status.main_process_instance_id),
+            "labels": dict(observed.metadata.labels) == labels,
+            "phase": observed.status.phase == self._pb.SANDBOX_PHASE_READY,
+            "admission_state": admission.state == self._pb.CONFIGURATION_ADMISSION_STATE_ACCEPTED,
+            "configuration_activated": bool(observed.status.configuration_activated),
+            "image": observed.spec.template.image == spec.template.image,
+            "policy": observed.spec.policy == spec.policy,
+            "providers": list(observed.spec.providers) == list(spec.providers),
+            "resources": observed.spec.template.resources == spec.template.resources,
+        })
+        if failed:
+            raise OpenShellError(f"native sandbox identity, policy or admission mismatch: {failed}")
         attached = await self._rpc("provider attachment", self._stub.ListSandboxProviders,
             self._pb.ListSandboxProvidersRequest(workspace_scope=self._scope, sandbox=sandbox.name),
             timeout=30)
@@ -516,22 +572,12 @@ class OpenShell(Execution, Transfer):
             proof = json.loads(result[0].stdout)
         except (ValueError, TypeError):
             raise OpenShellError("confinement probe returned invalid evidence") from None
-        config = self.config.profiles[sandbox.profile]
-        try:
-            quota, period = (int(v) for v in proof["cpu"].split())
-            valid = (proof["uid"] == 65532 and proof["nnp"] == "1" and proof["seccomp"] == "2"
-                     and proof["caps"] == 0 and proof["shared_tmp_mode"] == 0o1777
-                     and type(proof["null_device_major"]) is int and proof["null_device_major"] == 1
-                     and type(proof["null_device_minor"]) is int and proof["null_device_minor"] == 3
-                     and all(proof[k] is True for k in ("filesystem_denied", "shared_tmp_denied",
-                         "symlink_escape_denied", "workspace_writable", "network_denied",
-                         "sockets_absent", "credentials_absent", "null_sink_verified"))
-                     and 0 < int(proof["memory"]) <= config.memory_bytes
-                     and 0 < quota / period <= config.cpu_cores)
-        except (ValueError, KeyError, TypeError, AttributeError, ZeroDivisionError):
-            valid = False
-        if result[0].exit_code != 0 or result[0].output_truncated or not valid:
-            raise OpenShellError("actual workload confinement was not established")
+        # Only check names reach the message: the proof values are workload output.
+        failed = _failed({"exit_code": result[0].exit_code == 0,
+                          "output_truncated": not result[0].output_truncated,
+                          **_proof_checks(proof, self.config.profiles[sandbox.profile])})
+        if failed:
+            raise OpenShellError(f"actual workload confinement was not established: {failed}")
         self._save(path,
             {"binding": binding, "request_id": request_id,
              "sandbox": asdict(sandbox), "outer": outer, "workload": proof,
@@ -658,25 +704,30 @@ class OpenShell(Execution, Transfer):
             config = self.config.profiles[sandbox.profile]
             observed_cpu = (host.get("NanoCpus", 0) / 1e9 or
                             host.get("CpuQuota", 0) / (host.get("CpuPeriod", 0) or 100000))
-            valid = (all(v["Config"]["Labels"].get("openshell.ai/sandbox-id") == sandbox.id
-                         and v["State"]["Running"]
-                         and v["Id"] and v["State"]["StartedAt"]
-                         and not v["State"]["StartedAt"].startswith("0001-") for v in containers)
-                and workload["Image"] == config.image.split("@")[-1]
-                and by_role["supervisor"]["Image"] == self.config.supervisor_image
-                and host["Runtime"] == "runc" and host["NetworkMode"] == "none"
-                and not host["Privileged"] and workload["Config"]["User"] == "65532:65532"
-                and "ALL" in host.get("CapDrop", []) and not host.get("CapAdd")
-                and "no-new-privileges:true" in host.get("SecurityOpt", [])
-                and not host.get("Devices") and not host.get("DeviceRequests")
-                and host.get("PidMode", "") != "host" and host.get("IpcMode", "") != "host"
-                and 0 < host.get("PidsLimit", 0) <= 1024
-                and 0 < host.get("Memory", 0) <= config.memory_bytes
-                and 0 < observed_cpu <= config.cpu_cores
-                and all(m["Type"] == "volume" and "docker.sock" not in m["Destination"]
-                        for m in workload.get("Mounts", [])))
-            if not valid:
-                raise OpenShellError("observed outer workload fence failed")
+            failed = _failed({
+                "owner_label": all(v["Config"]["Labels"].get("openshell.ai/sandbox-id") == sandbox.id
+                                   for v in containers),
+                "running": all(v["State"]["Running"] and v["Id"] and v["State"]["StartedAt"]
+                               and not v["State"]["StartedAt"].startswith("0001-")
+                               for v in containers),
+                "workload_image": workload["Image"] == config.image.split("@")[-1],
+                "supervisor_image": by_role["supervisor"]["Image"] == self.config.supervisor_image,
+                "runtime": host["Runtime"] == "runc",
+                "network_mode": host["NetworkMode"] == "none",
+                "unprivileged": not host["Privileged"],
+                "user": workload["Config"]["User"] == "65532:65532",
+                "capabilities": "ALL" in host.get("CapDrop", []) and not host.get("CapAdd"),
+                "no_new_privileges": "no-new-privileges:true" in host.get("SecurityOpt", []),
+                "devices": not host.get("Devices") and not host.get("DeviceRequests"),
+                "namespaces": host.get("PidMode", "") != "host" and host.get("IpcMode", "") != "host",
+                "pids_limit": 0 < host.get("PidsLimit", 0) <= 1024,
+                "memory": 0 < host.get("Memory", 0) <= config.memory_bytes,
+                "cpu": 0 < observed_cpu <= config.cpu_cores,
+                "mounts": all(m["Type"] == "volume" and "docker.sock" not in m["Destination"]
+                              for m in workload.get("Mounts", [])),
+            })
+            if failed:
+                raise OpenShellError(f"observed outer workload fence failed: {failed}")
             return {"containers": {role: {"id": v["Id"], "started_at": v["State"]["StartedAt"]}
                                    for role, v in by_role.items()},
                     # Observed live 2026-10-05: docker inspect returns Mounts in varying order,
