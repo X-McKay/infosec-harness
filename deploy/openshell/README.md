@@ -75,9 +75,10 @@ closure. The context generator copies only `src/infosec_harness/sandbox/executor
 package markers); choose a new output directory for each build. The image runs
 `python -I -m infosec_harness.sandbox.executor` and contains no Temporal worker, controller,
 repository snapshot or credentials. Rebuild and reload it, and record the new image ID in the
-model profile, whenever `sandbox/executor.py` changes. An older image silently ignores new
-`ModelInvocation` fields (for example `timeout_seconds`), because unknown fields are not
-rejected there.
+model profile, whenever `sandbox/executor.py` changes. Images built from this source refuse
+an invocation carrying an unknown top-level `ModelInvocation` field, so a stale image fails the
+model call (asking for a rebuild) instead of silently dropping a newer budget such as
+`timeout_seconds`. Images built before this check still ignore unknown fields; rebuild them.
 
 ```bash
 .harness/bin/mise exec -- uv run --locked python deploy/openshell/build_context.py \
