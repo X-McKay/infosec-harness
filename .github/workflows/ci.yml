@@ -51,5 +51,5 @@ jobs:
           version: ${{ steps.pins.outputs.mise-version }}
           sha256: ${{ steps.pins.outputs.mise-sha256 }}
           install_args: node just
-      - run: cd ui && npm ci
+      # ui-check installs the locked dependencies (npm ci) into the fresh checkout itself.
       - run: just ui-check
