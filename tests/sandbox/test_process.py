@@ -33,17 +33,23 @@ async def test_child_receives_only_the_explicit_environment(monkeypatch):
 
 async def test_cancellation_reaps_child_before_it_can_mutate(tmp_path):
     ready, late = tmp_path / "ready", tmp_path / "late"
-    script = "import pathlib,os,time;pathlib.Path(os.environ['READY']).write_text(str(os.getpid()));time.sleep(1);pathlib.Path(os.environ['LATE']).write_text('bad')"
+    # The PID line is written to a temporary name and renamed, so the reader never sees a
+    # partial line; the reader also waits for the newline that ends it.
+    script = (
+        "import pathlib,os,time;r=pathlib.Path(os.environ['READY']);"
+        "t=r.with_suffix('.tmp');t.write_text(str(os.getpid())+'\\n');os.replace(t,r);"
+        "time.sleep(1);pathlib.Path(os.environ['LATE']).write_text('bad')"
+    )
     task = asyncio.create_task(
         run_bounded(
             [sys.executable, "-c", script], env={"READY": str(ready), "LATE": str(late)}, timeout=10
         )
     )
-    for _ in range(100):
-        if ready.exists():
+    for _ in range(500):
+        if ready.exists() and ready.read_text().endswith("\n"):
             break
         await asyncio.sleep(0.01)
-    assert ready.exists()
+    assert ready.read_text().endswith("\n")
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
