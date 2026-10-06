@@ -15,6 +15,7 @@ import ipaddress
 import json
 import os
 import uuid
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import asdict
 from pathlib import Path
@@ -35,6 +36,7 @@ from .execution import (
     Sandbox,
     _digest,
     _request_id,
+    _status,
 )
 from .process import finish, run_bounded
 from .transfer import Transfer
@@ -330,9 +332,25 @@ class OpenShell(Execution, Transfer):
         )
         return spec
 
-    async def _get(self, name: str):
-        return await asyncio.to_thread(self._stub.GetSandbox,
-            self._pb.GetSandboxRequest(workspace_scope=self._scope, name=name), timeout=30)
+    async def _rpc(self, what: str, call: Callable[..., Any], *args: Any,
+                   missing_ok: bool = False, **kwargs: Any) -> Any:
+        """One blocking native call in a thread. A gRPC failure becomes ``OpenShellError``
+        naming ``what`` and the status code only (server details can carry anything);
+        ``missing_ok`` turns NOT_FOUND into ``None``."""
+        import grpc
+
+        try:
+            return await asyncio.to_thread(call, *args, **kwargs)
+        except grpc.RpcError as error:
+            status = _status(error)
+            if missing_ok and status == grpc.StatusCode.NOT_FOUND.name:
+                return None
+            raise OpenShellError(f"native {what} RPC failed: {status}") from None
+
+    async def _get(self, name: str, *, missing_ok: bool = False) -> Any:
+        return await self._rpc("sandbox lookup", self._stub.GetSandbox,
+            self._pb.GetSandboxRequest(workspace_scope=self._scope, name=name), timeout=30,
+            missing_ok=missing_ok)
 
     async def _corroborate(self, sandbox: Sandbox, mismatch: str) -> None:
         """Recheck the exact native id and the outer fence immediately before dispatch."""
@@ -389,7 +407,7 @@ class OpenShell(Execution, Transfer):
                 self._save(path, {"sandbox": asdict(sandbox), "closed": False}, exclusive=True)
 
                 async def provision() -> Sandbox:
-                    response = await asyncio.to_thread(self._stub.CreateSandbox,
+                    response = await self._rpc("sandbox create", self._stub.CreateSandbox,
                         self._pb.CreateSandboxRequest(workspace_scope=self._scope, spec=spec,
                             name=name, labels=labels, request_id=_request_id(key)),
                         timeout=self.config.ready_timeout_seconds)
@@ -416,8 +434,8 @@ class OpenShell(Execution, Transfer):
             try:
                 if self._fenced(run_id):
                     raise OpenShellError("investigation closed during native create")
-                await asyncio.to_thread(self._client.wait_ready, name, workspace=self.config.workspace,
-                                        timeout_seconds=self.config.ready_timeout_seconds)
+                await self._rpc("sandbox readiness", self._client.wait_ready, name,
+                    workspace=self.config.workspace, timeout_seconds=self.config.ready_timeout_seconds)
                 await self._verify(sandbox, spec, labels, initial=initial)
                 if self._fenced(run_id):
                     raise OpenShellError("investigation closed during qualification")
@@ -442,7 +460,7 @@ class OpenShell(Execution, Transfer):
                 or list(observed.spec.providers) != list(spec.providers)
                 or observed.spec.template.resources != spec.template.resources):
             raise OpenShellError("native sandbox identity, policy or admission mismatch")
-        attached = await asyncio.to_thread(self._stub.ListSandboxProviders,
+        attached = await self._rpc("provider attachment", self._stub.ListSandboxProviders,
             self._pb.ListSandboxProvidersRequest(workspace_scope=self._scope, sandbox=sandbox.name),
             timeout=30)
         providers = list(attached.providers)
@@ -524,8 +542,6 @@ class OpenShell(Execution, Transfer):
         intent and a ready sandbox phase do not prove credential installation.
         Only read-only status RPCs may repeat. No inference or exec is retried.
         """
-        import grpc
-
         pb = self._pb
         request = pb.GetSandboxProviderStatusRequest(workspace_scope=self._scope,
             sandbox=sandbox.name, provider=provider.metadata.name)
@@ -534,8 +550,8 @@ class OpenShell(Execution, Transfer):
         try:
             async with asyncio.timeout(self.config.ready_timeout_seconds):
                 while True:
-                    response = await asyncio.to_thread(self._stub.GetSandboxProviderStatus, request,
-                        timeout=self.config.ready_timeout_seconds)
+                    response = await self._rpc("provider readiness", self._stub.GetSandboxProviderStatus,
+                        request, timeout=self.config.ready_timeout_seconds)
                     status = response.status
                     receipt = status.receipt
                     desired = receipt.desired
@@ -588,9 +604,6 @@ class OpenShell(Execution, Transfer):
                             f"{pb.ProviderReadinessState.Name(status.state)} "
                             f"{pb.ProviderReadinessReason.Name(status.reason)}")
                     await asyncio.sleep(0.25)
-        except grpc.RpcError as error:
-            raise OpenShellError("native provider readiness RPC failed: "
-                                 + error.code().name) from None
         except TimeoutError:
             reason = (pb.ProviderReadinessReason.Name(status.reason) if status is not None
                       else "no native observation")
@@ -691,13 +704,9 @@ class OpenShell(Execution, Transfer):
             return
         # Check the exact native ID before name-based deletion. A replacement
         # under the same name must never be stopped or deleted by this run.
-        import grpc
-        try:
-            current = (await self._get(sandbox.name)).sandbox
-        except grpc.RpcError as exc:
-            if exc.code() != grpc.StatusCode.NOT_FOUND:
-                raise
-        else:
+        response = await self._get(sandbox.name, missing_ok=True)
+        if response is not None:
+            current = response.sandbox
             if not sandbox.id:
                 expected = self._labels(sandbox.run_id, sandbox.profile)
                 if dict(current.metadata.labels) != expected or not current.metadata.id:
@@ -707,9 +716,9 @@ class OpenShell(Execution, Transfer):
                 self._save(path, {"sandbox": asdict(sandbox), "closed": False})
             if current.metadata.id != sandbox.id:
                 raise OpenShellError("sandbox name now belongs to another native id")
-            await asyncio.to_thread(self._client.delete, sandbox.name,
-                                    workspace=self.config.workspace, allow_missing=True)
-            await asyncio.to_thread(self._client.wait_deleted, sandbox.name,
+            await self._rpc("sandbox delete", self._client.delete, sandbox.name,
+                            workspace=self.config.workspace, allow_missing=True)
+            await self._rpc("sandbox deletion", self._client.wait_deleted, sandbox.name,
                 workspace=self.config.workspace, timeout_seconds=60, expected_sandbox_id=sandbox.id)
         if not sandbox.id:
             raise ExecutionUnknown("pending native create cannot yet be confirmed absent")

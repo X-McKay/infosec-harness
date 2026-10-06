@@ -69,18 +69,35 @@ def _request_id(key: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, "infosec-harness:" + key))
 
 
+def _status(error: BaseException) -> str:
+    """The gRPC status name of a native failure; its server-supplied details never leave."""
+    code = getattr(error, "code", None)
+    status = code() if callable(code) else None
+    return getattr(status, "name", "UNKNOWN")
+
+
 class Execution:
     """Bounded native exec with replayable receipts; a mixin of ``OpenShell``."""
 
     def _stream(self, sandbox: Sandbox, command: Sequence[str], timeout: int,
                 stdin: bytes | None, request_id: str, limit: int, binary: bool = False) -> tuple[CommandResult, bytes]:
+        """One native exec stream, bounded to ``limit`` output bytes.
+
+        Every failure after the request is sent is ``ExecutionUnknown``: the stream may have
+        dispatched. A gRPC failure reports only its status code.
+        """
+        import grpc
+
         # Pinned native RPC selectors are names, not immutable IDs. The trusted
         # worker corroborates exact ID/ownership before every dispatch.
         request = self._pb.ExecSandboxRequest(workspace_scope=self._scope, sandbox=sandbox.name,
             command=list(command), workdir="/workspace", stdin=stdin or b"",
             no_login_shell=True, request_id=request_id)
         request.execution_timeout.seconds = timeout
-        stream = self._stub.ExecSandbox(request, timeout=timeout + 10)
+        try:
+            stream = self._stub.ExecSandbox(request, timeout=timeout + 10)
+        except grpc.RpcError as error:
+            raise ExecutionUnknown(f"native exec stream failed: {_status(error)}") from None
         stdout, stderr = bytearray(), bytearray()
         code = None
         try:
@@ -105,6 +122,8 @@ class Execution:
                 raise ExecutionUnknown("native exit 124 cannot establish terminal execution")
             return CommandResult(code, "" if binary else stdout.decode(errors="replace"),
                                  stderr.decode(errors="replace")), bytes(stdout)
+        except grpc.RpcError as error:
+            raise ExecutionUnknown(f"native exec stream failed: {_status(error)}") from None
         finally:
             stream.cancel()
 

@@ -885,25 +885,33 @@ async def test_provider_status_not_requested_for_unattached_workspace(adapter, m
     await boundary.create("workspace")
 
 
-@pytest.mark.asyncio
-async def test_provider_readiness_rpc_error_discloses_only_status_code(adapter, monkeypatch):
-    import grpc
+SENTINEL = "SECRET-provider-credential-sentinel"
 
-    boundary, native, _, _ = provider_ready_adapter(adapter, monkeypatch)
-    sentinel = "SECRET-provider-credential-sentinel"
+
+def rpc_failure(status="UNAVAILABLE"):
+    """A native gRPC failure whose server-supplied details must never reach a message."""
+    import grpc
 
     class Failure(grpc.RpcError):
         def code(self):
-            return grpc.StatusCode.UNAVAILABLE
+            return grpc.StatusCode[status]
 
         def details(self):
-            return sentinel
+            return SENTINEL
 
         def __str__(self):
-            return sentinel
+            return SENTINEL
+
+    return Failure()
+
+
+@pytest.mark.asyncio
+async def test_provider_readiness_rpc_error_discloses_only_status_code(adapter, monkeypatch):
+    boundary, native, _, _ = provider_ready_adapter(adapter, monkeypatch)
+    sentinel = SENTINEL
 
     def failure(request, timeout):
-        raise Failure()
+        raise rpc_failure()
 
     monkeypatch.setattr(native, "GetSandboxProviderStatus", failure)
     with pytest.raises(OpenShellError) as caught:
@@ -1109,3 +1117,88 @@ async def test_inspector_timeout_kills_its_whole_process_group(tmp_path, monkeyp
     else:
         os.kill(grandchild, 9)
         pytest.fail("inspector descendant survived the timeout")
+
+
+class FailingStream(Stream):
+    def __iter__(self):
+        yield pb.ExecSandboxEvent(stdout=pb.ExecSandboxStdout(data=b"partial"))
+        raise rpc_failure("DEADLINE_EXCEEDED")
+
+
+async def test_exec_stream_rpc_failure_is_unknown_execution_without_server_details(adapter, monkeypatch):
+    boundary, native = adapter
+    sandbox = await boundary.create("run")
+    original = native.ExecSandbox
+
+    def failing(request, timeout):
+        original(request, timeout)
+        native.last_stream = FailingStream([])
+        return native.last_stream
+
+    monkeypatch.setattr(native, "ExecSandbox", failing)
+    with pytest.raises(ExecutionUnknown) as caught:
+        await boundary.execute(sandbox, "true", operation_id="activity", timeout=3)
+    chain = [caught.value, caught.value.__cause__]
+    assert "native exec stream failed: DEADLINE_EXCEEDED" in str(chain[1])
+    assert all(SENTINEL not in str(link) for link in chain)
+    assert native.last_stream.cancelled and native.deleted == [sandbox.name]
+
+
+async def test_capture_stream_rpc_failure_is_unknown_execution(adapter, monkeypatch, tmp_path):
+    boundary, native = adapter
+    source = await boundary.create("run")
+    probe = await boundary.create("run", profile="probe", slot="activity")
+    monkeypatch.setattr(native, "ExecSandbox", lambda request, timeout: FailingStream([]))
+    with pytest.raises(ExecutionUnknown, match="DEADLINE_EXCEEDED") as caught:
+        await boundary.copy_workspace(source, probe, operation_id="copy", expected_source=tmp_path)
+    assert SENTINEL not in str(caught.value) and native.deleted == [source.name]
+
+
+@pytest.mark.parametrize("method,what", [("GetSandbox", "sandbox lookup"),
+                                         ("ListSandboxProviders", "provider attachment")])
+async def test_unary_rpc_failure_names_only_the_call_and_status(adapter, monkeypatch, method, what):
+    boundary, native = adapter
+    await boundary.create("run")
+
+    def failure(request, timeout):
+        raise rpc_failure()
+
+    monkeypatch.setattr(native, method, failure)
+    with pytest.raises(OpenShellError) as caught:
+        await boundary.create("run")
+    assert str(caught.value) == f"native {what} RPC failed: UNAVAILABLE"
+    assert caught.value.__suppress_context__ and SENTINEL not in str(caught.value)
+
+
+async def test_create_rpc_failure_keeps_the_pending_record_fail_closed(adapter, monkeypatch):
+    boundary, native = adapter
+
+    def failure(request, timeout):
+        raise rpc_failure("DEADLINE_EXCEEDED")
+
+    monkeypatch.setattr(native, "CreateSandbox", failure)
+    with pytest.raises(OpenShellError, match=r"^native sandbox create RPC failed: DEADLINE_EXCEEDED$"):
+        await boundary.create("run")
+    saved = json.loads(next((boundary.config.state_dir / "sandboxes").glob("*.json")).read_bytes())
+    assert saved == {"sandbox": {"id": "", "run_id": "run", "name": saved["sandbox"]["name"],
+                                 "profile": "workspace", "slot": ""}, "closed": False}
+
+
+async def test_close_treats_only_not_found_as_absent(adapter, monkeypatch):
+    boundary, native = adapter
+    sandbox = await boundary.create("run")
+    status = {"value": "UNAVAILABLE"}
+
+    def failure(request, timeout):
+        raise rpc_failure(status["value"])
+
+    monkeypatch.setattr(native, "GetSandbox", failure)
+    with pytest.raises(OpenShellError, match=r"^native sandbox lookup RPC failed: UNAVAILABLE$"):
+        await boundary.close(sandbox)
+    assert not native.deleted
+    # NOT_FOUND means already gone: close still requires the inspector to show no workload.
+    status["value"] = "NOT_FOUND"
+    native.resources.pop(sandbox.name)
+    await boundary.close(sandbox)
+    saved = json.loads(next((boundary.config.state_dir / "sandboxes").glob("*.json")).read_bytes())
+    assert saved["closed"]
