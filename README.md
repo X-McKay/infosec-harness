@@ -2,7 +2,8 @@
 
 Investigate a reported vulnerability with a tool-using PydanticAI agent, run experiments
 inside OpenShell, and retain the investigation in Temporal. A small React UI submits
-findings and displays the resulting evidence.
+findings, displays the resulting evidence and reads the recorded evaluation, qualification
+and replay reports (see `ui/README.md`).
 
 The investigator chooses how to explore, install dependencies, construct experiments and
 interpret results. Language, environment and vulnerability expertise lives in packaged

@@ -2,8 +2,16 @@
 import { queryOptions, type QueryClient } from "@tanstack/react-query";
 import { ApiError, req } from "./http.ts";
 import type { components } from "./schema";
+import { cohortUnfinished } from "../lib/evaluation.ts";
 import { eventsPath, normalizeEvents } from "../lib/events.ts";
 import { isRecord } from "../lib/json.ts";
+import {
+  parseReportDocument,
+  parseReportSummaries,
+  reportApiPath,
+  type ReportDocument,
+  type ReportSummaries,
+} from "../lib/reports.ts";
 import { runActive } from "../lib/status.ts";
 
 type Finding = components["schemas"]["Finding"];
@@ -14,6 +22,8 @@ export type Health = components["schemas"]["Health"];
 export const LIST_REFRESH_MS = 5000;
 export const ACTIVE_RUN_REFRESH_MS = 3000;
 export const HEALTH_REFRESH_MS = 30000;
+export const REPORTS_REFRESH_MS = 15000;
+export const UNFINISHED_COHORT_REFRESH_MS = 5000;
 
 export const runsPath = (pageToken?: string) =>
   `/api/runs${pageToken ? `?page_token=${encodeURIComponent(pageToken)}` : ""}`;
@@ -59,7 +69,42 @@ export const queryKeys = {
   runs: (pageToken: string) => ["runs", pageToken] as const,
   run: (runId: string) => ["run", runId] as const,
   events: (runId: string) => ["run-events", runId] as const,
+  reports: ["reports"] as const,
+  report: (name: string) => ["report", name] as const,
 };
+
+/** A report document as served (untrusted) and as parsed by its shape. */
+export type LoadedReport = { raw: unknown; document: ReportDocument };
+
+/** GET /api/reports: the newest report files first. */
+export const reportsQuery = () =>
+  queryOptions({
+    queryKey: queryKeys.reports,
+    queryFn: async ({ signal }): Promise<ReportSummaries> =>
+      parseReportSummaries(await req<unknown>("/api/reports", { signal })),
+    refetchInterval: REPORTS_REFRESH_MS,
+  });
+
+/** GET /api/reports/{name}; an invalid name is refused before any request. */
+export const reportQuery = (name: string) =>
+  queryOptions({
+    queryKey: queryKeys.report(name),
+    queryFn: async ({ signal }): Promise<LoadedReport> => {
+      const path = reportApiPath(name);
+      if (!path) throw new Error("This report name is not valid.");
+      const raw = await req<unknown>(path, { signal });
+      return { raw, document: parseReportDocument(raw) };
+    },
+    // A finished report never changes; an unfinished cohort is rewritten after every case.
+    staleTime: Infinity,
+    refetchInterval: (query) => {
+      const document = query.state.data?.document;
+      return document?.shape === "cohort" && cohortUnfinished(document.report)
+        ? UNFINISHED_COHORT_REFRESH_MS
+        : false;
+    },
+    retry: retryUnlessNotFound,
+  });
 
 export const queries = {
   health: () =>

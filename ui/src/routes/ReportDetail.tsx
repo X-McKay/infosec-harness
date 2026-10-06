@@ -7,7 +7,7 @@ import { QualificationReportView } from "@/components/evaluations/QualificationR
 import { ReplayReportView } from "@/components/evaluations/ReplayReport";
 import { Section } from "@/components/evaluations/common";
 import { EvalLink } from "@/components/evaluations/links";
-import { reportQuery } from "@/components/evaluations/queries";
+import { reportQuery } from "@/api/queries";
 import { isReportName, type ReportDocument } from "@/lib/reports";
 
 const EYEBROWS: Record<ReportDocument["shape"], string> = {
