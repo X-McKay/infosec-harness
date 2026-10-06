@@ -88,6 +88,11 @@ budget stays `not_checked`.
 A `command_timeout_seconds` above the runtime's `max_timeout_seconds` (default 300) is capped
 for model requests but makes every tool command fail, so keep it within that maximum.
 
+`reports_dir` (default `.harness/reports`) is where `harness qualify` and `harness eval`
+write timestamped reports by default and the only directory the API's `/api/reports` reads.
+The API lists its top-level `*.json` files and serves one at a time (at most 16 MiB) without
+writing anything; report content is untrusted operator data and qualifies nothing by itself.
+
 The model name must match the endpoint's served identifier. The self-hosted model is not
 provisioned or downloaded by this repository. A Bedrock executor is included, but its native credential-profile integration is not yet
 qualified; do not treat the provider option as working execution evidence.
@@ -118,8 +123,9 @@ uv run --locked harness report investigate-v11-<id>
 
 For a local uncommitted fixture, use `source_mode: working_snapshot` and `revision: HEAD`.
 The worker captures an immutable source snapshot before invoking the model.
-The API exposes `/api/runs`, `/api/runs/{id}`, cancellation and `/api/health`.
-Health proves control-plane connectivity only; it does not qualify sandbox or model execution.
+The API exposes `/api/runs`, `/api/runs/{id}`, `/api/runs/{id}/events` (a bounded history
+projection), cancellation, `/api/reports`, `/api/reports/{name}` and `/api/health`.
+Health proves Temporal connectivity only; it does not qualify sandbox or model execution.
 
 ## Checks and evaluation
 
