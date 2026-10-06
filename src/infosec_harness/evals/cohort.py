@@ -264,7 +264,7 @@ def corpus_cases(manifest: Path) -> list[CorpusCase]:
     return cases
 
 
-async def cancel_owned(client, run_id: str, drain: timedelta | None = None) -> None:
+async def cancel_owned(client: Client, run_id: str, drain: timedelta | None = None) -> None:
     # The RPC timeout and local bound also cover a persistently unavailable transport.
     handle = client.get_workflow_handle(run_id)
     async with asyncio.timeout(RPC_TIMEOUT.total_seconds()):
@@ -690,11 +690,11 @@ async def evaluate_corpus(
 
 
 class _NoDispatch:
-    def __getattr__(self, name):
+    def __getattr__(self, name: str) -> None:
         raise AssertionError(f"Replay attempted native operation: {name}")
 
 
-async def replay_history(run_id: str, settings, client=None) -> dict:
+async def replay_history(run_id: str, settings: Settings, client: Client | None = None) -> dict:
     """Replay one recorded history against current workflow code with zero dispatch."""
     import pydantic_ai.models
     from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
@@ -713,7 +713,7 @@ async def replay_history(run_id: str, settings, client=None) -> dict:
     bind_investigator(build_agent(shell, OpenShellModel(
         shell, settings.model_name, provider=settings.model_provider,
         base_url=settings.model_base_url, region=settings.model_region)))
-    report = {"status": "passed", "workflow_id": run_id, "history_events": len(history.events),
+    report = {"status": "not_checked", "workflow_id": run_id, "history_events": len(history.events),
               "history_sha256": hashlib.sha256(data.encode()).hexdigest(), "verdict": None}
     try:
         await Replayer(
@@ -721,6 +721,7 @@ async def replay_history(run_id: str, settings, client=None) -> dict:
             plugins=[PydanticAIPlugin()],
             workflow_runner=workflow_runner(),
         ).replay_workflow(history)
+        report["status"] = "passed"
     except Exception as error:
         report.update(status="failed", failure_chain=failure_chain(error))
     description = await handle.describe(rpc_timeout=RPC_TIMEOUT)
