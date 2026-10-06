@@ -85,13 +85,15 @@ def bounded(argv: list[str], timeout: int) -> list[str]:
 # Printed output is cut at these sizes (together below the native output bound); a cut is
 # reported by one fixed marker line appended to stderr, which `unwrap_output` turns into
 # ``output_truncated``. A forged marker can only mark output truncated, never hide a cut.
+# The closing parenthesis sits on its own line after the command, so a command that ends
+# in a ``#`` comment or a heredoc terminator still parses.
 STDOUT_LIMIT = 200_000
 STDERR_LIMIT = 60_000
 TRUNCATION_MARKER = "[ih-wrapper] output exceeded the in-sandbox capture limit and was cut"
 _SHELL_WRAPPER = (
     'out=$(mktemp /tmp/ih-out.XXXXXX) && err=$(mktemp /tmp/ih-err.XXXXXX) || exit 125; '
     '/usr/bin/timeout --preserve-status -s KILL "$1" /bin/bash -lc '
-    '"cd /workspace/repo && ( $2 ) >\"$out\" 2>\"$err\" </dev/null"; code=$?; '
+    '"cd /workspace/repo && ( $2\n) >\"$out\" 2>\"$err\" </dev/null"; code=$?; '
     f'head -c {STDOUT_LIMIT} "$out"; head -c {STDERR_LIMIT} "$err" >&2; '
     f'if (( $(wc -c <"$out") > {STDOUT_LIMIT} || $(wc -c <"$err") > {STDERR_LIMIT} )); '
     f"then printf '\\n%s\\n' '{TRUNCATION_MARKER}' >&2; fi; "

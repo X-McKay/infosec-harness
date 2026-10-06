@@ -49,7 +49,7 @@ async def test_native_tools_use_openshell_and_return_receipts():
     assert result.output.evidence_ids == ["execute:1:cmd"]
     argv = shell.executions[0][1]
     assert argv[:2] == ["/bin/bash", "-c"] and argv[3:] == ["ih-wrapper", "110", "pytest test_sink.py"]
-    assert "cd /workspace/repo && ( $2 )" in argv[2] and "timeout --preserve-status -s KILL" in argv[2]
+    assert "cd /workspace/repo && ( $2\n)" in argv[2] and "timeout --preserve-status -s KILL" in argv[2]
 
 
 async def test_command_killed_at_budget_is_a_completed_receipt_with_feedback():
@@ -139,6 +139,41 @@ def test_wrapper_cut_is_reported_as_truncation(tmp_path, stream):
     assert TRUNCATION_MARKER not in unwrapped.stderr
     assert getattr(unwrapped, stream) == "x" * limit
     assert unwrapped.exit_code == 3
+
+
+@pytest.mark.parametrize(
+    ("command", "stdout"),
+    [
+        # Review of 2026-10-06: with the closing parenthesis on the command's own line, both
+        # of these failed as "syntax error: unexpected end of file" (exit 2).
+        ("echo hi # trailing comment", "hi\n"),
+        ("cat <<'EOF'\nline one\n$HOME stays literal\nEOF", "line one\n$HOME stays literal\n"),
+        (
+            """printf '%s|%s\\n' "double \\"quoted\\"" 'single "kept"'""",
+            'double "quoted"|single "kept"\n',
+        ),
+    ],
+)
+def test_wrapper_runs_commands_ending_in_comments_heredocs_and_quotes(tmp_path, command, stdout):
+    result = run_wrapper(tmp_path, command)
+    assert (result.exit_code, result.stdout, result.stderr) == (0, stdout, "")
+
+
+def test_wrapper_keeps_the_final_probe_line_after_a_heredoc_and_comment(tmp_path):
+    from infosec_harness.agents.evidence import parse_probe_observations
+    from infosec_harness.contracts import PROBE_FIELDS
+    from infosec_harness.tools.execute import unwrap_output
+
+    claims = dict.fromkeys(PROBE_FIELDS, True)
+    line = "HARNESS_PROBE " + json.dumps(claims)
+    command = (
+        f"cat <<'EOF' >probe.sh\necho context\necho '{line}'\nEOF\n"
+        "bash probe.sh  # the probe prints its observation line last"
+    )
+    result = unwrap_output(run_wrapper(tmp_path, command))
+    assert result.exit_code == 0 and result.output_truncated is False
+    assert result.stdout == f"context\n{line}\n"
+    assert parse_probe_observations(result.stdout) == {**claims, "origin": "self_reported"}
 
 
 async def test_cut_probe_output_is_truncated_evidence_and_never_qualifies():
