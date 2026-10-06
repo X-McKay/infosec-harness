@@ -27,8 +27,10 @@ async def test_native_tools_use_openshell_and_return_receipts():
     result = await agent.run("Inspect sink", deps=await make_deps(shell))
     assert result.output.evidence_ids == ["execute:1:cmd"]
     argv = shell.executions[0][1]
-    assert argv[:2] == ["/bin/bash", "-c"] and argv[3:] == ["ih-wrapper", "110", "pytest test_sink.py"]
-    assert "cd /workspace/repo && ( $2\n)" in argv[2] and "timeout --preserve-status -s KILL" in argv[2]
+    assert argv[:2] == ["/bin/bash", "-c"]
+    assert argv[3:] == ["ih-wrapper", "110", "pytest test_sink.py"]
+    assert "cd /workspace/repo && ( $2\n)" in argv[2]
+    assert "timeout --preserve-status -s KILL" in argv[2]
 
 
 async def test_command_killed_at_budget_is_a_completed_receipt_with_feedback():
@@ -82,6 +84,7 @@ def run_wrapper(tmp_path, command):
         capture_output=True,
         env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)},
         timeout=60,
+        check=False,  # the exit code is the result under test
     )
     return CommandResult(
         completed.returncode, completed.stdout.decode(), completed.stderr.decode()

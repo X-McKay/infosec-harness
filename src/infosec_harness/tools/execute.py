@@ -85,7 +85,8 @@ def environment_feedback(command: str, exit_code: int | None, output_truncated: 
 
 def bounded(argv: list[str], timeout: int) -> list[str]:
     """Kill ``argv`` inside the sandbox before the native timeout; every non-shell exec."""
-    return ["/usr/bin/timeout", "--preserve-status", "-s", "KILL", str(command_budget(timeout)), *argv]
+    budget = str(command_budget(timeout))
+    return ["/usr/bin/timeout", "--preserve-status", "-s", "KILL", budget, *argv]
 
 
 # Shell commands spawn children (npm, Maven, test runners). A killed child that still holds

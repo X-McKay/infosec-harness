@@ -88,7 +88,9 @@ class OpenShellModel(Model):
             # A complete native receipt with a failed executor: terminal, never resent.
             detail = result.stderr.rstrip().rsplit("\n", 1)[-1][-300:] if result.stderr else ""
             if result.exit_code == KILLED_EXIT:
-                detail = f"killed at the {budget}s executor budget; provider outcome unknown. {detail}"
+                detail = (
+                    f"killed at the {budget}s executor budget; provider outcome unknown. {detail}"
+                )
             raise ModelExecutorError(
                 f"OpenShell model executor returned no complete response "
                 f"(exit {result.exit_code}, truncated={result.output_truncated}): {detail}"

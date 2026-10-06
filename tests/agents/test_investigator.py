@@ -70,15 +70,20 @@ async def test_validator_lets_a_newer_cited_probe_supersede_an_older_flawed_one(
                               negative_control=True, vulnerability_observed=observed),
         )
 
-    flawed, corrected, later = probe("probe:6:a", True), probe("probe:9:b", False), probe("probe:12:c", True)
+    flawed, corrected = probe("probe:6:a", True), probe("probe:9:b", False)
+    later = probe("probe:12:c", True)
     ctx = SimpleNamespace(
         deps=SimpleNamespace(source_digest="digest"),
         messages=[ModelRequest(parts=[
             ToolReturnPart("run_probe", item.model_dump(), tool_call_id=item.id.split(":")[-1])
             for item in (flawed, corrected, later)])],
     )
-    base = dict(label="likely_not_exploitable", summary="fixed query, flawed probe explained",
-                evidence_ids=[corrected.id], citations=[dict(path="app.py", start_line=1, end_line=1)])
+    base = dict(
+        label="likely_not_exploitable",
+        summary="fixed query, flawed probe explained",
+        evidence_ids=[corrected.id],
+        citations=[dict(path="app.py", start_line=1, end_line=1)],
+    )
     # A later contrary probe blocks the verdict even when listed as superseded.
     with pytest.raises(ModelRetry, match="probe:12:c contradict.*cannot be superseded"):
         await validate_verdict(ctx, Verdict(**base, superseded_evidence_ids=[flawed.id, later.id]))
@@ -496,9 +501,10 @@ async def test_oversized_write_is_refused_before_the_tool_runs():
         )
 
     deps = await make_deps(shell)
+    limit = MAX_INVOCATION_BYTES
     with pytest.raises(
         UsageLimitExceeded,
-        match=rf"Tool call exceeds the durable payload budget \(\d+ > {MAX_INVOCATION_BYTES} bytes\)",
+        match=rf"Tool call exceeds the durable payload budget \(\d+ > {limit} bytes\)",
     ):
         await build_agent(shell, FunctionModel(respond)).run("Write", deps=deps)
     assert shell.executions == []

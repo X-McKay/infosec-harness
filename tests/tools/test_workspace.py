@@ -79,7 +79,8 @@ def run_file_tool(tmp_path, **request):
         timeout=60,
         check=False,
     )
-    return completed.returncode, completed.stdout.decode(errors="replace"), completed.stderr.decode()
+    stdout = completed.stdout.decode(errors="replace")
+    return completed.returncode, stdout, completed.stderr.decode()
 
 
 def test_file_tool_confines_paths_to_the_repository(tmp_path):
@@ -153,7 +154,9 @@ def test_file_tool_output_never_exceeds_the_excerpt(tmp_path):
     (root / "many").mkdir()
     (root / "many" / "m.txt").write_text("needle\n" * 150)
 
-    code, stdout, _ = run_file_tool(tmp_path, action="read", path="min.js", start_line=1, end_line=1)
+    code, stdout, _ = run_file_tool(
+        tmp_path, action="read", path="min.js", start_line=1, end_line=1
+    )
     assert code == 0
     assert stdout == "1: " + ("var a=1;" * 40_000)[:MAX_LINE_CHARS] + " [line cut]\n"
 

@@ -51,7 +51,8 @@ def pairs(*items):
         pytest.param(PROBE_PREFIX + json.dumps(list(VALID)), id="array-of-names"),
         pytest.param(PROBE_PREFIX + "true", id="scalar"),
         pytest.param(
-            PROBE_PREFIX + pairs(*((key, "true") for key in PROBE_FIELDS), ("target_reached", "false")),
+            PROBE_PREFIX
+            + pairs(*((key, "true") for key in PROBE_FIELDS), ("target_reached", "false")),
             id="duplicate-key-six-fields",
         ),
         pytest.param(
