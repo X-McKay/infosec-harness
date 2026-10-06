@@ -1,10 +1,9 @@
 ---
 name: cwe-94-code-injection
-description: Recognize code-injection sources and sinks (eval and dynamic exec) and define a canary
-  oracle. Use this when the finding is CWE-94 or untrusted input is evaluated as program source.
+description: Untrusted input evaluated as program source (eval, exec). Use this when the finding is CWE-94 or code injection.
 metadata:
   owner: appsec
-  version: 2.0.0
+  version: 2.0.1
 ---
 
 # CWE-94: Code injection
@@ -44,6 +43,8 @@ other action. Map the result onto `HARNESS_PROBE` (see `probe`):
 
 - `target_reached`: the real evaluator entry point received the payload, including when it
   treats it as data or rejects it.
+- `oracle_valid`: the payload fits the evaluation context and its result is absent from the
+  input text.
 - `vulnerability_observed`: the computed `h<nonce>` appears in the target's output or state.
 - `positive_control`: the language's evaluator run directly on the same payload in the same
   context yields `h<nonce>`.

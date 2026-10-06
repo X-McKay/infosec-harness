@@ -1,0 +1,7 @@
+{
+  "status": "passed",
+  "workflow_id": "investigate-v11-exploitable-0001",
+  "history_events": 42,
+  "history_sha256": "41eb852fc9630da741eb852fc9630da741eb852fc9630da741eb852fc9630da7",
+  "verdict": "potentially_exploitable"
+}

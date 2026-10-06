@@ -1,31 +1,55 @@
 #!/usr/bin/env python3
-"""Provision the pinned, per-checkout development toolchain and Linux executor."""
+"""Provision the pinned, per-checkout development toolchain, Linux VM and readiness check."""
 
 from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
 import os
 import platform
 import re
-import secrets
 import shlex
 import shutil
 import socket
 import subprocess
 import sys
 import tarfile
+import time
 import tomllib
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+# CHECKOUT is the working tree this script belongs to (pins, sources, UI). ROOT is the checkout
+# that owns .harness/ and the VM: the main working tree when CHECKOUT is a linked git worktree,
+# so every worktree drives the one live runtime. ./dev resolves the same directory.
+CHECKOUT = Path(__file__).resolve().parents[1]
+
+
+def main_checkout(checkout: Path) -> Path:
+    """The main working tree of a linked git worktree; otherwise ``checkout`` itself."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(checkout), "rev-parse", "--path-format=absolute",
+             "--git-common-dir"],
+            capture_output=True, text=True, timeout=15, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return checkout
+    common = result.stdout.strip()
+    if result.returncode or not common or Path(common).name != ".git":
+        return checkout
+    return Path(common).parent.resolve()
+
+
+ROOT = main_checkout(CHECKOUT)
 STATE = ROOT / ".harness"
 ENV_PATH = STATE / "dev.env"
-TOOLS_ENV = ROOT / ".dev-tools" / "versions.env"
-MISE_CONFIG = ROOT / ".mise.toml"
-RUNTIME_TEMPLATE = ROOT / "deploy" / "dev-runtime" / "lima.yaml"
+TOOLS_ENV = CHECKOUT / ".dev-tools" / "versions.env"
+MISE_CONFIG = CHECKOUT / ".mise.toml"
+RUNTIME_TEMPLATE = CHECKOUT / "deploy" / "dev-runtime" / "lima.yaml"
 # Per-checkout VM homes live under one short directory (macOS socket-path limits). Each home
 # records the checkout that owns it in OWNER_RECORD so `./dev gc` can find orphaned ones.
 RUNTIME_HOMES = Path.home() / ".cache" / "ih"
@@ -83,17 +107,19 @@ def _port_is_free(port: int) -> bool:
     return True
 
 
+# Loopback ports of the local control plane: Temporal gRPC and its bundled UI, the API and UI.
+PORT_BASES = {
+    "HARNESS_API_PORT": 8000,
+    "HARNESS_WEB_PORT": 8080,
+    "HARNESS_TEMPORAL_PORT": 7233,
+    "HARNESS_TEMPORAL_UI_PORT": 8233,
+}
+
+
 def ports() -> dict[str, int]:
     offset = int(hashlib.sha256(str(ROOT.resolve()).encode()).hexdigest()[:4], 16) % 300
-    bases = {
-        "HARNESS_POSTGRES_PORT": 5432,
-        "HARNESS_API_PORT": 8000,
-        "HARNESS_WEB_PORT": 8080,
-        "HARNESS_TEMPORAL_PORT": 7233,
-        "HARNESS_TEMPORAL_UI_PORT": 8233,
-    }
     for candidate in range(offset, offset + 1200):
-        selected = {key: base + candidate for key, base in bases.items()}
+        selected = {key: base + candidate for key, base in PORT_BASES.items()}
         if all(_port_is_free(port) for port in selected.values()):
             return selected
     raise RuntimeError("could not find a free checkout-specific port range")
@@ -110,45 +136,25 @@ def _read_env() -> dict[str, str]:
     return current
 
 
+def env_values(current: dict[str, str]) -> dict[str, str]:
+    """dev.env contents: the checkout's loopback ports (kept once chosen) and worker workspace.
+
+    Keys of the retired compose stack (project name, PostgreSQL port and password, build-egress
+    proxy, builder and web target) are dropped; ./dev derives the Temporal address and the
+    approved corpus root at run time.
+    """
+    if PORT_BASES.keys() <= current.keys():
+        values = {key: current[key] for key in PORT_BASES}
+    else:
+        values = {key: current.get(key, str(port)) for key, port in ports().items()}
+    values["HARNESS_WORKSPACE_DIR"] = str((STATE / "workspace").resolve())
+    return values
+
+
 def ensure_env() -> Path:
     STATE.mkdir(parents=True, exist_ok=True)
-    current = _read_env()
-    values = {"COMPOSE_PROJECT_NAME": current.get("COMPOSE_PROJECT_NAME", project_identity())}
-    port_keys = {
-        "HARNESS_POSTGRES_PORT",
-        "HARNESS_API_PORT",
-        "HARNESS_WEB_PORT",
-        "HARNESS_TEMPORAL_PORT",
-        "HARNESS_TEMPORAL_UI_PORT",
-    }
-    selected_ports = {} if port_keys <= current.keys() else ports()
-    values.update({key: current.get(key, str(value)) for key, value in selected_ports.items()})
-    for key in sorted(port_keys):
-        if key not in values:
-            values[key] = current[key]
-    # runsc is used only by the trusted image builder, never as an agent fallback.
-    # gVisor's userspace network stack cannot reach Docker's 127.0.0.11 embedded DNS on an
-    # Internal=true bridge. Give the only dual-homed service a deterministic address instead
-    # of weakening runsc or adding an external DNS path to the build network.
-    values["HARNESS_BUILD_EGRESS_HOST_IP"] = "172.30.0.2"
-    values["HARNESS_BUILD_EGRESS_SUBNET"] = "172.30.0.0/24"
-    values["HARNESS_BUILD_EGRESS_PROXY"] = (
-        f"http://{values['HARNESS_BUILD_EGRESS_HOST_IP']}:3128"
-    )
-    values["HARNESS_BUILD_EGRESS_NETWORK"] = current.get(
-        "HARNESS_BUILD_EGRESS_NETWORK", f"{values['COMPOSE_PROJECT_NAME']}-build-egress"
-    )
-    values["HARNESS_BUILDX_BUILDER"] = current.get(
-        "HARNESS_BUILDX_BUILDER", f"{values['COMPOSE_PROJECT_NAME']}-gvisor"
-    )
-    values["HARNESS_WEB_TARGET_PORT"] = "5173"
-    values["HARNESS_WORKSPACE_DIR"] = str((STATE / "workspace").resolve())
-    # Only the explicitly approved corpus is readable by the host-side worker.
-    values["HARNESS_LOCAL_REPO_ROOTS"] = json.dumps([str((ROOT / "eval-corpus").resolve())])
-    values["HARNESS_POSTGRES_PASSWORD"] = current.get(
-        "HARNESS_POSTGRES_PASSWORD", secrets.token_urlsafe(24)
-    )
-    text = "# Generated per checkout by ./dev; contains local credentials; do not commit.\n"
+    values = env_values(_read_env())
+    text = "# Generated per checkout by ./dev; private local state; do not commit.\n"
     text += "\n".join(f"{key}={shlex.quote(value)}" for key, value in values.items()) + "\n"
     if not ENV_PATH.exists() or ENV_PATH.read_text() != text:
         ENV_PATH.write_text(text)
@@ -176,7 +182,7 @@ def install_managed_tools() -> None:
     mise = shutil.which("mise")
     if not mise:
         raise RuntimeError("managed mise bootstrap is missing; rerun ./dev")
-    subprocess.run([mise, "install", "--yes"], cwd=ROOT, check=True)
+    subprocess.run([mise, "install", "--yes"], cwd=CHECKOUT, check=True)
 
 
 def run_tool(command: str, args: list[str], *, cwd: Path) -> None:
@@ -401,13 +407,13 @@ def tool_mismatches(names: list[str]) -> list[str]:
 
 
 def requirements(profile: str) -> list[str]:
-    # The offline loop runs `just check` and `just test`; the replay tests need the Temporal CLI.
+    # The offline loop runs `just check` and `just test`; the replay tests and the full
+    # profile's local control plane need the Temporal CLI.
     missing = tool_mismatches(["python", "uv", "just", "http:temporal"])
     if profile == "full":
+        # The VM's original daemon builds trusted workload images; it runs no service.
         if command_version("docker", "--version") is None:
             missing.append("managed VM Docker endpoint")
-        if command_version("docker", "compose", "version") is None:
-            missing.append("managed VM Docker Compose plugin")
         missing.extend(tool_mismatches(["node"]))
         free_gib = shutil.disk_usage(ROOT).free / (1024**3)
         if free_gib < 12:
@@ -448,10 +454,10 @@ def setup(profile: str, check_only: bool = False) -> int:
     run_tool(
         "uv",
         ["sync", "--locked", "--python", mise_tools()["python"], "--no-python-downloads"],
-        cwd=ROOT,
+        cwd=CHECKOUT,
     )
     if profile == "full":
-        run_tool("npm", ["ci", "--no-audit", "--no-fund"], cwd=ROOT / "ui")
+        run_tool("npm", ["ci", "--no-audit", "--no-fund"], cwd=CHECKOUT / "ui")
     return 0
 
 
@@ -493,18 +499,19 @@ def stop_vm() -> int:
     return 0
 
 
-# Generated per-checkout state that `reset` deletes. Pinned tools, downloads, logs and
-# reports under .harness/ are kept: they are verified caches and evidence, not stack state.
+# Generated per-checkout state that `reset` deletes. Pinned tools, downloads, logs, reports,
+# exported histories and the Temporal database under .harness/ are kept: they are verified
+# caches and evidence, not stack state.
 RESET_STATE = ("dev.env", "runtime-home", "bin/docker", "workspace")
 
 
 def reset(*, assume_yes: bool) -> int:
-    identity = _read_env().get("COMPOSE_PROJECT_NAME", project_identity())
+    identity = project_identity()
     print(f"reset deletes this checkout's ({identity}) stack and local state:")
-    print(f"- VM, Docker images and volumes (databases, artifacts, findings): {LIMA_HOME}")
+    print(f"- VM, Docker images and volumes (OpenShell daemon, artifacts): {LIMA_HOME}")
     for name in RESET_STATE:
         print(f"- {(STATE / name).relative_to(ROOT)}")
-    print("kept: pinned tools, downloads, logs and reports under .harness/")
+    print("kept: pinned tools, downloads, logs, reports, histories and temporal/ under .harness/")
     if not assume_yes:
         if not sys.stdin.isatty():
             print("reset needs confirmation: rerun in a terminal or pass --yes", file=sys.stderr)
@@ -592,16 +599,79 @@ def gc(*, delete: bool) -> int:
     return 2 if failed else 0
 
 
+def _loopback(url: str) -> str:
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
+        raise ValueError(f"readiness only checks loopback http URLs, not {url!r}")
+    return url.rstrip("/")
+
+
+def _api_ready(body: str) -> bool:
+    document = json.loads(body)
+    return isinstance(document, dict) and document.get("status") == "control_plane_ready"
+
+
+def readiness(
+    api_url: str, web_url: str, temporal_ui_url: str, *,
+    deadline_seconds: float = 120, interval: float = 2,
+) -> int:
+    """Bounded GET-only readiness of the local control plane, through no proxy.
+
+    It proves the API reaches Temporal and the two UIs serve their documents. It never claims
+    that a worker, OpenShell or live inference was qualified.
+    """
+    checks = {
+        "API and Temporal connectivity": (_loopback(api_url) + "/api/health", _api_ready),
+        "Temporal UI": (_loopback(temporal_ui_url) + "/", lambda body: True),
+        "UI document": (_loopback(web_url) + "/", lambda body: '<div id="root"></div>' in body),
+    }
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    deadline = time.monotonic() + deadline_seconds
+    failures: dict[str, str] = {}
+    while True:
+        for name, (url, accept) in list(checks.items()):
+            try:
+                with opener.open(urllib.request.Request(url, method="GET"), timeout=5) as reply:
+                    body = reply.read(1 << 20).decode("utf-8", "replace")
+                if accept(body):
+                    del checks[name]
+                    failures.pop(name, None)
+                else:
+                    failures[name] = f"unexpected response from {url}"
+            except (OSError, ValueError, http.client.HTTPException) as exc:
+                failures[name] = f"{url}: {exc}"
+        if not checks:
+            print("API, Temporal connectivity, Temporal UI and UI document: passed")
+            print("Worker execution, OpenShell and live inference: not_checked")
+            return 0
+        if time.monotonic() >= deadline:
+            print(f"control-plane readiness failed within {deadline_seconds:g} s:", file=sys.stderr)
+            print("\n".join(f"- {name}: {failures[name]}" for name in checks), file=sys.stderr)
+            return 2
+        time.sleep(interval)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "action", nargs="?", default="setup", choices=("setup", "stop-vm", "reset", "gc")
+        "action", nargs="?", default="setup",
+        choices=("setup", "ready", "stop-vm", "reset", "gc"),
     )
     parser.add_argument("--profile", choices=("full", "offline"), default="full")
     parser.add_argument("--check-only", action="store_true")
     parser.add_argument("--yes", action="store_true", help="reset: confirm without a prompt")
     parser.add_argument("--delete", action="store_true", help="gc: delete orphaned homes")
+    parser.add_argument("--api-url", help="ready: the local API base URL")
+    parser.add_argument("--web-url", help="ready: the local UI base URL")
+    parser.add_argument("--temporal-ui-url", help="ready: the Temporal UI base URL")
+    parser.add_argument("--timeout", type=float, default=120, help="ready: seconds to wait")
     args = parser.parse_args(argv)
+    if args.action == "ready":
+        if not (args.api_url and args.web_url and args.temporal_ui_url):
+            parser.error("ready needs --api-url, --web-url and --temporal-ui-url")
+        return readiness(
+            args.api_url, args.web_url, args.temporal_ui_url, deadline_seconds=args.timeout
+        )
     if args.action == "stop-vm":
         return stop_vm()
     if args.action == "reset":

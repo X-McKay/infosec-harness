@@ -266,7 +266,10 @@ async def test_adapter_rejects_oversized_input_before_sandbox_creation(monkeypat
         "infosec_harness.agents.inference.activity.info",
         lambda: SimpleNamespace(workflow_id="run", activity_id="7"),
     )
-    with pytest.raises(ValueError, match="invocation exceeds the durable payload budget"):
+    limit = executor.MAX_INVOCATION_BYTES
+    with pytest.raises(
+        ValueError, match=rf"invocation exceeds the durable payload budget \(\d+ > {limit} bytes\)"
+    ):
         await OpenShellModel(shell, "fixture").request(
             [ModelRequest(parts=[UserPromptPart("x" * executor.MAX_INVOCATION_BYTES)])],
             None,
@@ -286,5 +289,9 @@ async def test_adapter_rejects_oversized_native_response(monkeypatch):
         "infosec_harness.agents.inference.activity.info",
         lambda: SimpleNamespace(workflow_id="run", activity_id="7"),
     )
-    with pytest.raises(ValueError, match="response exceeds the durable payload budget"):
+    limit = executor.MAX_RESPONSE_BYTES
+    with pytest.raises(
+        ValueError,
+        match=rf"response exceeds the durable payload budget \({limit + 1} > {limit} bytes\)",
+    ):
         await OpenShellModel(shell, "fixture").request([], None, ModelRequestParameters())

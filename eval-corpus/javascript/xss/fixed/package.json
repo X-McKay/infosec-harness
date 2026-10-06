@@ -1,7 +1,0 @@
-{
-  "name": "xss-fixed",
-  "version": "1.0.0",
-  "private": true,
-  "scripts": {"test": "jest"},
-  "devDependencies": {"jest": "^29.7.0"}
-}

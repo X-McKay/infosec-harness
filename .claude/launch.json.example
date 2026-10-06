@@ -1,0 +1,20 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "ui",
+      "url": "http://127.0.0.1:8080",
+      "port": 8080
+    },
+    {
+      "name": "api",
+      "url": "http://127.0.0.1:8000",
+      "port": 8000
+    },
+    {
+      "name": "temporal-ui",
+      "url": "http://127.0.0.1:8233",
+      "port": 8233
+    }
+  ]
+}

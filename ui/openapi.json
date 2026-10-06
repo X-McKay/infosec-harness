@@ -8,6 +8,7 @@
     "/api/health": {
       "get": {
         "summary": "Health",
+        "description": "Temporal connectivity only; sandbox, worker and model execution stay not_checked.",
         "operationId": "health_api_health_get",
         "responses": {
           "200": {
@@ -15,11 +16,17 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "type": "object",
-                  "title": "Response Health Api Health Get"
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Temporal is unreachable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
                 }
               }
             }
@@ -170,11 +177,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "title": "Response Cancel Api Runs  Run Id  Cancel Post"
+                  "$ref": "#/components/schemas/CancelResult"
                 }
               }
             }
@@ -191,10 +194,136 @@
           }
         }
       }
+    },
+    "/api/runs/{run_id}/events": {
+      "get": {
+        "summary": "Run Events",
+        "description": "At most ``MAX_EVENTS`` history events as kinds, activity names and bounded labels.",
+        "operationId": "run_events_api_runs__run_id__events_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunEvents"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/reports": {
+      "get": {
+        "summary": "Reports",
+        "description": "Newest report files first; one unreadable file never fails the listing.",
+        "operationId": "reports_api_reports_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportList"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/reports/{name}": {
+      "get": {
+        "summary": "Report",
+        "description": "One report document, validated as a JSON object. Its content is untrusted data.",
+        "operationId": "report_api_reports__name__get",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Report Api Reports  Name  Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such report"
+          },
+          "413": {
+            "description": "Report exceeds 16 MiB"
+          },
+          "422": {
+            "description": "Report is not a readable JSON object"
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "CancelResult": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "cancellation_requested",
+              "running",
+              "completed",
+              "failed",
+              "canceled",
+              "terminated",
+              "continued_as_new",
+              "timed_out",
+              "unknown"
+            ],
+            "title": "Status"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "CancelResult",
+        "description": "A cancellation request, or the status of a run that had already closed."
+      },
       "Citation": {
         "properties": {
           "path": {
@@ -396,6 +525,46 @@
         "type": "object",
         "title": "HTTPValidationError"
       },
+      "Health": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "control_plane_ready",
+              "temporal_unavailable"
+            ],
+            "title": "Status"
+          },
+          "temporal": {
+            "type": "boolean",
+            "title": "Temporal"
+          },
+          "runtime": {
+            "type": "string",
+            "const": "not_checked",
+            "title": "Runtime",
+            "default": "not_checked"
+          },
+          "generation": {
+            "type": "string",
+            "title": "Generation"
+          },
+          "task_queue": {
+            "type": "string",
+            "title": "Task Queue"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "status",
+          "temporal",
+          "generation",
+          "task_queue"
+        ],
+        "title": "Health",
+        "description": "Temporal connectivity only; never sandbox, worker or model qualification."
+      },
       "InvestigationResult": {
         "properties": {
           "finding": {
@@ -464,6 +633,249 @@
           "model"
         ],
         "title": "InvestigationResult"
+      },
+      "ReportList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ReportSummary"
+            },
+            "type": "array",
+            "maxItems": 200,
+            "title": "Items"
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "ReportList"
+      },
+      "ReportSummary": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "model",
+              "diagnostic",
+              "openshell",
+              "replay",
+              "unknown"
+            ],
+            "title": "Kind"
+          },
+          "bytes": {
+            "type": "integer",
+            "title": "Bytes"
+          },
+          "modified_at": {
+            "type": "string",
+            "title": "Modified At"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "commit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commit"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "planned": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned"
+          },
+          "completed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed"
+          },
+          "task_success_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Success Rate"
+          },
+          "unsafe_negatives": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unsafe Negatives"
+          },
+          "gates": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Gates"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "kind",
+          "bytes",
+          "modified_at"
+        ],
+        "title": "ReportSummary",
+        "description": "Operator report files are untrusted and vary in shape: every parsed field is optional."
+      },
+      "RunEvent": {
+        "properties": {
+          "at": {
+            "type": "string",
+            "title": "At"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "workflow_started",
+              "activity_scheduled",
+              "activity_completed",
+              "activity_failed",
+              "activity_timed_out",
+              "timer",
+              "workflow_completed",
+              "workflow_failed",
+              "workflow_cancelled",
+              "other"
+            ],
+            "title": "Kind"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Detail",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "at",
+          "kind"
+        ],
+        "title": "RunEvent"
+      },
+      "RunEvents": {
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/RunEvent"
+            },
+            "type": "array",
+            "maxItems": 500,
+            "title": "Events"
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "run_id",
+          "events"
+        ],
+        "title": "RunEvents"
       },
       "RunPage": {
         "properties": {
@@ -561,6 +973,16 @@
           },
           "status": {
             "type": "string",
+            "enum": [
+              "running",
+              "completed",
+              "failed",
+              "canceled",
+              "terminated",
+              "continued_as_new",
+              "timed_out",
+              "unknown"
+            ],
             "title": "Status"
           },
           "started_at": {
@@ -577,6 +999,44 @@
               }
             ],
             "title": "Closed At"
+          },
+          "verdict": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "potentially_exploitable",
+                  "likely_not_exploitable",
+                  "inconclusive"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verdict"
+          },
+          "cwe": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cwe"
+          },
+          "repo_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo Url"
           }
         },
         "additionalProperties": false,

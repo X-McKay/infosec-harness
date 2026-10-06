@@ -1,10 +1,9 @@
 ---
 name: lang-python
-description: 'Conventions for reading Python repositories: layout, entry points, test discovery, and
-  common sinks. Use this when the repository is primarily Python.'
+description: 'Python repositories: layout, entry points, test discovery, common sinks. Use this when the repository is primarily Python.'
 metadata:
   owner: appsec
-  version: 1.1.0
+  version: 1.2.0
 ---
 
 # Python repositories
@@ -30,6 +29,16 @@ metadata:
   usually pytest; `unittest.TestCase` classes are common too.
 - **Sinks to note:** `subprocess`/`os.system`, `cursor.execute`, `open`, `eval`/`exec`,
   `pickle`/`yaml.load`, template `| safe` / `Markup`, `requests`/`urllib` with dynamic URLs.
+
+## When the toolchain is absent
+
+The workspace image ships Python 3.12; pytest and third-party packages come from the
+repository's declared dependencies through `environment`. Verify with `command -v python3` and
+`python3 -c "import <module>"` for each import on the path to the sink. A probe needs no test
+runner: a plain script that imports the real code and prints the `HARNESS_PROBE` line is
+enough. If a module the target cannot import without is missing and `environment` cannot
+provide it, do not stub it. Return `inconclusive`, name the exact missing module as a
+limitation in the verdict summary, and record what reading established.
 
 ## Completion criteria
 

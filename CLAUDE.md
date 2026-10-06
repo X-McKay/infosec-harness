@@ -51,6 +51,7 @@ The managed Lima VM and runsc builder provision trusted workload images; agent e
 always uses OpenShell. Never weaken a boundary to get setup or qualification to pass.
 Offline mode leaves native OpenShell and live inference `not_checked`.
 `--settings FILE` on `./dev qualify|eval|replay|worker` freezes one configuration (no `HARNESS_*`).
+`./dev eval --parallel N` runs up to N cases at once and records that as a report limitation.
 Never edit `src/infosec_harness/` (code, YAML or skill Markdown) while an owned evaluation
 worker runs: the worker identity covers those files and its guard ends the cohort.
 

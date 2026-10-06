@@ -8,9 +8,9 @@ OpenShell release archives and OCI image identities are pinned in
 
 ## Prepare the checkout-owned runtime
 
-Use the canonical setup entry point. Full setup checks the managed VM, actual runsc builder,
-control plane and configured native runtime; offline mode intentionally leaves native runtime
-and live inference `not_checked`.
+Use the canonical setup entry point. Full setup checks the managed VM, the local Temporal
+control plane and the configured native runtime; offline mode intentionally leaves native
+runtime and live inference `not_checked`.
 
 ```bash
 ./dev --profile offline
@@ -29,10 +29,11 @@ for artifact in cli-macos-arm64 gateway-linux-arm64 supervisor-linux-arm64 sandb
 done
 ```
 
-Build the workspace/toolchain image only through the already qualified runsc build-egress
-builder. `.harness/dev.env` supplies its checkout-local builder and approved proxy; it is a
-private file, so do not print it or commit the resulting log or tar. The image is then streamed
-into the dedicated guest daemon without selecting a host Docker context:
+Build trusted workload images on the managed VM's original Docker daemon (plain `runc`,
+ordinary egress for package downloads) through the checkout's `.harness/bin/docker` shim, never
+on host Docker. That daemon runs no investigation workload: each build is saved to a tar and
+streamed into the dedicated guest daemon without selecting a host Docker context. Every base
+image stays pinned by digest in its Dockerfile. Do not commit the resulting log or tar.
 
 The qualified workspace base is the official `python:3.12.13-slim-bookworm` image pinned by
 the manifest-verified index digest
@@ -47,14 +48,9 @@ reachable under the workspace policy), gcc and make. Every command runs under
 the model executor image needs `/usr/bin/timeout`.
 
 ```bash
-set -a
-source .harness/dev.env
-set +a
-.harness/bin/docker buildx build -f deploy/openshell/Dockerfile.workspace \
-  --builder "$HARNESS_BUILDX_BUILDER" \
-  --build-arg HTTP_PROXY="$HARNESS_BUILD_EGRESS_PROXY" \
-  --build-arg HTTPS_PROXY="$HARNESS_BUILD_EGRESS_PROXY" \
-  --output type=docker,dest=.harness/openshell/workspace.tar deploy/openshell
+.harness/bin/docker build -f deploy/openshell/Dockerfile.workspace \
+  --tag ih-openshell-workspace:build deploy/openshell
+.harness/bin/docker save ih-openshell-workspace:build >.harness/openshell/workspace.tar
 
 CHECKOUT_ID="$(basename "$(cat .harness/runtime-home)")"
 LIMA_VERSION="$(awk -F= '$1 == "LIMA_VERSION" {print $2}' .dev-tools/versions.env)"
@@ -66,31 +62,23 @@ LIMA_HOME="$(cat .harness/runtime-home)" \
 ```
 
 Record the resulting image ID from the load/inspect result in each workspace and probe profile.
-The copy-up of apt-owned files and the package installation intentionally run in one Dockerfile
-layer because the runsc BuildKit overlay cannot create dpkg backup hardlinks to lower-layer
-files.
 
 Build the separate, minimal model executor from the current module and hash-locked dependency
 closure. The context generator copies only `src/infosec_harness/sandbox/executor.py` (with empty
 package markers); choose a new output directory for each build. The image runs
 `python -I -m infosec_harness.sandbox.executor` and contains no Temporal worker, controller,
 repository snapshot or credentials. Rebuild and reload it, and record the new image ID in the
-model profile, whenever `sandbox/executor.py` changes. An older image silently ignores new
-`ModelInvocation` fields (for example `timeout_seconds`), because unknown fields are not
-rejected there.
+model profile, whenever `sandbox/executor.py` changes. Images built from this source refuse
+an invocation carrying an unknown top-level `ModelInvocation` field, so a stale image fails the
+model call (asking for a rebuild) instead of silently dropping a newer budget such as
+`timeout_seconds`. Images built before this check still ignore unknown fields; rebuild them.
 
 ```bash
 .harness/bin/mise exec -- uv run --locked python deploy/openshell/build_context.py \
   --machine aarch64 --output .harness/openshell/executor-context
-set -a
-source .harness/dev.env
-set +a
-.harness/bin/docker buildx build -f .harness/openshell/executor-context/Dockerfile \
-  --builder "$HARNESS_BUILDX_BUILDER" \
-  --build-arg HTTP_PROXY="$HARNESS_BUILD_EGRESS_PROXY" \
-  --build-arg HTTPS_PROXY="$HARNESS_BUILD_EGRESS_PROXY" \
-  --output type=docker,dest=.harness/openshell/executor.tar \
-  .harness/openshell/executor-context
+.harness/bin/docker build -f .harness/openshell/executor-context/Dockerfile \
+  --tag ih-openshell-executor:build .harness/openshell/executor-context
+.harness/bin/docker save ih-openshell-executor:build >.harness/openshell/executor.tar
 
 CHECKOUT_ID="$(basename "$(cat .harness/runtime-home)")"
 LIMA_VERSION="$(awk -F= '$1 == "LIMA_VERSION" {print $2}' .dev-tools/versions.env)"
@@ -138,7 +126,10 @@ committed. VM state itself lives under `~/.cache/ih/<checkout-id>/`.
 | Path | Contents |
 | --- | --- |
 | `bin/`, `mise/`, `mise-cache/`, `mise-state/`, `tools/`, `downloads/` | Pinned, hash-verified managed tools (mise, Docker CLI, Lima) |
-| `dev.env` | Generated ports, compose project, builder and build-egress proxy; private, do not print |
+| `dev.env` | Generated checkout-specific ports and the worker workspace directory |
+| `temporal/` | The local Temporal dev server's SQLite database; kept by `./dev stop` |
+| `run/` | Pid files and logs of the local Temporal, API and UI processes |
+| `histories/` | Workflow history JSON written by `harness export-history` |
 | `runtime-home` | Path of this checkout's Lima home |
 | `openshell/artifacts/` | Hash-verified OpenShell release archives |
 | `openshell/*.tar`, `openshell/executor-context/` | Workspace and executor image build outputs |
@@ -311,10 +302,10 @@ The pinned 0.1.2 gateway admits at most 1,000 retained durable mutations per cal
 hours, which a full cohort exceeds. `deploy/openshell/patches/` carries the tracked patch that
 makes that quota the validated config key `openshell.gateway.max_mutation_admissions_per_caller`
 (default 1000); only the patched binary reads that key. Build the patched binary reproducibly
-from the exact pinned source, vendored crates and the pinned `rust:1.95.0-trixie` image through
-the qualified build-egress builder; the build runs offline after the base image and `cmake`
-package. From a worktree, set `HARNESS_DIR=/path/to/main/checkout/.harness` so the script uses
-that checkout's managed tools, `dev.env` and build context:
+from the exact pinned source, vendored crates and the pinned `rust:1.95.0-trixie` image on the
+managed VM's original Docker daemon; the build runs offline after the base image and `cmake`
+package. From a git worktree the script uses the main checkout's `.harness/` (managed tools
+and build context) automatically; `HARNESS_DIR=/path/to/.harness` overrides that:
 
 ```bash
 B=.harness/openshell/gateway-build
@@ -385,7 +376,7 @@ served model identifier in the worker environment, and put provider credentials 
 native model provider. Run the unchanged registered corpus with:
 
 ```bash
-./dev eval [--settings settings.json] [--keep-going]   # .harness/reports/model-<UTC time>.json
+./dev eval [--settings settings.json] [--keep-going] [--parallel N]   # .harness/reports/model-<UTC time>.json
 ./dev eval --case pathtraversal-fixed                 # diagnostic; never qualifies
 ./dev replay investigate-v11-eval-<id> --output .harness/reports/replay-<id>.json
 ```
@@ -399,7 +390,11 @@ terminal agent-level failure: an exhausted budget, invalid model output after co
 a `ModelExecutorError` (the executor exited without a complete response, including a kill at
 the request budget; that request is never resent). Any other timeout, transport, identity,
 unknown-dispatch, native or cleanup failure stops the cohort. No case is re-run, and an
-incomplete cohort fails. `replay` re-executes the history against current workflow code with
+incomplete cohort fails. `--parallel N` (1 to 8, default 1) runs up to N cases at once against the
+one owned worker and records a report limitation: latency and executor failure rates are not
+comparable to a sequential baseline, and peak in-flight native operations rise with
+concurrency. A stopping failure latches: in-flight cases finish and no new case starts.
+`replay` re-executes the history against current workflow code with
 model and native dispatch disabled.
 
 Review the manifest, endpoint, model, dataset hashes, report destination and bounded request

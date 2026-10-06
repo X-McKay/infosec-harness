@@ -15,3 +15,8 @@ research/
 # Per-developer Claude Code permission rules
 .claude/settings.local.json
 .claude/launch.json
+
+# Playwright end-to-end output
+ui/playwright-report/
+ui/test-results/
+ui/blob-report/

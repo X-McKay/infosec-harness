@@ -2,8 +2,9 @@
 
 from typing import Literal
 
-from pydantic_ai.messages import ModelResponse
-from pydantic_ai.models import Model
+from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.models import Model, ModelRequestParameters
+from pydantic_ai.settings import ModelSettings
 from temporalio import activity
 
 from infosec_harness.sandbox import OpenShell
@@ -49,7 +50,12 @@ class OpenShellModel(Model):
     def system(self) -> str:
         return "openshell"
 
-    async def request(self, messages, model_settings, model_request_parameters) -> ModelResponse:
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
         # Native PydanticAI durability owns this activity's stable identity and history.
         # Production inference without Temporal is deliberately unavailable.
         info = activity.info()
@@ -66,7 +72,10 @@ class OpenShellModel(Model):
         )
         encoded = invocation.model_dump_json().encode()
         if len(encoded) > MAX_INVOCATION_BYTES:
-            raise ValueError("Model invocation exceeds the durable payload budget")
+            raise ValueError(
+                f"Model invocation exceeds the durable payload budget "
+                f"({len(encoded)} > {MAX_INVOCATION_BYTES} bytes)"
+            )
         sandbox = await self.openshell.create(info.workflow_id, profile="model")
         result = await self.openshell.execute(
             sandbox,
@@ -79,11 +88,17 @@ class OpenShellModel(Model):
             # A complete native receipt with a failed executor: terminal, never resent.
             detail = result.stderr.rstrip().rsplit("\n", 1)[-1][-300:] if result.stderr else ""
             if result.exit_code == KILLED_EXIT:
-                detail = f"killed at the {budget}s executor budget; provider outcome unknown. {detail}"
+                detail = (
+                    f"killed at the {budget}s executor budget; provider outcome unknown. {detail}"
+                )
             raise ModelExecutorError(
                 f"OpenShell model executor returned no complete response "
                 f"(exit {result.exit_code}, truncated={result.output_truncated}): {detail}"
             )
-        if len(result.stdout.encode()) > MAX_RESPONSE_BYTES:
-            raise ValueError("Model response exceeds the durable payload budget")
+        size = len(result.stdout.encode())
+        if size > MAX_RESPONSE_BYTES:
+            raise ValueError(
+                f"Model response exceeds the durable payload budget "
+                f"({size} > {MAX_RESPONSE_BYTES} bytes)"
+            )
         return RESPONSE.validate_json(result.stdout)

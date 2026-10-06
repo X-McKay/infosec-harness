@@ -9,7 +9,7 @@ from pathlib import Path
 import pydantic_ai.models
 import pytest
 
-from infosec_harness.config import get_settings
+from infosec_harness.config import reset_settings
 
 ROOT = Path(__file__).resolve().parents[1]
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
@@ -21,9 +21,9 @@ def isolated_settings(tmp_path, monkeypatch):
         if key.startswith("HARNESS_") and not key.startswith("HARNESS_TEST_"):
             monkeypatch.delenv(key)
     monkeypatch.setenv("HARNESS_WORKSPACE_DIR", str(tmp_path / "workspace"))
-    get_settings.cache_clear()
+    reset_settings()
     yield
-    get_settings.cache_clear()
+    reset_settings()
 
 
 @pytest.fixture
@@ -38,6 +38,18 @@ def temporal_cli():
             pytest.fail("Pinned Temporal CLI is required for durable qualification")
         pytest.skip("Pinned Temporal CLI unavailable; durable qualification not checked")
     return found
+
+
+@pytest.fixture
+async def temporal_env(temporal_cli):
+    """A fresh local Temporal dev server with the PydanticAI plugin, for one test."""
+    from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
+    from temporalio.testing import WorkflowEnvironment
+
+    async with await WorkflowEnvironment.start_local(
+        dev_server_existing_path=temporal_cli, plugins=[PydanticAIPlugin()]
+    ) as env:
+        yield env
 
 
 def load_script(name: str):

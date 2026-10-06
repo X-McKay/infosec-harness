@@ -2,13 +2,61 @@
 set -euo pipefail
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 cd "$ROOT_DIR"
+
+# The checkout that owns .harness/ (managed tools, VM, Temporal database, private configuration
+# and logs): the main working tree when this is a linked git worktree, so every worktree drives
+# the one live runtime. scripts/dev_setup.py resolves the same directory.
+main_checkout() {
+  local common
+  common="$(git -C "$ROOT_DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" ||
+    common=""
+  if [[ -n "$common" && "$(basename -- "$common")" == .git ]]; then
+    (cd -- "$(dirname -- "$common")" && pwd -P)
+  else
+    printf '%s\n' "$ROOT_DIR"
+  fi
+}
+MAIN_DIR="$(main_checkout)"
+HARNESS_DIR="$MAIN_DIR/.harness"
+ENV_FILE="$HARNESS_DIR/dev.env"
+RUN_DIR="$HARNESS_DIR/run"
+TEMPORAL_DB="$HARNESS_DIR/temporal/temporal.db"
+# The dev server's default namespace keeps closed histories for one day; keep them 30 days so
+# replay evidence survives. Export anything needed longer with ./dev export-history.
+TEMPORAL_RETENTION=720h
+SERVICES=(temporal api ui)
+VERSIONS_FILE=.dev-tools/versions.env
+
 PROFILE=full
 if [[ "${1:-}" == --profile ]]; then PROFILE="${2:?profile required}"; shift 2; fi
 COMMAND="${1:-start}"
 if (($#)); then shift; fi
-ENV_FILE=.harness/dev.env
-VERSIONS_FILE=.dev-tools/versions.env
 [[ "$PROFILE" == full || "$PROFILE" == offline ]] || { echo "profile must be full or offline" >&2; exit 2; }
+
+usage() {
+  cat <<'USAGE'
+Usage: ./dev [--profile full|offline] [COMMAND] [ARGS]
+Commands:
+  start           default; full: VM, local Temporal/API/UI, readiness, qualify; offline: checks
+  check           lint and compile
+  test            deterministic tests with a real local Temporal; no model calls
+  worker          trusted Temporal worker on native OpenShell
+  qualify         native boundaries; no model calls
+  eval            live corpus, owned worker on a fresh queue; --case never qualifies
+  replay          zero-dispatch history replay of RUN_ID
+  export-history  write RUN_ID's workflow history JSON (default .harness/histories/); no overwrite
+  status          local Temporal, API and UI processes, URLs and the Temporal database
+  logs            last 100 lines of the temporal, api and ui logs (or one NAME)
+  smoke           bounded GET-only control-plane readiness, then qualify
+  doctor          verify pinned tools and the VM without changing them; full: qualify
+  env             print shell lines putting the managed uv, just, node and temporal on PATH
+  stop            stop the local Temporal, API and UI; keeps the database, VM and all data
+--settings FILE is accepted anywhere among the arguments of worker|qualify|eval|replay|export-history.
+Full mode requires explicit OpenShell configuration; see deploy/openshell/README.md.
+From a git worktree every command uses the main checkout's .harness/; start the stack there.
+USAGE
+}
+
 pin() {
   awk -F= -v key="$1" '$1 == key {print $2; exit}' "$VERSIONS_FILE"
 }
@@ -41,14 +89,14 @@ download() {
 
 # Checkout-local mise state. .mise.toml is trusted by path (it pins the Temporal CLI by URL and
 # hash, which mise only reads from a trusted file) without writing any global trust record.
-MISE_BIN="$ROOT_DIR/.harness/bin/mise"
+MISE_BIN="$HARNESS_DIR/bin/mise"
 export MISE_BIN
-export MISE_DATA_DIR="$ROOT_DIR/.harness/mise"
-export MISE_CACHE_DIR="$ROOT_DIR/.harness/mise-cache"
-export MISE_STATE_DIR="$ROOT_DIR/.harness/mise-state"
+export MISE_DATA_DIR="$HARNESS_DIR/mise"
+export MISE_CACHE_DIR="$HARNESS_DIR/mise-cache"
+export MISE_STATE_DIR="$HARNESS_DIR/mise-state"
 export MISE_IGNORED_CONFIG_PATHS="${HOME}/.tool-versions:${HOME}/.config/mise/config.toml:${HOME}/.config/mise/conf.d"
 export MISE_TRUSTED_CONFIG_PATHS="$ROOT_DIR/.mise.toml"
-export PATH="$ROOT_DIR/.harness/bin:$PATH"
+export PATH="$HARNESS_DIR/bin:$PATH"
 
 bootstrap_mise() {
   local version system machine artifact checksum url actual
@@ -82,29 +130,43 @@ bootstrap_mise() {
   fi
 }
 
+# Shell lines for an interactive shell: the managed tools, never the VM docker shim.
+print_env() {
+  [[ -x "$MISE_BIN" ]] || { echo "managed tools are missing; run ./dev in $MAIN_DIR first" >&2; return 2; }
+  local paths
+  paths="$("$MISE_BIN" bin-paths | paste -sd: -)"
+  [[ -n "$paths" ]] || { echo "no managed tools are installed; run ./dev in $MAIN_DIR first" >&2; return 2; }
+  echo "# Managed tools for $ROOT_DIR (state: $HARNESS_DIR). Apply with: eval \"\$(./dev env)\""
+  printf 'export PATH=%q:"$PATH"\n' "$paths"
+  echo "export UV_PYTHON_DOWNLOADS=never"
+}
 
-if [[ "$COMMAND" == --help || "$COMMAND" == -h || "$COMMAND" == help ]]; then
-  echo "Usage: ./dev [--profile full|offline] [start|check|test|worker|status|logs|doctor|smoke|stop]"
-  echo "       ./dev qualify|eval|replay|worker [harness options] (--settings FILE anywhere)"
-  echo "Full mode requires explicit OpenShell configuration; see deploy/openshell/README.md."
-  echo "eval runs live inference on the corpus with an owned worker on a fresh task queue."
-  echo "stop preserves volumes and the VM; no implicit reset or paid inference."
-  exit 0
-fi
+case "$COMMAND" in
+  help|-h|--help) usage; exit 0 ;;
+  env) print_env; exit ;;
+  start)
+    if [[ "$PROFILE" == full && "$MAIN_DIR" != "$ROOT_DIR" ]]; then
+      echo "the live stack belongs to the main checkout; run ./dev there: $MAIN_DIR" >&2
+      echo "From this worktree use ./dev --profile offline, qualify, eval, replay or status." >&2
+      exit 2
+    fi ;;
+esac
 bootstrap_mise
 managed() { "$MISE_BIN" exec -- "$@"; }
 setup() { managed python scripts/dev_setup.py --profile "$PROFILE" "$@"; }
 load_env() {
-  [[ -f "$ENV_FILE" ]] || { echo "run ./dev first" >&2; return 2; }
+  [[ -f "$ENV_FILE" ]] || { echo "run ./dev in $MAIN_DIR first ($ENV_FILE is missing)" >&2; return 2; }
   set -a
   source "$ENV_FILE"
   set +a
   export HARNESS_TEMPORAL_ADDRESS="127.0.0.1:$HARNESS_TEMPORAL_PORT"
-}
-compose() {
-  load_env
-  docker compose -f docker-compose.yml -f docker-compose.dev.yml \
-    --project-name "$COMPOSE_PROJECT_NAME" --env-file "$ENV_FILE" "$@"
+  # Unless the operator names an allowlist, a worker started here reads only this checkout's
+  # approved corpus. The native runtime configuration lives in the owning checkout.
+  if [[ -z "${HARNESS_LOCAL_REPO_ROOTS:-}" ]]; then
+    [[ "$ROOT_DIR" != *[\"\\]* ]] || { echo "checkout path cannot be encoded as JSON" >&2; return 2; }
+    export HARNESS_LOCAL_REPO_ROOTS="[\"$ROOT_DIR/eval-corpus\"]"
+  fi
+  export HARNESS_OPENSHELL_CONFIG="${HARNESS_OPENSHELL_CONFIG:-$HARNESS_DIR/openshell/runtime.json}"
 }
 harness() {
   # --settings is a global harness option; accept it anywhere among the verb's arguments.
@@ -126,12 +188,131 @@ harness() {
   managed uv run --locked harness ${settings[@]+"${settings[@]}"} "$command" ${args[@]+"${args[@]}"}
 }
 qualify() { harness qualify "$@"; }
-control_plane() {
-  load_env
-  managed uv run --locked python scripts/control_plane_check.py \
-    --api-url "http://127.0.0.1:$HARNESS_API_PORT" \
-    --web-url "http://127.0.0.1:$HARNESS_WEB_PORT"
+
+# Each local service runs in its own process group. Its pid file records the group leader's pid
+# and start time, so stop never signals a process that merely reused the pid.
+service_pid() {
+  local file="$RUN_DIR/$1.pid" pid="" started=""
+  [[ -f "$file" ]] || return 0
+  { IFS= read -r pid; IFS= read -r started; } <"$file" || true
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || { echo "$1: unreadable pid file $file" >&2; return 2; }
+  kill -0 "$pid" 2>/dev/null || return 0
+  if [[ "$(ps -o lstart= -p "$pid")" != "$started" || "$(ps -o pgid= -p "$pid" | tr -d ' ')" != "$pid" ]]; then
+    echo "$1: pid $pid is no longer the process ./dev started; leaving it alone" >&2
+    return 0
+  fi
+  printf '%s\n' "$pid"
 }
+start_service() {
+  local name=$1 log="$RUN_DIR/$1.log" pid started
+  shift
+  pid="$(service_pid "$name")"
+  if [[ -n "$pid" ]]; then echo "$name: running (pid $pid)"; return 0; fi
+  mkdir -p "$RUN_DIR"
+  if [[ -f "$log" ]]; then mv -f "$log" "$log.1"; fi
+  set -m
+  nohup "$@" </dev/null >"$log" 2>&1 &
+  pid=$!
+  set +m
+  started="$(ps -o lstart= -p "$pid" || true)"
+  if [[ -z "$started" ]]; then
+    tail -n 20 "$log" >&2 || true
+    echo "$name: exited immediately; see $log" >&2
+    return 2
+  fi
+  printf '%s\n%s\n' "$pid" "$started" >"$RUN_DIR/$name.pid"
+  echo "$name: started (pid $pid, log $log)"
+}
+stop_service() {
+  local name=$1 pid
+  pid="$(service_pid "$name")"
+  if [[ -z "$pid" ]]; then
+    rm -f "$RUN_DIR/$name.pid"
+    echo "$name: not running"
+    return 0
+  fi
+  kill -TERM -- "-$pid" 2>/dev/null || true
+  for _ in $(seq 1 60); do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.5
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    echo "$name: still running 30 s after SIGTERM (pid $pid); not forced" >&2
+    return 2
+  fi
+  rm -f "$RUN_DIR/$name.pid"
+  echo "$name: stopped"
+}
+wait_for_temporal() {
+  for _ in $(seq 1 120); do
+    if managed temporal operator cluster health --address "$HARNESS_TEMPORAL_ADDRESS" >/dev/null 2>&1; then
+      return 0
+    fi
+    [[ -n "$(service_pid temporal)" ]] || break
+    sleep 0.5
+  done
+  tail -n 20 "$RUN_DIR/temporal.log" >&2 || true
+  echo "Temporal did not become ready on $HARNESS_TEMPORAL_ADDRESS" >&2
+  return 2
+}
+# The pinned Temporal CLI dev server with a persistent SQLite database and its bundled UI,
+# bound to loopback; then the API and the Vite UI. Temporal keeps running across ./dev; the
+# stateless API and UI restart so they serve the current code.
+start_stack() {
+  load_env
+  mkdir -p "$(dirname "$TEMPORAL_DB")" "$RUN_DIR"
+  # nohup runs programs, not shell functions: name the managed mise exec explicitly.
+  start_service temporal "$MISE_BIN" exec -- temporal server start-dev \
+    --db-filename "$TEMPORAL_DB" --ip 127.0.0.1 --port "$HARNESS_TEMPORAL_PORT" \
+    --ui-ip 127.0.0.1 --ui-port "$HARNESS_TEMPORAL_UI_PORT" --ui-disable-news-fetch \
+    --log-level warn
+  wait_for_temporal
+  managed temporal operator namespace update --namespace default \
+    --retention "$TEMPORAL_RETENTION" --address "$HARNESS_TEMPORAL_ADDRESS" >/dev/null
+  stop_service ui
+  stop_service api
+  start_service api "$MISE_BIN" exec -- uv run --locked harness api \
+    --host 127.0.0.1 --port "$HARNESS_API_PORT"
+  export VITE_API_URL="http://127.0.0.1:$HARNESS_API_PORT"
+  start_service ui "$MISE_BIN" exec -- npm --prefix ui run dev -- \
+    --host 127.0.0.1 --port "$HARNESS_WEB_PORT" --strictPort
+}
+ready() {
+  load_env
+  managed python scripts/dev_setup.py ready \
+    --api-url "http://127.0.0.1:$HARNESS_API_PORT" \
+    --web-url "http://127.0.0.1:$HARNESS_WEB_PORT" \
+    --temporal-ui-url "http://127.0.0.1:$HARNESS_TEMPORAL_UI_PORT"
+}
+status() {
+  load_env
+  local name pid url
+  for name in "${SERVICES[@]}"; do
+    case "$name" in
+      temporal) url="$HARNESS_TEMPORAL_ADDRESS, UI http://127.0.0.1:$HARNESS_TEMPORAL_UI_PORT" ;;
+      api) url="http://127.0.0.1:$HARNESS_API_PORT" ;;
+      ui) url="http://127.0.0.1:$HARNESS_WEB_PORT" ;;
+    esac
+    pid="$(service_pid "$name")"
+    if [[ -n "$pid" ]]; then
+      printf '%-9s running  pid %-7s %s\n' "$name" "$pid" "$url"
+    else
+      printf '%-9s stopped\n' "$name"
+    fi
+  done
+  echo "Temporal database: $TEMPORAL_DB"
+  echo "logs: $RUN_DIR"
+}
+logs() {
+  local name names=("${SERVICES[@]}")
+  if (($#)); then names=("$@"); fi
+  for name in "${names[@]}"; do
+    [[ " ${SERVICES[*]} " == *" $name "* ]] || { echo "unknown service: $name (${SERVICES[*]})" >&2; return 2; }
+    echo "==> $RUN_DIR/$name.log <=="
+    tail -n 100 "$RUN_DIR/$name.log" 2>/dev/null || echo "(no log)"
+  done
+}
+
 case "$COMMAND" in
   start)
     setup
@@ -141,13 +322,8 @@ case "$COMMAND" in
       HARNESS_TEST_REQUIRE_TEMPORAL=1 managed just test
       echo "Native OpenShell and live inference: not_checked (offline profile)"
     else
-      compose up -d --force-recreate egress-proxy
-      managed uv run --locked python scripts/dev_sandbox_check.py \
-        --runtime runsc --network "$HARNESS_BUILD_EGRESS_NETWORK" \
-        --proxy "$HARNESS_BUILD_EGRESS_PROXY" --builder "$HARNESS_BUILDX_BUILDER" \
-        --compose-project "$COMPOSE_PROJECT_NAME"
-      compose up --build -d --remove-orphans
-      control_plane
+      start_stack
+      ready
       qualify
       echo "Control plane and OpenShell checked. Start a worker with ./dev worker."
       echo "Live model inference: not_checked; configure an explicit provider before submitting."
@@ -158,10 +334,15 @@ case "$COMMAND" in
   qualify) qualify "$@" ;;
   eval) harness eval "$@" --allow-inference --owned-worker ;;
   replay) harness replay "$@" ;;
-  status) compose ps ;;
-  logs) compose logs --no-color --tail=100 "$@" ;;
+  export-history) harness export-history "$@" ;;
+  status) status ;;
+  logs) logs "$@" ;;
+  smoke) ready; qualify ;;
   doctor) setup --check-only; if [[ "$PROFILE" == full ]]; then qualify; fi ;;
-  smoke) control_plane; qualify ;;
-  stop) compose down --remove-orphans ;;
-  *) echo "unknown command: $COMMAND" >&2; exit 2 ;;
+  stop)
+    failed=0
+    for name in ui api temporal; do stop_service "$name" || failed=1; done
+    echo "Temporal database, VM and data preserved; ./dev starts them again."
+    exit "$failed" ;;
+  *) echo "unknown command: $COMMAND (see ./dev help)" >&2; exit 2 ;;
 esac

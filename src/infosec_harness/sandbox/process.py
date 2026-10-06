@@ -1,4 +1,4 @@
-"""The one owned subprocess runner (used for Git).
+"""The one owned subprocess runner (source checkout and read-only container inspection).
 
 Every child gets its own process group, an explicit environment and no stdin. Output is
 captured with a bound per stream. A timeout or cancellation kills the whole group and reaps it
@@ -38,7 +38,7 @@ class ProcessResult:
 
 
 class _Tail:
-    def __init__(self, limit: int):
+    def __init__(self, limit: int) -> None:
         self.limit, self.data, self.truncated = limit, bytearray(), False
 
     def add(self, chunk: bytes) -> None:
@@ -48,8 +48,12 @@ class _Tail:
             self.truncated = True
 
 
-async def _finish(future: asyncio.Future):
-    """Await an owned operation to completion despite repeated cancellation requests."""
+async def finish[T](future: asyncio.Future[T]) -> T:
+    """Await an owned operation to completion despite repeated cancellation requests.
+
+    The caller's cancellation is not lost: it stays requested on the calling task, so a
+    caller that must still propagate it re-raises its own ``CancelledError`` afterwards.
+    """
     while not future.done():
         with suppress(asyncio.CancelledError):
             await asyncio.shield(future)
@@ -73,12 +77,12 @@ def _kill_group(process: asyncio.subprocess.Process) -> None:
 async def _reap(waiter: asyncio.Future, streams: Iterable[asyncio.Future]) -> None:
     """Reap the killed child, then give its pipes a bounded grace period."""
     with suppress(Exception):
-        await _finish(waiter)
+        await finish(waiter)
     pending = [task for task in streams if not task.done()]
     if pending:
         bounded = asyncio.ensure_future(asyncio.wait(pending, timeout=_DRAIN_GRACE_S))
         with suppress(Exception):
-            await _finish(bounded)
+            await finish(bounded)
         for task in pending:
             task.cancel()
 
@@ -112,9 +116,9 @@ async def run_bounded(
     except asyncio.CancelledError:
         # The spawn may still succeed; an owned child must not outlive this call.
         with suppress(Exception):
-            process = await _finish(spawning)
+            process = await finish(spawning)
             _kill_group(process)
-            await _finish(asyncio.ensure_future(process.wait()))
+            await finish(asyncio.ensure_future(process.wait()))
         raise
     out, err = _Tail(capture_limit), _Tail(capture_limit)
     readers = [

@@ -1,10 +1,9 @@
 ---
 name: cwe-918-ssrf
-description: Recognize SSRF sinks and define a loopback oracle that needs no external network. Use
-  this when the finding is CWE-918 or untrusted input chooses a request destination.
+description: Untrusted input choosing a server-side request destination. Use this when the finding is CWE-918 or SSRF.
 metadata:
   owner: appsec
-  version: 2.0.0
+  version: 2.0.1
 ---
 
 # CWE-918: Server-side request forgery (SSRF)
@@ -44,6 +43,8 @@ its real HTTP client. Map the result onto `HARNESS_PROBE` (see `probe`):
 - `target_reached`: the real callable ran with an attacker-selected listener URL, including
   when its destination validation rejects it. An exception alone is not a block: decide
   whether the guard or a setup failure raised it.
+- `oracle_valid`: the listener is on loopback and the target's real HTTP client, not a patched
+  transport, sends the request.
 - `vulnerability_observed`: the listener recorded the target's request, or the target
   returned the listener's marker.
 - `positive_control`: a direct request from the probe to the listener is recorded.
