@@ -1,6 +1,9 @@
+import asyncio
+import hashlib
 import json
 import logging
 import re
+from pathlib import Path
 
 import pytest
 import typer
@@ -231,3 +234,50 @@ def test_logging_is_one_stderr_handler_at_the_configured_level(monkeypatch):
     assert ours[0].formatter._fmt == "%(asctime)s %(levelname)s %(name)s %(message)s"
     assert root.level == logging.DEBUG
     assert logging.getLogger("httpx").level == logging.WARNING
+
+
+@pytest.mark.requires_temporal
+async def test_export_history_writes_the_exact_history_once(temporal_cli, tmp_path, monkeypatch):
+    from temporalio.client import WorkflowHistory
+    from temporalio.testing import WorkflowEnvironment
+
+    config.reset_settings()
+    monkeypatch.chdir(tmp_path)
+    run_id = "investigate-v11-export"
+    path = tmp_path / ".harness" / "histories" / f"{run_id}.json"
+
+    async def export(*args: str):
+        # The command runs its own event loop, as it does from a shell.
+        return await asyncio.to_thread(CliRunner().invoke, cli.app, ["export-history", *args])
+
+    async with await WorkflowEnvironment.start_local(dev_server_existing_path=temporal_cli) as env:
+        # No worker polls this queue: the history is a fixed started/scheduled pair.
+        await env.client.start_workflow("InvestigationWorkflow", id=run_id, task_queue="idle")
+        monkeypatch.setenv("HARNESS_TEMPORAL_ADDRESS", env.client.service_client.config.target_host)
+        config.reset_settings()
+
+        first = await export(run_id)
+        assert first.exit_code == 0, first.output
+        data = path.read_bytes()
+        expected = await env.client.get_workflow_handle(run_id).fetch_history()
+        assert data == expected.to_json().encode()
+        summary = json.loads(first.output)
+        assert summary == {
+            "workflow_id": run_id,
+            "history_events": len(WorkflowHistory.from_json(run_id, data.decode()).events),
+            "history_sha256": hashlib.sha256(data).hexdigest(),
+            "output": str(Path(".harness/histories") / f"{run_id}.json"),
+        }
+        assert summary["history_events"] >= 2
+
+        again = await export(run_id)  # Never overwritten.
+        assert again.exit_code != 0 and path.read_bytes() == data
+        unsafe = await export("../escape")  # A run ID never becomes a path by itself.
+        assert unsafe.exit_code != 0 and not (tmp_path / ".harness" / "escape.json").exists()
+        missing = await export("investigate-v11-missing")
+        assert missing.exit_code == 1
+        chosen = tmp_path / "evidence" / "copy.json"
+        explicit = await export(run_id, "--output", str(chosen))
+        assert explicit.exit_code == 0, explicit.output
+        assert chosen.read_bytes() == data
+    assert sorted(item.name for item in path.parent.iterdir()) == [path.name]
