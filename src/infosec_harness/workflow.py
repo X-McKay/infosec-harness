@@ -280,9 +280,20 @@ class InvestigationWorkflow(PydanticAIWorkflow):
             self._state.status = "cancelled"
             self._state.error = "Investigation cancelled"
         except Exception as error:
-            caught = ApplicationError(str(error), type=type(error).__name__, non_retryable=True)
+            # Keep the root cause: Temporal wraps activity failures, and callers classify
+            # outcomes by the innermost type (e.g. a terminal executor exit vs unknown dispatch).
+            chain = [error]
+            while len(chain) < 8 and (
+                nxt := getattr(chain[-1], "cause", None) or chain[-1].__cause__
+            ):
+                chain.append(nxt)
+            root = chain[-1]
+            message = " <- ".join(str(item)[:500] for item in chain)
+            caught = ApplicationError(
+                message, type=getattr(root, "type", None) or type(root).__name__, non_retryable=True
+            )
             self._state.status = "failed"
-            self._state.error = str(error)
+            self._state.error = message
         finally:
             self._state.phase = "cleaning_up"
             try:

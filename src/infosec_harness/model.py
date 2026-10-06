@@ -10,6 +10,10 @@ from .model_executor import MAX_INVOCATION_BYTES, MAX_RESPONSE_BYTES, RESPONSE, 
 from .openshell import OpenShell
 
 
+class ModelExecutorError(RuntimeError):
+    """The executor ran to a terminal exit without a usable response; its receipt is complete."""
+
+
 class OpenShellModel(Model):
     """Never creates a provider client or reads provider credentials on the worker."""
 
@@ -64,7 +68,12 @@ class OpenShellModel(Model):
             stdin=encoded,
         )
         if result.exit_code != 0 or result.output_truncated:
-            raise RuntimeError("OpenShell model executor returned no complete response")
+            # A complete native receipt with a failed executor: terminal, never resent.
+            detail = result.stderr.rstrip().rsplit("\n", 1)[-1][-300:] if result.stderr else ""
+            raise ModelExecutorError(
+                f"OpenShell model executor returned no complete response "
+                f"(exit {result.exit_code}, truncated={result.output_truncated}): {detail}"
+            )
         if len(result.stdout.encode()) > MAX_RESPONSE_BYTES:
             raise ValueError("Model response exceeds the durable payload budget")
         return RESPONSE.validate_json(result.stdout)

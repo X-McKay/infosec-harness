@@ -355,6 +355,10 @@ def test_keep_going_continues_only_after_terminal_agent_level_failure():
 
     assert evaluation.agent_level(workflow_failure(("UsageLimitExceeded", "budget")))
     assert evaluation.agent_level(workflow_failure(("UnexpectedModelBehavior", "bad output")))
+    # Observed live 2026-10-05: the executor exited 1 on a sandbox DNS failure before any
+    # request was sent; its receipt is complete, so the next fresh case may proceed.
+    assert evaluation.agent_level(workflow_failure(
+        ("ModelExecutorError", "OpenShell model executor returned no complete response (exit 1")))
     for stop in (
         workflow_failure(("ActivityError", "Activity task failed")),
         workflow_failure(("UsageLimitExceeded", "budget"), ("ExecutionUnknown", "unknown")),

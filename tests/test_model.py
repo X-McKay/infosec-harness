@@ -63,6 +63,26 @@ async def test_transport_runs_only_in_separate_model_sandbox(monkeypatch):
     assert kwargs["operation_id"] == "model:7"
 
 
+async def test_failed_executor_exit_is_a_named_terminal_error_with_detail(monkeypatch):
+    """A non-zero executor exit has a complete receipt: raise ModelExecutorError carrying the
+    last stderr line so reports show the cause (observed live: sandbox DNS ConnectError)."""
+    from infosec_harness.model import ModelExecutorError
+
+    shell = FakeOpenShell()
+
+    async def execute(sandbox, command, **kwargs):
+        return CommandResult(1, "", "Traceback...\nhttpcore2.ConnectError: [Errno -5] No address")
+
+    shell.execute = execute
+    monkeypatch.setattr(
+        "infosec_harness.model.activity.info",
+        lambda: SimpleNamespace(workflow_id="run", activity_id="7"),
+    )
+    adapter = OpenShellModel(shell, "fixture", base_url="https://configured.example/v1")
+    with pytest.raises(ModelExecutorError, match=r"exit 1.*ConnectError.*No address"):
+        await adapter.request([], None, ModelRequestParameters())
+
+
 async def test_production_model_refuses_non_temporal_inference():
     with pytest.raises(RuntimeError, match="activity context"):
         await OpenShellModel(FakeOpenShell(), "fixture").request([], None, ModelRequestParameters())

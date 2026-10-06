@@ -29,7 +29,10 @@ from infosec_harness.web import PREFIX, RPC_TIMEOUT, connect, execution_timeout,
 DRAIN = timedelta(minutes=30)
 # Raised by workflow code itself (budgets, invalid model output after retries). Model and tool
 # activities surface only as ActivityError, whose external outcome is unknown: those stop.
-AGENT_FAILURES = frozenset({"UsageLimitExceeded", "UnexpectedModelBehavior"})
+# Terminal failures with complete receipts: budgets, malformed output, or an executor that
+# exited without a response (e.g. a sandbox DNS/connect failure before any request was
+# sent). Unknown dispatch (OpenShellError/ExecutionUnknown) is never in this set.
+AGENT_FAILURES = frozenset({"UsageLimitExceeded", "UnexpectedModelBehavior", "ModelExecutorError"})
 
 
 class ReleasePolicy(BaseModel):
