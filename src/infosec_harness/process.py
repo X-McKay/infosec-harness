@@ -11,12 +11,10 @@ from __future__ import annotations
 import asyncio
 import os
 import signal
-import time
 from collections.abc import Iterable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 
-MINIMAL_PATH = "/usr/local/bin:/usr/bin:/bin"
 _CHUNK = 16_384
 # After the group is killed, a reader can only stay blocked if a descendant escaped the group
 # and still holds the pipe. Give the pipes this long to close, then abandon them.
@@ -36,7 +34,6 @@ class ProcessResult:
     stdout: str
     stderr: str
     timed_out: bool
-    duration_s: float
     truncated: bool = False  # A stream exceeded capture_limit; only its tail was kept.
 
 
@@ -99,7 +96,6 @@ async def run_bounded(
     Raises ``OSError`` when the executable cannot be started, and re-raises cancellation only
     after the group has been killed and reaped. A timeout is reported in the result.
     """
-    start = time.monotonic()
     spawning = asyncio.ensure_future(
         asyncio.create_subprocess_exec(
             *argv,
@@ -143,6 +139,5 @@ async def run_bounded(
         stdout=out.data.decode(errors="replace"),
         stderr=err.data.decode(errors="replace"),
         timed_out=timed_out,
-        duration_s=time.monotonic() - start,
         truncated=out.truncated or err.truncated,
     )
