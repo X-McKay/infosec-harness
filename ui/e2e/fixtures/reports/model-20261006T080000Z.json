@@ -1,0 +1,690 @@
+{
+  "version": 1,
+  "kind": "cohort",
+  "commit": "741eb852fc9630da741eb852fc9630da741eb852",
+  "generation": "v11",
+  "model": "example-model-2026-09",
+  "task_queue": "investigate-v11-eval-eb852fc9630da741eb852fc9630da741",
+  "owned_worker": true,
+  "worker_identity": {
+    "fingerprint": "wkr-52fc9630da741eb8",
+    "code_sha256": "c9630da741eb852fc9630da741eb852fc9630da741eb852fc9630da741eb852f",
+    "config_sha256": "30da741eb852fc9630da741eb852fc9630da741eb852fc9630da741eb852fc96",
+    "dependencies": {
+      "pydantic-ai": "1.2.3",
+      "temporalio": "1.18.0"
+    }
+  },
+  "dataset_sha256": "a741eb852fc9630da741eb852fc9630da741eb852fc9630da741eb852fc9630d",
+  "runtime_config_sha256": "1eb852fc9630da741eb852fc9630da741eb852fc9630da741eb852fc9630da74",
+  "limits": {
+    "max_requests": 40,
+    "max_tool_calls": 60,
+    "total_tokens": 400000,
+    "timeout_seconds": 1800,
+    "command_timeout_seconds": 120
+  },
+  "native_operation_budget": {
+    "status": "passed",
+    "planned_cases": 36,
+    "per_case_ceiling": 120,
+    "required_headroom": 4320,
+    "retained": 2000,
+    "quota": 20000,
+    "headroom": 18000,
+    "observed_at_ms": 1791273595000,
+    "source": "operator-configured read-only occupancy command",
+    "limitations": [
+      "One ledger snapshot: other callers and 24 h retention expiry change occupancy during the run."
+    ]
+  },
+  "started_at": "2026-10-06T08:00:00+00:00",
+  "status": "running",
+  "gates": {
+    "complete_corpus": "not_checked",
+    "task_success_rate": "not_checked",
+    "unsafe_negatives": "not_checked"
+  },
+  "threshold": 0.8,
+  "release_policy_sha256": "852fc9630da741eb852fc9630da741eb852fc9630da741eb852fc9630da741eb",
+  "release_policy": {
+    "minimum_task_success_rate": 0.8,
+    "maximum_unsafe_negatives": 0
+  },
+  "cases": [
+    {
+      "name": "sqli-vulnerable",
+      "expected": "potentially_exploitable",
+      "status": "completed",
+      "workflow_id": "investigate-v11-eval-da741eb852fc",
+      "started_at": "2026-10-06T08:00:00+00:00",
+      "finished_at": "2026-10-06T08:04:00.250+00:00",
+      "duration_seconds": 240.25,
+      "predicted": "potentially_exploitable",
+      "passed": true,
+      "source_digest": "sha256:30da741eb852fc9630da741eb852fc9630da741eb852fc9630da741eb852fc96",
+      "usage": {
+        "requests": 8,
+        "tool_calls": 12,
+        "input_tokens": 20000,
+        "output_tokens": 1000
+      },
+      "limitations": [
+        "Probe claims are self-reported."
+      ],
+      "worker_identity": {
+        "fingerprint": "wkr-52fc9630da741eb8",
+        "code_sha256": "c9630da741eb852fc9630da741eb852fc9630da741eb852fc9630da741eb852f",
+        "config_sha256": "30da741eb852fc9630da741eb852fc9630da741eb852fc9630da741eb852fc96",
+        "dependencies": {
+          "pydantic-ai": "1.2.3",
+          "temporalio": "1.18.0"
+        }
+      },
+      "native_operations": {
+        "status": "observed",
+        "categories": {
+          "workspace": {
+            "completed": 20,
+            "unknown": 0
+          },
+          "probe": {
+            "completed": 8,
+            "unknown": 1
+          }
+        },
+        "total": {
+          "completed": 28,
+          "unknown": 1
+        },
+        "limitations": []
+      }
+    },
+    {
+      "name": "sqli-fixed",
+      "expected": "likely_not_exploitable",
+      "status": "completed",
+      "workflow_id": "investigate-v11-eval-41eb852fc963",
+      "started_at": "2026-10-06T08:06:40+00:00",
+      "finished_at": "2026-10-06T08:11:17.250+00:00",
+      "duration_seconds": 277.25,
+      "predicted": "likely_not_exploitable",
+      "passed": true,
+      "source_digest": "sha256:a741eb852fc9630da741eb852fc9630da741eb852fc9630da741eb852fc9630d",
+      "usage": {
+        "requests": 9,
+        "tool_calls": 13,
+        "input_tokens": 21000,
+        "output_tokens": 1050
+      },
+      "limitations": [
+        "Probe claims are self-reported."
+      ],
+      "worker_identity": {
+        "fingerprint": "wkr-52fc9630da741eb8",
+        "code_sha256": "c9630da741eb852fc9630da741eb852fc9630da741eb852fc9630da741eb852f",
+        "config_sha256": "30da741eb852fc9630da741eb852fc9630da741eb852fc9630da741eb852fc96",
+        "dependencies": {
+          "pydantic-ai": "1.2.3",
+          "temporalio": "1.18.0"
+        }
+      },
+      "native_operations": {
+        "status": "observed",
+        "categories": {
+          "workspace": {
+            "completed": 21,
+            "unknown": 0
+          },
+          "probe": {
+            "completed": 9,
+            "unknown": 0
+          }
+        },
+        "total": {
+          "completed": 30,
+          "unknown": 0
+        },
+        "limitations": []
+      }
+    },
+    {
+      "name": "cmdi-vulnerable",
+      "expected": "potentially_exploitable",
+      "status": "completed",
+      "workflow_id": "investigate-v11-eval-b852fc9630da",
+      "started_at": "2026-10-06T08:13:20+00:00",
+      "finished_at": "2026-10-06T08:18:34.250+00:00",
+      "duration_seconds": 314.25,
+      "predicted": "potentially_exploitable",
+      "passed": true,
+      "source_digest": "sha256:1eb852fc9630da741eb852fc9630da741eb852fc9630da741eb852fc9630da74",
+      "usage": {
+        "requests": 10,
+        "tool_calls": 14,
+        "input_tokens": 22000,
+        "output_tokens": 1100
+      },
+      "limitations": [
+        "Probe claims are self-reported."
+      ],
+      "worker_identity": {
+        "fingerprint": "wkr-52fc9630da741eb8",
+        "code_sha256": "c9630da741eb852fc9630da741eb852fc9630da741eb852fc9630da741eb852f",
+        "config_sha256": "30da741eb852fc9630da741eb852fc9630da741eb852fc9630da741eb852fc96",
+        "dependencies": {
+          "pydantic-ai": "1.2.3",
+          "temporalio": "1.18.0"
+        }
+      },
+      "native_operations": {
+        "status": "observed",
+        "categories": {
+          "workspace": {
+            "completed": 22,
+            "unknown": 0
+          },
+          "probe": {
+            "completed": 10,
+            "unknown": 0
+          }
+        },
+        "total": {
+          "completed": 32,
+          "unknown": 0
+        },
+        "limitations": []
+      }
+    },
+    {
+      "name": "cmdi-fixed",
+      "expected": "likely_not_exploitable",
+      "status": "completed",
+      "workflow_id": "investigate-v11-eval-2fc9630da741",
+      "started_at": "2026-10-06T08:20:00+00:00",
+      "finished_at": "2026-10-06T08:25:51.250+00:00",
+      "duration_seconds": 351.25,
+      "predicted": "likely_not_exploitable",
+      "passed": true,
+      "source_digest": "sha256:852fc9630da741eb852fc9630da741eb852fc9630da741eb852fc9630da741eb",
+      "usage": {
+        "requests": 11,
+        "tool_calls": 15,
+        "input_tokens": 23000,
+        "output_tokens": 1150
+      },
+      "limitations": [
+        "Probe claims are self-reported."
+      ],
+      "worker_identity": {
+        "fingerprint": "wkr-52fc9630da741eb8",
+        "code_sha256": "c9630da741eb852fc9630da741eb852fc9630da741eb852fc9630da741eb852f",
+        "config_sha256": "30da741eb852fc9630da741eb852fc9630da741eb852fc9630da741eb852fc96",
+        "dependencies": {
+          "pydantic-ai": "1.2.3",
+          "temporalio": "1.18.0"
+        }
+      },
+      "native_operations": {
+        "status": "observed",
+        "categories": {
+          "workspace": {
+            "completed": 23,
+            "unknown": 0
+          },
+          "probe": {
+            "completed": 11,
+            "unknown": 1
+          }
+        },
+        "total": {
+          "completed": 34,
+          "unknown": 1
+        },
+        "limitations": []
+      }
+    },
+    {
+      "name": "pathtraversal-vulnerable",
+      "expected": "potentially_exploitable",
+      "status": "completed",
+      "workflow_id": "investigate-v11-eval-9630da741eb8",
+      "started_at": "2026-10-06T08:26:40+00:00",
+      "finished_at": "2026-10-06T08:33:08.250+00:00",
+      "duration_seconds": 388.25,
+      "predicted": "potentially_exploitable",
+      "passed": true,
+      "source_digest": "sha256:fc9630da741eb852fc9630da741eb852fc9630da741eb852fc9630da741eb852",
+      "usage": {
+        "requests": 12,
+        "tool_calls": 16,
+        "input_tokens": 24000,
+        "output_tokens": 1200
+      },
+      "limitations": [
+        "Probe claims are self-reported."
+      ],
+      "worker_identity": {
+        "fingerprint": "wkr-52fc9630da741eb8",
+        "code_sha256": "c9630da741eb852fc9630da741eb852fc9630da741eb852fc9630da741eb852f",
+        "config_sha256": "30da741eb852fc9630da741eb852fc9630da741eb852fc9630da741eb852fc96",
+        "dependencies": {
+          "pydantic-ai": "1.2.3",
+          "temporalio": "1.18.0"
+        }
+      },
+      "native_operations": {
+        "status": "observed",
+        "categories": {
+          "workspace": {
+            "completed": 24,
+            "unknown": 0
+          },
+          "probe": {
+            "completed": 8,
+            "unknown": 0
+          }
+        },
+        "total": {
+          "completed": 32,
+          "unknown": 0
+        },
+        "limitations": []
+      }
+    },
+    {
+      "name": "pathtraversal-fixed",
+      "expected": "likely_not_exploitable",
+      "status": "completed",
+      "workflow_id": "investigate-v11-eval-0da741eb852f",
+      "started_at": "2026-10-06T08:33:20+00:00",
+      "finished_at": "2026-10-06T08:37:25.250+00:00",
+      "duration_seconds": 245.25,
+      "predicted": "likely_not_exploitable",
+      "passed": true,
+      "source_digest": "sha256:630da741eb852fc9630da741eb852fc9630da741eb852fc9630da741eb852fc9",
+      "usage": {
+        "requests": 13,
+        "tool_calls": 17,
+        "input_tokens": 25000,
+        "output_tokens": 1250
+      },
+      "limitations": [
+        "Probe claims are self-reported."
+      ],
+      "worker_identity": {
+        "fingerprint": "wkr-52fc9630da741eb8",
+        "code_sha256": "c9630da741eb852fc9630da741eb852fc9630da741eb852fc9630da741eb852f",
+        "config_sha256": "30da741eb852fc9630da741eb852fc9630da741eb852fc9630da741eb852fc96",
+        "dependencies": {
+          "pydantic-ai": "1.2.3",
+          "temporalio": "1.18.0"
+        }
+      },
+      "native_operations": {
+        "status": "observed",
+        "categories": {
+          "workspace": {
+            "completed": 20,
+            "unknown": 0
+          },
+          "probe": {
+            "completed": 9,
+            "unknown": 0
+          }
+        },
+        "total": {
+          "completed": 29,
+          "unknown": 0
+        },
+        "limitations": []
+      }
+    },
+    {
+      "name": "xss-vulnerable",
+      "expected": "potentially_exploitable",
+      "status": "completed",
+      "workflow_id": "investigate-v11-eval-741eb852fc96",
+      "started_at": "2026-10-06T08:40:00+00:00",
+      "finished_at": "2026-10-06T08:44:42.250+00:00",
+      "duration_seconds": 282.25,
+      "predicted": "potentially_exploitable",
+      "passed": true,
+      "source_digest": "sha256:da741eb852fc9630da741eb852fc9630da741eb852fc9630da741eb852fc9630",
+      "usage": {
+        "requests": 14,
+        "tool_calls": 18,
+        "input_tokens": 26000,
+        "output_tokens": 1300
+      },
+      "limitations": [
+        "Probe claims are self-reported."
+      ],
+      "worker_identity": {
+        "fingerprint": "wkr-52fc9630da741eb8",
+        "code_sha256": "c9630da741eb852fc9630da741eb852fc9630da741eb852fc9630da741eb852f",
+        "config_sha256": "30da741eb852fc9630da741eb852fc9630da741eb852fc9630da741eb852fc96",
+        "dependencies": {
+          "pydantic-ai": "1.2.3",
+          "temporalio": "1.18.0"
+        }
+      },
+      "native_operations": {
+        "status": "observed",
+        "categories": {
+          "workspace": {
+            "completed": 21,
+            "unknown": 0
+          },
+          "probe": {
+            "completed": 10,
+            "unknown": 1
+          }
+        },
+        "total": {
+          "completed": 31,
+          "unknown": 1
+        },
+        "limitations": []
+      }
+    },
+    {
+      "name": "xss-fixed",
+      "expected": "likely_not_exploitable",
+      "status": "completed",
+      "workflow_id": "investigate-v11-eval-eb852fc9630d",
+      "started_at": "2026-10-06T08:46:40+00:00",
+      "finished_at": "2026-10-06T08:51:59.250+00:00",
+      "duration_seconds": 319.25,
+      "predicted": "likely_not_exploitable",
+      "passed": true,
+      "source_digest": "sha256:41eb852fc9630da741eb852fc9630da741eb852fc9630da741eb852fc9630da7",
+      "usage": {
+        "requests": 8,
+        "tool_calls": 19,
+        "input_tokens": 27000,
+        "output_tokens": 1350
+      },
+      "limitations": [
+        "Probe claims are self-reported."
+      ],
+      "worker_identity": {
+        "fingerprint": "wkr-52fc9630da741eb8",
+        "code_sha256": "c9630da741eb852fc9630da741eb852fc9630da741eb852fc9630da741eb852f",
+        "config_sha256": "30da741eb852fc9630da741eb852fc9630da741eb852fc9630da741eb852fc96",
+        "dependencies": {
+          "pydantic-ai": "1.2.3",
+          "temporalio": "1.18.0"
+        }
+      },
+      "native_operations": {
+        "status": "observed",
+        "categories": {
+          "workspace": {
+            "completed": 22,
+            "unknown": 0
+          },
+          "probe": {
+            "completed": 11,
+            "unknown": 0
+          }
+        },
+        "total": {
+          "completed": 33,
+          "unknown": 0
+        },
+        "limitations": []
+      }
+    },
+    {
+      "name": "codeinjection-vulnerable",
+      "expected": "potentially_exploitable",
+      "status": "completed",
+      "workflow_id": "investigate-v11-eval-52fc9630da74",
+      "started_at": "2026-10-06T08:53:20+00:00",
+      "finished_at": "2026-10-06T08:59:16.250+00:00",
+      "duration_seconds": 356.25,
+      "predicted": "potentially_exploitable",
+      "passed": true,
+      "source_digest": "sha256:b852fc9630da741eb852fc9630da741eb852fc9630da741eb852fc9630da741e",
+      "usage": {
+        "requests": 9,
+        "tool_calls": 20,
+        "input_tokens": 28000,
+        "output_tokens": 1400
+      },
+      "limitations": [
+        "Probe claims are self-reported."
+      ],
+      "worker_identity": {
+        "fingerprint": "wkr-52fc9630da741eb8",
+        "code_sha256": "c9630da741eb852fc9630da741eb852fc9630da741eb852fc9630da741eb852f",
+        "config_sha256": "30da741eb852fc9630da741eb852fc9630da741eb852fc9630da741eb852fc96",
+        "dependencies": {
+          "pydantic-ai": "1.2.3",
+          "temporalio": "1.18.0"
+        }
+      },
+      "native_operations": {
+        "status": "observed",
+        "categories": {
+          "workspace": {
+            "completed": 23,
+            "unknown": 0
+          },
+          "probe": {
+            "completed": 8,
+            "unknown": 0
+          }
+        },
+        "total": {
+          "completed": 31,
+          "unknown": 0
+        },
+        "limitations": []
+      }
+    },
+    {
+      "name": "codeinjection-fixed",
+      "expected": "likely_not_exploitable",
+      "status": "completed",
+      "workflow_id": "investigate-v11-eval-c9630da741eb",
+      "started_at": "2026-10-06T09:00:00+00:00",
+      "finished_at": "2026-10-06T09:06:33.250+00:00",
+      "duration_seconds": 393.25,
+      "predicted": "likely_not_exploitable",
+      "passed": true,
+      "source_digest": "sha256:2fc9630da741eb852fc9630da741eb852fc9630da741eb852fc9630da741eb85",
+      "usage": {
+        "requests": 10,
+        "tool_calls": 12,
+        "input_tokens": 29000,
+        "output_tokens": 1450
+      },
+      "limitations": [
+        "Probe claims are self-reported."
+      ],
+      "worker_identity": {
+        "fingerprint": "wkr-52fc9630da741eb8",
+        "code_sha256": "c9630da741eb852fc9630da741eb852fc9630da741eb852fc9630da741eb852f",
+        "config_sha256": "30da741eb852fc9630da741eb852fc9630da741eb852fc9630da741eb852fc96",
+        "dependencies": {
+          "pydantic-ai": "1.2.3",
+          "temporalio": "1.18.0"
+        }
+      },
+      "native_operations": {
+        "status": "observed",
+        "categories": {
+          "workspace": {
+            "completed": 24,
+            "unknown": 0
+          },
+          "probe": {
+            "completed": 9,
+            "unknown": 1
+          }
+        },
+        "total": {
+          "completed": 33,
+          "unknown": 1
+        },
+        "limitations": []
+      }
+    },
+    {
+      "name": "deserialization-vulnerable",
+      "expected": "potentially_exploitable",
+      "status": "starting",
+      "workflow_id": "investigate-v11-eval-30da741eb852",
+      "started_at": "2026-10-06T09:06:40+00:00"
+    },
+    {
+      "name": "deserialization-fixed",
+      "expected": "likely_not_exploitable",
+      "status": "unstarted"
+    },
+    {
+      "name": "xxe-vulnerable",
+      "expected": "potentially_exploitable",
+      "status": "unstarted"
+    },
+    {
+      "name": "xxe-fixed",
+      "expected": "likely_not_exploitable",
+      "status": "unstarted"
+    },
+    {
+      "name": "ssrf-vulnerable",
+      "expected": "potentially_exploitable",
+      "status": "unstarted"
+    },
+    {
+      "name": "ssrf-fixed",
+      "expected": "likely_not_exploitable",
+      "status": "unstarted"
+    },
+    {
+      "name": "unreachable",
+      "expected": "likely_not_exploitable",
+      "status": "unstarted"
+    },
+    {
+      "name": "testonly",
+      "expected": "likely_not_exploitable",
+      "status": "unstarted"
+    },
+    {
+      "name": "java-sqli-vulnerable",
+      "expected": "potentially_exploitable",
+      "status": "unstarted"
+    },
+    {
+      "name": "java-sqli-fixed",
+      "expected": "likely_not_exploitable",
+      "status": "unstarted"
+    },
+    {
+      "name": "java-cmdi-vulnerable",
+      "expected": "potentially_exploitable",
+      "status": "unstarted"
+    },
+    {
+      "name": "java-cmdi-fixed",
+      "expected": "likely_not_exploitable",
+      "status": "unstarted"
+    },
+    {
+      "name": "java-xxe-vulnerable",
+      "expected": "potentially_exploitable",
+      "status": "unstarted"
+    },
+    {
+      "name": "java-xxe-fixed",
+      "expected": "likely_not_exploitable",
+      "status": "unstarted"
+    },
+    {
+      "name": "javascript-cmdi-vulnerable",
+      "expected": "potentially_exploitable",
+      "status": "unstarted"
+    },
+    {
+      "name": "javascript-cmdi-fixed",
+      "expected": "likely_not_exploitable",
+      "status": "unstarted"
+    },
+    {
+      "name": "javascript-xss-vulnerable",
+      "expected": "potentially_exploitable",
+      "status": "unstarted"
+    },
+    {
+      "name": "javascript-xss-fixed",
+      "expected": "likely_not_exploitable",
+      "status": "unstarted"
+    },
+    {
+      "name": "perl-sqli-vulnerable",
+      "expected": "potentially_exploitable",
+      "status": "unstarted"
+    },
+    {
+      "name": "perl-sqli-fixed",
+      "expected": "likely_not_exploitable",
+      "status": "unstarted"
+    },
+    {
+      "name": "perl-cmdi-vulnerable",
+      "expected": "potentially_exploitable",
+      "status": "unstarted"
+    },
+    {
+      "name": "perl-cmdi-fixed",
+      "expected": "likely_not_exploitable",
+      "status": "unstarted"
+    },
+    {
+      "name": "javascript-xssesm-vulnerable",
+      "expected": "potentially_exploitable",
+      "status": "unstarted"
+    },
+    {
+      "name": "javascript-xssesm-fixed",
+      "expected": "likely_not_exploitable",
+      "status": "unstarted"
+    },
+    {
+      "name": "perl-xss-vulnerable",
+      "expected": "potentially_exploitable",
+      "status": "unstarted"
+    },
+    {
+      "name": "perl-xss-fixed",
+      "expected": "likely_not_exploitable",
+      "status": "unstarted"
+    }
+  ],
+  "native_operation_estimate": {
+    "status": "estimate",
+    "completed_case_samples": 10,
+    "planned_cases": 36,
+    "observed_totals": {
+      "completed": 313,
+      "unknown": 4
+    },
+    "native_capacity": "not_checked",
+    "limitations": [
+      "Actual observed attempts plus completed-case range extrapolated to unobserved cases; not a capacity gate."
+    ],
+    "observed_attempt_range_per_case": [
+      29,
+      35
+    ],
+    "unobserved_cases": 26,
+    "estimated_cohort_attempt_range": [
+      1071,
+      1227
+    ]
+  }
+}

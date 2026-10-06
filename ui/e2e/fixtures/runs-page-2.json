@@ -1,0 +1,25 @@
+{
+  "items": [
+    {
+      "id": "investigate-v11-older-0007",
+      "title": "Deserialization of session cookie",
+      "status": "terminated",
+      "started_at": "2026-10-04T18:00:00+00:00",
+      "closed_at": "2026-10-04T18:20:00+00:00",
+      "verdict": null,
+      "cwe": "CWE-502",
+      "repo_url": "https://git.example.test/acme/session.git"
+    },
+    {
+      "id": "investigate-v11-older-0008",
+      "title": "Open redirect after login",
+      "status": "completed",
+      "started_at": "2026-10-04T17:00:00+00:00",
+      "closed_at": "2026-10-04T17:06:00+00:00",
+      "verdict": "inconclusive",
+      "cwe": "CWE-601",
+      "repo_url": "https://git.example.test/acme/auth.git"
+    }
+  ],
+  "next_page_token": null
+}

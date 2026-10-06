@@ -1,0 +1,12 @@
+{
+  "run_id": "investigate-v11-untrusted-0005",
+  "events": [
+    {
+      "at": "2026-10-05T10:30:00+00:00",
+      "kind": "workflow_started",
+      "name": "<script>window.__e2ePwned=16</script>",
+      "detail": "<img src=x onerror=\"window.__e2ePwned=17\">"
+    }
+  ],
+  "truncated": false
+}

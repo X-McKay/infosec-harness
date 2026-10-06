@@ -1,10 +1,9 @@
 ---
 name: cwe-502-deserialization
-description: Recognize unsafe deserialization sinks and define a safe, sandbox-only gadget oracle.
-  Use this when the finding is CWE-502 or untrusted bytes are deserialized into objects.
+description: Untrusted bytes deserialized into objects. Use this when the finding is CWE-502 or names unsafe deserialization.
 metadata:
   owner: appsec
-  version: 2.0.0
+  version: 2.0.1
 ---
 
 # CWE-502: Unsafe deserialization
@@ -44,6 +43,8 @@ onto `HARNESS_PROBE` (see `probe`):
 
 - `target_reached`: the real deserialization entry point received the gadget bytes,
   including when a safe loader or type allowlist rejects them.
+- `oracle_valid`: the gadget was serialized with the target's own mechanism and the canary did
+  not exist before.
 - `vulnerability_observed`: the canary exists after the target call and did not before.
 - `positive_control`: the unsafe primitive called directly (`pickle.loads`,
   `ObjectInputStream.readObject`) on equivalent bytes creates a separate canary path.

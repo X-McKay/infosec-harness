@@ -49,6 +49,23 @@ in run 8 was a median of 2.2 minutes per case (1.2 to 4.6). Read-only inspection
 showed 6,385 retained claims; run 8 added 1,670, keeping the session near 7,100 of the
 10,000-claim quota.
 
+## Corpus label leak
+
+Runs 1 through 10 used fixtures whose paths and comments carried the label: every pair of the
+36-case corpus lived under `eval-corpus/<lang>/<topic>/vulnerable` and `.../fixed`, sources stated
+`# VULNERABLE: ...` or `# FIXED: ...` with an explanation of the weakness or the control, the
+`unreachable` case's docstring said its sink was not reachable from untrusted input, Java and
+JavaScript package names ended in `-vuln` or `-fixed`, and the two findings of each of the eight
+Python pairs had different descriptions (the exploitable one describing the weakness). The workflow
+withheld `repo_url` from the model's prompt and mounted each snapshot at `/workspace/repo`, so the
+directory name was probably not seen, but the source comments, package names and finding
+descriptions were available to the agent. The accuracy figures from these runs (142 of 146 through
+run 8, 30 of 36 in run 8, 30 of 33 in run 10, 0 unsafe negatives) are therefore not independent
+evidence of triage quality; the quality gates were already `not_checked` and stay so. The corpus was
+de-labelled on 2026-10-06 in commits `1ab456c`, `4f0d5e6`, `7a8df53` and `f7bc84f` on
+`claude/corpus-delabel` (neutral `a`/`b` directories; stripped comments, test names and metadata;
+one shared description per pair; a hygiene test), and accuracy must be re-measured on that corpus.
+
 ## Defects found live and their fixes
 
 | Observation | Fix | Verification |

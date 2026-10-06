@@ -65,6 +65,11 @@ class Verdict(Contract):
     superseded_evidence_ids: list[str] = Field(default_factory=list, max_length=10)
 
 
+# The HARNESS_PROBE claims: four prerequisites and the observation they qualify.
+PROBE_PREREQUISITES = ("target_reached", "oracle_valid", "positive_control", "negative_control")
+PROBE_FIELDS = (*PROBE_PREREQUISITES, "vulnerability_observed")
+
+
 class Evidence(Contract):
     """Process fields are observed; text and observations remain untrusted claims."""
 
@@ -93,15 +98,7 @@ class Evidence(Contract):
             and not self.output_truncated
             and isinstance(self.observations.get("workspace_digest"), str)
             and self.observations.get("source_verified") is True
-            and all(
-                self.observations.get(key) is True
-                for key in (
-                    "target_reached",
-                    "oracle_valid",
-                    "positive_control",
-                    "negative_control",
-                )
-            )
+            and all(self.observations.get(key) is True for key in PROBE_PREREQUISITES)
             and type(self.observations.get("vulnerability_observed")) is bool
         )
 
@@ -184,8 +181,73 @@ class RunSummary(Contract):
     status: str
     started_at: str
     closed_at: str | None = None
+    # Null when the run is not completed or its result could not be read in time.
+    verdict: (
+        Literal["potentially_exploitable", "likely_not_exploitable", "inconclusive"] | None
+    ) = None
+    cwe: str | None = None
+    repo_url: str | None = None
 
 
 class RunPage(Contract):
     items: list[RunSummary]
     next_page_token: str | None = None
+
+
+class Health(Contract):
+    """Temporal connectivity only; never sandbox, worker or model qualification."""
+
+    status: Literal["control_plane_ready", "temporal_unavailable"]
+    temporal: bool
+    runtime: Literal["not_checked"] = "not_checked"
+    generation: str
+    task_queue: str
+
+
+class RunEvent(Contract):
+    at: str
+    kind: Literal[
+        "workflow_started",
+        "activity_scheduled",
+        "activity_completed",
+        "activity_failed",
+        "activity_timed_out",
+        "timer",
+        "workflow_completed",
+        "workflow_failed",
+        "workflow_cancelled",
+        "other",
+    ]
+    name: str | None = Field(default=None, max_length=200)
+    # Bounded labels such as an exit code or failure type; never a payload.
+    detail: str = Field(default="", max_length=200)
+
+
+class RunEvents(Contract):
+    run_id: str
+    events: list[RunEvent] = Field(max_length=500)
+    truncated: bool = False
+
+
+class ReportSummary(Contract):
+    """Operator report files are untrusted and vary in shape: every parsed field is optional."""
+
+    name: str
+    kind: Literal["model", "diagnostic", "openshell", "replay", "unknown"]
+    bytes: int
+    modified_at: str
+    status: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    commit: str | None = None
+    model: str | None = None
+    planned: int | None = None
+    completed: int | None = None
+    task_success_rate: float | None = None
+    unsafe_negatives: int | None = None
+    gates: dict[str, str] = Field(default_factory=dict)
+
+
+class ReportList(Contract):
+    items: list[ReportSummary] = Field(max_length=200)
+    truncated: bool = False

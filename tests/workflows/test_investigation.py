@@ -9,7 +9,7 @@ from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
-from fakes import FakeOpenShell, final_response, runner
+from fakes import FakeOpenShell, final_response
 from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
@@ -35,6 +35,7 @@ from infosec_harness.workflows.investigation import (
     PreparedInvestigation,
     bind_investigator,
 )
+from infosec_harness.workflows.worker import workflow_runner
 
 
 def test_prepared_investigation_decodes_v11_payload_with_duplicated_fields(tmp_path):
@@ -130,7 +131,7 @@ async def test_real_temporal_replay_and_restart(temporal_cli, tmp_path):
             task_queue=queue,
             workflows=[InvestigationWorkflow],
             activities=[activities.prepare, activities.finalize, activities.cleanup],
-            workflow_runner=runner(),
+            workflow_runner=workflow_runner(),
             graceful_shutdown_timeout=timedelta(seconds=30),
         )
         worker = Worker(env.client, **worker_args)
@@ -161,7 +162,7 @@ async def test_real_temporal_replay_and_restart(temporal_cli, tmp_path):
         await Replayer(
             workflows=[InvestigationWorkflow],
             plugins=[PydanticAIPlugin()],
-            workflow_runner=runner(),
+            workflow_runner=workflow_runner(),
         ).replay_workflow(history)
         assert model_calls == calls_before
         assert shell.executions == commands_before
@@ -198,7 +199,7 @@ async def test_real_temporal_cancel_cleans_owned_sandboxes(temporal_cli, tmp_pat
             task_queue=queue,
             workflows=[InvestigationWorkflow],
             activities=[activities.prepare, activities.finalize, activities.cleanup],
-            workflow_runner=runner(),
+            workflow_runner=workflow_runner(),
         ):
             handle = await env.client.start_workflow(
                 InvestigationWorkflow.run,
@@ -256,7 +257,7 @@ async def test_real_temporal_unknown_side_effect_is_never_retried(temporal_cli, 
             task_queue=queue,
             workflows=[InvestigationWorkflow],
             activities=[activities.prepare, activities.finalize, activities.cleanup],
-            workflow_runner=runner(),
+            workflow_runner=workflow_runner(),
         ):
             handle = await env.client.start_workflow(
                 InvestigationWorkflow.run,
@@ -481,7 +482,7 @@ async def test_history_budget_fails_before_oversized_schedule_and_cleans_up(temp
             task_queue=queue,
             workflows=[InvestigationWorkflow],
             activities=[activities.prepare, activities.finalize, activities.cleanup],
-            workflow_runner=runner(),
+            workflow_runner=workflow_runner(),
         ):
             handle = await env.client.start_workflow(
                 InvestigationWorkflow.run,
@@ -503,7 +504,7 @@ async def test_history_budget_fails_before_oversized_schedule_and_cleans_up(temp
         await Replayer(
             workflows=[InvestigationWorkflow],
             plugins=[PydanticAIPlugin()],
-            workflow_runner=runner(),
+            workflow_runner=workflow_runner(),
         ).replay_workflow(history)
         assert len(model_calls) == 3
 
@@ -562,7 +563,7 @@ async def test_total_history_guard_stops_mixed_tool_batch_and_replays(
             task_queue=queue,
             workflows=[InvestigationWorkflow],
             activities=[activities.prepare, activities.finalize, activities.cleanup],
-            workflow_runner=runner(),
+            workflow_runner=workflow_runner(),
         ):
             handle = await env.client.start_workflow(
                 InvestigationWorkflow.run,
@@ -593,7 +594,7 @@ async def test_total_history_guard_stops_mixed_tool_batch_and_replays(
         await Replayer(
             workflows=[InvestigationWorkflow],
             plugins=[PydanticAIPlugin()],
-            workflow_runner=runner(),
+            workflow_runner=workflow_runner(),
         ).replay_workflow(history)
         assert len(calls) == 1 and len(shell.executions) == 1
 
@@ -640,7 +641,7 @@ async def test_model_finding_prompt_excludes_host_variant_path(temporal_cli, tmp
             task_queue=queue,
             workflows=[InvestigationWorkflow],
             activities=[activities.prepare, activities.finalize, activities.cleanup],
-            workflow_runner=runner(),
+            workflow_runner=workflow_runner(),
         ),
     ):
         result = await asyncio.wait_for(

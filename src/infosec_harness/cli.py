@@ -25,7 +25,7 @@ def configure(
 
 def new_report(kind: str) -> Path:
     # Timestamped by default; an existing report is still never overwritten.
-    return Path(".harness/reports") / f"{kind}-{datetime.now(UTC):%Y%m%dT%H%M%SZ}.json"
+    return get_settings().reports_dir / f"{kind}-{datetime.now(UTC):%Y%m%dT%H%M%SZ}.json"
 
 
 @app.command()
