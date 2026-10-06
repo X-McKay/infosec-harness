@@ -359,7 +359,13 @@ def test_keep_going_continues_only_after_terminal_agent_level_failure():
     # request was sent; its receipt is complete, so the next fresh case may proceed.
     assert evaluation.agent_level(workflow_failure(
         ("ModelExecutorError", "OpenShell model executor returned no complete response (exit 1")))
+    # Live cohort 2, case 7: output corrections exhausted; the workflow names the outer type.
+    assert evaluation.agent_level(workflow_failure(
+        ("UnexpectedModelBehavior", "UnexpectedModelBehavior: Exceeded maximum output retries (2) "
+         "<- ModelRetry: Complete probes probe:8 contradict potentially_exploitable")))
     for stop in (
+        workflow_failure(("ModelExecutorError", "ModelExecutorError: executor exit <- "
+                          "ExecutionUnknown: native execution outcome unknown; sandbox closed")),
         workflow_failure(("ActivityError", "Activity task failed")),
         workflow_failure(("UsageLimitExceeded", "budget"), ("ExecutionUnknown", "unknown")),
         workflow_failure(("OpenShellError", "native")),

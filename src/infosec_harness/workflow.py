@@ -287,11 +287,16 @@ class InvestigationWorkflow(PydanticAIWorkflow):
                 nxt := getattr(chain[-1], "cause", None) or chain[-1].__cause__
             ):
                 chain.append(nxt)
-            root = chain[-1]
-            message = " <- ".join(str(item)[:500] for item in chain)
-            caught = ApplicationError(
-                message, type=getattr(root, "type", None) or type(root).__name__, non_retryable=True
-            )
+
+            def label(item: BaseException) -> str:
+                return getattr(item, "type", None) or type(item).__name__
+
+            # The outermost non-wrapper type names the failure (UnexpectedModelBehavior, not
+            # the ModelRetry it wraps; ModelExecutorError, not the ActivityError around it).
+            wrappers = {"ActivityError", "ChildWorkflowError", "WorkflowFailureError"}
+            named = next((item for item in chain if label(item) not in wrappers), error)
+            message = " <- ".join(f"{label(item)}: {str(item)[:400]}" for item in chain)
+            caught = ApplicationError(message, type=label(named), non_retryable=True)
             self._state.status = "failed"
             self._state.error = message
         finally:

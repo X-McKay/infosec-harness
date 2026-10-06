@@ -119,11 +119,14 @@ def failure_chain(error: BaseException | None, limit: int = 5) -> list[dict]:
 def agent_level(error: BaseException) -> bool:
     """A terminal workflow failure whose whole cause chain is agent/model-level."""
     chain = failure_chain(error, limit=10)
+    # The workflow embeds every wrapped type in its message, so a native or unknown-dispatch
+    # link anywhere in the original chain still stops the cohort.
+    text = " ".join(link["message"] for link in chain).lower()
     return (
         isinstance(error, WorkflowFailureError)
         and 1 < len(chain) < 10
         and all(link["type"] in AGENT_FAILURES for link in chain[1:])
-        and not any("cleanup" in link["message"].lower() for link in chain)
+        and not any(marker in text for marker in ("cleanup", "executionunknown", "openshellerror"))
     )
 
 
