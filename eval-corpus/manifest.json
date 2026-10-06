@@ -13,7 +13,7 @@
         "cwe": "CWE-89",
         "severity": "high",
         "source_tool": "seed-corpus",
-        "description": "`name` is concatenated into the SQL passed to cursor.execute in get_user."
+        "description": "`name` reaches cursor.execute in get_user."
       },
       "truth": {
         "expected_verdict": "potentially_exploitable",
@@ -61,7 +61,7 @@
         "cwe": "CWE-78",
         "severity": "critical",
         "source_tool": "seed-corpus",
-        "description": "`path` is concatenated into a shell command (shell=True)."
+        "description": "`path` reaches subprocess.run in count_lines."
       },
       "truth": {
         "expected_verdict": "potentially_exploitable",
@@ -109,7 +109,7 @@
         "cwe": "CWE-22",
         "severity": "high",
         "source_tool": "seed-corpus",
-        "description": "`name` is joined onto BASE without a containment check."
+        "description": "`name` reaches open() in read_doc."
       },
       "truth": {
         "expected_verdict": "potentially_exploitable",
@@ -157,7 +157,7 @@
         "cwe": "CWE-79",
         "severity": "medium",
         "source_tool": "seed-corpus",
-        "description": "`text` is interpolated into HTML without encoding."
+        "description": "`text` is rendered into HTML in render_comment."
       },
       "truth": {
         "expected_verdict": "potentially_exploitable",
@@ -205,7 +205,7 @@
         "cwe": "CWE-94",
         "severity": "critical",
         "source_tool": "seed-corpus",
-        "description": "`expr` is passed to eval in compute_setting."
+        "description": "`expr` reaches an eval-family call in compute_setting."
       },
       "truth": {
         "expected_verdict": "potentially_exploitable",
@@ -244,7 +244,7 @@
     {
       "name": "deserialization-vulnerable",
       "finding": {
-        "title": "Unsafe deserialization in load_profile",
+        "title": "Deserialization of untrusted data in load_profile",
         "repo_url": "eval-corpus/python/deserialization/a",
         "revision": "HEAD",
         "file_path": "app.py",
@@ -253,7 +253,7 @@
         "cwe": "CWE-502",
         "severity": "critical",
         "source_tool": "seed-corpus",
-        "description": "`blob` is passed to pickle.loads in load_profile."
+        "description": "`blob` reaches a pickle unpickler in load_profile."
       },
       "truth": {
         "expected_verdict": "potentially_exploitable",
@@ -268,7 +268,7 @@
     {
       "name": "deserialization-fixed",
       "finding": {
-        "title": "Unsafe deserialization in load_profile",
+        "title": "Deserialization of untrusted data in load_profile",
         "repo_url": "eval-corpus/python/deserialization/b",
         "revision": "HEAD",
         "file_path": "app.py",
@@ -301,7 +301,7 @@
         "cwe": "CWE-611",
         "severity": "high",
         "source_tool": "seed-corpus",
-        "description": "`document` is parsed with external general entity resolution enabled."
+        "description": "`document` reaches a SAX parser in parse_note."
       },
       "truth": {
         "expected_verdict": "potentially_exploitable",
@@ -349,7 +349,7 @@
         "cwe": "CWE-918",
         "severity": "high",
         "source_tool": "seed-corpus",
-        "description": "`url` chooses the destination of urlopen in fetch_preview."
+        "description": "`url` reaches urlopen in fetch_preview."
       },
       "truth": {
         "expected_verdict": "potentially_exploitable",
@@ -412,7 +412,7 @@
     {
       "name": "testonly",
       "finding": {
-        "title": "SQL string built in test helper",
+        "title": "SQL string construction in build_query",
         "repo_url": "eval-corpus/python/queryhelper/a",
         "revision": "HEAD",
         "file_path": "tests/test_helpers.py",
@@ -421,7 +421,7 @@
         "cwe": "CWE-89",
         "severity": "low",
         "source_tool": "seed-corpus",
-        "description": "Query string built by concatenation in a test helper."
+        "description": "build_query builds a query string by concatenation."
       },
       "truth": {
         "expected_verdict": "likely_not_exploitable",
@@ -878,7 +878,7 @@
         "cwe": "CWE-1321",
         "severity": "high",
         "source_tool": "seed-corpus",
-        "description": "Keys of the untrusted source object are copied recursively onto the target in mergePreferences."
+        "description": "Keys of the untrusted source object reach the recursive assignment in mergePreferences."
       },
       "truth": {
         "expected_verdict": "potentially_exploitable",
@@ -926,7 +926,7 @@
         "cwe": "CWE-915",
         "severity": "high",
         "source_tool": "seed-corpus",
-        "description": "Every key of the request body is applied to the user with setattr in update_profile."
+        "description": "Request body keys reach setattr on the user in update_profile."
       },
       "truth": {
         "expected_verdict": "potentially_exploitable",
@@ -974,7 +974,7 @@
         "cwe": "CWE-209",
         "severity": "medium",
         "source_tool": "seed-corpus",
-        "description": "The traceback of a failed report lookup, including the formatted exception message, is written to the HTTP response in ReportHandler.do_GET."
+        "description": "A failed report lookup reaches the error response written by ReportHandler.do_GET."
       },
       "truth": {
         "expected_verdict": "potentially_exploitable",
@@ -1013,7 +1013,7 @@
     {
       "name": "insecuretemp-vulnerable",
       "finding": {
-        "title": "Insecure temporary file in export_report",
+        "title": "Temporary file creation in export_report",
         "repo_url": "eval-corpus/python/tempfile/b",
         "revision": "HEAD",
         "file_path": "app.py",
@@ -1022,7 +1022,7 @@
         "cwe": "CWE-377",
         "severity": "medium",
         "source_tool": "seed-corpus",
-        "description": "export_report writes to a fixed file name in the shared temp directory without exclusive creation."
+        "description": "export_report creates its export file in the shared temp directory."
       },
       "truth": {
         "expected_verdict": "potentially_exploitable",
@@ -1037,7 +1037,7 @@
     {
       "name": "insecuretemp-fixed",
       "finding": {
-        "title": "Insecure temporary file in export_report",
+        "title": "Temporary file creation in export_report",
         "repo_url": "eval-corpus/python/tempfile/a",
         "revision": "HEAD",
         "file_path": "app.py",
@@ -1070,7 +1070,7 @@
         "cwe": "CWE-942",
         "severity": "high",
         "source_tool": "seed-corpus",
-        "description": "The request Origin is echoed into Access-Control-Allow-Origin with credentials allowed in handleProfile."
+        "description": "The request Origin reaches Access-Control-Allow-Origin with credentials in handleProfile."
       },
       "truth": {
         "expected_verdict": "potentially_exploitable",
@@ -1118,7 +1118,7 @@
         "cwe": "CWE-732",
         "severity": "medium",
         "source_tool": "seed-corpus",
-        "description": "save_token clears the umask and sets mode 0666 on the file holding a user's API token."
+        "description": "save_token sets the mode of the file holding a user's API token."
       },
       "truth": {
         "expected_verdict": "potentially_exploitable",
@@ -1166,7 +1166,7 @@
         "cwe": "CWE-601",
         "severity": "medium",
         "source_tool": "seed-corpus",
-        "description": "`next_url` becomes the Location destination unchanged in redirect_target."
+        "description": "`next_url` reaches the Location destination in redirect_target."
       },
       "truth": {
         "expected_verdict": "potentially_exploitable",
@@ -1214,7 +1214,7 @@
         "cwe": "CWE-1236",
         "severity": "medium",
         "source_tool": "seed-corpus",
-        "description": "User-submitted cell values are written to CSV verbatim in export_csv."
+        "description": "User-submitted cell values reach the CSV writer in export_csv."
       },
       "truth": {
         "expected_verdict": "potentially_exploitable",
@@ -1262,7 +1262,7 @@
         "cwe": "CWE-98",
         "severity": "high",
         "source_tool": "seed-corpus",
-        "description": "`name` is imported directly in load_plugin."
+        "description": "`name` selects the module imported in load_plugin."
       },
       "truth": {
         "expected_verdict": "potentially_exploitable",
@@ -1310,7 +1310,7 @@
         "cwe": "CWE-113",
         "severity": "medium",
         "source_tool": "seed-corpus",
-        "description": "`$location` is interpolated into the header block in redirect_headers."
+        "description": "`$location` reaches the Location header in redirect_headers."
       },
       "truth": {
         "expected_verdict": "potentially_exploitable",
@@ -1358,7 +1358,7 @@
         "cwe": "CWE-77",
         "severity": "high",
         "source_tool": "seed-corpus",
-        "description": "`term` occupies an option position in the grep argument vector in search."
+        "description": "`term` reaches the grep argument vector in search."
       },
       "truth": {
         "expected_verdict": "potentially_exploitable",
@@ -1397,7 +1397,7 @@
     {
       "name": "idor-vulnerable",
       "finding": {
-        "title": "Insecure direct object reference in get_note",
+        "title": "Missing authorization in get_note",
         "repo_url": "eval-corpus/python/idor/b",
         "revision": "HEAD",
         "file_path": "app.py",
@@ -1406,7 +1406,7 @@
         "cwe": "CWE-862",
         "severity": "high",
         "source_tool": "seed-corpus",
-        "description": "get_note returns a note selected by note_id without checking that it belongs to current_user."
+        "description": "get_note looks up a note by note_id on behalf of current_user."
       },
       "truth": {
         "expected_verdict": "potentially_exploitable",
@@ -1421,7 +1421,7 @@
     {
       "name": "idor-fixed",
       "finding": {
-        "title": "Insecure direct object reference in get_note",
+        "title": "Missing authorization in get_note",
         "repo_url": "eval-corpus/python/idor/a",
         "revision": "HEAD",
         "file_path": "app.py",
@@ -1430,7 +1430,7 @@
         "cwe": "CWE-862",
         "severity": "high",
         "source_tool": "seed-corpus",
-        "description": "get_note returns a note selected by note_id; an ownership check guards the return."
+        "description": "get_note looks up a note by note_id on behalf of current_user."
       },
       "truth": {
         "expected_verdict": "likely_not_exploitable",
@@ -1445,7 +1445,7 @@
     {
       "name": "jwtnone-vulnerable",
       "finding": {
-        "title": "JWT alg:none accepted in verify_token",
+        "title": "Improper signature verification in verify_token",
         "repo_url": "eval-corpus/python/jwtnone/a",
         "revision": "HEAD",
         "file_path": "app.py",
@@ -1454,7 +1454,7 @@
         "cwe": "CWE-347",
         "severity": "high",
         "source_tool": "seed-corpus",
-        "description": "verify_token trusts the token header's alg and returns the claims unverified when alg is none."
+        "description": "verify_token reads the token header and returns the claims of a token it accepts."
       },
       "truth": {
         "expected_verdict": "potentially_exploitable",
@@ -1469,7 +1469,7 @@
     {
       "name": "jwtnone-fixed",
       "finding": {
-        "title": "JWT alg:none accepted in verify_token",
+        "title": "Improper signature verification in verify_token",
         "repo_url": "eval-corpus/python/jwtnone/b",
         "revision": "HEAD",
         "file_path": "app.py",
@@ -1478,7 +1478,7 @@
         "cwe": "CWE-347",
         "severity": "high",
         "source_tool": "seed-corpus",
-        "description": "verify_token pins HS256 and always checks the HMAC before returning claims."
+        "description": "verify_token reads the token header and returns the claims of a token it accepts."
       },
       "truth": {
         "expected_verdict": "likely_not_exploitable",
@@ -1493,7 +1493,7 @@
     {
       "name": "pwhash-vulnerable",
       "finding": {
-        "title": "Unsalted MD5 password hashing in hash_password",
+        "title": "Risky password hashing in hash_password",
         "repo_url": "eval-corpus/python/pwhash/a",
         "revision": "HEAD",
         "file_path": "app.py",
@@ -1502,7 +1502,7 @@
         "cwe": "CWE-327",
         "severity": "medium",
         "source_tool": "seed-corpus",
-        "description": "hash_password stores an unsalted MD5 digest of the password."
+        "description": "hash_password produces the stored representation of a user's password."
       },
       "truth": {
         "expected_verdict": "potentially_exploitable",
@@ -1517,7 +1517,7 @@
     {
       "name": "pwhash-fixed",
       "finding": {
-        "title": "Unsalted MD5 password hashing in hash_password",
+        "title": "Risky password hashing in hash_password",
         "repo_url": "eval-corpus/python/pwhash/b",
         "revision": "HEAD",
         "file_path": "app.py",
@@ -1526,7 +1526,7 @@
         "cwe": "CWE-327",
         "severity": "medium",
         "source_tool": "seed-corpus",
-        "description": "hash_password derives the stored value with a salted PBKDF2-HMAC-SHA256 work factor."
+        "description": "hash_password produces the stored representation of a user's password."
       },
       "truth": {
         "expected_verdict": "likely_not_exploitable",
@@ -1550,7 +1550,7 @@
         "cwe": "CWE-330",
         "severity": "high",
         "source_tool": "seed-corpus",
-        "description": "generateToken builds the session token from Math.random(), a non-cryptographic PRNG."
+        "description": "generateToken produces the session token."
       },
       "truth": {
         "expected_verdict": "potentially_exploitable",
@@ -1574,7 +1574,7 @@
         "cwe": "CWE-330",
         "severity": "high",
         "source_tool": "seed-corpus",
-        "description": "generateToken draws the session token from crypto.randomBytes, a CSPRNG."
+        "description": "generateToken produces the session token."
       },
       "truth": {
         "expected_verdict": "likely_not_exploitable",
@@ -1598,7 +1598,7 @@
         "cwe": "CWE-384",
         "severity": "high",
         "source_tool": "seed-corpus",
-        "description": "login keeps the client-supplied session id after authentication, so a planted id becomes authenticated."
+        "description": "login receives the client-supplied session id and returns the session id used after authentication."
       },
       "truth": {
         "expected_verdict": "potentially_exploitable",
@@ -1622,7 +1622,7 @@
         "cwe": "CWE-384",
         "severity": "high",
         "source_tool": "seed-corpus",
-        "description": "login destroys the pre-login id and issues a fresh session id on authentication."
+        "description": "login receives the client-supplied session id and returns the session id used after authentication."
       },
       "truth": {
         "expected_verdict": "likely_not_exploitable",
@@ -1637,7 +1637,7 @@
     {
       "name": "perl-adminpw-vulnerable",
       "finding": {
-        "title": "Hard-coded admin password in authenticate",
+        "title": "Hard-coded credentials in authenticate",
         "repo_url": "eval-corpus/perl/adminpw/b",
         "revision": "HEAD",
         "file_path": "lib/Auth.pm",
@@ -1646,7 +1646,7 @@
         "cwe": "CWE-798",
         "severity": "high",
         "source_tool": "seed-corpus",
-        "description": "authenticate accepts a hard-coded admin password compiled into the module for the admin account."
+        "description": "authenticate decides whether a username and password are accepted, including for the admin account."
       },
       "truth": {
         "expected_verdict": "potentially_exploitable",
@@ -1661,7 +1661,7 @@
     {
       "name": "perl-adminpw-fixed",
       "finding": {
-        "title": "Hard-coded admin password in authenticate",
+        "title": "Hard-coded credentials in authenticate",
         "repo_url": "eval-corpus/perl/adminpw/a",
         "revision": "HEAD",
         "file_path": "lib/Auth.pm",
@@ -1670,7 +1670,7 @@
         "cwe": "CWE-798",
         "severity": "high",
         "source_tool": "seed-corpus",
-        "description": "authenticate verifies every account, including admin, against the configured credential and fails closed when absent."
+        "description": "authenticate decides whether a username and password are accepted, including for the admin account."
       },
       "truth": {
         "expected_verdict": "likely_not_exploitable",
@@ -1694,7 +1694,7 @@
         "cwe": "CWE-787",
         "severity": "critical",
         "source_tool": "seed-corpus",
-        "description": "`name` is copied with strcpy into a fixed 16-byte stack buffer with no bound, so a name of 16 bytes or more overflows buf."
+        "description": "`name` is copied into a 16-byte stack buffer in format_greeting."
       },
       "truth": {
         "expected_verdict": "potentially_exploitable",
@@ -1718,7 +1718,7 @@
         "cwe": "CWE-787",
         "severity": "critical",
         "source_tool": "seed-corpus",
-        "description": "`name` is copied into a fixed 16-byte stack buffer in format_greeting."
+        "description": "`name` is copied into a 16-byte stack buffer in format_greeting."
       },
       "truth": {
         "expected_verdict": "likely_not_exploitable",
@@ -1742,7 +1742,7 @@
         "cwe": "CWE-190",
         "severity": "high",
         "source_tool": "seed-corpus",
-        "description": "`n + 1` is computed in unsigned short, so n == 65535 wraps the allocation size to 0 while the subsequent memcpy writes n bytes."
+        "description": "`n` participates in the allocation size calculation in dup_n before a memcpy of n bytes."
       },
       "truth": {
         "expected_verdict": "potentially_exploitable",
@@ -1781,7 +1781,7 @@
     {
       "name": "redos-vulnerable",
       "finding": {
-        "title": "Catastrophic backtracking in is_valid_email",
+        "title": "Inefficient regular expression in is_valid_email",
         "repo_url": "eval-corpus/python/redos/b",
         "revision": "HEAD",
         "file_path": "app.py",
@@ -1790,7 +1790,7 @@
         "cwe": "CWE-1333",
         "severity": "medium",
         "source_tool": "seed-corpus",
-        "description": "`value` is matched against a regex with a nested quantifier (([a-zA-Z0-9]+)+), whose backtracking time grows exponentially on non-matching input."
+        "description": "`value` is matched against an email-validation regex in is_valid_email."
       },
       "truth": {
         "expected_verdict": "potentially_exploitable",
@@ -1805,7 +1805,7 @@
     {
       "name": "redos-fixed",
       "finding": {
-        "title": "Catastrophic backtracking in is_valid_email",
+        "title": "Inefficient regular expression in is_valid_email",
         "repo_url": "eval-corpus/python/redos/a",
         "revision": "HEAD",
         "file_path": "app.py",
@@ -1829,7 +1829,7 @@
     {
       "name": "javascript-zipbomb-vulnerable",
       "finding": {
-        "title": "Unbounded decompression in inflate",
+        "title": "Uncontrolled resource consumption in inflate",
         "repo_url": "eval-corpus/javascript/zipbomb/b",
         "revision": "HEAD",
         "file_path": "src/inflate.js",
@@ -1838,7 +1838,7 @@
         "cwe": "CWE-400",
         "severity": "medium",
         "source_tool": "seed-corpus",
-        "description": "`buf` is gunzipped with no maxOutputLength, so a small compressed input can expand to an unbounded buffer in memory (decompression bomb)."
+        "description": "`buf` is gunzipped in inflate."
       },
       "truth": {
         "expected_verdict": "potentially_exploitable",
@@ -1853,7 +1853,7 @@
     {
       "name": "javascript-zipbomb-fixed",
       "finding": {
-        "title": "Unbounded decompression in inflate",
+        "title": "Uncontrolled resource consumption in inflate",
         "repo_url": "eval-corpus/javascript/zipbomb/a",
         "revision": "HEAD",
         "file_path": "src/inflate.js",
@@ -1886,7 +1886,7 @@
         "cwe": "CWE-362",
         "severity": "high",
         "source_tool": "seed-corpus",
-        "description": "`path` is checked with os.path.exists and then opened by name, leaving a check/use gap and following a final symlink to a different file."
+        "description": "`path` is opened in read_config."
       },
       "truth": {
         "expected_verdict": "potentially_exploitable",
@@ -1934,7 +1934,7 @@
         "cwe": "CWE-476",
         "severity": "medium",
         "source_tool": "seed-corpus",
-        "description": "`payload`'s 'address' field is assumed present; when missing, data.get('address') is None and the attribute access on it raises AttributeError."
+        "description": "`payload`'s 'address' field is read in user_city."
       },
       "truth": {
         "expected_verdict": "potentially_exploitable",
@@ -1971,5 +1971,5 @@
       "language": "python"
     }
   ],
-  "note": "Paired seeded corpus across languages. Each case carries its own `language`. Vulnerable variants -> potentially_exploitable; fixed -> likely_not_exploitable. Truth is for scoring only. The `-fixed` variants are `neutralized`, not `unreachable` and not plain `reachable`: untrusted input does arrive at the sink, and a named control on the path stops it. `unreachable` is reserved for the one case where no untrusted value reaches the sink at all. The distinction decides whether the probe runs, so it is ground truth rather than wording."
+  "note": "Paired seeded corpus across languages. Each case carries its own `language`. Vulnerable variants -> potentially_exploitable; fixed -> likely_not_exploitable. Truth is for scoring only. The `-fixed` variants are `neutralized`, not `unreachable` and not plain `reachable`: untrusted input does arrive at the sink, and a named control on the path stops it. `unreachable` is reserved for the one case where no untrusted value reaches the sink at all. The distinction decides whether the probe runs, so it is ground truth rather than wording. Variant directories are named `a` and `b` per topic; which one is exploitable is recorded only in this manifest and in the maintainers' answer key in README.md, and must never be copied into agent inputs. Both findings of a pair share their title and description."
 }
