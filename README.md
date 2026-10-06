@@ -36,7 +36,9 @@ Pins are recorded in `.mise.toml` and `.dev-tools/`. On macOS Apple Silicon or L
 Full mode requires the native runtime described in [OpenShell setup](deploy/openshell/README.md).
 It fails if that boundary cannot be demonstrated. It does not silently substitute Docker,
 a stub agent or a public model. The checkout-managed Linux VM and isolated image builder
-are provisioning infrastructure; investigation commands always go through OpenShell.
+are provisioning infrastructure; investigation commands always go through OpenShell. A full
+evaluation cohort exceeds the pinned gateway's admission quota and needs the
+[patched gateway](deploy/openshell/README.md#patched-gateway-build).
 
 Set operator configuration in the worker environment. No provider credentials belong in
 that environment: provision them in OpenShell's model profile.
@@ -49,6 +51,24 @@ export HARNESS_MODEL_NAME=Qwen3.6-35B-A3B-NVFP4
 export HARNESS_LOCAL_REPO_ROOTS='["/absolute/path/to/approved/repositories"]'
 ./dev worker
 ```
+
+Budgets come from `Limits` (defaults: 300,000 tokens, 30 model requests, 120 s per command),
+for example `HARNESS_LIMITS__TOTAL_TOKENS=600000`. To freeze one exact configuration, pass
+`--settings FILE`: a JSON document of `Settings` fields, including nested `limits`, that is
+used instead of every `HARNESS_*` variable, so it must also name the Temporal address:
+
+```json
+{
+  "temporal_address": "127.0.0.1:<temporal-port>",
+  "openshell_config": "/absolute/path/to/runtime.json",
+  "model_base_url": "https://your-model-host/v1",
+  "local_repo_roots": ["/absolute/path/to/infosec-harness/eval-corpus"],
+  "limits": {"total_tokens": 600000, "max_requests": 40, "command_timeout_seconds": 300}
+}
+```
+
+A `command_timeout_seconds` above the runtime's `max_timeout_seconds` (default 300) is capped
+for model requests but makes every tool command fail, so keep it within that maximum.
 
 The model name must match the endpoint's served identifier. The self-hosted model is not
 provisioned or downloaded by this repository. A Bedrock executor is included, but its native credential-profile integration is not yet
@@ -109,7 +129,10 @@ A definitive verdict requires source citations and a successful, complete offlin
 whose original source files remain unchanged, with explicit target and control observations.
 Those observations are model-authored claims, not independent semantic attestation. Unknown
 command delivery, missing controls, truncation, failure or contradictory evidence must not
-be reported as a verified negative result. See [architecture and boundaries](docs/architecture/TRIAGE_SYSTEM.md).
+be reported as a verified negative result. A contrary probe can be set aside only when it
+is older than the newest cited probe and the summary explains its flaw. A command killed at
+its budget inside the sandbox is a complete exit-137 result; the gateway's own exit 124 stays
+unknown. See [architecture and boundaries](docs/architecture/TRIAGE_SYSTEM.md).
 
 The current workflow generation uses the `investigate-v11` queue. It binds every native
 model/tool activity to the captured worker identity. v10 and older histories and workers
