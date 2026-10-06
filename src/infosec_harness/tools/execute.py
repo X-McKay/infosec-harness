@@ -122,6 +122,32 @@ def unwrap_output(result: CommandResult) -> CommandResult:
     return replace(result, stderr=result.stderr[: -len(suffix)], output_truncated=True)
 
 
+def evidence_from_result(
+    identity: str,
+    *,
+    kind: Literal["probe", "command"],
+    command: str,
+    result: CommandResult,
+    sandbox_id: str,
+    source_digest: str,
+    observations: dict[str, bool | str | int | None],
+) -> Evidence:
+    """Full (unexcerpted) evidence for one completed command, already passed through
+    ``unwrap_output``. The tool return and finalization's receipt rebuild must agree."""
+    return Evidence(
+        id=identity,
+        kind=kind,
+        command=command,
+        exit_code=result.exit_code,
+        stdout=result.stdout,
+        stderr=result.stderr,
+        output_truncated=result.output_truncated,
+        sandbox_id=sandbox_id,
+        source_digest=source_digest,
+        observations=observations,
+    )
+
+
 def bounded_shell(command: str, timeout: int) -> list[str]:
     """Run ``command`` under the shell wrapper: its own in-sandbox kill and file-backed capture."""
     return ["/bin/bash", "-c", _SHELL_WRAPPER, "ih-wrapper", str(command_budget(timeout)), command]
@@ -170,15 +196,11 @@ async def command_tool(
             "workspace, or split the work."
         )
     # Tool returns enter durable history; return bounded excerpts only.
-    return Evidence(
-        id=identity,
+    return evidence_from_result(
+        identity,
         kind="probe" if kind == "probe" else "command",
         command=command,
-        exit_code=result.exit_code,
-        stdout=result.stdout,
-        stderr=result.stderr,
-        timed_out=False,
-        output_truncated=result.output_truncated,
+        result=result,
         sandbox_id=sandbox.id,
         source_digest=ctx.deps.source_digest,
         observations=observations,
