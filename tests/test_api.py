@@ -92,6 +92,37 @@ async def test_completed_result_comes_from_temporal_not_a_shadow_database(client
     assert (await request("GET", "/api/runs/old-batch")).status_code == 404
 
 
+@pytest.mark.parametrize(
+    ("status", "code", "detail"),
+    [
+        (RPCStatusCode.NOT_FOUND, 404, "Investigation not found"),
+        (RPCStatusCode.INVALID_ARGUMENT, 400, "Temporal rejected the request as invalid"),
+        (
+            RPCStatusCode.DEADLINE_EXCEEDED,
+            504,
+            "No worker answered within 10s: is `harness worker` serving task queue "
+            "investigate-v11?",
+        ),
+        (RPCStatusCode.UNAVAILABLE, 503, "Workflow service unavailable (UNAVAILABLE)"),
+        (RPCStatusCode.PERMISSION_DENIED, 503, "Workflow service unavailable (PERMISSION_DENIED)"),
+    ],
+)
+async def test_temporal_rpc_failures_map_to_operator_errors(client, caplog, status, code, detail):
+    failure = RPCError("payload: attacker text", status, b"")
+    handle = SimpleNamespace(describe=AsyncMock(side_effect=failure))
+    client.get_workflow_handle = lambda *args, **kwargs: handle
+    with caplog.at_level("WARNING", logger="infosec_harness.api"):
+        response = await request("GET", "/api/runs/investigate-v11-test")
+    assert response.status_code == code
+    assert response.json() == {"detail": detail}
+    assert "attacker" not in response.text
+    [record] = [item for item in caplog.records if item.name == "infosec_harness.api"]
+    assert record.getMessage() == (
+        f"event=temporal_rpc_failed status={status.name} http_status={code} "
+        "path=/api/runs/investigate-v11-test"
+    )
+
+
 async def test_pagination_bounded_and_invalid_token_never_reaches_temporal(client):
     row = SimpleNamespace(
         id="investigate-v11-test",
@@ -198,7 +229,9 @@ async def test_run_events_project_kinds_without_payloads(client):
             EventType.EVENT_TYPE_ACTIVITY_TASK_COMPLETED,
             activity_task_completed_event_attributes=history_pb.ActivityTaskCompletedEventAttributes(
                 scheduled_event_id=5,
-                result=json_payloads({"return_value": {"exit_code": 137, "stdout": secret}}),
+                result=json_payloads(
+                    {"kind": "tool_return", "result": {"exit_code": 137, "stdout": secret}}
+                ),
             ),
         ),
         history_event(
@@ -261,6 +294,48 @@ async def test_run_events_project_kinds_without_payloads(client):
     assert body["events"][0]["at"] == "2026-10-06T12:00:01+00:00"
     # Payloads and failure messages are untrusted and never projected.
     assert "attacker" not in response.text
+
+
+@pytest.mark.parametrize(
+    ("document", "label"),
+    [
+        ({"kind": "tool_return", "result": {"exit_code": 0}}, "exit_code=0"),
+        ({"kind": "tool_return", "result": {"exit_code": -9}}, "exit_code=-9"),
+        # A refused command has no exit code; probe observations never supply one.
+        (
+            {"kind": "tool_return", "result": {"exit_code": None, "observations": {"exit_code": 0}}},
+            "",
+        ),
+        ({"kind": "tool_return", "result": {"exit_code": True}}, ""),
+        ({"kind": "tool_return", "result": {"exit_code": "1"}}, ""),
+        ({"kind": "tool_return", "result": "text"}, ""),
+        ({"kind": "model_retry", "result": {"exit_code": 1}}, ""),
+        ({"exit_code": 1}, ""),
+        ({"return_value": {"exit_code": 1}}, ""),
+        ([{"exit_code": 1}], ""),
+    ],
+)
+def test_exit_code_label_is_read_from_one_fixed_location(document, label):
+    assert api.exit_code(json_payloads(document)) == label
+
+
+async def test_exit_code_location_matches_the_recorded_tool_return():
+    # Pins the wire shape: PydanticAI's own wrapper and converter, not a hand-written payload.
+    from pydantic_ai.durable_exec._toolset import wrap_tool_call_result
+    from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
+    from temporalio.converter import DataConverter
+
+    from infosec_harness.contracts import Evidence
+
+    async def tool():
+        return Evidence(
+            id="execute:1:a", kind="command", command="c", exit_code=137,
+            sandbox_id="s", source_digest="d", observations={"exit_code": 0},
+        )
+
+    converter = PydanticAIPlugin().configure_client({"data_converter": DataConverter.default})
+    encoded = await converter["data_converter"].encode([await wrap_tool_call_result(tool())])
+    assert api.exit_code(Payloads(payloads=encoded)) == "exit_code=137"
 
 
 async def test_run_events_are_capped_and_run_id_is_validated(client):
@@ -459,11 +534,18 @@ async def test_report_document_is_confined_to_reports_dir(reports_dir, tmp_path)
     outside = tmp_path / "secret.json"
     outside.write_text('{"secret": true}')
     (reports_dir / "link.json").symlink_to(outside)
+    # Served exactly as listed: an in-root symlink and a directory are not reports either.
+    (reports_dir / "alias.json").symlink_to(reports_dir / "model-a.json")
+    (reports_dir / "nested.json").mkdir()
     response = await request("GET", "/api/reports/model-a.json")
     assert response.status_code == 200
     assert response.json() == {"status": "passed", "cases": []}
+    listed = [item["name"] for item in (await request("GET", "/api/reports")).json()["items"]]
+    assert sorted(listed) == ["model-a.json", "replay-list.json"]
     for name in (
         "link.json",
+        "alias.json",
+        "nested.json",
         "..%2Fsecret.json",
         "%2E%2E%2Fsecret.json",
         "..secret.json",
@@ -509,6 +591,20 @@ async def test_report_listing_is_capped_and_survives_a_missing_directory(
     assert [item["status"] for item in body["items"]] == ["passed", "passed", "not_summarized"]
     monkeypatch.setattr(api, "get_settings", lambda: Settings(reports_dir=reports_dir / "none"))
     assert (await request("GET", "/api/reports")).json() == {"items": [], "truncated": False}
+
+
+async def test_unreadable_reports_dir_is_logged_not_silent(tmp_path, monkeypatch, caplog):
+    not_a_directory = tmp_path / "reports"
+    not_a_directory.write_text("")
+    monkeypatch.setattr(api, "get_settings", lambda: Settings(reports_dir=not_a_directory))
+    with caplog.at_level("WARNING", logger="infosec_harness.api"):
+        response = await request("GET", "/api/reports")
+    assert response.json() == {"items": [], "truncated": False}
+    [record] = [item for item in caplog.records if item.name == "infosec_harness.api"]
+    assert record.levelname == "WARNING"
+    assert record.getMessage().startswith(
+        f"event=reports_dir_unreadable path={not_a_directory.resolve()} error="
+    )
 
 
 @pytest.mark.requires_temporal
