@@ -66,6 +66,39 @@ de-labelled on 2026-10-06 in commits `1ab456c`, `4f0d5e6`, `7a8df53` and `f7bc84
 `claude/corpus-delabel` (neutral `a`/`b` directories; stripped comments, test names and metadata;
 one shared description per pair; a hygiene test), and accuracy must be re-measured on that corpus.
 
+## Promotion, migration and the first de-labelled cohort (2026-10-06, afternoon)
+
+All work merged into develop (#11 API and UI, #12 Java XXE skills, #13 cleanup, #15 UI
+polish and Playwright suite, #16 skills coverage and de-labelled corpus, #17 evidence, #18
+quality pass, #14 stack simplification) and develop was promoted to main as `f734f3f` (#19).
+Live steps on that head, in order:
+
+- Executor image rebuilt from `f734f3f` (`sha256:105b713a…`; the invocation contract now refuses
+  unknown fields and Bedrock honours the request budget) and set in the model profile with the
+  previous configuration backed up.
+- Native qualification passed on that source and configuration (`native-qualification-14.json`
+  from a clean worktree at develop's head, `native-qualification-15.json` from a clean detached
+  worktree at `f734f3f`; config `68062827…`).
+- All 249 retained workflow histories were exported from the compose Temporal with
+  `harness export-history` into `.harness/histories/`; the 12 replay histories match their
+  replayed `history_sha256` byte for byte.
+- Migration from the compose stack per `deploy/README.md`: the old builder removed with its state
+  kept, the compose project brought down with all three volumes preserved, the Temporal dev
+  server, API and UI started by `./dev` as local processes. The dedicated OpenShell daemon
+  refused to stop because its firewall baseline had already drifted earlier in the session
+  (compose operations); it kept running throughout, its gateway stayed healthy at quota 40,000,
+  and the refusal stands as the documented operator-review signal until the daemon is next
+  restarted. `./dev`'s closing qualify step needs `HARNESS_OPENSHELL_CONFIG` to name the private
+  configuration; with the frozen settings file it passes.
+- Run 11 was a misconfigured launch: the manifest's relative repository paths resolve against
+  the checkout running the cohort, while the approved roots named another checkout, so the first
+  three cases (parallel 3) were refused by the root check, the stop latch started nothing else,
+  and cleanup left 0 containers. The approved root was corrected.
+- Run 12 is the first cohort on the de-labelled 82-case corpus, on `f734f3f` from a clean
+  detached worktree, with `--parallel 3`, the frozen `settings-82.json` (600k tokens, 40
+  requests, 300 s commands), capacity pre-flight passed (29,891 of headroom against 14,760
+  required). It is the first independent accuracy measurement; its report is `cohort-12.json`.
+
 ## Defects found live and their fixes
 
 | Observation | Fix | Verification |
