@@ -102,10 +102,20 @@ class WorkerIdentityInterceptor(Interceptor):
         return Guard(next)
 
 
+def workflow_runner():
+    """The sandboxed workflow runner shared by the worker and zero-dispatch replay."""
+    from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
+
+    return SandboxedWorkflowRunner(
+        restrictions=SandboxRestrictions.default.with_passthrough_modules(
+            InvestigationWorkflow.__module__, "annotated_types", "typing_inspection"
+        )
+    )
+
+
 def create_worker(client, settings):
     """Register native PydanticAI model/tool activities and three lifecycle activities."""
     from temporalio.worker import Worker
-    from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 
     from infosec_harness.agents.inference import OpenShellModel
 
@@ -143,9 +153,5 @@ def create_worker(client, settings):
         workflows=[InvestigationWorkflow],
         activities=[activities.prepare, activities.finalize, activities.cleanup],
         interceptors=[WorkerIdentityInterceptor(partial(worker_identity, settings))],
-        workflow_runner=SandboxedWorkflowRunner(
-            restrictions=SandboxRestrictions.default.with_passthrough_modules(
-                InvestigationWorkflow.__module__, "annotated_types", "typing_inspection"
-            )
-        ),
+        workflow_runner=workflow_runner(),
     )

@@ -20,11 +20,18 @@ from temporalio.client import WorkflowExecutionStatus, WorkflowFailureError
 from temporalio.exceptions import ApplicationError
 
 from infosec_harness._io import write_json
-from infosec_harness.api import PREFIX, RPC_TIMEOUT, connect, execution_timeout, start_investigation
+from infosec_harness.api import (
+    GENERATION,
+    PREFIX,
+    RPC_TIMEOUT,
+    connect,
+    execution_timeout,
+    start_investigation,
+)
 from infosec_harness.contracts import Finding, InvestigationResult, Limits
 from infosec_harness.sandbox import OpenShell, OpenShellConfig, native_operation_accounting
-from infosec_harness.sandbox.process import _finish
-from infosec_harness.workflows.worker import worker_identity
+from infosec_harness.sandbox.process import finish
+from infosec_harness.workflows.worker import worker_identity, workflow_runner
 
 # The harness checkout: src/infosec_harness/evals/ is three levels below it.
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -283,7 +290,7 @@ async def evaluate_corpus(manifest: Path, output: Path, settings, *, names=(),
         "version": 1,
         "kind": "diagnostic" if names else "cohort",
         "commit": commit,
-        "generation": "v11",
+        "generation": GENERATION,
         "model": settings.model_name,
         "task_queue": settings.task_queue,
         "owned_worker": owned_worker,
@@ -371,7 +378,7 @@ async def evaluate_corpus(manifest: Path, output: Path, settings, *, names=(),
                 if not (terminal or isinstance(exc, WorkflowFailureError)):
                     # Reconcile the one owned ID; never resend an uncertain start or inference.
                     try:
-                        await _finish(asyncio.ensure_future(
+                        await finish(asyncio.ensure_future(
                             cancel_owned(client, run_id, DRAIN if owned_worker else None)))
                         record["cancellation"] = "terminal" if owned_worker else "requested"
                     except Exception as cancellation_error:
@@ -438,7 +445,6 @@ async def replay_history(run_id: str, settings, client=None) -> dict:
     import pydantic_ai.models
     from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
     from temporalio.worker import Replayer
-    from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 
     from infosec_harness.agents.inference import OpenShellModel
     from infosec_harness.agents.investigator import build_agent
@@ -456,17 +462,10 @@ async def replay_history(run_id: str, settings, client=None) -> dict:
     report = {"status": "passed", "workflow_id": run_id, "history_events": len(history.events),
               "history_sha256": hashlib.sha256(data.encode()).hexdigest(), "verdict": None}
     try:
-        # Same passthrough modules as create_worker's sandboxed workflow runner.
         await Replayer(
             workflows=[InvestigationWorkflow],
             plugins=[PydanticAIPlugin()],
-            workflow_runner=SandboxedWorkflowRunner(
-                restrictions=SandboxRestrictions.default.with_passthrough_modules(
-                    "infosec_harness.workflows.investigation",
-                    "annotated_types",
-                    "typing_inspection",
-                )
-            ),
+            workflow_runner=workflow_runner(),
         ).replay_workflow(history)
     except Exception as error:
         report.update(status="failed", failure_chain=failure_chain(error))
