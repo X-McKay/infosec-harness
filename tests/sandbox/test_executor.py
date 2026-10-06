@@ -150,6 +150,7 @@ def test_executor_refuses_an_oversized_invocation_before_parsing(monkeypatch):
 
     stdin = io.BytesIO(b"{" + b" " * executor.MAX_INVOCATION_BYTES)
     monkeypatch.setattr(sys, "stdin", type("Stdin", (), {"buffer": stdin})())
-    with pytest.raises(ValueError, match=f"more than {executor.MAX_INVOCATION_BYTES} bytes"):
+    limit = executor.MAX_INVOCATION_BYTES
+    with pytest.raises(ValueError, match=rf"\(at least {limit + 1} > {limit} bytes\)"):
         executor.main()
     assert stdin.tell() == executor.MAX_INVOCATION_BYTES + 1

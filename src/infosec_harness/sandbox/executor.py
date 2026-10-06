@@ -116,16 +116,17 @@ async def execute(invocation: ModelInvocation) -> bytes:
         )
     encoded = RESPONSE.dump_json(response)
     if len(encoded) > MAX_RESPONSE_BYTES:
-        raise ValueError(f"Model response exceeds the durable payload budget: {len(encoded)} "
-                         f"bytes (max {MAX_RESPONSE_BYTES})")
+        raise ValueError("Model response exceeds the durable payload budget "
+                         f"({len(encoded)} > {MAX_RESPONSE_BYTES} bytes)")
     return encoded
 
 
 def main() -> None:
     data = sys.stdin.buffer.read(MAX_INVOCATION_BYTES + 1)
     if len(data) > MAX_INVOCATION_BYTES:
-        raise ValueError("Model invocation exceeds the durable payload budget: more than "
-                         f"{MAX_INVOCATION_BYTES} bytes")
+        # Reading stops one byte past the limit, so the measured size is a lower bound.
+        raise ValueError("Model invocation exceeds the durable payload budget "
+                         f"(at least {len(data)} > {MAX_INVOCATION_BYTES} bytes)")
     invocation = ModelInvocation.model_validate_json(data)
     sys.stdout.buffer.write(asyncio.run(execute(invocation)))
 
