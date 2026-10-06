@@ -37,7 +37,7 @@ Pins are recorded in `.mise.toml` and `.dev-tools/`. On macOS Apple Silicon or L
 
 ```bash
 ./dev --profile offline       # pinned tools and deterministic checks, including local Temporal
-./dev                         # VM, local Temporal/API/UI, readiness and native OpenShell checks
+./dev                         # VM, local Temporal/API/UI, readiness and native qualification
 ./dev worker                  # run the trusted Temporal worker
 ./dev status                  # process state, loopback URLs and the Temporal database
 ./dev logs [temporal|api|ui]  # last 100 lines of each local process log
@@ -60,14 +60,19 @@ from `.harness/dev.env`:
 Temporal keeps running across `./dev` runs and its database persists across `./dev stop`;
 the stateless API and UI restart on each `./dev` so they serve the current code. `./dev` sets
 the default namespace's retention to 30 days (the dev server's default is one day); keep
-anything needed longer with `./dev export-history RUN_ID`. Nothing runs in a container except
-OpenShell workloads and trusted image builds inside the managed VM.
+anything needed longer with `./dev export-history RUN_ID`. There is no compose project, image
+proxy or control-plane container: nothing runs in a container except OpenShell workloads and
+trusted image builds on the managed VM's Docker daemon.
 
 Full mode requires the native runtime described in [OpenShell setup](deploy/openshell/README.md).
-It fails if that boundary cannot be demonstrated. It does not silently substitute Docker,
-a stub agent or a public model. The checkout-managed Linux VM and its image-building Docker
-daemon are provisioning infrastructure; investigation commands always go through OpenShell. A
-full evaluation cohort exceeds the pinned gateway's admission quota and needs the
+Its closing qualification reads the private runtime configuration
+`.harness/openshell/private/native-config.json`, else `.harness/openshell/runtime.json`, else
+the file `HARNESS_OPENSHELL_CONFIG` names, and prints which one it chose. With none of them,
+`./dev` says so and reports native qualification `not_checked`; `./dev worker`, `qualify` and
+`eval` refuse with the same message. Qualification fails if the boundary cannot be
+demonstrated; it never silently substitutes Docker, a stub agent or a public model. The
+checkout-managed Linux VM and its image-building Docker daemon are provisioning
+infrastructure; investigation commands always go through OpenShell. A full evaluation cohort exceeds the pinned gateway's admission quota and needs the
 [patched gateway](deploy/openshell/README.md#patched-gateway-build). Moving a checkout from the
 former compose stack: see [migrating from the compose stack](deploy/README.md#migrating-from-the-compose-stack).
 
@@ -78,8 +83,8 @@ tools, VM, Temporal database, `dev.env`, private OpenShell configuration) throug
 `git rev-parse --git-common-dir`, so from any worktree
 
 ```bash
-./dev eval --settings /path/to/settings.json   # against the one live runtime
-./dev qualify | replay RUN_ID | status | logs | smoke
+./dev eval --settings /path/to/settings.json [--parallel N]   # against the one live runtime
+./dev qualify | replay RUN_ID | export-history RUN_ID | status | logs | smoke
 ./dev --profile offline                       # deterministic checks of this worktree
 ```
 
@@ -105,10 +110,11 @@ dependencies when `ui/node_modules` is missing. For Claude Code previews, copy
 ones `./dev status` prints; the entries attach to the processes `./dev` started.
 
 Set operator configuration in the worker environment. No provider credentials belong in
-that environment: provision them in OpenShell's model profile.
+that environment: provision them in OpenShell's model profile. `HARNESS_OPENSHELL_CONFIG` is
+needed only when neither default configuration path above exists.
 
 ```bash
-export HARNESS_OPENSHELL_CONFIG=/absolute/path/to/runtime.json
+export HARNESS_OPENSHELL_CONFIG=/absolute/path/to/native-config.json   # optional, see above
 export HARNESS_MODEL_PROVIDER=openai
 export HARNESS_MODEL_BASE_URL=https://your-model-host/v1
 export HARNESS_MODEL_NAME=Qwen3.6-35B-A3B-NVFP4
@@ -118,19 +124,27 @@ export HARNESS_LOCAL_REPO_ROOTS='["/absolute/path/to/approved/repositories"]'
 
 Budgets come from `Limits` (defaults: 300,000 tokens, 30 model requests, 120 s per command),
 for example `HARNESS_LIMITS__TOTAL_TOKENS=600000`. To freeze one exact configuration, pass
-`--settings FILE`: a JSON document of `Settings` fields, including nested `limits`, that is
-used instead of every `HARNESS_*` variable, so it must also name the Temporal address:
+`--settings FILE` (to `./dev worker|qualify|eval|replay|export-history`, anywhere among the
+verb's arguments): a JSON document of `Settings` fields, including nested `limits`, that is
+used instead of every `HARNESS_*` variable and refuses unknown keys, so it must also name the
+Temporal address and the OpenShell configuration:
 
 ```json
 {
   "temporal_address": "127.0.0.1:<temporal-port>",
-  "openshell_config": "/absolute/path/to/runtime.json",
+  "openshell_config": "/absolute/path/to/.harness/openshell/private/native-config.json",
   "model_base_url": "https://your-model-host/v1",
   "local_repo_roots": ["/absolute/path/to/infosec-harness/eval-corpus"],
   "native_occupancy_command": ["/path/to/read-only-occupancy-command"],
+  "reports_dir": "/absolute/path/to/reports",
+  "log_level": "INFO",
   "limits": {"total_tokens": 600000, "max_requests": 40, "command_timeout_seconds": 300}
 }
 ```
+
+Relative paths in the file resolve against the directory `./dev` runs in (the invoking
+checkout). One process binds one configuration: `--settings` is refused once anything has
+read the environment settings.
 
 `native_occupancy_command` names an operator-owned read-only command whose last stdout line
 is `{"retained": N, "quota": M, "read_only": true}` for the native admission ledger (see
@@ -146,6 +160,13 @@ for model requests but makes every tool command fail, so keep it within that max
 write timestamped reports by default and the only directory the API's `/api/reports` reads.
 The API lists its top-level `*.json` files and serves one at a time (at most 16 MiB) without
 writing anything; report content is untrusted operator data and qualifies nothing by itself.
+
+`log_level` (`HARNESS_LOG_LEVEL`; `DEBUG`, `INFO`, `WARNING` or `ERROR`, default `INFO`) sets
+the one stderr handler that `harness worker`, `api` and `eval` install. Lifecycle records
+are `event=<name> key=value` lines with run, sandbox and operation ids, never commands, output
+or credentials; HTTP client and access-log chatter stays at `WARNING`. `log_level` and
+`reports_dir` cannot change an investigation, so they are not part of the worker's
+`config_sha256`.
 
 The model name must match the endpoint's served identifier. The self-hosted model is not
 provisioned or downloaded by this repository. A Bedrock executor is included, but its native credential-profile integration is not yet
@@ -187,12 +208,13 @@ Health proves Temporal connectivity only; it does not qualify sandbox or model e
 just check
 just test
 just test-network
-just generated-check          # API schema, CLAUDE.md and copied development skills
+just generated-check          # API schema, CLAUDE.md, copied skills, runtime skill catalog
 just ui-check
 ./dev check                   # just check with the managed tools
 ./dev test                    # just test, failing rather than skipping without Temporal
 ./dev qualify                 # native boundaries, no model calls
 ./dev eval                    # live corpus with an owned worker on a fresh task queue
+./dev eval --parallel N       # up to N (1 to 8) cases at once; recorded as a report limitation
 ./dev eval --case NAME        # one-case diagnostic; never qualifies
 ./dev replay RUN_ID           # zero-dispatch history replay
 ./dev export-history RUN_ID   # .harness/histories/RUN_ID.json; read-only, never overwrites
@@ -201,13 +223,17 @@ just ui-check
 `export-history` writes exactly Temporal's history JSON for a workflow, so its SHA-256 equals
 the `history_sha256` that `replay` reports for the same history.
 
-Evaluation uses the unchanged paired corpus and packaged release policy. It requires a
+Evaluation uses the unchanged, de-labelled 82-case paired corpus
+([eval-corpus](eval-corpus/README.md)) and the packaged release policy. It requires a
 clean source identity, the native runtime and model endpoint; `--settings FILE`, accepted
 anywhere among a `./dev` verb's arguments, pins one exact configuration. Each qualify and
 eval report gets a new timestamped path under `.harness/reports/`; failures and unstarted
-cases remain visible. See
+cases remain visible. `--parallel N` results are not comparable to a sequential baseline for
+latency or executor failure rates. See
 [OpenShell setup](deploy/openshell/README.md#qualification-and-evaluation) for draining an
-interrupted owned worker and `--keep-going`. Live runs consume inference
+interrupted owned worker, `--keep-going` and `--parallel`. `harness` exits 0 for a passed gate
+or a completed diagnostic, 1 for a failed or `not_checked` gate, 2 for a usage or
+configuration error and 3 for an operational failure. Live runs consume inference
 resources and never happen as part of ordinary setup or deterministic tests.
 
 A definitive verdict requires source citations and a successful, complete offline probe
