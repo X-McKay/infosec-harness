@@ -1,10 +1,9 @@
 ---
 name: cwe-89-sql-injection
-description: Recognize SQL injection sources, sinks, and sanitizers, and define a deterministic oracle
-  for one. Use this when the finding is CWE-89 or the code builds a query string from untrusted input.
+description: Untrusted input built into SQL text. Use this when the finding is CWE-89 or SQL injection.
 metadata:
   owner: appsec
-  version: 2.0.0
+  version: 2.0.1
 ---
 
 # CWE-89: SQL injection
@@ -57,6 +56,8 @@ Map the result onto `HARNESS_PROBE`:
 
 - `target_reached`: the real query function ran with the payload, including when it raises
   a validation or SQL error. A syntax error from a quoting mismatch is not a clean negative.
+- `oracle_valid`: a real driver runs the query, the seeded rows separate intended from
+  excluded, and the payload matches the quoting context.
 - `vulnerability_observed`: the row the intended `WHERE` excludes comes back, or the token
   appears in the traced statement as SQL syntax rather than a bound value.
 - `positive_control`: the equivalent concatenated query, executed directly on the same

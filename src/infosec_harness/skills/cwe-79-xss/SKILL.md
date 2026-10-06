@@ -1,10 +1,9 @@
 ---
 name: cwe-79-xss
-description: Recognize reflected and stored XSS sources, sinks, and encoders, and define a deterministic
-  oracle. Use this when the finding is CWE-79 or untrusted input reaches markup unencoded.
+description: Untrusted input reaching HTML markup unencoded (reflected or stored XSS). Use this when the finding is CWE-79.
 metadata:
   owner: appsec
-  version: 2.0.0
+  version: 2.0.1
 ---
 
 # CWE-79: Cross-site scripting
@@ -40,6 +39,7 @@ the result onto `HARNESS_PROBE` (see `probe`):
 
 - `target_reached`: the real renderer ran with the token in the attacker-controlled field and
   returned output or raised its own validation error.
+- `oracle_valid`: the token's raw and entity-encoded forms are distinguishable in the output.
 - `vulnerability_observed`: the output contains the token in markup-significant form (raw
   `<`, or an unescaped attribute break) rather than entity-encoded (`&lt;`, `&quot;`).
 - `positive_control`: the check fires on a string with the raw token concatenated into markup.

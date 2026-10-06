@@ -9,6 +9,9 @@
   `set-quota`, `restart`, `status`); built by `deploy/openshell/build_gateway.sh`. See
   [patched gateway build](../deploy/openshell/README.md#patched-gateway-build).
 - `check_api_schema.py`, `generated.py`: generated API and development-instruction drift.
+- `corpus_verify.py`: runs each corpus fixture's maintainer tests from
+  `eval-corpus/verification/` against a temporary copy of the fixture. See
+  [fixture verification](../eval-corpus/README.md#fixture-verification).
 
 Runtime qualification, live evaluation and zero-dispatch replay use `harness qualify`,
 `harness eval` and `harness replay` (through `./dev qualify|eval|replay`).
