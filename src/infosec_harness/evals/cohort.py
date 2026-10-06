@@ -10,7 +10,7 @@ import os
 import re
 import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack, suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -69,6 +69,16 @@ _SEGMENT_LABEL = re.compile(r"([A-Za-z_][A-Za-z0-9_.]*): ")
 # each). Live run 8 retained at most 96 admissions per case under 40 requests / 100 calls.
 CASE_LIFECYCLE_OPERATIONS = 40
 OCCUPANCY_TIMEOUT = 60
+# Upper bound for --parallel: one model endpoint, one worker and one admission ledger.
+# Raising it needs a measured run; the capacity preflight bounds retention, not concurrency.
+MAX_PARALLEL = 8
+PARALLEL_LIMITATION = (
+    "Cases ran concurrently (parallel > 1) against one model endpoint and one worker: latency "
+    "and executor failure rates are not comparable to a sequential baseline, and peak in-flight "
+    "native operations rise with concurrency (the capacity preflight bounds the total only)."
+)
+# Failures a case reports that end the cohort run itself once in-flight cases settle.
+INTERRUPTS = (asyncio.CancelledError, KeyboardInterrupt, SystemExit)
 GATES = ("complete_corpus", "task_success_rate", "unsafe_negatives")
 # The observation is one JSON line; anything beyond this tail is not read.
 OCCUPANCY_CAPTURE = 64_000
@@ -508,6 +518,55 @@ def _derive_gates(rows: list[dict], policy: ReleasePolicy, *, diagnostic: bool) 
             "task_success_rate": rate, "unsafe_negatives": unsafe_negatives, "status": status}
 
 
+async def _schedule(
+    cases: list[CorpusCase],
+    records: list[dict],
+    run: Callable[[CorpusCase, dict, int], Awaitable[BaseException | None]],
+    *,
+    parallel: int,
+    keep_going: bool,
+) -> BaseException | None:
+    """Start cases in manifest order, at most ``parallel`` at a time, until the stop latch.
+
+    The latch is set, before the failed case releases its slot, by any failure that is not an
+    agent-level failure under ``keep_going``; a case checks it immediately before starting,
+    so no case starts after it. In-flight cases are never cancelled by a sibling's failure.
+    If the cohort itself is cancelled, every in-flight case reconciles its own run
+    concurrently and this returns only after all of them finish. Returns the first
+    cancellation-like failure a case reported, for the caller to re-raise.
+    """
+    slots = asyncio.Semaphore(parallel)
+    stop = asyncio.Event()
+    started = 0
+    interrupts: list[BaseException] = []
+
+    async def one(case: CorpusCase, record: dict) -> None:
+        nonlocal started
+        async with slots:
+            if stop.is_set():
+                return  # Never started: the row stays unstarted.
+            started += 1
+            failure = await run(case, record, started)
+            if failure is not None and not (keep_going and agent_level(failure)):
+                stop.set()
+            if isinstance(failure, INTERRUPTS):
+                interrupts.append(failure)
+
+    tasks = [asyncio.ensure_future(one(case, record))
+             for case, record in zip(cases, records, strict=True)]
+    try:
+        await asyncio.wait(tasks)
+    except asyncio.CancelledError:
+        stop.set()
+        for task in tasks:
+            task.cancel()
+        await finish(asyncio.ensure_future(asyncio.wait(tasks)))
+        raise
+    for task in tasks:
+        task.result()  # A case only raises on a harness defect (e.g. a report write).
+    return interrupts[0] if interrupts else None
+
+
 async def evaluate_corpus(
     manifest: Path,
     output: Path,
@@ -516,6 +575,7 @@ async def evaluate_corpus(
     names: tuple[str, ...] = (),
     owned_worker: bool = False,
     keep_going: bool = False,
+    parallel: int = 1,
 ) -> dict:
     """Run the frozen corpus once through the production workflow; never resend a case.
 
@@ -529,7 +589,15 @@ async def evaluate_corpus(
     It continues only after a terminal failure whose cause chain is agent-level. Timeouts,
     transport errors, identity mismatch, native/dispatch or cleanup failures still stop the
     cohort, because the next case would compete with unknown work. The gates are unchanged.
+
+    ``parallel`` runs up to that many cases at once (default 1: strictly sequential). Cases
+    start in manifest order and rows stay in manifest order. After a stopping failure no new
+    case starts, while cases already in flight finish within their own bound. The value is
+    recorded as a run condition: concurrent cases share one model endpoint and one worker,
+    so results are not comparable to a sequential baseline without saying so.
     """
+    if not 1 <= parallel <= MAX_PARALLEL:
+        raise ValueError(f"parallel must be between 1 and {MAX_PARALLEL}; got {parallel}")
     if output.exists():
         raise ValueError("Report exists; preserve the previous cohort and choose a new path")
     if owned_worker:
@@ -549,6 +617,7 @@ async def evaluate_corpus(
         "model": settings.model_name,
         "task_queue": settings.task_queue,
         "owned_worker": owned_worker,
+        "parallel": parallel,
         "worker_identity": identity.model_dump(),
         "dataset_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
         "runtime_config_sha256": hashlib.sha256(settings.openshell_config.read_bytes()).hexdigest(),
@@ -565,6 +634,8 @@ async def evaluate_corpus(
             for case in cases
         ],
     }
+    if parallel > 1:
+        candidate["limitations"] = [PARALLEL_LIMITATION]
     write_json(output, candidate, exclusive=True)
 
     def persist() -> None:
@@ -590,15 +661,18 @@ async def evaluate_corpus(
             candidate["gates"]["complete_corpus"] = "failed"
             persist()
             raise
-        for index, (case, record) in enumerate(zip(cases, candidate["cases"], strict=True), 1):
-            failure = await _run_case(
+
+        async def run(case: CorpusCase, record: dict, index: int) -> BaseException | None:
+            return await _run_case(
                 client, settings, identity, case, record, candidate, persist,
                 owned_worker=owned_worker, index=index, total=len(cases),
             )
-            if isinstance(failure, (asyncio.CancelledError, KeyboardInterrupt, SystemExit)):
-                raise failure
-            if failure is not None and not (keep_going and agent_level(failure)):
-                break
+
+        # Still inside the stack: an owned worker outlives every in-flight reconciliation.
+        interrupt = await _schedule(cases, candidate["cases"], run, parallel=parallel,
+                                    keep_going=keep_going)
+        if interrupt is not None:
+            raise interrupt
     candidate["native_operation_estimate"] = cohort_operation_estimate(candidate["cases"])
     derived = _derive_gates(candidate["cases"], policy, diagnostic=bool(names))
     candidate.update(derived, finished_at=datetime.now(UTC).isoformat())

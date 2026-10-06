@@ -526,6 +526,189 @@ async def test_keep_going_never_reruns_and_cannot_pass_incomplete_cohort(
                                "unsafe_negatives": "not_checked"}
 
 
+class ParallelClient:
+    """Fake Temporal client: one handle per started ID, each case scripted by title.
+
+    ``script[title]`` is ``(release, outcome)``: the result waits for ``release`` and then
+    returns or raises ``outcome``. Tracks the peak number of results awaited at once.
+    """
+
+    def __init__(self, script):
+        self.script, self.started, self.handles = script, [], {}
+        self.in_flight = self.peak = 0
+        self.cancelled = []
+
+    async def start_workflow(self, workflow, request, *, id, **kwargs):
+        title = request.finding.title
+        self.started.append((title, id))
+        release, outcome = self.script[title]
+        client = self
+        cancel_requested = asyncio.Event()
+
+        async def result(**kwargs):
+            client.in_flight += 1
+            client.peak = max(client.peak, client.in_flight)
+            try:
+                waiters = {asyncio.ensure_future(release.wait()),
+                           asyncio.ensure_future(cancel_requested.wait())}
+                try:
+                    await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
+                finally:
+                    for waiter in waiters:
+                        waiter.cancel()
+            finally:
+                client.in_flight -= 1
+            if cancel_requested.is_set():
+                raise workflow_failure(("CancelledError", "Workflow cancelled"))
+            if isinstance(outcome, BaseException):
+                raise outcome
+            return outcome
+
+        async def cancel(**kwargs):
+            client.cancelled.append(title)
+            cancel_requested.set()
+
+        handle = SimpleNamespace(result=result, cancel=cancel)
+        self.handles[id] = handle
+        return handle
+
+    def get_workflow_handle(self, run_id):
+        return self.handles[run_id]
+
+
+def parallel_cohort(tmp_path, monkeypatch, identity, titles, outcomes):
+    finding = Finding(title="case", repo_url="repo")
+    manifest = prepared_cohort(tmp_path, monkeypatch, [
+        (finding.model_copy(update={"title": title}), "inconclusive", title) for title in titles])
+    completed = InvestigationResult(
+        finding=finding, verdict=Verdict(label="inconclusive", summary="fixture"), evidence=[],
+        source_digest="hash", model=get_settings().model_name, worker_identity=identity)
+    releases = {title: asyncio.Event() for title in titles}
+    client = ParallelClient({title: (releases[title], outcomes.get(title, completed))
+                             for title in titles})
+    monkeypatch.setattr(cohort, "connect", AsyncMock(return_value=client))
+    return manifest, client, releases
+
+
+async def until(condition):
+    async with asyncio.timeout(5):
+        while not condition():
+            await asyncio.sleep(0.005)
+
+
+async def test_parallel_runs_at_most_n_cases_and_keeps_manifest_order(
+    tmp_path, monkeypatch, fixture_worker_identity
+):
+    titles = list("abcdefg")
+    manifest, client, releases = parallel_cohort(
+        tmp_path, monkeypatch, fixture_worker_identity, titles, {})
+    task = asyncio.create_task(cohort.evaluate_corpus(
+        manifest, tmp_path / "report.json", get_settings(), parallel=3))
+    await until(lambda: client.in_flight == 3)
+    # Cases start in manifest order; finishing out of order frees slots for the next ones.
+    assert [title for title, _ in client.started] == ["a", "b", "c"]
+    for title in reversed(titles):
+        releases[title].set()
+    report = await asyncio.wait_for(task, 5)
+    assert client.peak == 3
+    assert [title for title, _ in client.started] == titles
+    assert [row["name"] for row in report["cases"]] == titles
+    assert all(row["status"] == "completed" for row in report["cases"])
+    assert report["parallel"] == 3 and report["limitations"] == [cohort.PARALLEL_LIMITATION]
+    assert report["status"] == "passed"
+    assert report == json.loads((tmp_path / "report.json").read_text())
+
+
+@pytest.mark.parametrize("keep_going", [False, True])
+async def test_parallel_stop_latch_lets_in_flight_cases_finish_and_starts_no_more(
+    tmp_path, monkeypatch, fixture_worker_identity, keep_going
+):
+    # b fails with a non-agent failure while a and c are still running.
+    titles = list("abcdef")
+    manifest, client, releases = parallel_cohort(
+        tmp_path, monkeypatch, fixture_worker_identity, titles,
+        {"b": workflow_failure(("ActivityError", "Activity task failed"))})
+    task = asyncio.create_task(cohort.evaluate_corpus(
+        manifest, tmp_path / "report.json", get_settings(), parallel=3, keep_going=keep_going))
+    await until(lambda: client.in_flight == 3)
+    releases["b"].set()
+    await until(lambda: client.in_flight == 2)
+    await asyncio.sleep(0.05)
+    assert [title for title, _ in client.started] == ["a", "b", "c"]  # Latched: no d.
+    releases["a"].set()
+    releases["c"].set()
+    for title in "def":
+        releases[title].set()
+    report = await asyncio.wait_for(task, 5)
+    assert [row["status"] for row in report["cases"]] == [
+        "completed", "failed", "completed", "unstarted", "unstarted", "unstarted"]
+    # The failed case is never re-run and every started ID is fresh.
+    started_ids = [run_id for _, run_id in client.started]
+    assert len(started_ids) == len(set(started_ids)) == 3
+    assert client.cancelled == []  # A sibling's failure never cancels in-flight work.
+    assert report["gates"]["complete_corpus"] == "failed" and report["status"] == "failed"
+
+
+async def test_parallel_keep_going_continues_past_agent_failures_without_rerunning(
+    tmp_path, monkeypatch, fixture_worker_identity
+):
+    titles = list("abcde")
+    manifest, client, releases = parallel_cohort(
+        tmp_path, monkeypatch, fixture_worker_identity, titles,
+        {"a": workflow_failure(("UsageLimitExceeded", "budget")),
+         "d": workflow_failure(("UnexpectedModelBehavior", "bad output"))})
+    for release in releases.values():
+        release.set()
+    report = await asyncio.wait_for(cohort.evaluate_corpus(
+        manifest, tmp_path / "report.json", get_settings(), parallel=3, keep_going=True), 5)
+    assert [row["status"] for row in report["cases"]] == [
+        "failed", "completed", "completed", "failed", "completed"]
+    assert [title for title, _ in client.started] == titles  # Each case exactly once.
+
+
+async def test_parallel_cancellation_reconciles_every_in_flight_run_before_the_worker_stops(
+    tmp_path, monkeypatch, fixture_worker_identity
+):
+    from contextlib import asynccontextmanager
+
+    from infosec_harness.workflows import worker
+
+    titles = list("abcde")
+    manifest, client, _ = parallel_cohort(
+        tmp_path, monkeypatch, fixture_worker_identity, titles, {})
+    worker_stopped_after = []
+
+    @asynccontextmanager
+    async def owned(client_, settings):
+        try:
+            yield
+        finally:
+            worker_stopped_after.append(sorted(client.cancelled))
+
+    monkeypatch.setattr(worker, "create_worker", owned)
+    output = tmp_path / "report.json"
+    task = asyncio.create_task(cohort.evaluate_corpus(
+        manifest, output, get_settings(), owned_worker=True, parallel=3))
+    await until(lambda: client.in_flight == 3)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, 5)
+    # Each in-flight run was cancelled and drained concurrently, before the worker stopped.
+    assert worker_stopped_after == [["a", "b", "c"]]
+    persisted = json.loads(output.read_text())
+    assert [row["status"] for row in persisted["cases"]] == [
+        "failed", "failed", "failed", "unstarted", "unstarted"]
+    assert all(row["cancellation"] == "terminal" for row in persisted["cases"][:3])
+    assert [title for title, _ in client.started] == ["a", "b", "c"]
+
+
+@pytest.mark.parametrize("parallel", [0, cohort.MAX_PARALLEL + 1])
+async def test_parallel_is_bounded(tmp_path, parallel):
+    with pytest.raises(ValueError, match="parallel must be between 1 and"):
+        await cohort.evaluate_corpus(tmp_path / "m.json", tmp_path / "r.json", get_settings(),
+                                     parallel=parallel)
+
+
 async def test_named_cases_are_a_diagnostic_that_never_qualifies(
     tmp_path, monkeypatch, fixture_worker_identity, capsys
 ):
