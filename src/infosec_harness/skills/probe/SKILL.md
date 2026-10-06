@@ -5,8 +5,21 @@ description: Load before writing or running any probe. Author and run a focused 
 
 Trace the finding's real attacker-controlled value to the sensitive operation; the matching
 `cwe-*` skill defines the oracle and controls. Inspect the actual function signature and
-preconditions. Never reimplement, stub or mock the target or its sink: a stand-in that
-rejects or ignores the input reports a false negative.
+preconditions.
+
+## Real target, real inputs
+
+- A probe must execute the target code as built for its real runtime. Reimplementing the
+  target in another language, replacing its runtime or standard library with stubs, mocking
+  the sink, or simulating the environment is a stand-in: it may explain intent but does not
+  establish behaviour, must not carry a definitive label, and the verdict must be
+  `inconclusive` with the limitation named (the precedent is `cwe-918-ssrf`'s rule on
+  patched resolvers).
+- A probe varies only inputs the sink actually receives from a caller (arguments, request
+  fields, files the application reads by design). It must not change the interpreter's
+  module search path, environment variables, working directory, installed packages or files
+  the application does not take from the caller; a probe that does so is disqualified and
+  must not be cited, and a later probe may not supersede an earlier one on that basis.
 
 ## Prepare and run
 
@@ -22,6 +35,9 @@ rejects or ignores the input reports a false negative.
 - Make the runner really run the probe: exit 0 with zero tests is not success. Pytest captures
   stdout (use `-s`); Jest/Vitest may silence console output; Gradle may skip an up-to-date
   task; Maven may pick the wrong JUnit provider. Inspect runner output. Keep output short.
+- Each tool call resends the whole conversation, so calls spend the budget: run variants as
+  one list in one script, one output line each; edit and rerun one debug script instead of
+  writing numbered copies; print the raw value (`repr`, `Data::Dumper`) once before guessing.
 
 ## Observation line
 

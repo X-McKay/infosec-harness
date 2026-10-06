@@ -4,6 +4,7 @@ Also the lifecycle activities' worker-identity checks before any side effect.
 """
 
 import asyncio
+import json
 import uuid
 from datetime import timedelta
 from types import SimpleNamespace
@@ -35,6 +36,7 @@ from infosec_harness.workflows.investigation import (
     WorkerIdentityMismatch,
     bind_investigator,
 )
+from infosec_harness.workflows.snapshot import InvalidCitation
 from infosec_harness.workflows.worker import workflow_runner
 
 
@@ -75,7 +77,16 @@ async def test_finalize_rejects_invented_receipt_and_source_lines(tmp_path):
         summary="Line absent",
         citations=[Citation(path="sink.py", start_line=1, end_line=2)],
     )
-    with pytest.raises(ValueError, match="exceeds source"):
+    with pytest.raises(InvalidCitation, match="exceeds source"):
+        await activities.finalize(
+            FinalizeInvestigation(prepared=prepared, verdict=verdict, usage={})
+        )
+    # Live run 12, case c-intoverflow-vulnerable: a citation of a probe written in the
+    # sandbox raised FileNotFoundError here, a harness failure that stopped the cohort.
+    verdict = verdict.model_copy(
+        update={"citations": [Citation(path="probe.py", start_line=1, end_line=20)]}
+    )
+    with pytest.raises(InvalidCitation, match="'probe.py' is not a file in the original"):
         await activities.finalize(
             FinalizeInvestigation(prepared=prepared, verdict=verdict, usage={})
         )
@@ -856,6 +867,34 @@ async def test_prepare_refuses_mismatched_candidate_before_any_side_effect():
     assert shell.executions == []
 
 
+async def test_citation_feedback_refuses_another_prepared_identity_before_reading(tmp_path):
+    bound = WorkerIdentity(
+        fingerprint="a" * 64, code_sha256="b" * 64, config_sha256="c" * 64, dependencies={}
+    )
+    shell = FakeOpenShell()
+    activities = InvestigationActivities(shell, None, "fixture", identity=lambda: bound)
+    deps = InvestigationDeps(
+        run_id="run",
+        sandbox=await shell.create("run"),
+        source_digest="digest",
+        snapshot_path=str(tmp_path / "never-read"),
+        request=InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture")),
+        worker_identity=bound.model_copy(update={"fingerprint": "d" * 64}),
+    )
+    citations = [Citation(path="sink.py", start_line=1, end_line=1)]
+    with pytest.raises(WorkerIdentityMismatch, match="before citation feedback"):
+        await activities.check_citations(deps, citations)
+    (tmp_path / "sink.py").write_text("source\n")
+    deps = deps.model_copy(update={"worker_identity": bound, "snapshot_path": str(tmp_path)})
+    assert await activities.check_citations(deps, citations) == []
+    assert await activities.check_citations(
+        deps, [Citation(path="probe.py", start_line=1, end_line=1)]
+    ) == [
+        "citation path 'probe.py' is not a file in the original snapshot; cite only files "
+        "that existed before your probes, or drop the citation"
+    ]
+
+
 def test_worker_refuses_configuration_drift():
     first = WorkerIdentity(
         fingerprint="a" * 64, code_sha256="b" * 64, config_sha256="c" * 64, dependencies={}
@@ -958,3 +997,102 @@ async def test_prepare_waits_for_cleanup_through_repeated_cancellation(monkeypat
         await task
     assert shell.closed == ["owned"]
 
+
+
+@pytest.mark.requires_temporal
+@pytest.mark.parametrize("outcome", ["repaired", "exhausted", "unchecked"])
+async def test_real_temporal_citation_feedback_runs_on_the_worker_and_replays(
+    temporal_env, tmp_path, outcome
+):
+    """The validator's citation check is a worker activity behind a patch marker: replay
+    reads no snapshot, and every way a bad citation ends is agent-level for a cohort."""
+    from temporalio import activity
+
+    from infosec_harness.agents.investigator import CITATION_ACTIVITY, CITATION_PATCH
+    from infosec_harness.evals.cohort import agent_level
+
+    (tmp_path / "sink.py").write_text("source\n")
+    shell = FakeOpenShell()
+    calls = 0
+
+    def respond(messages, info):
+        nonlocal calls
+        calls += 1
+        response = final_response(info)
+        repaired = outcome == "repaired" and calls > 1
+        path = "sink.py" if repaired else "probe.py"
+        response.parts[0].args["citations"] = [dict(path=path, start_line=1, end_line=1)]
+        return response
+
+    bind_investigator(build_agent(shell, FunctionModel(respond)))
+
+    async def snapshot(finding, run_id):
+        return SimpleNamespace(path=str(tmp_path), digest="digest")
+
+    class Unchecked(InvestigationActivities):
+        # A feedback check that missed the citation: finalization still refuses it.
+        @activity.defn(name=CITATION_ACTIVITY)
+        async def check_citations(self, deps, citations):
+            return []
+
+    activities = (Unchecked if outcome == "unchecked" else InvestigationActivities)(
+        shell, snapshot, "fixture"
+    )
+    queue = f"citation-{uuid.uuid4()}"
+    async with Worker(
+        temporal_env.client,
+        task_queue=queue,
+        workflows=[InvestigationWorkflow],
+        activities=[
+            activities.prepare, activities.check_citations, activities.finalize,
+            activities.cleanup,
+        ],
+        workflow_runner=workflow_runner(),
+    ):
+        handle = await temporal_env.client.start_workflow(
+            InvestigationWorkflow.run,
+            InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture")),
+            id=queue,
+            task_queue=queue,
+        )
+        if outcome == "repaired":
+            result = await asyncio.wait_for(handle.result(), 30)
+            assert [citation.path for citation in result.verdict.citations] == ["sink.py"]
+        else:
+            with pytest.raises(WorkflowFailureError) as failed:
+                await asyncio.wait_for(handle.result(), 30)
+            assert agent_level(failed.value), failed.value.cause
+            assert failed.value.cause.type == (
+                "UnexpectedModelBehavior" if outcome == "exhausted" else "InvalidCitation"
+            )
+            assert "'probe.py' is not a file in the original snapshot" in str(failed.value.cause)
+        assert shell.closed == [queue]
+    history = await handle.fetch_history()
+    scheduled = [
+        event.activity_task_scheduled_event_attributes.activity_type.name
+        for event in history.events
+        if event.HasField("activity_task_scheduled_event_attributes")
+    ]
+    assert scheduled.count(CITATION_ACTIVITY) == {"repaired": 2, "exhausted": 3, "unchecked": 1}[
+        outcome
+    ]
+    assert "finalize_investigation" in scheduled or outcome == "exhausted"
+    markers = [
+        event.marker_recorded_event_attributes
+        for event in history.events
+        if event.HasField("marker_recorded_event_attributes")
+    ]
+    patches = [
+        json.loads(payload.data)["id"]
+        for marker in markers
+        if marker.marker_name == "core_patch"
+        for payload in marker.details["patch-data"].payloads
+    ]
+    assert patches == [CITATION_PATCH]
+    calls_before = calls
+    await Replayer(
+        workflows=[InvestigationWorkflow],
+        plugins=[PydanticAIPlugin()],
+        workflow_runner=workflow_runner(),
+    ).replay_workflow(history)
+    assert calls == calls_before

@@ -21,6 +21,7 @@ from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxR
 
 from infosec_harness.agents.investigator import (
     AGENT_NAME,
+    CITATION_ACTIVITY,
     GUARDED_ACTIVITY_PREFIX,
     InvestigationDeps,
     build_agent,
@@ -98,7 +99,10 @@ def test_guard_prefix_matches_every_registered_native_activity():
     }
     assert "agent__investigator__model_request" in names
     assert names and all(name.startswith(GUARDED_ACTIVITY_PREFIX) for name in names)
-    lifecycle = ("prepare_investigation", "finalize_investigation", "cleanup_investigation")
+    lifecycle = (
+        "prepare_investigation", CITATION_ACTIVITY, "finalize_investigation",
+        "cleanup_investigation",
+    )
     assert not any(name.startswith(GUARDED_ACTIVITY_PREFIX) for name in lifecycle)
 
 
@@ -317,3 +321,11 @@ def test_worker_refuses_command_budget_above_runtime_maximum(
     assert len(captures) == 1
     activities = created["activities"][0].__self__
     assert activities.bound_identity is created["interceptors"][0].bound_identity
+    # The validator's citation feedback runs on this worker; without it every run that
+    # cites a file fails at the first verdict.
+    from temporalio import activity
+
+    assert [activity._Definition.from_callable(fn).name for fn in created["activities"]] == [
+        "prepare_investigation", CITATION_ACTIVITY, "finalize_investigation",
+        "cleanup_investigation",
+    ]

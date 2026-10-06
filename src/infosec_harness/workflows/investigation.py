@@ -20,10 +20,11 @@ with workflow.unsafe.imports_passed_through():
     from pydantic_ai.usage import UsageLimits
 
     from infosec_harness.agents.evidence import parse_probe_observations
-    from infosec_harness.agents.investigator import InvestigationDeps
+    from infosec_harness.agents.investigator import CITATION_ACTIVITY, InvestigationDeps
     from infosec_harness.contracts import (
         MAX_EVIDENCE_IDS,
         MAX_SUMMARY_CHARS,
+        Citation,
         Finding,
         InvestigationRequest,
         InvestigationResult,
@@ -36,7 +37,7 @@ with workflow.unsafe.imports_passed_through():
     from infosec_harness.sandbox.process import finish
     from infosec_harness.tools.execute import evidence_from_result, unwrap_output
 
-    from .snapshot import Snapshot, validate_citation
+    from .snapshot import Snapshot, citation_feedback, validate_citation
 
 # The terminal failure message embeds at most this many cause links, each message cut to
 # FAILURE_LINK_CHARS. Clients classify failures from it, so these values are a v11 contract.
@@ -180,15 +181,27 @@ class InvestigationActivities:
             ),
         )
 
+    def check_deps(self, deps: InvestigationDeps, stage: str) -> None:
+        if deps.worker_identity != self.bound_identity:
+            raise WorkerIdentityMismatch(
+                f"Investigation changed worker identity before {stage} "
+                f"(prepared={short(deps.worker_identity)} bound={short(self.bound_identity)})"
+            )
+
+    @activity.defn(name=CITATION_ACTIVITY)
+    async def check_citations(
+        self, deps: InvestigationDeps, citations: list[Citation]
+    ) -> list[str]:
+        """Read-only feedback for the output validator; finalization re-checks every citation."""
+        self.check_identity()
+        self.check_deps(deps, "citation feedback")
+        return citation_feedback(deps.snapshot_path, citations)
+
     @activity.defn(name="finalize_investigation")
     async def finalize(self, payload: FinalizeInvestigation) -> InvestigationResult:
         self.check_identity()
         deps = payload.prepared.deps
-        if deps.worker_identity != self.bound_identity:
-            raise WorkerIdentityMismatch(
-                "Investigation changed worker identity before finalization "
-                f"(prepared={short(deps.worker_identity)} bound={short(self.bound_identity)})"
-            )
+        self.check_deps(deps, "finalization")
         evidence = []
         for receipt in self.openshell.receipts(deps.run_id):
             operation_id = receipt.operation_id
@@ -222,6 +235,8 @@ class InvestigationActivities:
                 "Verdict cites an execution without a trusted OpenShell receipt: "
                 + repr(unknown)[:200]
             )
+        # Defence in depth behind the validator's feedback: an invalid model citation fails
+        # the run as InvalidCitation, which a cohort classifies as agent-level.
         for citation in payload.verdict.citations:
             validate_citation(deps.snapshot_path, citation)
         limitations = []

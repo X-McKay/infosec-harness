@@ -3,7 +3,7 @@ name: cwe-918-ssrf
 description: Untrusted input choosing a server-side request destination. Use this when the finding is CWE-918 or SSRF.
 metadata:
   owner: appsec
-  version: 2.0.1
+  version: 2.1.0
 ---
 
 # CWE-918: Server-side request forgery (SSRF)
@@ -61,3 +61,8 @@ probe replaces the sink's real behaviour: it is a stand-in and can support the p
 only, never `vulnerability_observed`. A threat model that needs the attacker to control the
 allowlisted hosts themselves (their DNS, certificates or servers) is outside the finding's scope
 unless the finding states it; record it as a limitation in the summary, not as exploitability.
+
+Test URL-parsing and encoding variants as one list in one probe: pass each candidate through
+the application's own validation and print one line per input. Never spend one tool call per
+`urlparse` variant: the library's parser is not the guard under test, and each call resends
+the whole conversation.

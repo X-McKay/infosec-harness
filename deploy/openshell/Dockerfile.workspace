@@ -10,6 +10,10 @@ import tempfile
 packages = [
     "ca-certificates", "nodejs", "npm", "default-jdk-headless", "maven",
     "perl", "cpanminus", "gcc", "make",
+    # C headers: only a Recommends of gcc, so --no-install-recommends omitted them and no
+    # probe compiled. The AddressSanitizer runtime (libasan8) already arrives as a Depends
+    # of gcc -> gcc-12 -> libgcc-12-dev.
+    "libc6-dev",
     # CPAN cannot be reached from the workspace egress policy; the corpus needs these.
     "libdbi-perl", "libdbd-sqlite3-perl",
 ]

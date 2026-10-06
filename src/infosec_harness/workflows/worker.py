@@ -151,7 +151,7 @@ def workflow_runner() -> SandboxedWorkflowRunner:
 
 
 def create_worker(client: Client, settings: Settings) -> Worker:
-    """Register native PydanticAI model/tool activities and three lifecycle activities."""
+    """Register native PydanticAI model/tool activities and four lifecycle activities."""
     openshell = OpenShell(OpenShellConfig.load(settings.openshell_config))
     budget = settings.limits.command_timeout_seconds
     if budget > openshell.config.max_timeout_seconds:
@@ -201,7 +201,12 @@ def create_worker(client: Client, settings: Settings) -> Worker:
         client,
         task_queue=settings.task_queue,
         workflows=[InvestigationWorkflow],
-        activities=[activities.prepare, activities.finalize, activities.cleanup],
+        activities=[
+            activities.prepare,
+            activities.check_citations,
+            activities.finalize,
+            activities.cleanup,
+        ],
         interceptors=[WorkerIdentityInterceptor(identity, bound)],
         workflow_runner=workflow_runner(),
     )

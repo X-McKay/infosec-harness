@@ -205,3 +205,54 @@ def test_loader_accepts_every_skill_and_the_catalog_fits_its_budget():
         f"- {capability.id}: {capability.get_description()}" for capability in capabilities
     )
     assert len(catalog) <= CATALOG_BUDGET_CHARS, f"{len(catalog)} characters"
+
+
+# Live run 12 (2026-10-06) regressions: each rule names the history that motivated it.
+PROBE_RULES = (
+    # fileinclusion-fixed: a planted same-named module on a prepended sys.path superseded the
+    # correct probe that observed the allowlist hold.
+    "A probe varies only inputs the sink actually receives from a caller",
+    "a later probe may not supersede an earlier one on that basis",
+    # c-*-fixed: a Python reimplementation and a -nostdlib build against libc stubs.
+    "A probe must execute the target code as built for its real runtime",
+    "must not carry a definitive label",
+    # ssrf/perl/javascript budget exhaustions: one variant per tool call.
+    "Each tool call resends the whole conversation",
+)
+RULE_REFERENCES = ("investigate", "cwe-98-file-inclusion", "lang-c-cpp")
+BUDGET_RULES = {
+    "cwe-918-ssrf": "Never spend one tool call per",
+    "cwe-89-sql-injection": "`selectall_arrayref` returns one array reference",
+    "cwe-77-command-injection-generic": "controls with stdin closed and a timeout",
+}
+
+
+def text_of(name):
+    return " ".join((SKILLS / name / "SKILL.md").read_text(encoding="utf-8").split())
+
+
+def test_probe_rules_from_run_12_are_stated_and_referenced():
+    probe = text_of("probe")
+    for rule in PROBE_RULES:
+        assert rule in probe, rule
+    assert "`cwe-918-ssrf`'s rule on patched resolvers" in probe
+    for name in RULE_REFERENCES:
+        assert '`probe`, "Real target, real inputs"' in text_of(name), name
+    assert "attacker-influenced search path" not in text_of("cwe-98-file-inclusion")
+    for name, rule in BUDGET_RULES.items():
+        assert rule in text_of(name), name
+
+
+def test_c_skill_checks_headers_first_and_names_the_limitation():
+    """c-stackoverflow-vulnerable: gcc without headers, then an apt-get attempt."""
+    _, body = split(SKILLS / "lang-c-cpp" / "SKILL.md")
+    assert headings(body)[0] == "First: check the headers"
+    first = " ".join(section(body, "First: check the headers").split())
+    assert "echo '#include <stdio.h>' | gcc -x c -fsyntax-only -" in first
+    assert "Never try `apt-get`" in first and "`inconclusive`" in first
+    assert ("Limitation: the workspace has no C standard library headers (gcc reported "
+            '"stdio.h: No such file or directory"), so the target could not be compiled and '
+            "no probe executed it.") in first
+    environment = (SKILLS / "environment" / "SKILL.md").read_text(encoding="utf-8")
+    row = next(line for line in environment.splitlines() if line.startswith("| C/C++"))
+    assert "gcc -x c -fsyntax-only" in row and "Never install packages" in row

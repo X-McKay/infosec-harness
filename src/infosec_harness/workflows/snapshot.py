@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import hashlib
 import json
 import logging
@@ -33,29 +34,82 @@ class Snapshot:
     digest: str
 
 
+# Characters of a model-supplied citation path echoed in feedback and failure messages.
+SHOWN_PATH_CHARS = 200
+
+
+class InvalidCitation(ValueError):
+    """A model-supplied citation names no bounded file line range of the original snapshot.
+
+    Raised only for the model's own mistakes (a missing, non-file or non-relative path, or
+    lines past the end). Symlink and escape refusals stay plain ``ValueError``: capture
+    rejects links, so meeting one means the snapshot changed, never an agent-level fault.
+    """
+
+
+def shown(relative: str) -> str:
+    return repr(relative[:SHOWN_PATH_CHARS])
+
+
 def confined(root: str | Path, relative: str) -> Path:
+    """The regular file ``relative`` names inside ``root``; ``ValueError`` for anything else.
+
+    A missing root is an ``OSError``: the snapshot, not the caller, is absent.
+    """
     path = PurePosixPath(relative.replace("\\", "/"))
     if path.is_absolute() or ".." in path.parts or not path.parts:
-        raise ValueError("expected a relative source path")
+        raise InvalidCitation(f"citation path {shown(relative)} is not a relative source path")
     base = Path(root).resolve(strict=True)
+    missing = InvalidCitation(
+        f"citation path {shown(relative)} is not a file in the original snapshot; cite only "
+        "files that existed before your probes, or drop the citation"
+    )
     target = base.joinpath(*path.parts)
-    if any(
-        p.is_symlink() for p in (target, *target.parents) if p != base and p.is_relative_to(base)
-    ):
-        raise ValueError("source symlinks are not supported")
-    target = target.resolve(strict=True)
-    if not target.is_relative_to(base):
-        raise ValueError("source path escapes snapshot")
+    try:
+        if any(
+            p.is_symlink()
+            for p in (target, *target.parents)
+            if p != base and p.is_relative_to(base)
+        ):
+            raise ValueError("source symlinks are not supported")
+        # Non-strict: no component is a link (checked above), so a missing path resolves to
+        # itself and is refused below as a caller error instead of escaping as an OSError.
+        target = target.resolve()
+        if not target.is_relative_to(base):
+            raise ValueError("source path escapes snapshot")
+        if not target.is_file():
+            raise missing
+    except OSError as error:
+        # A model-supplied over-long component cannot name a captured file; any other
+        # OSError (permissions, I/O) is the harness's and propagates.
+        if error.errno != errno.ENAMETOOLONG:
+            raise
+        raise missing from None
     return target
 
 
 def validate_citation(snapshot_path: str | Path, citation: Citation) -> Citation:
     path = confined(snapshot_path, citation.path)
-    if not path.is_file() or path.stat().st_size > MAX_FILE:
-        raise ValueError("citation must identify a bounded source file")
-    if citation.end_line > len(path.read_bytes().splitlines()):
-        raise ValueError("citation exceeds source file")
+    if path.stat().st_size > MAX_FILE:
+        raise InvalidCitation(f"citation path {shown(citation.path)} is not a bounded source file")
+    lines = len(path.read_bytes().splitlines())
+    if citation.end_line > lines:
+        raise InvalidCitation(
+            f"citation {shown(citation.path)} line range {citation.start_line}-{citation.end_line} "
+            f"exceeds source file length ({lines} lines)"
+        )
     return citation
+
+
+def citation_feedback(snapshot_path: str | Path, citations: list[Citation]) -> list[str]:
+    """One bounded message per invalid citation; any other failure propagates (fail closed)."""
+    problems = []
+    for citation in citations:
+        try:
+            validate_citation(snapshot_path, citation)
+        except InvalidCitation as error:
+            problems.append(str(error))
+    return problems
 
 
 def _capture(source: Path, destination: Path | None) -> str:

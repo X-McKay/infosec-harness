@@ -3,7 +3,7 @@ name: cwe-98-file-inclusion
 description: Untrusted input choosing a file or module to load and execute. Use this when the finding is CWE-98/829.
 metadata:
   owner: appsec
-  version: 1.0.0
+  version: 1.1.0
 ---
 
 # CWE-98 / CWE-829: File inclusion (LFI / RFI)
@@ -47,7 +47,8 @@ Condition: **the program loaded and executed a file the attacker chose, from out
 set.** The probe owns a temp directory. Create a module/file there, outside the intended base, whose
 import/execution has a benign observable effect that touches only a probe path — for example on import
 it writes `/tmp/harness_incl_<nonce>` or sets a module attribute to the nonce. Point the real loader at
-that file through its untrusted selector (a path, or a name plus an attacker-influenced search path).
+that file through its untrusted selector: a path, or a name, plus a search path only when the
+application itself takes that search path from the caller.
 Map onto `HARNESS_PROBE` (see `probe`):
 
 - `target_reached`: the real loader ran with the attacker selector and loaded or refused a target.
@@ -76,11 +77,18 @@ never load real system modules for effect.
 
 ## Pitfalls
 
+- **The allowlist trap.** With a key-to-module allowlist the caller picks only a key. Planting a
+  module named like an allow-listed one in a directory the probe prepends to `sys.path`
+  (`@INC`, `NODE_PATH`), then showing the import resolve to it, changes the interpreter, not the
+  input: that probe is disqualified, must not be cited, and cannot supersede a probe that
+  observed the allowlist hold (see `probe`, "Real target, real inputs"). It counts only when the
+  application itself takes the search path or module file from the caller.
+
 - Importing *data* (JSON/YAML) by a user path is path traversal, not inclusion; the distinction is
   whether code *runs* on load.
 - Python caches imports in `sys.modules`; use a unique module name per run so a cached benign module
   does not mask or fake the result.
-- Clean up planted modules and any `sys.path`/`@INC` changes in a `finally` block as `probe` requires.
+- Clean up planted modules in a `finally` block as `probe` requires.
 
 ## Verdict guidance
 
