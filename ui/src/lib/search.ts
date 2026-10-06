@@ -7,6 +7,8 @@
 import type { components } from "../api/schema";
 import { STATUS_FILTERS, statusGroup, type StatusFilter } from "./status.ts";
 import { isVerdictLabel, type VerdictLabel } from "./verdict.ts";
+import { OUTCOME_LABELS, type Outcome } from "./evaluation.ts";
+import { REPORT_KINDS, type ReportKind } from "./reports.ts";
 
 /**
  * One row of GET /api/runs. `verdict` is null unless the API read the completed result in
@@ -77,6 +79,59 @@ export function filterRuns<T extends RunListItem>(
             typeof field === "string" && field.toLowerCase().includes(needle),
         )),
   );
+}
+
+/** `/reports?kind=`: the report-kind filter, kept in the URL like the list filters. */
+export type ReportsSearch = { kind?: ReportKind };
+
+export function parseReportsSearch(
+  search: Record<string, unknown>,
+): ReportsSearch {
+  return REPORT_KINDS.includes(search.kind as ReportKind)
+    ? { kind: search.kind as ReportKind }
+    : {};
+}
+
+/** `/reports/$name?case=&outcome=&language=`: a cohort report's case-table filters. */
+export type CaseFilters = {
+  case?: string;
+  outcome?: Outcome;
+  language?: string;
+};
+
+const MAX_LANGUAGE = 64;
+
+export function parseCaseFilters(search: Record<string, unknown>): CaseFilters {
+  const parsed: CaseFilters = {};
+  const needle = typeof search.case === "string" ? search.case.trim() : "";
+  if (needle) parsed.case = needle.slice(0, MAX_QUERY);
+  if (
+    typeof search.outcome === "string" &&
+    Object.hasOwn(OUTCOME_LABELS, search.outcome)
+  )
+    parsed.outcome = search.outcome as Outcome;
+  if (
+    typeof search.language === "string" &&
+    search.language &&
+    search.language.length <= MAX_LANGUAGE
+  )
+    parsed.language = search.language;
+  return parsed;
+}
+
+/**
+ * A route validator that owns its keys. TanStack Router merges a route's validated search over
+ * the raw query string, so a key the parser rejects (`?status=bogus`) would otherwise survive
+ * the merge with its raw value. Every owned key is set, to undefined when rejected.
+ */
+export function ownedSearch<T extends object>(
+  keys: readonly (keyof T & string)[],
+  parse: (search: Record<string, unknown>) => T,
+): (search: Record<string, unknown>) => T {
+  return (search) => {
+    const owned = Object.fromEntries(keys.map((key) => [key, undefined]));
+    return { ...owned, ...parse(search) } as T;
+  };
 }
 
 /** Previous and next investigation within the filtered page; never guessed across pages. */

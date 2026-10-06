@@ -23,7 +23,11 @@ export function FailureList({ cases }: { cases: CohortCase[] }) {
         <div className="space-y-4">
           <div className="flex flex-wrap gap-2" aria-label="Failures by class">
             {summary.map((row) => (
-              <Badge key={row.kind} variant="outline" className="font-medium">
+              <Badge
+                key={row.kind}
+                variant="outline"
+                className="whitespace-normal font-medium"
+              >
                 {FAILURE_LABELS[row.kind]} · {row.count}
                 <span className="ml-1 font-normal text-muted-foreground">
                   ({row.errorTypes.join(", ")})
@@ -42,7 +46,7 @@ export function FailureList({ cases }: { cases: CohortCase[] }) {
                       <span className="font-mono text-sm font-medium">
                         {item.name}
                       </span>
-                      <Badge variant="exploitable">
+                      <Badge variant="failed">
                         {item.error_type ?? "Unknown error"}
                       </Badge>
                       {kind && (

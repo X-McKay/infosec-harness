@@ -3,7 +3,8 @@ import { useState } from "react";
 import type { components } from "@/api/schema";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { integer } from "@/lib/format";
+import { CopyButton } from "@/components/ui/copy-button";
+import { integer, lineCount } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import {
   claimOrigin,
@@ -36,7 +37,7 @@ export function OutputBlock({
         {label}: no output recorded
       </p>
     );
-  const lines = value.split("\n").length;
+  const lines = lineCount(value);
   return (
     <details
       open={open}
@@ -93,14 +94,17 @@ export function EvidenceCard({
       <CardHeader className="gap-2 space-y-0">
         <div className="flex flex-wrap items-center gap-2">
           <Icon className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
-          <code className="break-all text-xs font-medium">{evidence.id}</code>
+          <span className="inline-flex min-w-0 items-center gap-0.5">
+            <code className="break-all text-xs font-medium">{evidence.id}</code>
+            <CopyButton value={evidence.id} label="Copy evidence ID" />
+          </span>
           {cited && <Badge>cited</Badge>}
           {superseded && <Badge variant="muted">superseded</Badge>}
           {!cited && !superseded && <Badge variant="muted">not cited</Badge>}
           {exitBadge(evidence)}
           {evidence.timed_out && <Badge variant="failed">timed out</Badge>}
           {evidence.output_truncated && (
-            <Badge variant="inconclusive">output truncated</Badge>
+            <Badge variant="warning">output truncated</Badge>
           )}
           {reportExcerpted(evidence) && (
             <Badge variant="muted">report excerpt</Badge>
@@ -116,13 +120,33 @@ export function EvidenceCard({
       <CardContent className="space-y-4">
         <pre className="output">{evidence.command}</pre>
         <dl className="grid gap-x-6 gap-y-2 text-xs sm:grid-cols-2">
-          <div>
+          <div className="min-w-0">
             <dt className="text-muted-foreground">Sandbox</dt>
-            <dd className="break-all font-mono">{evidence.sandbox_id}</dd>
+            <dd className="flex items-start gap-1">
+              <span className="min-w-0 break-all font-mono leading-6">
+                {evidence.sandbox_id}
+              </span>
+              {evidence.sandbox_id && (
+                <CopyButton
+                  value={evidence.sandbox_id}
+                  label="Copy sandbox ID"
+                />
+              )}
+            </dd>
           </div>
-          <div>
+          <div className="min-w-0">
             <dt className="text-muted-foreground">Source digest</dt>
-            <dd className="break-all font-mono">{evidence.source_digest}</dd>
+            <dd className="flex items-start gap-1">
+              <span className="min-w-0 break-all font-mono leading-6">
+                {evidence.source_digest}
+              </span>
+              {evidence.source_digest && (
+                <CopyButton
+                  value={evidence.source_digest}
+                  label="Copy source digest"
+                />
+              )}
+            </dd>
           </div>
         </dl>
         {probe && (

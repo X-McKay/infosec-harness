@@ -1,0 +1,7 @@
+{
+  "status": "control_plane_ready",
+  "temporal": true,
+  "runtime": "not_checked",
+  "generation": "v11",
+  "task_queue": "investigate-v11"
+}

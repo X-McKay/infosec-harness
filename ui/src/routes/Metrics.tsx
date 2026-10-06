@@ -10,7 +10,7 @@ import {
   Tile,
 } from "@/components/evaluations/common";
 import { EvalLink } from "@/components/evaluations/links";
-import { reportQuery, reportsQuery } from "@/api/queries";
+import { REPORTS_REFRESH_MS, reportQuery, reportsQuery } from "@/api/queries";
 import {
   cohortUnfinished,
   gateRows,
@@ -145,6 +145,7 @@ export function Metrics() {
               list.isFetching || details.some((query) => query.isFetching)
             }
             stale={list.isError && !!list.data}
+            live={REPORTS_REFRESH_MS}
           />
           <Button
             variant="outline"
@@ -186,6 +187,7 @@ export function Metrics() {
               title="Task success rate"
               description="Correct over planned cases per cohort. Columns below the policy minimum are red."
               points={ratePoints}
+              mutedLabel="Grey: the cohort has not finished; its rate is partial."
               format={(value) => percent(value, 0)}
               maximum={1}
               reference={

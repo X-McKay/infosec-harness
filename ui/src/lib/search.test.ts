@@ -4,7 +4,10 @@ import {
   filterRuns,
   hasFilters,
   parseDetailSearch,
+  ownedSearch,
+  parseCaseFilters,
   parseInvestigationSearch,
+  parseReportsSearch,
   queueSearch,
   runNeighbors,
   type RunListItem,
@@ -115,4 +118,43 @@ test("neighbors come from the same filtered page and are never guessed", () => {
   assert.deepEqual(runNeighbors("c", items).next, undefined);
   assert.deepEqual(runNeighbors("absent", items), { total: 3 });
   assert.deepEqual(runNeighbors("a", []), { total: 0 });
+});
+
+test("the report-kind filter accepts only known kinds", () => {
+  assert.deepEqual(parseReportsSearch({ kind: "openshell" }), {
+    kind: "openshell",
+  });
+  assert.deepEqual(parseReportsSearch({ kind: "everything" }), {});
+  assert.deepEqual(parseReportsSearch({ kind: ["model"] }), {});
+  assert.deepEqual(parseReportsSearch({}), {});
+});
+
+test("case-table filters are bounded and outcomes must be known", () => {
+  assert.deepEqual(
+    parseCaseFilters({
+      case: "  python/sqli ",
+      outcome: "unsafe_negative",
+      language: "python",
+    }),
+    { case: "python/sqli", outcome: "unsafe_negative", language: "python" },
+  );
+  assert.deepEqual(
+    parseCaseFilters({ outcome: "toString", language: "x".repeat(65) }),
+    {},
+  );
+  assert.deepEqual(parseCaseFilters({ case: "   ", outcome: 3 }), {});
+  assert.equal(parseCaseFilters({ case: "a".repeat(500) }).case?.length, 200);
+});
+
+test("owned search keys override rejected raw values in the router's merge", () => {
+  const validate = ownedSearch(
+    ["q", "status", "verdict", "page"],
+    parseInvestigationSearch,
+  );
+  const raw = { status: "bogus", verdict: "nope", q: "CWE-78", extra: "kept" };
+  const merged = { ...raw, ...validate(raw) };
+  assert.equal(merged.status, undefined);
+  assert.equal(merged.verdict, undefined);
+  assert.equal(merged.q, "CWE-78");
+  assert.equal(merged.extra, "kept");
 });

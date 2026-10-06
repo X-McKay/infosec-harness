@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
-import { Badge } from "@/components/ui/badge";
+import { Badge, type BadgeVariant } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { CopyButton } from "@/components/ui/copy-button";
 import { OUTCOME_LABELS, type GateRow, type Outcome } from "@/lib/evaluation";
 import type { GateStatus, ReportKind } from "@/lib/reports";
 import { cn } from "@/lib/utils";
@@ -25,43 +26,35 @@ export function GateBadge({
     <Badge
       variant={
         status === "passed"
-          ? "safe"
+          ? "passed"
           : status === "failed"
-            ? "exploitable"
-            : "outline"
+            ? "failed"
+            : "muted"
       }
-      className={cn(
-        "whitespace-nowrap",
-        status === "not_checked" &&
-          "border-dashed font-medium text-muted-foreground",
-        compact && "px-2 text-[11px]",
-      )}
+      className={cn(compact && "px-1.5 text-[11px]")}
     >
       {label ? `${label} · ${text}` : text}
     </Badge>
   );
 }
 
-/** Report and check states as recorded. Only `passed` is green; anything unknown is neutral. */
+/**
+ * Report and check states as recorded, in the outlined state family so they never look like a
+ * verdict. Only `passed` is green; in-flight states use the active style; anything else that
+ * is not a recognised outcome (not checked, unknown, unstarted) is dashed and neutral.
+ */
+export function statusBadgeVariant(value: string): BadgeVariant {
+  if (value === "passed") return "passed";
+  if (value === "failed") return "failed";
+  if (value === "running" || value === "starting") return "active";
+  if (value === "completed" || value === "cancelled") return "outline";
+  return "muted";
+}
+
 export function StatusBadge({ status }: { status: string | null | undefined }) {
   const value = status || "unknown";
-  const variant =
-    value === "passed"
-      ? "safe"
-      : value === "failed"
-        ? "exploitable"
-        : value === "running" || value === "cancelled" || value === "starting"
-          ? "inconclusive"
-          : "outline";
   return (
-    <Badge
-      variant={variant}
-      className={cn(
-        "whitespace-nowrap",
-        (value === "not_checked" || value === "unknown") &&
-          "border-dashed font-medium text-muted-foreground",
-      )}
-    >
+    <Badge variant={statusBadgeVariant(value)}>
       {value.replaceAll("_", " ")}
     </Badge>
   );
@@ -81,8 +74,8 @@ export function KindBadge({ kind }: { kind: ReportKind }) {
     <Badge
       variant="outline"
       className={cn(
-        "whitespace-nowrap font-medium",
-        kind === "model" && "border-primary/40 text-primary",
+        "font-medium",
+        kind === "model" && "border-primary/50 text-primary",
       )}
     >
       {KIND_LABELS[kind]}
@@ -90,27 +83,30 @@ export function KindBadge({ kind }: { kind: ReportKind }) {
   );
 }
 
-const OUTCOME_STYLE: Record<Outcome, string> = {
-  correct_positive:
-    "border-transparent bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
-  correct_negative:
-    "border-transparent bg-sky-500/15 text-sky-700 dark:text-sky-400",
-  unsafe_negative:
-    "border-transparent bg-red-500/15 text-red-700 dark:text-red-400",
-  false_positive:
-    "border-transparent bg-orange-500/15 text-orange-700 dark:text-orange-400",
-  inconclusive:
-    "border-transparent bg-amber-500/15 text-amber-700 dark:text-amber-400",
-  error: "border-red-500/40 text-red-700 dark:text-red-400",
-  not_run: "border-dashed text-muted-foreground",
+/**
+ * An outcome judges a verdict against the expected label, so judged outcomes use the filled
+ * verdict shape; a case that errored or never ran has no verdict and uses the state family.
+ */
+const OUTCOME_STYLE: Record<Outcome, [BadgeVariant, string?]> = {
+  correct_positive: ["safe"],
+  correct_negative: [
+    "safe",
+    "bg-sky-500/15 text-sky-800 dark:bg-sky-500/20 dark:text-sky-300",
+  ],
+  unsafe_negative: ["exploitable"],
+  false_positive: [
+    "exploitable",
+    "bg-orange-500/15 text-orange-800 dark:bg-orange-500/20 dark:text-orange-300",
+  ],
+  inconclusive: ["inconclusive"],
+  error: ["failed"],
+  not_run: ["muted"],
 };
 
 export function OutcomeBadge({ outcome }: { outcome: Outcome }) {
+  const [variant, className] = OUTCOME_STYLE[outcome];
   return (
-    <Badge
-      variant="outline"
-      className={cn("whitespace-nowrap", OUTCOME_STYLE[outcome])}
-    >
+    <Badge variant={variant} className={className}>
       {OUTCOME_LABELS[outcome]}
     </Badge>
   );
@@ -153,18 +149,36 @@ export function Field({
   children,
   mono,
   className,
+  copy,
 }: {
   label: string;
   children: ReactNode;
   mono?: boolean;
   className?: string;
+  /** The full recorded value (often shown shortened) and the copy button's name. */
+  copy?: { value: string | null | undefined; label: string };
 }) {
+  const value = (
+    <span
+      className={cn(
+        "min-w-0",
+        mono ? "break-all font-mono text-xs" : "break-words",
+      )}
+    >
+      {children}
+    </span>
+  );
   return (
-    <div className={className}>
+    <div className={cn("min-w-0", className)}>
       <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className={cn(mono ? "break-all font-mono text-xs" : "break-words")}>
-        {children}
-      </dd>
+      {copy?.value ? (
+        <dd className="flex items-start gap-1">
+          {value}
+          <CopyButton value={copy.value} label={copy.label} className="-mt-1" />
+        </dd>
+      ) : (
+        <dd>{value}</dd>
+      )}
     </div>
   );
 }
@@ -256,6 +270,16 @@ export function Section({
       </CardHeader>
       <CardContent>{children}</CardContent>
     </Card>
+  );
+}
+
+/** A value the report does not record: a muted dash that reads "not recorded", never 0. */
+export function NotRecorded() {
+  return (
+    <span className="text-muted-foreground">
+      <span aria-hidden="true">—</span>
+      <span className="sr-only">not recorded</span>
+    </span>
   );
 }
 

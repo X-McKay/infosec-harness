@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -8,7 +8,10 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  useNavigate,
   useParams,
+  useRouterState,
+  useSearch,
 } from "@tanstack/react-router";
 import {
   ChartLine,
@@ -25,7 +28,13 @@ import {
 } from "@/components/evaluations/links";
 import { Card, CardContent } from "@/components/ui/card";
 import { isReportName } from "@/lib/reports";
-import { parseDetailSearch, parseInvestigationSearch } from "@/lib/search";
+import {
+  ownedSearch,
+  parseCaseFilters,
+  parseDetailSearch,
+  parseInvestigationSearch,
+  parseReportsSearch,
+} from "@/lib/search";
 import { InvestigationDetail } from "@/routes/InvestigationDetail";
 import { Investigations } from "@/routes/Investigations";
 import { Metrics } from "@/routes/Metrics";
@@ -51,7 +60,25 @@ function RouterLink({ href, ...props }: EvalLinkProps) {
   return <Link to={href} {...props} />;
 }
 
+/**
+ * At 768px and wider: the fixed sidebar (brand, runtime summary, navigation, appearance).
+ * Below that: a compact header with the brand, runtime summary and appearance on one row and
+ * the navigation as a horizontally scrolling row that keeps the current route in view.
+ */
 function Shell() {
+  const pathname = useRouterState({
+    select: (state) => state.location.pathname,
+  });
+  const nav = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const element = nav.current;
+    const current = element?.querySelector<HTMLElement>("[aria-current=page]");
+    if (!element || !current || element.scrollWidth <= element.clientWidth)
+      return;
+    // Horizontal only: never scroll the page itself.
+    element.scrollLeft =
+      current.offsetLeft - (element.clientWidth - current.offsetWidth) / 2;
+  }, [pathname]);
   return (
     <div className="min-h-screen md:pl-56">
       <a
@@ -60,18 +87,27 @@ function Shell() {
       >
         Skip to content
       </a>
-      <aside className="sidebar flex gap-4 border-b p-4 md:fixed md:inset-y-0 md:left-0 md:w-56 md:flex-col md:border-r">
-        <Link
-          to="/"
-          className="flex items-center gap-2 py-3 text-sm font-semibold"
-        >
-          <ShieldCheck className="h-5 w-5 text-primary" aria-hidden="true" />{" "}
-          InfoSec Harness
-        </Link>
-        <RuntimeIndicator />
+      <aside className="sidebar border-b md:fixed md:inset-y-0 md:left-0 md:flex md:w-56 md:flex-col md:gap-4 md:border-b-0 md:border-r md:p-4">
+        <div className="flex items-start gap-3 px-4 pb-2 pt-3 md:block md:p-0">
+          <div className="min-w-0 flex-1 space-y-1 md:space-y-0">
+            <Link
+              to="/"
+              className="flex w-fit items-center gap-2 rounded text-sm font-semibold md:py-3"
+            >
+              <ShieldCheck
+                className="h-5 w-5 shrink-0 text-primary"
+                aria-hidden="true"
+              />
+              InfoSec Harness
+            </Link>
+            <RuntimeIndicator />
+          </div>
+          <ThemeSelect className="field h-8 w-[6.5rem] shrink-0 py-1 text-xs md:hidden" />
+        </div>
         <nav
+          ref={nav}
           aria-label="Main navigation"
-          className="flex min-w-0 flex-1 gap-1 overflow-x-auto md:flex-col"
+          className="nav-row flex min-w-0 gap-1 overflow-x-auto px-3 pb-2 md:flex-1 md:flex-col md:overflow-visible md:p-0"
         >
           {navigation.map(([to, label, Icon]) => (
             <Link
@@ -89,12 +125,15 @@ function Shell() {
             </Link>
           ))}
         </nav>
-        <label className="appearance-control shrink-0 text-xs text-muted-foreground md:mt-auto">
+        <label className="hidden w-32 shrink-0 text-xs text-muted-foreground md:mt-auto md:block">
           Appearance
           <ThemeSelect className="field mt-2 w-full" />
         </label>
       </aside>
-      <main id="content" className="mx-auto max-w-[1600px] px-5 py-8 lg:px-10">
+      <main
+        id="content"
+        className="mx-auto max-w-[1600px] px-4 py-5 sm:px-5 md:py-8 lg:px-10"
+      >
         <Outlet />
       </main>
     </div>
@@ -104,8 +143,18 @@ function Shell() {
 /** `/reports/$name`: only a validated report file name reaches the view or the API. */
 function ReportRoute() {
   const { name } = useParams({ from: "/reports/$name" });
+  const filters = useSearch({ from: "/reports/$name" });
+  const navigate = useNavigate({ from: "/reports/$name" });
   if (!isReportName(name)) return <NotFound />;
-  return <ReportDetail name={name} />;
+  return (
+    <ReportDetail
+      name={name}
+      caseFilters={filters}
+      onCaseFilters={(next) =>
+        void navigate({ search: next, replace: true, resetScroll: false })
+      }
+    />
+  );
 }
 
 function NotFound() {
@@ -129,13 +178,19 @@ const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
   component: Investigations,
-  validateSearch: parseInvestigationSearch,
+  validateSearch: ownedSearch(
+    ["q", "status", "verdict", "page"],
+    parseInvestigationSearch,
+  ),
 });
 const detailRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/runs/$runId",
   component: InvestigationDetail,
-  validateSearch: parseDetailSearch,
+  validateSearch: ownedSearch(
+    ["q", "status", "verdict", "page", "from_queue"],
+    parseDetailSearch,
+  ),
 });
 const runtimeRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -146,11 +201,16 @@ const reportsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/reports",
   component: Reports,
+  validateSearch: ownedSearch(["kind"], parseReportsSearch),
 });
 const reportRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/reports/$name",
   component: ReportRoute,
+  validateSearch: ownedSearch(
+    ["case", "outcome", "language"],
+    parseCaseFilters,
+  ),
 });
 const metricsRoute = createRoute({
   getParentRoute: () => rootRoute,

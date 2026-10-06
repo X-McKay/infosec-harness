@@ -42,10 +42,21 @@ export function QualificationReportView({
         action={<StatusBadge status={report.status} />}
       >
         <dl className="grid grid-cols-2 gap-4 text-sm md:grid-cols-3">
-          <Field label="Run ID" mono>
+          <Field
+            label="Run ID"
+            mono
+            copy={{ value: report.run_id, label: "Copy run ID" }}
+          >
             {report.run_id ?? "Unavailable"}
           </Field>
-          <Field label="OpenShell config" mono>
+          <Field
+            label="OpenShell config"
+            mono
+            copy={{
+              value: report.config_sha256,
+              label: "Copy OpenShell config SHA-256",
+            }}
+          >
             {shortHash(report.config_sha256, 16) ?? "Unavailable"}
           </Field>
           <Field label="Run cleanup">

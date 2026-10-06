@@ -1,8 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useParams, useSearch } from "@tanstack/react-router";
+import {
+  Link,
+  useNavigate,
+  useParams,
+  useSearch,
+} from "@tanstack/react-router";
+import { useEffect } from "react";
 import { ArrowLeft } from "lucide-react";
 import { ApiError } from "@/api/http";
-import { mutations, queries } from "@/api/queries";
+import { mutations, queries, runRefreshInterval } from "@/api/queries";
 import type { components } from "@/api/schema";
 import { Freshness, QueryState } from "@/components/QueryState";
 import { EventTimeline } from "@/components/investigations/EventTimeline";
@@ -19,6 +25,9 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Breakable } from "@/components/ui/breakable";
+import { CopyButton } from "@/components/ui/copy-button";
+import { typingTarget } from "@/lib/keyboard";
 import { failureLabel } from "@/lib/events";
 import { filterRuns, queueSearch, runNeighbors } from "@/lib/search";
 import { runActive, statusLabel, statusVariant } from "@/lib/status";
@@ -79,26 +88,13 @@ export function InvestigationDetail() {
   const { finding, result } = run;
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0 max-w-4xl">
-          <div className="mb-4">
-            <BackLink search={returnSearch} />
-          </div>
+      <header className="space-y-4">
+        <BackLink search={returnSearch} />
+        <div className="min-w-0 max-w-5xl">
           <p className="eyebrow">Investigation · {phaseLabel(run.phase)}</p>
           <h1>{finding.title}</h1>
-          <p className="mt-2 break-all text-sm text-muted-foreground">
-            {finding.repo_url} · {finding.revision} ·{" "}
-            {finding.source_mode === "working_snapshot"
-              ? "working snapshot"
-              : "git revision"}
-            {finding.cwe && <> · {finding.cwe}</>}
-            {finding.file_path && <> · {finding.file_path}</>}
-          </p>
-          <p className="mt-1 break-all font-mono text-xs text-muted-foreground">
-            {run.id}
-          </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <Badge variant={statusVariant(run.status)}>
             {statusLabel(run.status)}
           </Badge>
@@ -107,17 +103,60 @@ export function InvestigationDetail() {
               {verdictLabel(result.verdict.label)}
             </Badge>
           )}
-          {active && <CancelButton runId={run.id} />}
+          <Freshness
+            at={query.dataUpdatedAt}
+            fetching={query.isFetching}
+            stale={query.isError}
+            live={runRefreshInterval(run.status)}
+          />
+          {active && (
+            <div className="ml-auto">
+              <CancelButton runId={run.id} />
+            </div>
+          )}
         </div>
-      </div>
+        <dl className="grid max-w-5xl gap-x-6 gap-y-2 text-sm sm:grid-cols-[auto_minmax(0,1fr)]">
+          <dt className="text-xs text-muted-foreground sm:pt-0.5">
+            Repository
+          </dt>
+          <dd className="flex min-w-0 items-start gap-1">
+            <span className="min-w-0 font-mono text-xs leading-6 [overflow-wrap:anywhere]">
+              <Breakable>{finding.repo_url}</Breakable>
+            </span>
+            <CopyButton value={finding.repo_url} label="Copy repository" />
+          </dd>
+          <dt className="text-xs text-muted-foreground sm:pt-0.5">Source</dt>
+          <dd className="min-w-0 leading-6 text-muted-foreground">
+            <span className="font-mono text-xs text-foreground [overflow-wrap:anywhere]">
+              {finding.revision}
+            </span>{" "}
+            ·{" "}
+            {finding.source_mode === "working_snapshot"
+              ? "working snapshot"
+              : "git revision"}
+            {finding.cwe && <> · {finding.cwe}</>}
+            {finding.file_path && (
+              <>
+                {" "}
+                ·{" "}
+                <span className="font-mono text-xs text-foreground [overflow-wrap:anywhere]">
+                  <Breakable>{finding.file_path}</Breakable>
+                </span>
+              </>
+            )}
+          </dd>
+          <dt className="text-xs text-muted-foreground sm:pt-0.5">Run ID</dt>
+          <dd className="flex min-w-0 items-start gap-1">
+            <span className="min-w-0 font-mono text-xs leading-6 [overflow-wrap:anywhere]">
+              {run.id}
+            </span>
+            <CopyButton value={run.id} label="Copy run ID" />
+          </dd>
+        </dl>
+      </header>
 
       {search.from_queue && <Neighbors runId={run.id} search={returnSearch} />}
 
-      <Freshness
-        at={query.dataUpdatedAt}
-        fetching={query.isFetching}
-        stale={query.isError}
-      />
       {query.isError && (
         <QueryState error={query.error} retry={() => void query.refetch()} />
       )}
@@ -139,7 +178,7 @@ export function InvestigationDetail() {
 
       {result ? (
         <>
-          <div className="grid gap-5 xl:grid-cols-[1.6fr_1fr]">
+          <div className="grid items-start gap-5 xl:grid-cols-[1.6fr_1fr]">
             <VerdictPanel result={result} />
             <Limitations limitations={result.limitations ?? []} />
           </div>
@@ -217,6 +256,28 @@ function Neighbors({
   });
   const items = filterRuns(list.data?.items ?? [], search);
   const position = runNeighbors(runId, items);
+  const navigate = useNavigate();
+  // j and k step to the next and previous investigation, as they move between list rows.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (typingTarget(event, event.target as HTMLElement | null)) return;
+      const id =
+        event.key === "j"
+          ? position.next
+          : event.key === "k"
+            ? position.previous
+            : undefined;
+      if (!id) return;
+      event.preventDefault();
+      void navigate({
+        to: "/runs/$runId",
+        params: { runId: id },
+        search: { ...search, from_queue: true },
+      });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [navigate, position.next, position.previous, search]);
   return (
     <nav
       className="flex flex-wrap items-center justify-between gap-3"
@@ -233,14 +294,19 @@ function Neighbors({
         {(["previous", "next"] as const).map((direction) => {
           const id = position[direction];
           const label = direction === "previous" ? "Previous" : "Next";
+          const key = direction === "previous" ? "k" : "j";
           return id ? (
             <Button key={direction} size="sm" variant="outline" asChild>
               <Link
                 to="/runs/$runId"
                 params={{ runId: id }}
                 search={{ ...search, from_queue: true }}
+                aria-keyshortcuts={key}
               >
                 {label}
+                <kbd aria-hidden="true" className="hidden md:inline-block">
+                  {key}
+                </kbd>
               </Link>
             </Button>
           ) : (
