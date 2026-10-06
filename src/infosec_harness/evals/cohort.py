@@ -24,10 +24,7 @@ from temporalio.exceptions import ApplicationError, TerminatedError
 from temporalio.exceptions import TimeoutError as TemporalTimeoutError
 
 from infosec_harness._io import write_json
-
-# TODO(merge): import GENERATION from contracts.py once the toplevel owner adds it there.
 from infosec_harness.api import (
-    GENERATION,
     PREFIX,
     RPC_TIMEOUT,
     connect,
@@ -35,7 +32,13 @@ from infosec_harness.api import (
     start_investigation,
 )
 from infosec_harness.config import Settings
-from infosec_harness.contracts import Finding, InvestigationResult, Limits, WorkerIdentity
+from infosec_harness.contracts import (
+    GENERATION,
+    Finding,
+    InvestigationResult,
+    Limits,
+    WorkerIdentity,
+)
 from infosec_harness.sandbox import OpenShell, OpenShellConfig, native_operation_accounting
 from infosec_harness.sandbox.process import finish, run_bounded
 from infosec_harness.workflows.investigation import (

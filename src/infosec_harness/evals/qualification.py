@@ -8,10 +8,8 @@ from pathlib import Path
 from uuid import uuid4
 
 from infosec_harness._io import write_json
-
-# TODO(merge): import GENERATION from contracts.py once the toplevel owner adds it there.
-from infosec_harness.api import GENERATION
 from infosec_harness.config import Settings, get_settings
+from infosec_harness.contracts import GENERATION
 from infosec_harness.sandbox import OpenShell, OpenShellConfig
 from infosec_harness.sandbox.process import finish
 from infosec_harness.workflows.worker import worker_identity

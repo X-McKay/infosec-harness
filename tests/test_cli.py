@@ -51,14 +51,15 @@ def test_settings_file_is_exact_and_not_merged(tmp_path, monkeypatch, evaluation
     results.append({"status": "completed", "kind": "diagnostic"})
     invoked = invoke(
         "--settings", str(frozen), "eval", "--allow-inference", "--case", "a", "--case", "b",
-        "--keep-going", "--owned-worker",
+        "--keep-going", "--owned-worker", "--parallel", "3",
     )
     assert invoked.exit_code == 0, invoked.output  # A completed diagnostic ran as asked.
     output, settings, options = calls[0]
     assert settings is config.get_settings()
     assert settings.model_name == "from-file"
     assert settings.temporal_namespace == "default"  # Not merged from the environment.
-    assert options == {"names": ("a", "b"), "owned_worker": True, "keep_going": True}
+    assert options == {"names": ("a", "b"), "owned_worker": True, "keep_going": True,
+                       "parallel": 3}
     assert re.fullmatch(r"\.harness/reports/diagnostic-\d{8}T\d{6}Z\.json", output.as_posix())
 
 

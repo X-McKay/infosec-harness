@@ -9,7 +9,7 @@ from pathlib import Path
 import pydantic_ai.models
 import pytest
 
-from infosec_harness.config import get_settings
+from infosec_harness.config import reset_settings
 
 ROOT = Path(__file__).resolve().parents[1]
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
@@ -21,9 +21,9 @@ def isolated_settings(tmp_path, monkeypatch):
         if key.startswith("HARNESS_") and not key.startswith("HARNESS_TEST_"):
             monkeypatch.delenv(key)
     monkeypatch.setenv("HARNESS_WORKSPACE_DIR", str(tmp_path / "workspace"))
-    get_settings.cache_clear()
+    reset_settings()
     yield
-    get_settings.cache_clear()
+    reset_settings()
 
 
 @pytest.fixture

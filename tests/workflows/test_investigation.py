@@ -973,15 +973,3 @@ async def test_prepare_waits_for_cleanup_through_repeated_cancellation(monkeypat
         await task
     assert shell.closed == ["owned"]
 
-
-def test_report_bounds_match_the_verdict_contract():
-    from annotated_types import MaxLen
-
-    from infosec_harness.workflows import investigation as module
-
-    def max_length(field):
-        return next(m.max_length for m in Verdict.model_fields[field].metadata
-                    if isinstance(m, MaxLen))
-
-    assert (max_length("evidence_ids"), max_length("summary")) == (
-        module.MAX_EVIDENCE_IDS, module.MAX_SUMMARY_CHARS)

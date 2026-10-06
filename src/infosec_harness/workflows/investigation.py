@@ -22,6 +22,8 @@ with workflow.unsafe.imports_passed_through():
     from infosec_harness.agents.evidence import parse_probe_observations
     from infosec_harness.agents.investigator import InvestigationDeps
     from infosec_harness.contracts import (
+        MAX_EVIDENCE_IDS,
+        MAX_SUMMARY_CHARS,
         Finding,
         InvestigationRequest,
         InvestigationResult,
@@ -42,11 +44,6 @@ FAILURE_CHAIN_LINKS = 8
 FAILURE_LINK_CHARS = 400
 # Temporal wrapper types; the outermost other type names a terminal failure.
 FAILURE_WRAPPERS = frozenset({"ActivityError", "ChildWorkflowError", "WorkflowFailureError"})
-
-# Report bounds of Verdict.evidence_ids and Verdict.summary.
-# TODO(merge): import MAX_EVIDENCE_IDS and MAX_SUMMARY_CHARS from contracts.py once added.
-MAX_EVIDENCE_IDS = 10
-MAX_SUMMARY_CHARS = 12_000
 
 # Lifecycle activity bounds (v11 values; replay does not compare them, but keep them stable).
 PREPARE_TIMEOUT = timedelta(minutes=10)
@@ -240,13 +237,10 @@ class InvestigationActivities:
         report_ids = set(verdict.evidence_ids)
         if verdict.label != "inconclusive":
             # Same admission rule as the validator, over receipt-rebuilt evidence only.
-            corroborated, contrary, _superseded = definitive_support(verdict, evidence)
-            blocked = {item.id for item in contrary}
-            superseded = [
-                item.id
-                for item in evidence
-                if item.id in verdict.superseded_evidence_ids and item.id not in blocked
-            ]
+            support = definitive_support(verdict, evidence)
+            corroborated, contrary = support.corroborated, support.contrary
+            # Contradicting qualified probes the verdict superseded and the ordering rule excused.
+            superseded = [item.id for item in support.superseded]
             if superseded:
                 limitations.append(
                     "The investigator superseded earlier complete probes whose observations "
@@ -442,7 +436,8 @@ class InvestigationWorkflow(PydanticAIWorkflow):
         if caught is not None:
             self._state.phase = self._state.status
             raise caught
-        assert result is not None
+        if result is None:  # Unreachable: every path without a result raised above.
+            raise RuntimeError("Investigation ended without a result or a failure")
         self._state.status = "completed"
         self._state.phase = "completed"
         self._state.result = result

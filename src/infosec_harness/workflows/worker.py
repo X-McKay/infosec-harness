@@ -83,6 +83,9 @@ def worker_identity(settings: Settings) -> WorkerIdentity:
             "temporal_tls_client_cert",
             "temporal_tls_ca_file",
             "openshell_config",
+            # Operator conveniences that cannot change an investigation.
+            "log_level",
+            "reports_dir",
         },
     )
     encoded = json.dumps(

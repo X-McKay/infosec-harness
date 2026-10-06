@@ -199,19 +199,20 @@ def evaluate(
     keep_going: bool = typer.Option(
         False, help="Continue only after a terminal agent/model-level case failure."
     ),
+    parallel: int = typer.Option(
+        1, min=1, help="Run up to N cases at once (recorded as a run condition; default 1)."
+    ),
 ) -> None:
     """Run the paired corpus (or a diagnostic subset) once, preserving failures and unstarted cases."""
     if not allow_inference:
         raise typer.BadParameter("Live evaluation requires --allow-inference")
-    # TODO(claude/quality-workflows-evals): add `--parallel N` passed to
-    # evaluate_corpus(parallel=...) once that parameter exists.
     from infosec_harness.evals.cohort import evaluate_corpus
 
     configure_logging()
     output = output or new_report("diagnostic" if case else "model")
     finish(operate(evaluate_corpus(
         manifest, output, get_settings(), names=tuple(case or ()),
-        owned_worker=owned_worker, keep_going=keep_going,
+        owned_worker=owned_worker, keep_going=keep_going, parallel=parallel,
     )))
 
 

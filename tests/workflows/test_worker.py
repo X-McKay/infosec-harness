@@ -266,6 +266,15 @@ def test_identity_binds_policy_contents_dependencies_and_configuration(tmp_path)
     assert worker_identity(settings).fingerprint != second.fingerprint
 
 
+def test_identity_ignores_operator_settings_that_cannot_change_an_investigation(tmp_path):
+    config = tmp_path / "runtime.json"
+    config.write_text("{}")
+    settings = Settings(openshell_config=config)
+    first = worker_identity(settings)
+    changed = settings.model_copy(update={"log_level": "DEBUG", "reports_dir": tmp_path / "r"})
+    assert worker_identity(changed) == first
+
+
 @pytest.mark.parametrize(("budget", "output_bytes"), [(300, None), (301, None), (300, 260_070)])
 def test_worker_refuses_command_budget_above_runtime_maximum(
     tmp_path, monkeypatch, budget, output_bytes

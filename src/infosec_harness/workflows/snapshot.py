@@ -213,7 +213,8 @@ async def snapshot(finding: Finding, run_id: str, settings: Settings | None = No
             )
         elif finding.revision != "HEAD":
             raise ValueError("working snapshot cannot resolve a Git revision")
-        assert source is not None
+        if source is None:  # Unreachable: a remote source was refused unless git_revision.
+            raise ValueError("working snapshots require a local source")
         candidate = staging / "snapshot"
         candidate.mkdir()
         digest = await _off_loop(_capture, source, candidate / "tree")
