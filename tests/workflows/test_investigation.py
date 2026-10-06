@@ -1,4 +1,7 @@
-"""Real Temporal histories: replay, worker restart, cancellation, and failure cleanup."""
+"""Real Temporal histories: replay, worker restart, cancellation, and failure cleanup.
+
+Also the lifecycle activities' worker-identity checks before any side effect.
+"""
 
 import asyncio
 import uuid
@@ -6,33 +9,32 @@ from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
+from fakes import FakeOpenShell, final_response, runner
 from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 from temporalio.client import WorkflowFailureError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Replayer, Worker
-from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
-from test_agent import FakeOpenShell, final_response
 
 from infosec_harness.agents.investigator import InvestigationDeps, build_agent
-from infosec_harness.contracts import Citation, Finding, InvestigationRequest, Limits, Verdict
+from infosec_harness.contracts import (
+    Citation,
+    Finding,
+    InvestigationRequest,
+    Limits,
+    Verdict,
+    WorkerIdentity,
+)
 from infosec_harness.sandbox import Sandbox
 from infosec_harness.workflows.investigation import (
+    CleanupInvestigation,
     FinalizeInvestigation,
     InvestigationActivities,
     InvestigationWorkflow,
     PreparedInvestigation,
     bind_investigator,
 )
-
-
-def runner():
-    return SandboxedWorkflowRunner(
-        restrictions=SandboxRestrictions.default.with_passthrough_modules(
-            "infosec_harness.workflows.investigation", "annotated_types", "typing_inspection"
-        )
-    )
 
 
 def test_prepared_investigation_decodes_v11_payload_with_duplicated_fields(tmp_path):
@@ -46,36 +48,6 @@ def test_prepared_investigation_decodes_v11_payload_with_duplicated_fields(tmp_p
     # v11 histories carried copies of deps.snapshot_path and deps.worker_identity here.
     legacy = {"deps": deps.model_dump(mode="json"), "snapshot_path": "/other", "worker_identity": None}
     assert PreparedInvestigation.model_validate(legacy) == PreparedInvestigation(deps=deps)
-
-
-@pytest.mark.parametrize("budget", [300, 301])
-def test_worker_refuses_command_budget_above_runtime_maximum(tmp_path, monkeypatch, budget):
-    """Above the runtime bound every execute is refused mid-investigation; the worker must
-    refuse to start instead of silently capping only the model timeout."""
-    import temporalio.worker
-
-    from infosec_harness.config import get_settings
-    from infosec_harness.workflows import worker
-
-    config = tmp_path / "runtime.json"
-    config.write_text("{}")
-    settings = get_settings().model_copy(update={
-        "openshell_config": config,
-        "limits": Limits(command_timeout_seconds=budget),
-    })
-    monkeypatch.setattr(worker, "OpenShellConfig", SimpleNamespace(
-        load=lambda path: SimpleNamespace(max_timeout_seconds=300)))
-    monkeypatch.setattr(worker, "OpenShell", lambda config: SimpleNamespace(config=config))
-    monkeypatch.setattr(temporalio.worker, "Worker", lambda client, **kwargs: kwargs)
-    monkeypatch.setattr(InvestigationWorkflow, "agent", None)
-    monkeypatch.setattr(InvestigationWorkflow, "__pydantic_ai_agents__", [])
-    if budget > 300:
-        with pytest.raises(ValueError, match=r"command_timeout_seconds \(301\) exceeds"):
-            worker.create_worker(None, settings)
-        assert InvestigationWorkflow.agent is None
-        return
-    assert worker.create_worker(None, settings)["task_queue"] == settings.task_queue
-    assert InvestigationWorkflow.agent.model.timeout == 300
 
 
 async def test_finalize_rejects_invented_receipt_and_source_lines(tmp_path):
@@ -799,3 +771,123 @@ async def test_incomplete_contrary_probe_is_not_a_qualified_observation(tmp_path
     )
     assert result.verdict.label == "likely_not_exploitable"
     assert not any("contradictory" in limitation for limitation in result.limitations)
+
+
+async def test_prepare_refuses_mismatched_candidate_before_any_side_effect():
+    identity = WorkerIdentity(
+        fingerprint="a" * 64, code_sha256="b" * 64, config_sha256="c" * 64, dependencies={}
+    )
+    shell = FakeOpenShell()
+
+    async def snapshot(*args):
+        raise AssertionError("mismatch must refuse before source capture")
+
+    activities = InvestigationActivities(shell, snapshot, "fixture", identity=lambda: identity)
+    with pytest.raises(ValueError, match="does not match"):
+        await activities.prepare(
+            InvestigationRequest(
+                finding=Finding(title="case", repo_url="fixture"), expected_worker_identity="d" * 64
+            )
+        )
+    assert shell.executions == []
+
+
+def test_worker_refuses_configuration_drift():
+    first = WorkerIdentity(
+        fingerprint="a" * 64, code_sha256="b" * 64, config_sha256="c" * 64, dependencies={}
+    )
+    current = [first]
+    activities = InvestigationActivities(
+        FakeOpenShell(), None, "fixture", identity=lambda: current[0]
+    )
+    current[0] = first.model_copy(update={"config_sha256": "d" * 64})
+    with pytest.raises(ValueError, match="changed; restart"):
+        activities.check_identity()
+
+
+@pytest.mark.parametrize("mode", ["different", "drift", "unknown"])
+async def test_cleanup_requires_original_bound_identity_but_allows_current_drift(mode):
+    from temporalio.exceptions import ApplicationError
+
+    original = WorkerIdentity(
+        fingerprint="a" * 64, code_sha256="b" * 64, config_sha256="c" * 64, dependencies={}
+    )
+    current = [original]
+    shell = FakeOpenShell()
+    activities = InvestigationActivities(shell, None, "fixture", identity=lambda: current[0])
+    current[0] = original.model_copy(update={"fingerprint": "d" * 64})
+    expected = "e" * 64 if mode == "different" else None if mode == "unknown" else "a" * 64
+    payload = CleanupInvestigation(run_id="owned", expected_worker_identity=expected)
+    if mode == "drift":
+        await activities.cleanup(payload)
+        assert shell.closed == ["owned"]
+    else:
+        with pytest.raises(ApplicationError, match="different worker|cleanup unverified") as error:
+            await activities.cleanup(payload)
+        assert error.value.non_retryable
+        assert shell.closed == ([] if mode == "different" else ["owned"])
+
+
+@pytest.mark.parametrize("stage", ["create", "upload"])
+async def test_failed_prepare_closes_on_receiving_worker(monkeypatch, tmp_path, stage):
+    from types import SimpleNamespace
+
+    import infosec_harness.workflows.investigation as module
+
+    shell = FakeOpenShell()
+
+    async def fail(*args, **kwargs):
+        raise ValueError("bounded native staging failed")
+
+    setattr(shell, stage, fail)
+    monkeypatch.setattr(module.activity, "info", lambda: SimpleNamespace(workflow_id="owned"))
+
+    async def snapshot(*args):
+        return SimpleNamespace(path=str(tmp_path), digest="digest")
+
+    activities = InvestigationActivities(shell, snapshot, "fixture")
+    with pytest.raises(ValueError, match="bounded native staging failed"):
+        await activities.prepare(
+            InvestigationRequest(finding=Finding(title="case", repo_url="fixture"))
+        )
+    assert shell.closed == ["owned"]
+
+
+async def test_prepare_waits_for_cleanup_through_repeated_cancellation(monkeypatch, tmp_path):
+    import asyncio
+    from types import SimpleNamespace
+
+    import infosec_harness.workflows.investigation as module
+
+    uploading, cleaning, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    shell = FakeOpenShell()
+
+    async def upload(*args):
+        uploading.set()
+        await asyncio.Event().wait()
+
+    async def cleanup(run_id):
+        cleaning.set()
+        await release.wait()
+        shell.closed.append(run_id)
+
+    shell.upload, shell.close_run = upload, cleanup
+    monkeypatch.setattr(module.activity, "info", lambda: SimpleNamespace(workflow_id="owned"))
+
+    async def snapshot(*args):
+        return SimpleNamespace(path=str(tmp_path), digest="digest")
+
+    activities = InvestigationActivities(shell, snapshot, "fixture")
+    task = asyncio.create_task(
+        activities.prepare(InvestigationRequest(finding=Finding(title="case", repo_url="fixture")))
+    )
+    await uploading.wait()
+    task.cancel()
+    await cleaning.wait()
+    task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done() and shell.closed == []
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert shell.closed == ["owned"]

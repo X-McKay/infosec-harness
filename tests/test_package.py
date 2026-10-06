@@ -37,6 +37,31 @@ def test_standalone_executor_has_no_worker_runtime_imports():
             assert node.module and node.module.split(".")[0] in allowed
 
 
+def test_package_relative_paths_resolve_from_the_subpackages():
+    """Modules moved into subpackages still find the package data and the checkout."""
+    from infosec_harness.agents import investigator
+    from infosec_harness.evals import cohort
+    from infosec_harness.workflows import worker
+
+    package = ROOT / "src/infosec_harness"
+    assert investigator.SKILLS.resolve() == package / "skills"
+    assert (investigator.SKILLS / "investigate/SKILL.md").is_file()
+    assert Path(cohort.__file__).with_name("release-policy.yaml").resolve() == (
+        package / "evals/release-policy.yaml"
+    )
+    assert cohort.release_policy()[0].minimum_task_success_rate == 0.75
+    assert cohort.REPOSITORY_ROOT == ROOT
+    # The worker identity covers every runtime file of the package, not one subpackage.
+    assert worker.PACKAGE_ROOT.resolve() == package
+    covered = {
+        path.relative_to(package).as_posix()
+        for path in package.rglob("*")
+        if path.is_file() and path.suffix in {".py", ".yaml", ".md"}
+    }
+    assert {"cli.py", "skills/investigate/SKILL.md", "evals/release-policy.yaml",
+            "sandbox/executor.py", "workflows/investigation.py"} <= covered
+
+
 def test_executor_import_loads_no_other_package_module():
     """The package initialisers stay lazy, so the shipped executor imports alone."""
     script = (

@@ -3,15 +3,14 @@
 from types import SimpleNamespace
 
 import pytest
+from fakes import FakeOpenShell
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.tools import ToolDefinition
-from test_agent import FakeOpenShell
 
 from infosec_harness.agents.inference import RESPONSE, ModelInvocation, OpenShellModel
-from infosec_harness.sandbox import CommandResult
-from infosec_harness.sandbox import executor as model_executor
+from infosec_harness.sandbox import CommandResult, executor
 
 
 async def test_native_message_tools_and_usage_roundtrip(monkeypatch):
@@ -31,8 +30,8 @@ async def test_native_message_tools_and_usage_roundtrip(monkeypatch):
         assert info.function_tools[0].name == "read"
         return ModelResponse(parts=[ToolCallPart("read", {"path": "sink.py"}, tool_call_id="x")])
 
-    monkeypatch.setattr(model_executor, "provider_model", lambda _: FunctionModel(respond))
-    response = RESPONSE.validate_json(await model_executor.execute(request))
+    monkeypatch.setattr(executor, "provider_model", lambda _: FunctionModel(respond))
+    response = RESPONSE.validate_json(await executor.execute(request))
     assert response.parts[0].args == {"path": "sink.py"}
     assert response.usage.input_tokens > 0
 
@@ -100,12 +99,12 @@ def test_provider_has_no_sdk_retries(monkeypatch):
         settings=None,
         parameters=ModelRequestParameters(),
     )
-    model = model_executor.provider_model(invocation)
+    model = executor.provider_model(invocation)
     assert model.provider.client.max_retries == 0
     # Live 2026-10-06: the OpenAI default connect timeout of 5 s failed four Java cases on a
     # slow but healthy endpoint. The whole-request timeout follows the invocation budget.
     assert model.provider.client.timeout == 110.0
-    custom = model_executor.provider_model(invocation.model_copy(update={"timeout_seconds": 290}))
+    custom = executor.provider_model(invocation.model_copy(update={"timeout_seconds": 290}))
     assert custom.provider.client.timeout == 290.0
 
 
@@ -119,7 +118,7 @@ def test_no_ambient_bedrock_credentials_fallback(monkeypatch):
         parameters=ModelRequestParameters(),
     )
     with pytest.raises(KeyError, match="AWS_ACCESS_KEY_ID"):
-        model_executor.provider_model(invocation)
+        executor.provider_model(invocation)
 
 
 @pytest.mark.parametrize(
@@ -135,7 +134,7 @@ def test_provider_never_falls_back_to_default_endpoint(endpoint):
         parameters=ModelRequestParameters(),
     )
     with pytest.raises(ValueError, match="explicit OpenShell-allowed model endpoint"):
-        model_executor.provider_model(invocation)
+        executor.provider_model(invocation)
 
 
 def test_explicit_keyless_endpoint_uses_native_placeholder(monkeypatch):
@@ -148,7 +147,7 @@ def test_explicit_keyless_endpoint_uses_native_placeholder(monkeypatch):
         settings=None,
         parameters=ModelRequestParameters(),
     )
-    model = model_executor.provider_model(invocation)
+    model = executor.provider_model(invocation)
     assert model.provider.client.api_key == "openshell"
 
 
@@ -201,7 +200,7 @@ async def test_native_openai_tools_messages_and_usage_with_mock_transport(monkey
             http_client=http_client,
         )
         monkeypatch.setattr(
-            model_executor,
+            executor,
             "provider_model",
             lambda invocation: OpenAIChatModel(
                 invocation.model_name, provider=OpenAIProvider(openai_client=client)
@@ -226,7 +225,7 @@ async def test_native_openai_tools_messages_and_usage_with_mock_transport(monkey
                 ]
             ),
         )
-        response = RESPONSE.validate_json(await model_executor.execute(invocation))
+        response = RESPONSE.validate_json(await executor.execute(invocation))
         assert response.parts[0].tool_call_id == "call"
         assert response.parts[0].args == '{"path":"sink.py"}'
         assert response.usage.input_tokens == 12
@@ -235,11 +234,11 @@ async def test_native_openai_tools_messages_and_usage_with_mock_transport(monkey
 
 async def test_executor_response_budget_rejects_before_activity_return(monkeypatch):
     monkeypatch.setattr(
-        model_executor,
+        executor,
         "provider_model",
         lambda _: FunctionModel(
             lambda messages, info: ModelResponse(
-                parts=[TextPart("x" * model_executor.MAX_RESPONSE_BYTES)]
+                parts=[TextPart("x" * executor.MAX_RESPONSE_BYTES)]
             )
         ),
     )
@@ -251,7 +250,7 @@ async def test_executor_response_budget_rejects_before_activity_return(monkeypat
         parameters=ModelRequestParameters(),
     )
     with pytest.raises(ValueError, match="response exceeds the durable payload budget"):
-        await model_executor.execute(invocation)
+        await executor.execute(invocation)
 
 
 async def test_adapter_rejects_oversized_input_before_sandbox_creation(monkeypatch):
@@ -269,7 +268,7 @@ async def test_adapter_rejects_oversized_input_before_sandbox_creation(monkeypat
     )
     with pytest.raises(ValueError, match="invocation exceeds the durable payload budget"):
         await OpenShellModel(shell, "fixture").request(
-            [ModelRequest(parts=[UserPromptPart("x" * model_executor.MAX_INVOCATION_BYTES)])],
+            [ModelRequest(parts=[UserPromptPart("x" * executor.MAX_INVOCATION_BYTES)])],
             None,
             ModelRequestParameters(),
         )
@@ -280,7 +279,7 @@ async def test_adapter_rejects_oversized_native_response(monkeypatch):
     shell = FakeOpenShell()
 
     async def execute(*args, **kwargs):
-        return CommandResult(0, "x" * (model_executor.MAX_RESPONSE_BYTES + 1), "")
+        return CommandResult(0, "x" * (executor.MAX_RESPONSE_BYTES + 1), "")
 
     shell.execute = execute
     monkeypatch.setattr(

@@ -8,6 +8,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+from fakes import FakeOpenShell
 from pydantic import BaseModel
 from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, TemporalDurability
 from pydantic_ai.models.function import FunctionModel
@@ -17,7 +18,6 @@ from temporalio.common import RetryPolicy
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import ExecuteActivityInput, Worker
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
-from test_agent import FakeOpenShell
 
 from infosec_harness.agents.investigator import (
     AGENT_NAME,
@@ -25,14 +25,16 @@ from infosec_harness.agents.investigator import (
     InvestigationDeps,
     build_agent,
 )
-from infosec_harness.contracts import Finding, InvestigationRequest, WorkerIdentity
+from infosec_harness.config import Settings
+from infosec_harness.contracts import Finding, InvestigationRequest, Limits, WorkerIdentity
 from infosec_harness.sandbox import Sandbox
 from infosec_harness.workflows.investigation import (
     CleanupInvestigation,
     InvestigationActivities,
+    InvestigationWorkflow,
     PreparedInvestigation,
 )
-from infosec_harness.workflows.worker import WorkerIdentityInterceptor
+from infosec_harness.workflows.worker import WorkerIdentityInterceptor, worker_identity
 
 
 def identity(value="a"):
@@ -233,3 +235,54 @@ async def test_real_temporal_different_worker_refuses_native_activity_before_exe
     assert model_calls == []
     assert shell.executions == []
     assert shell.closed == [queue]
+
+
+def test_identity_binds_policy_contents_dependencies_and_configuration(tmp_path):
+    import json
+
+    policy = tmp_path / "policy.yaml"
+    policy.write_text("network: deny")
+    config = tmp_path / "runtime.json"
+    config.write_text(json.dumps({"profiles": {"probe": {"policy": str(policy)}}}))
+    settings = Settings(openshell_config=config, temporal_api_key="do-not-report")
+    first = worker_identity(settings)
+    assert "do-not-report" not in first.model_dump_json()
+    assert first.dependencies["openshell"] == "0.1.2"
+    settings.temporal_api_key = "another-secret"
+    assert worker_identity(settings) == first
+    policy.write_text("network: allow")
+    second = worker_identity(settings)
+    assert second.code_sha256 == first.code_sha256
+    assert second.config_sha256 != first.config_sha256
+    settings.model_name = "other-model"
+    assert worker_identity(settings).fingerprint != second.fingerprint
+
+
+@pytest.mark.parametrize("budget", [300, 301])
+def test_worker_refuses_command_budget_above_runtime_maximum(tmp_path, monkeypatch, budget):
+    """Above the runtime bound every execute is refused mid-investigation; the worker must
+    refuse to start instead of silently capping only the model timeout."""
+    import temporalio.worker
+
+    from infosec_harness.config import get_settings
+    from infosec_harness.workflows import worker
+
+    config = tmp_path / "runtime.json"
+    config.write_text("{}")
+    settings = get_settings().model_copy(update={
+        "openshell_config": config,
+        "limits": Limits(command_timeout_seconds=budget),
+    })
+    monkeypatch.setattr(worker, "OpenShellConfig", SimpleNamespace(
+        load=lambda path: SimpleNamespace(max_timeout_seconds=300)))
+    monkeypatch.setattr(worker, "OpenShell", lambda config: SimpleNamespace(config=config))
+    monkeypatch.setattr(temporalio.worker, "Worker", lambda client, **kwargs: kwargs)
+    monkeypatch.setattr(InvestigationWorkflow, "agent", None)
+    monkeypatch.setattr(InvestigationWorkflow, "__pydantic_ai_agents__", [])
+    if budget > 300:
+        with pytest.raises(ValueError, match=r"command_timeout_seconds \(301\) exceeds"):
+            worker.create_worker(None, settings)
+        assert InvestigationWorkflow.agent is None
+        return
+    assert worker.create_worker(None, settings)["task_queue"] == settings.task_queue
+    assert InvestigationWorkflow.agent.model.timeout == 300

@@ -110,13 +110,12 @@ async def test_pagination_bounded_and_invalid_token_never_reaches_temporal(clien
 async def test_real_temporal_submit_query_and_cancellation(temporal_cli, tmp_path):
     import asyncio
 
+    from fakes import FakeOpenShell, runner
     from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
     from pydantic_ai.models.function import FunctionModel
     from temporalio.client import WorkflowFailureError
     from temporalio.testing import WorkflowEnvironment
     from temporalio.worker import Worker
-    from test_agent import FakeOpenShell
-    from test_workflow import runner
 
     from infosec_harness.agents.investigator import build_agent
     from infosec_harness.workflows.investigation import (

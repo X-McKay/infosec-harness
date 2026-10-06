@@ -11,7 +11,7 @@ from infosec_harness.contracts import Finding, InvestigationResult, Verdict
 from infosec_harness.evals import cohort
 
 # The checkout that holds this test file, found independently of the module under test.
-CHECKOUT = Path(__file__).resolve().parents[1]
+CHECKOUT = Path(__file__).resolve().parents[2]
 
 
 def test_real_corpus_labels_and_sources_are_preserved():
@@ -488,9 +488,9 @@ def owned_worker_factory(monkeypatch, tmp_path, shell, respond, identity, create
 
     A mocked model proves lifecycle and cleanup ordering only; it is never quality evidence.
     """
+    from fakes import runner
     from pydantic_ai.models.function import FunctionModel
     from temporalio.worker import Worker
-    from test_workflow import runner
 
     from infosec_harness.agents.investigator import build_agent
     from infosec_harness.workflows import investigation, worker
@@ -520,11 +520,11 @@ def owned_worker_factory(monkeypatch, tmp_path, shell, respond, identity, create
 async def test_owned_worker_keeps_going_after_agent_failure_and_replays(
     temporal_cli, tmp_path, monkeypatch, fixture_worker_identity
 ):
+    from fakes import FakeOpenShell, final_response
     from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
     from pydantic_ai.messages import ModelResponse, ToolCallPart
     from temporalio.client import WorkflowExecutionStatus
     from temporalio.testing import WorkflowEnvironment
-    from test_agent import FakeOpenShell, final_response
 
     from infosec_harness.contracts import Limits
 
@@ -572,10 +572,10 @@ async def test_owned_worker_keeps_going_after_agent_failure_and_replays(
 async def test_owned_worker_stays_up_until_cancelled_run_cleans_up(
     temporal_cli, tmp_path, monkeypatch, fixture_worker_identity
 ):
+    from fakes import FakeOpenShell
     from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
     from temporalio.client import WorkflowExecutionStatus
     from temporalio.testing import WorkflowEnvironment
-    from test_agent import FakeOpenShell
 
     shell = FakeOpenShell()
     entered = asyncio.Event()
