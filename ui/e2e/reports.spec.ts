@@ -89,15 +89,18 @@ test.describe("reports list", () => {
       locator.evaluate((node) => {
         const computed = getComputedStyle(node);
         return {
-          background: computed.backgroundColor,
           color: computed.color,
           border: computed.borderStyle,
+          borderColor: computed.borderColor,
         };
       });
+    // Gate states are outlined badges (never the filled verdict pills): a pass has a solid
+    // coloured outline, not checked a dashed neutral one with different text colour.
     const passedStyle = await style(passed);
     const notCheckedStyle = await style(notChecked);
+    expect(passedStyle.border).toBe("solid");
     expect(notCheckedStyle.border).toBe("dashed");
-    expect(notCheckedStyle.background).not.toBe(passedStyle.background);
+    expect(notCheckedStyle.borderColor).not.toBe(passedStyle.borderColor);
     expect(notCheckedStyle.color).not.toBe(passedStyle.color);
   });
 
