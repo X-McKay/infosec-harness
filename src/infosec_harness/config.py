@@ -108,6 +108,3 @@ def reset_settings() -> None:
     global _settings
     _settings = None
 
-
-# Until tests/conftest.py calls reset_settings(): its isolation fixture calls this name.
-get_settings.cache_clear = reset_settings  # type: ignore[attr-defined]
