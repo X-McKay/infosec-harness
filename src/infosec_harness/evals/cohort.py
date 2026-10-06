@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import re
 import subprocess
@@ -16,7 +17,7 @@ from typing import Literal
 from uuid import uuid4
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from temporalio.client import WorkflowExecutionStatus, WorkflowFailureError
 from temporalio.exceptions import ApplicationError, TerminatedError
 from temporalio.exceptions import TimeoutError as TemporalTimeoutError
@@ -30,9 +31,10 @@ from infosec_harness.api import (
     execution_timeout,
     start_investigation,
 )
+from infosec_harness.config import Settings
 from infosec_harness.contracts import Finding, InvestigationResult, Limits
 from infosec_harness.sandbox import OpenShell, OpenShellConfig, native_operation_accounting
-from infosec_harness.sandbox.process import finish
+from infosec_harness.sandbox.process import finish, run_bounded
 from infosec_harness.workflows.investigation import (
     CLEANUP_RESERVE,
     FAILURE_CHAIN_LINKS,
@@ -64,6 +66,12 @@ _SEGMENT_LABEL = re.compile(r"([A-Za-z_][A-Za-z0-9_.]*): ")
 # each). Live run 8 retained at most 96 admissions per case under 40 requests / 100 calls.
 CASE_LIFECYCLE_OPERATIONS = 40
 OCCUPANCY_TIMEOUT = 60
+# The observation is one JSON line; anything beyond this tail is not read.
+OCCUPANCY_CAPTURE = 64_000
+# Bound on an error message or stderr tail recorded in a report.
+ERROR_CHARS = 300
+
+log = logging.getLogger(__name__)
 
 
 class ReleasePolicy(BaseModel):
@@ -75,18 +83,37 @@ class ReleasePolicy(BaseModel):
 class Occupancy(BaseModel):
     """One read-only observation of the native admission ledger, printed by an operator command."""
 
-    model_config = ConfigDict(extra="ignore")
+    # Strict: "5" is not a count and 1 is not ``true``; a read-only claim must be literal.
+    model_config = ConfigDict(extra="ignore", strict=True)
     retained: int = Field(ge=0)
     quota: int = Field(ge=1)
     read_only: Literal[True]
     observed_at_ms: int | None = None
+
+    @field_validator("read_only", mode="before")
+    @classmethod
+    def literal_true(cls, value: object) -> object:
+        # Literal matching compares by equality even in strict mode, and 1 == True.
+        if value is not True:
+            raise ValueError("read_only must be the JSON literal true")
+        return value
 
 
 def case_operation_ceiling(limits: Limits) -> int:
     return limits.max_requests + limits.max_tool_calls + CASE_LIFECYCLE_OPERATIONS
 
 
-def native_capacity_preflight(settings, planned: int) -> dict:
+def printable(text: str) -> str:
+    """Control characters (terminal escapes, newlines) become spaces."""
+    return "".join(char if char.isprintable() else " " for char in text)
+
+
+def bounded(error: BaseException) -> str:
+    """A report-safe error message: harness-authored text, cut to ERROR_CHARS."""
+    return printable(str(error))[:ERROR_CHARS]
+
+
+async def native_capacity_preflight(settings: Settings, planned: int) -> dict:
     """Refuse to start a cohort into a saturated admission ledger.
 
     The operator names a read-only command (``native_occupancy_command``) whose last stdout
@@ -108,14 +135,15 @@ def native_capacity_preflight(settings, planned: int) -> dict:
     command = list(settings.native_occupancy_command)
     if not command:
         report["reason"] = "No read-only native occupancy command is configured."
+        log.info("event=capacity_preflight status=not_checked planned=%d", planned)
         return report
     try:
-        completed = subprocess.run(command, capture_output=True, text=True, check=True,
-                                   stdin=subprocess.DEVNULL, timeout=OCCUPANCY_TIMEOUT)
-        observed = Occupancy.model_validate_json(completed.stdout.strip().splitlines()[-1])
+        observed = await _observe_occupancy(command, report)
     except Exception as error:
-        report.update(status="failed", error_type=type(error).__name__,
+        report.update(status="failed", error_type=type(error).__name__, error=bounded(error),
                       reason="The occupancy command did not return a read-only observation.")
+        log.warning("event=capacity_preflight status=failed error_type=%s exit_code=%s",
+                    report["error_type"], report.get("exit_code"))
         return report
     headroom = observed.quota - observed.retained
     report.update(
@@ -126,7 +154,38 @@ def native_capacity_preflight(settings, planned: int) -> dict:
     )
     if report["status"] == "failed":
         report["reason"] = "Insufficient native admission headroom for the planned cases."
+    log.info("event=capacity_preflight status=%s planned=%d required=%d headroom=%d",
+             report["status"], planned, report["required_headroom"], headroom)
     return report
+
+
+async def _observe_occupancy(command: list[str], report: dict) -> Occupancy:
+    """Run the operator command once (bounded, group-killed) and parse its last stdout line.
+
+    Records ``exit_code`` and a bounded ``stderr_tail`` in ``report``; raises on any outcome
+    that is not one strict read-only observation.
+    """
+    # The operator command inherits the environment it was configured in (its VM or cluster
+    # tooling may need it), minus the harness's own settings, which can carry credentials.
+    env = {key: value for key, value in os.environ.items() if not key.startswith("HARNESS_")}
+    result = await run_bounded(command, env=env, timeout=OCCUPANCY_TIMEOUT,
+                               capture_limit=OCCUPANCY_CAPTURE)
+    report["exit_code"] = result.exit_code
+    if result.stderr.strip():
+        report["stderr_tail"] = printable(result.stderr.strip())[-ERROR_CHARS:]
+    if result.timed_out:
+        raise TimeoutError(f"occupancy command exceeded {OCCUPANCY_TIMEOUT} s and was killed")
+    if result.exit_code != 0:
+        raise RuntimeError(f"occupancy command exited {result.exit_code}; expected 0")
+    lines = result.stdout.strip().splitlines()
+    if not lines:
+        raise ValueError("occupancy command printed no observation line")
+    try:
+        return Occupancy.model_validate_json(lines[-1])
+    except ValidationError as error:
+        problems = sorted({f"{'.'.join(map(str, item['loc'])) or '<root>'}: {item['type']}"
+                           for item in error.errors()})
+        raise ValueError("occupancy observation rejected: " + "; ".join(problems)) from None
 
 
 def release_policy() -> tuple[ReleasePolicy, str]:
@@ -367,7 +426,7 @@ async def evaluate_corpus(manifest: Path, output: Path, settings, *, names=(),
         "dataset_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
         "runtime_config_sha256": hashlib.sha256(settings.openshell_config.read_bytes()).hexdigest(),
         "limits": settings.limits.model_dump(),
-        "native_operation_budget": native_capacity_preflight(settings, len(cases)),
+        "native_operation_budget": await native_capacity_preflight(settings, len(cases)),
         "started_at": datetime.now(UTC).isoformat(),
         "status": "running",
         "gates": {

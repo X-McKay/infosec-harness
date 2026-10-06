@@ -701,34 +701,88 @@ def test_case_operation_ceiling_covers_the_largest_live_observation():
 
 
 @pytest.mark.parametrize(
-    "command",
+    ("command", "error_type", "detail"),
     [
-        occupancy_command(json.dumps({"retained": 1, "quota": 20000, "read_only": False})),
-        occupancy_command(json.dumps({"retained": 1, "quota": 20000})),
-        occupancy_command("not json"),
-        occupancy_command(json.dumps({"retained": 1, "quota": 20000, "read_only": True}), 1),
-        ["/nonexistent/occupancy-command"],
+        (occupancy_command(json.dumps({"retained": 1, "quota": 20000, "read_only": False})),
+         "ValueError", "read_only: value_error"),
+        (occupancy_command(json.dumps({"retained": 1, "quota": 20000})),
+         "ValueError", "read_only: missing"),
+        (occupancy_command("not json"), "ValueError", "json_invalid"),
+        (occupancy_command(json.dumps({"retained": 1, "quota": 20000, "read_only": True}), 1),
+         "RuntimeError", "exited 1"),
+        (["/nonexistent/occupancy-command"], "FileNotFoundError", "occupancy-command"),
+        # Strict: an integer is not a read-only claim and a string is not a count.
+        (occupancy_command(json.dumps({"retained": 1, "quota": 20000, "read_only": 1})),
+         "ValueError", "read_only: value_error"),
+        (occupancy_command(json.dumps({"retained": "5", "quota": 20000, "read_only": True})),
+         "ValueError", "retained: int_type"),
+        ([sys.executable, "-c", "pass"], "ValueError", "no observation line"),
     ],
 )
-def test_capacity_preflight_fails_closed_without_a_read_only_observation(monkeypatch, command):
+async def test_capacity_preflight_fails_closed_without_a_read_only_observation(
+    monkeypatch, command, error_type, detail
+):
     settings = get_settings()
     monkeypatch.setattr(settings, "native_occupancy_command", command)
-    report = cohort.native_capacity_preflight(settings, 36)
+    report = await cohort.native_capacity_preflight(settings, 36)
     assert report["status"] == "failed"
-    assert "retained" not in report and "error_type" in report
+    assert "retained" not in report
+    assert report["error_type"] == error_type
+    assert detail in report["error"] and len(report["error"]) <= cohort.ERROR_CHARS
 
 
-def test_capacity_preflight_is_unchecked_only_when_unconfigured(monkeypatch):
+async def test_capacity_preflight_records_exit_code_and_a_bounded_stderr_tail(monkeypatch):
+    settings = get_settings()
+    noisy = "import sys; sys.stderr.write('\\x1b[31m' + 'e' * 5000 + 'gateway down'); sys.exit(3)"
+    monkeypatch.setattr(settings, "native_occupancy_command", [sys.executable, "-c", noisy])
+    monkeypatch.setenv("HARNESS_TEMPORAL_API_KEY", "never-passed-on")
+    report = await cohort.native_capacity_preflight(settings, 1)
+    assert (report["status"], report["exit_code"]) == ("failed", 3)
+    assert report["stderr_tail"].endswith("gateway down")
+    assert len(report["stderr_tail"]) <= cohort.ERROR_CHARS
+    assert "\x1b" not in report["stderr_tail"]
+
+
+async def test_capacity_preflight_kills_the_whole_command_group_at_its_bound(monkeypatch):
+    import time
+
+    settings = get_settings()
+    # A grandchild keeps the pipes open; only a process-group kill ends the wait.
+    hang = [sys.executable, "-c",
+            "import subprocess, sys, time; subprocess.Popen([sys.executable, '-c', "
+            "'import time; time.sleep(60)']); time.sleep(60)"]
+    monkeypatch.setattr(settings, "native_occupancy_command", hang)
+    monkeypatch.setattr(cohort, "OCCUPANCY_TIMEOUT", 0.5)
+    began = time.monotonic()
+    report = await cohort.native_capacity_preflight(settings, 1)
+    assert time.monotonic() - began < 5
+    assert (report["status"], report["error_type"]) == ("failed", "TimeoutError")
+    assert report["exit_code"] is None
+
+
+async def test_capacity_preflight_passes_only_the_non_harness_environment(monkeypatch, tmp_path):
+    settings = get_settings()
+    probe = ("import json, os; print(json.dumps({'retained': 0, 'quota': 10 ** 6, "
+             "'read_only': True, 'observed_at_ms': len([k for k in os.environ "
+             "if k.startswith('HARNESS_')])}))")
+    monkeypatch.setattr(settings, "native_occupancy_command", [sys.executable, "-c", probe])
+    monkeypatch.setenv("HARNESS_TEMPORAL_API_KEY", "never-passed-on")
+    report = await cohort.native_capacity_preflight(settings, 1)
+    assert report["status"] == "passed" and report["observed_at_ms"] == 0
+
+
+async def test_capacity_preflight_is_unchecked_only_when_unconfigured(monkeypatch):
     settings = get_settings()
     monkeypatch.setattr(settings, "native_occupancy_command", [])
-    report = cohort.native_capacity_preflight(settings, 36)
+    report = await cohort.native_capacity_preflight(settings, 36)
     assert report["status"] == "not_checked"
     assert report["required_headroom"] == 36 * cohort.case_operation_ceiling(settings.limits)
     monkeypatch.setattr(settings, "native_occupancy_command", occupancy_command(
         json.dumps({"retained": 8344, "quota": 20000, "read_only": True, "observed_at_ms": 5})))
-    report = cohort.native_capacity_preflight(settings, 36)
+    report = await cohort.native_capacity_preflight(settings, 36)
     assert report["status"] == "passed"
     assert (report["retained"], report["quota"], report["headroom"]) == (8344, 20000, 11656)
+    assert report["exit_code"] == 0
 
 
 async def test_saturated_ledger_refuses_the_cohort_before_any_dispatch(tmp_path, monkeypatch):
