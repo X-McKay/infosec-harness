@@ -9,7 +9,7 @@ from uuid import uuid4
 from infosec_harness._io import write_json
 from infosec_harness.config import get_settings
 from infosec_harness.sandbox import OpenShell, OpenShellConfig
-from infosec_harness.sandbox.process import _finish
+from infosec_harness.sandbox.process import finish
 
 
 async def qualify_runtime(output: Path) -> dict:
@@ -95,7 +95,7 @@ async def qualify_runtime(output: Path) -> dict:
         report.update(status="failed", error_type=type(exc).__name__)
     finally:
         try:
-            await _finish(asyncio.ensure_future(runtime.close_run(run_id)))
+            await finish(asyncio.ensure_future(runtime.close_run(run_id)))
             report["cleanup"] = "passed"
         except Exception as exc:
             report.update(status="failed", cleanup="failed", cleanup_error_type=type(exc).__name__)

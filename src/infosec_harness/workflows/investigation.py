@@ -29,7 +29,7 @@ with workflow.unsafe.imports_passed_through():
         definitive_support,
     )
     from infosec_harness.sandbox import OpenShell
-    from infosec_harness.sandbox.process import _finish
+    from infosec_harness.sandbox.process import finish
     from infosec_harness.tools.execute import unwrap_output
 
     from .snapshot import validate_citation
@@ -80,7 +80,7 @@ class InvestigationActivities:
         except BaseException:
             # This worker knows which runtime received the create, even when no
             # Prepared result reaches the workflow. Close that ownership locally.
-            await _finish(asyncio.ensure_future(self.openshell.close_run(run_id)))
+            await finish(asyncio.ensure_future(self.openshell.close_run(run_id)))
             raise
         return PreparedInvestigation(
             deps=InvestigationDeps(
@@ -323,7 +323,7 @@ class InvestigationWorkflow(PydanticAIWorkflow):
             self._state.phase = "cleaning_up"
             try:
                 # A cancelled caller still waits for owned sandbox cleanup to settle.
-                await _finish(
+                await finish(
                     asyncio.ensure_future(
                         workflow.execute_activity(
                             "cleanup_investigation",

@@ -23,7 +23,7 @@ from infosec_harness._io import write_json
 from infosec_harness.api import PREFIX, RPC_TIMEOUT, connect, execution_timeout, start_investigation
 from infosec_harness.contracts import Finding, InvestigationResult, Limits
 from infosec_harness.sandbox import OpenShell, OpenShellConfig, native_operation_accounting
-from infosec_harness.sandbox.process import _finish
+from infosec_harness.sandbox.process import finish
 from infosec_harness.workflows.worker import worker_identity
 
 # The harness checkout: src/infosec_harness/evals/ is three levels below it.
@@ -371,7 +371,7 @@ async def evaluate_corpus(manifest: Path, output: Path, settings, *, names=(),
                 if not (terminal or isinstance(exc, WorkflowFailureError)):
                     # Reconcile the one owned ID; never resend an uncertain start or inference.
                     try:
-                        await _finish(asyncio.ensure_future(
+                        await finish(asyncio.ensure_future(
                             cancel_owned(client, run_id, DRAIN if owned_worker else None)))
                         record["cancellation"] = "terminal" if owned_worker else "requested"
                     except Exception as cancellation_error:
