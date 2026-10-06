@@ -64,6 +64,7 @@ from infosec_harness.contracts import (
     RunSummary,
     VerdictLabel,
 )
+from infosec_harness.workflows.investigation import CLEANUP_RESERVE
 
 log = logging.getLogger(__name__)
 
@@ -86,8 +87,9 @@ RUN_STATUSES: tuple[RunStatus, ...] = get_args(RunStatus)
 
 
 def execution_timeout(limits: Limits) -> timedelta:
-    # Starts at submission, including time queued without a worker. Reserve cleanup time.
-    return timedelta(seconds=limits.timeout_seconds + 600)
+    # Starts at submission, including time queued without a worker. Reserve the time owned
+    # cleanup can need after the investigation deadline, or the server ends the run first.
+    return timedelta(seconds=limits.timeout_seconds) + CLEANUP_RESERVE
 
 
 class ConnectionOptions(TypedDict, total=False):

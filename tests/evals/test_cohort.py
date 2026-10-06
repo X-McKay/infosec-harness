@@ -421,8 +421,6 @@ def test_drain_is_the_workflow_cleanup_reserve():
     assert cohort.DRAIN == CLEANUP_RESERVE
 
 
-@pytest.mark.xfail(strict=True, reason="api.execution_timeout still reserves 600 s; the "
-                   "toplevel owner derives it from CLEANUP_RESERVE (remove this mark then)")
 def test_execution_timeout_reserves_owned_cleanup():
     from datetime import timedelta
 

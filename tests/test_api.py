@@ -17,6 +17,7 @@ from temporalio.service import RPCError, RPCStatusCode
 from infosec_harness import api
 from infosec_harness.config import Settings
 from infosec_harness.contracts import Finding, InvestigationResult, Verdict
+from infosec_harness.workflows.investigation import CLEANUP_RESERVE
 
 
 @pytest.fixture
@@ -44,7 +45,9 @@ async def test_submit_records_native_workflow_and_server_limits(client):
     assert kwargs["task_queue"] == "investigate-v11"
     assert kwargs["id"] == response.json()["id"]
     assert args[1].limits.max_requests == 30
-    assert kwargs["execution_timeout"] == timedelta(seconds=args[1].limits.timeout_seconds + 600)
+    assert kwargs["execution_timeout"] == (
+        timedelta(seconds=args[1].limits.timeout_seconds) + CLEANUP_RESERVE
+    )
     invalid = await request(
         "POST",
         "/api/runs",
