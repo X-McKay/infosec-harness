@@ -386,6 +386,35 @@ def test_keep_going_continues_only_after_terminal_agent_level_failure():
     assert not cohort.agent_level(deep)
 
 
+def test_keep_going_classifies_from_the_untruncated_chain_with_an_allowlist():
+    # The shape the workflow writes: ActivityError around the named type, all links embedded.
+    assert cohort.agent_level(workflow_failure(
+        ("ModelExecutorError", "ActivityError: Activity task failed <- ModelExecutorError: "
+         "OpenShell model executor returned no complete response (exit 1)")))
+    # Regression: the report view cuts each message at 500 characters; a marker past the cut
+    # was invisible to the classifier and --keep-going continued after unknown dispatch.
+    hidden = ("UnexpectedModelBehavior: " + "x" * 400 + " <- ModelRetry: " + "y" * 400
+              + " <- ExecutionUnknown: native execution outcome unknown; sandbox closed")
+    assert len(hidden) > 800 and "ExecutionUnknown" not in hidden[:500]
+    past_cut = workflow_failure(("UnexpectedModelBehavior", hidden))
+    assert "ExecutionUnknown" not in str(cohort.failure_chain(past_cut))
+    # Regression: a substring denylist let inner types it did not name through.
+    for stop in (
+        past_cut,
+        workflow_failure(("UnexpectedModelBehavior",
+                          "UnexpectedModelBehavior: x <- TimeoutError: rpc deadline")),
+        workflow_failure(("ModelExecutorError", "ModelExecutorError: x <- RpcError: unavailable")),
+        workflow_failure(("UsageLimitExceeded",
+                          "UsageLimitExceeded: x <- UnsafeSnapshotMetadata: y")),
+        workflow_failure(("UsageLimitExceeded", "budget"), ("TimeoutError", "rpc deadline")),
+        # A separator not followed by a label fails closed.
+        workflow_failure(("UnexpectedModelBehavior", "UnexpectedModelBehavior: x <- y")),
+        # The workflow embeds at most eight links; a full message may have lost deeper ones.
+        workflow_failure(("UsageLimitExceeded", " <- ".join(["ModelRetry: x"] * 8))),
+    ):
+        assert not cohort.agent_level(stop), stop
+
+
 @pytest.mark.parametrize("keep_going", [False, True])
 async def test_keep_going_never_reruns_and_cannot_pass_incomplete_cohort(
     tmp_path, monkeypatch, fixture_worker_identity, keep_going

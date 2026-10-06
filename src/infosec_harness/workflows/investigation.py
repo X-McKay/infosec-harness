@@ -34,6 +34,13 @@ with workflow.unsafe.imports_passed_through():
 
     from .snapshot import validate_citation
 
+# The terminal failure message embeds at most this many cause links, each message cut to
+# FAILURE_LINK_CHARS. Clients classify failures from it, so these values are a v11 contract.
+FAILURE_CHAIN_LINKS = 8
+FAILURE_LINK_CHARS = 400
+# Temporal wrapper types; the outermost other type names a terminal failure.
+FAILURE_WRAPPERS = frozenset({"ActivityError", "ChildWorkflowError", "WorkflowFailureError"})
+
 
 class PreparedInvestigation(BaseModel):
     # Default extra='ignore' keeps decoding v11 payloads that duplicated
@@ -303,7 +310,7 @@ class InvestigationWorkflow(PydanticAIWorkflow):
             # outcomes by the outermost meaningful type (e.g. a terminal executor exit vs
             # unknown dispatch) and by the chain embedded in the message.
             chain = [error]
-            while len(chain) < 8 and (
+            while len(chain) < FAILURE_CHAIN_LINKS and (
                 nxt := getattr(chain[-1], "cause", None) or chain[-1].__cause__
             ):
                 chain.append(nxt)
@@ -313,9 +320,10 @@ class InvestigationWorkflow(PydanticAIWorkflow):
 
             # The outermost non-wrapper type names the failure (UnexpectedModelBehavior, not
             # the ModelRetry it wraps; ModelExecutorError, not the ActivityError around it).
-            wrappers = {"ActivityError", "ChildWorkflowError", "WorkflowFailureError"}
-            named = next((item for item in chain if label(item) not in wrappers), error)
-            message = " <- ".join(f"{label(item)}: {str(item)[:400]}" for item in chain)
+            named = next((item for item in chain if label(item) not in FAILURE_WRAPPERS), error)
+            message = " <- ".join(
+                f"{label(item)}: {str(item)[:FAILURE_LINK_CHARS]}" for item in chain
+            )
             caught = ApplicationError(message, type=label(named), non_retryable=True)
             self._state.status = "failed"
             self._state.error = message

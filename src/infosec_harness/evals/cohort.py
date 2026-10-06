@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 from contextlib import AsyncExitStack, suppress
@@ -31,6 +32,7 @@ from infosec_harness.api import (
 from infosec_harness.contracts import Finding, InvestigationResult, Limits
 from infosec_harness.sandbox import OpenShell, OpenShellConfig, native_operation_accounting
 from infosec_harness.sandbox.process import finish
+from infosec_harness.workflows.investigation import FAILURE_CHAIN_LINKS, FAILURE_WRAPPERS
 from infosec_harness.workflows.worker import worker_identity, workflow_runner
 
 # The harness checkout: src/infosec_harness/evals/ is three levels below it.
@@ -40,9 +42,18 @@ DRAIN = timedelta(minutes=30)
 # Terminal agent-level failures that --keep-going may continue past: budgets and invalid model
 # output (raised by workflow code), and ModelExecutorError, an executor that exited without a
 # response under a complete receipt (e.g. a sandbox DNS/connect failure, or a kill at the
-# budget). Unknown dispatch (OpenShellError/ExecutionUnknown) is never in this set, and
-# `agent_level` also scans the embedded chain text for those markers and for cleanup.
+# budget). Unknown dispatch (OpenShellError/ExecutionUnknown) is never in this set.
 AGENT_FAILURES = frozenset({"UsageLimitExceeded", "UnexpectedModelBehavior", "ModelExecutorError"})
+# Every link inside an agent-level failure must be one of these: the agent-level types, the
+# ModelRetry an exhausted output correction wraps, and Temporal's wrappers. An allowlist, so
+# an unknown inner type (a timeout, an RPC error, any OpenShellError subclass) stops a cohort.
+AGENT_CHAIN = AGENT_FAILURES | FAILURE_WRAPPERS | {"ModelRetry"}
+# Second check over the whole untruncated chain text; never a reason to continue.
+STOP_MARKERS = ("cleanup", "executionunknown", "openshellerror")
+# Client-side cause links examined; a deeper chain is not classified as agent-level.
+CLASSIFIED_LINKS = 10
+# One "<Label>: " segment of the workflow's " <- "-joined failure message.
+_SEGMENT_LABEL = re.compile(r"([A-Za-z_][A-Za-z0-9_.]*): ")
 # Native mutation admissions one case may retain beyond one exec per model request and per
 # tool call: sandbox creates, admission execs, captures and snapshot delivery parts (900 kB
 # each). Live run 8 retained at most 96 admissions per case under 40 requests / 100 calls.
@@ -179,27 +190,66 @@ async def cancel_owned(client, run_id: str, drain: timedelta | None = None) -> N
                 await handle.result()
 
 
-def failure_chain(error: BaseException | None, limit: int = 5) -> list[dict]:
+def failure_label(error: BaseException) -> str:
+    kind = error.type if isinstance(error, ApplicationError) else None
+    return kind or type(error).__name__
+
+
+def cause_links(error: BaseException | None, limit: int) -> tuple[list[BaseException], bool]:
+    """The first ``limit`` links of a cause chain, and whether more links remain."""
     chain = []
     while error is not None and len(chain) < limit:
-        kind = error.type if isinstance(error, ApplicationError) else None
-        chain.append({"type": kind or type(error).__name__, "message": str(error)[:500]})
+        chain.append(error)
         error = getattr(error, "cause", None) or error.__cause__
-    return chain
+    return chain, error is not None
+
+
+def failure_chain(error: BaseException | None, limit: int = 5) -> list[dict]:
+    """A bounded view of a cause chain for reports; never used to classify a failure."""
+    return [{"type": failure_label(link), "message": str(link)[:500]}
+            for link in cause_links(error, limit)[0]]
+
+
+def _embedded_labels_allowed(message: str) -> bool:
+    """Every link label the workflow embedded in ``message`` is in AGENT_CHAIN.
+
+    The workflow writes ``Label: text`` links joined by `` <- ``. A first segment without a
+    label is a plain message. Every later segment must carry an allowed label: text that only
+    looks like a separator fails closed, and a message with the workflow's full link count
+    may have lost deeper links, so it fails closed too.
+    """
+    segments = message.split(" <- ")
+    if len(segments) >= FAILURE_CHAIN_LINKS:
+        return False
+    for position, segment in enumerate(segments):
+        label = _SEGMENT_LABEL.match(segment)
+        if label is None:
+            if position:
+                return False
+        elif label[1] not in AGENT_CHAIN:
+            return False
+    return True
 
 
 def agent_level(error: BaseException) -> bool:
-    """A terminal workflow failure whose whole cause chain is agent/model-level."""
-    chain = failure_chain(error, limit=10)
-    # The workflow embeds every wrapped type in its message, so a native or unknown-dispatch
-    # link anywhere in the original chain still stops the cohort.
-    text = " ".join(link["message"] for link in chain).lower()
-    return (
-        isinstance(error, WorkflowFailureError)
-        and 1 < len(chain) < 10
-        and all(link["type"] in AGENT_FAILURES for link in chain[1:])
-        and not any(marker in text for marker in ("cleanup", "executionunknown", "openshellerror"))
-    )
+    """A terminal workflow failure whose whole, untruncated cause chain is agent/model-level.
+
+    Classified from the raw exceptions, never from the bounded ``failure_chain`` report view:
+    the outermost typed cause must be an AGENT_FAILURES type, every further typed link and
+    every link label the workflow embedded in a message must be in AGENT_CHAIN, and no stop
+    marker may appear anywhere in the chain text.
+    """
+    if not isinstance(error, WorkflowFailureError):
+        return False
+    chain, deeper = cause_links(error, CLASSIFIED_LINKS)
+    if deeper or len(chain) < 2 or failure_label(chain[1]) not in AGENT_FAILURES:
+        return False
+    if any(failure_label(link) not in AGENT_CHAIN for link in chain[2:]):
+        return False
+    if not all(_embedded_labels_allowed(str(link)) for link in chain[1:]):
+        return False
+    text = " ".join(str(link) for link in chain).lower()
+    return not any(marker in text for marker in STOP_MARKERS)
 
 
 def receipt_summary(config_path: Path, run_id: str) -> dict:
