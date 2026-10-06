@@ -18,8 +18,8 @@ SKILL_FILES = sorted(SKILLS.glob("*/SKILL.md"))
 SKILL_NAMES = frozenset(path.parent.name for path in SKILL_FILES)
 
 # The largest skill before the language-coverage work was 4,854 bytes (probe); the largest
-# new one is 5,240 bytes (triage-unknown-cwe). 7 KiB is the smallest round ceiling that
-# leaves headroom over both (about 34% over the largest).
+# new one is 5,279 bytes (lang-rust). 7 KiB is the smallest round ceiling that leaves
+# headroom over both (about 36% over the largest).
 MAX_SKILL_BYTES = 7 * 1024
 MAX_DESCRIPTION_CHARS = 400
 # The deferred-capability catalog the model sees before loading any skill: one
