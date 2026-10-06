@@ -10,9 +10,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import io
-import json
 import tarfile
-from dataclasses import asdict
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -26,8 +24,12 @@ from .execution import (
     Sandbox,
     SourceChanged,
     SourceRejected,
+    TransferRecord,
     _digest,
+    _load,
+    _records,
     _request_id,
+    _sandbox_record,
 )
 
 # The pinned gateway decodes at most 1 MiB per gRPC message; archives travel in parts.
@@ -129,14 +131,14 @@ class Transfer:
         archive = record.with_suffix(".tar")
         async with self._locks.setdefault(key, asyncio.Lock()):
             if record.exists():
-                saved = json.loads(record.read_bytes())
+                saved: TransferRecord = _load(record)
                 if "sha256" not in saved:
                     raise ExecutionUnknown("source snapshot has an unknown prior outcome")
                 raw = archive.read_bytes()
                 if len(raw) != saved["size"] or hashlib.sha256(raw).hexdigest() != saved["sha256"]:
                     raise OpenShellError("persisted source snapshot integrity failed")
             else:
-                intent = {"source": asdict(source), "operation_id": operation_id}
+                intent: TransferRecord = {"source": _sandbox_record(source), "operation_id": operation_id}
                 if cover_operations:
                     intent["covered_operations"] = self._completed_operations(source)
                 self._save(record, intent, exclusive=True)
@@ -207,9 +209,10 @@ class Transfer:
         if result.exit_code:
             raise OpenShellError("offline probe source restore failed")
         archive_digest = hashlib.sha256(raw).hexdigest()
-        self._save(record, {"source": asdict(source), "probe": asdict(probe),
+        restored: TransferRecord = {"source": _sandbox_record(source), "probe": _sandbox_record(probe),
             "operation_id": operation_id, "sha256": archive_digest, "size": len(raw),
-            "expected_source_digest": original_digest, "restored": True})
+            "expected_source_digest": original_digest, "restored": True}
+        self._save(record, restored)
         return archive_digest
 
     async def verify_source(self, probe: Sandbox, expected_source: Path, *, operation_id: str) -> None:
@@ -217,7 +220,7 @@ class Transfer:
             raise OpenShellError("post-execution integrity checks require an offline probe")
         raw, record, original_digest = await self._snapshot(probe, operation_id=operation_id,
             expected_source=expected_source, cover_operations=True)
-        saved = json.loads(record.read_bytes())
+        saved: TransferRecord = _load(record)
         if saved.get("source_verified"):
             return
         # Only operations completed before the capture began. A capture saved without that
@@ -228,9 +231,5 @@ class Transfer:
 
     def _completed_operations(self, sandbox: Sandbox) -> list[str]:
         """Operation ids with a completed receipt on this exact native sandbox."""
-        operations = []
-        for path in (self.config.state_dir / "operations").glob("*.json"):
-            saved = json.loads(path.read_bytes())
-            if saved["sandbox"]["id"] == sandbox.id and "result" in saved:
-                operations.append(saved["operation_id"])
-        return sorted(operations)
+        return sorted(saved["operation_id"] for saved in _records(self.config.state_dir, "operations")
+                      if saved["sandbox"]["id"] == sandbox.id and "result" in saved)

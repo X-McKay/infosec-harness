@@ -1326,3 +1326,38 @@ async def test_message_wording_does_not_decide_a_source_change(adapter, tmp_path
     with pytest.raises(SourceRejected, match="unsafe file types") as caught:
         await boundary.copy_workspace(source, probe, operation_id="copy", expected_source=original)
     assert not isinstance(caught.value, SourceChanged)
+
+
+async def test_receipts_read_records_saved_by_an_earlier_v11_worker(adapter):
+    """In-flight v11 runs keep records written before the record types existed: an exec
+    receipt, a probe restore, and an integrity check without a covered-operation set."""
+    boundary, _ = adapter
+    state = boundary.config.state_dir
+    probe = {"id": "native-probe", "run_id": "run", "name": "ih-probe", "profile": "probe",
+             "slot": "probe:1:call"}
+    workspace = {**probe, "id": "native-workspace", "name": "ih-workspace", "profile": "workspace",
+                 "slot": ""}
+    records = {
+        "operations/a.json": {"command": ["/bin/sh", "-c", "run-tests"], "operation_id": "probe:1:call",
+            "request_digest": "d" * 64, "sandbox": probe,
+            "result": {"exit_code": 0, "output_truncated": False, "stderr": "", "stdout": "ok\n"}},
+        "operations/b.json": {"command": ["true"], "operation_id": "execute:2:call",
+            "request_digest": "e" * 64, "sandbox": {**probe, "run_id": "other"},
+            "result": {"exit_code": 0, "output_truncated": False, "stderr": "", "stdout": ""}},
+        "operations/c.json": {"command": ["true"], "operation_id": "probe:3:call",
+            "request_digest": "f" * 64, "sandbox": probe},
+        "transfers/restore.json": {"expected_source_digest": "o" * 64, "operation_id": "copy:1:call",
+            "probe": probe, "restored": True, "sha256": "a" * 64, "size": 10240,
+            "source": workspace},
+        "transfers/verify.json": {"expected_source_digest": "o" * 64, "operation_id": "verify:1:call",
+            "sha256": "b" * 64, "size": 10240, "source": probe, "source_verified": True,
+            "verified_operations": ["probe:1:call"]},
+    }
+    for name, value in records.items():
+        (state / name).parent.mkdir(exist_ok=True)
+        (state / name).write_text(json.dumps(value, sort_keys=True))
+    [receipt] = boundary.receipts("run")
+    assert receipt.sandbox.id == "native-probe" and receipt.sandbox.slot == "probe:1:call"
+    assert receipt.command == ["/bin/sh", "-c", "run-tests"] and receipt.request_digest == "d" * 64
+    assert receipt.result.stdout == "ok\n" and receipt.result.exit_code == 0
+    assert receipt.workspace_digest == "a" * 64 and receipt.source_verified

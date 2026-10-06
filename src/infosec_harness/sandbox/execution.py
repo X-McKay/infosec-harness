@@ -14,9 +14,10 @@ import asyncio
 import hashlib
 import json
 import uuid
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import asdict, dataclass
-from typing import Any, Literal
+from pathlib import Path
+from typing import Any, Literal, NotRequired, TypedDict
 
 ProfileName = Literal["workspace", "probe", "model"]
 _PYTHON = "/usr/local/bin/python"
@@ -72,8 +73,82 @@ class ExecutionReceipt:
     source_verified: bool = False
 
 
+# Durable records under ``state_dir``: plain JSON (sorted keys) written by ``_save``. These
+# types describe the bytes; they never change them. Every key a reader may meet in a record
+# from an earlier v11 worker is listed, and later additions are ``NotRequired``.
+
+
+class SandboxRecord(TypedDict):
+    """``asdict(Sandbox)``."""
+
+    id: str
+    run_id: str
+    name: str
+    profile: ProfileName
+    slot: NotRequired[str]
+
+
+class ResultRecord(TypedDict):
+    """``asdict(CommandResult)``."""
+
+    exit_code: int
+    stdout: str
+    stderr: str
+    output_truncated: bool
+
+
+class OperationRecord(TypedDict):
+    """``operations/``: one exec intent, saved before dispatch; ``result`` once completed."""
+
+    sandbox: SandboxRecord
+    operation_id: str
+    request_digest: str
+    command: list[str]
+    result: NotRequired[ResultRecord]
+
+
+class TransferRecord(TypedDict):
+    """``transfers/``: one source capture, then its probe restore or its verification."""
+
+    source: SandboxRecord
+    operation_id: str
+    covered_operations: NotRequired[list[str]]  # Saved before capture (integrity checks).
+    sha256: NotRequired[str]  # Present once the capture completed.
+    size: NotRequired[int]
+    probe: NotRequired[SandboxRecord]  # Restore: the probe that received the capture.
+    restored: NotRequired[bool]
+    expected_source_digest: NotRequired[str]
+    source_verified: NotRequired[bool]  # Verification: these operations are covered.
+    verified_operations: NotRequired[list[str]]
+
+
+class OwnershipRecord(TypedDict):
+    """``sandboxes/``: the owned sandbox (empty ``id`` while a create is pending)."""
+
+    sandbox: SandboxRecord
+    closed: bool
+
+
+def _load(path: Path) -> Any:
+    return json.loads(path.read_bytes())
+
+
+def _records(state_dir: Path, folder: str) -> Iterator[Any]:
+    """Every record in one ``state_dir`` folder, in a stable order."""
+    for path in sorted((state_dir / folder).glob("*.json")):
+        yield _load(path)
+
+
 def _digest(value: Any) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _sandbox_record(sandbox: Sandbox) -> SandboxRecord:
+    return SandboxRecord(**asdict(sandbox))
+
+
+def _result_record(result: CommandResult) -> ResultRecord:
+    return ResultRecord(**asdict(result))
 
 
 def _request_id(key: str) -> str:
@@ -155,11 +230,11 @@ class Execution:
                                   hashlib.sha256(stdin or b"").hexdigest()])
         key = _digest([sandbox.run_id, operation_id])
         path = self._record("operations", key)
-        receipt = {"sandbox": asdict(sandbox), "operation_id": operation_id,
-                   "request_digest": request_digest, "command": args}
+        receipt: OperationRecord = {"sandbox": _sandbox_record(sandbox), "operation_id": operation_id,
+                                    "request_digest": request_digest, "command": args}
 
         def replay() -> CommandResult:
-            saved = json.loads(path.read_bytes())
+            saved: OperationRecord = _load(path)
             if saved.get("request_digest") != request_digest:
                 raise OpenShellError("operation_id was reused with a different request")
             if "result" not in saved:
@@ -185,25 +260,28 @@ class Execution:
                 unknown = ExecutionUnknown("native execution outcome unknown; sandbox closed")
                 await self._close_owned(sandbox, unknown)
                 raise unknown from exc
-            self._save(path, {**receipt, "result": asdict(result)})
+            self._save(path, {**receipt, "result": _result_record(result)})
             return result
 
     def receipts(self, run_id: str) -> list[ExecutionReceipt]:
+        """Completed exec receipts of one run, with the restored workspace digest and whether
+        a later integrity check covered each operation."""
+        snapshots: dict[str, str] = {}
+        verified: set[tuple[str, str]] = set()
+        transfer: TransferRecord
+        for transfer in _records(self.config.state_dir, "transfers"):
+            if transfer.get("restored") and transfer.get("expected_source_digest"):
+                snapshots[transfer["probe"]["id"]] = transfer["sha256"]
+            if transfer.get("source_verified"):
+                verified.update((transfer["source"]["id"], operation)
+                                for operation in transfer["verified_operations"])
         values = []
-        snapshots = {}
-        verified = set()
-        for path in (self.config.state_dir / "transfers").glob("*.json"):
-            saved = json.loads(path.read_bytes())
-            if saved.get("restored") and saved.get("expected_source_digest"):
-                snapshots[saved["probe"]["id"]] = saved["sha256"]
-            if saved.get("source_verified"):
-                verified.update((saved["source"]["id"], operation)
-                                for operation in saved["verified_operations"])
-        for path in (self.config.state_dir / "operations").glob("*.json"):
-            saved = json.loads(path.read_bytes())
-            if saved["sandbox"]["run_id"] == run_id and "result" in saved:
-                values.append(ExecutionReceipt(Sandbox(**saved["sandbox"]), saved["operation_id"],
-                    saved["request_digest"], saved["command"], CommandResult(**saved["result"]),
-                    snapshots.get(saved["sandbox"]["id"]),
-                    (saved["sandbox"]["id"], saved["operation_id"]) in verified))
+        operation: OperationRecord
+        for operation in _records(self.config.state_dir, "operations"):
+            sandbox, result = operation["sandbox"], operation.get("result")
+            if sandbox["run_id"] != run_id or result is None:
+                continue
+            values.append(ExecutionReceipt(Sandbox(**sandbox), operation["operation_id"],
+                operation["request_digest"], operation["command"], CommandResult(**result),
+                snapshots.get(sandbox["id"]), (sandbox["id"], operation["operation_id"]) in verified))
         return values

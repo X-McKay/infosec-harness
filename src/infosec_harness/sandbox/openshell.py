@@ -31,10 +31,14 @@ from .execution import (
     Execution,
     ExecutionUnknown,
     OpenShellError,
+    OwnershipRecord,
     ProfileName,
     Sandbox,
     _digest,
+    _load,
+    _records,
     _request_id,
+    _sandbox_record,
     _status,
 )
 from .process import finish, run_bounded
@@ -59,8 +63,7 @@ def native_operation_accounting(state_dir: Path, run_id: str) -> dict:
     for folder, category in (("sandboxes", "create"), ("qualification", "admission_exec"),
                              ("operations", "exec"), ("transfers", "workspace_capture")):
         completed = unknown = 0
-        for path in (state_dir / folder).glob("*.json"):
-            saved = json.loads(path.read_bytes())
+        for saved in _records(state_dir, folder):
             sandbox = saved.get("sandbox", saved.get("source", saved.get("binding", {}).get("sandbox", {})))
             if sandbox.get("run_id") != run_id:
                 continue
@@ -217,6 +220,10 @@ def _proof_checks(proof: Any, profile: Profile) -> dict[str, bool]:
         except (ValueError, TypeError, AttributeError, ZeroDivisionError):
             checks[key] = False
     return checks
+
+
+def _ownership(sandbox: Sandbox, *, closed: bool = False) -> OwnershipRecord:
+    return {"sandbox": _sandbox_record(sandbox), "closed": closed}
 
 
 def _directory(path: Path) -> None:
@@ -434,12 +441,12 @@ class OpenShell(Execution, Transfer):
                 spec = self._spec(profile)
             except BaseException as error:
                 if not initial:
-                    saved = json.loads(path.read_bytes())
+                    saved: OwnershipRecord = _load(path)
                     if not saved.get("closed"):
                         await self._close_owned(Sandbox(**saved["sandbox"]), error)
                 raise
             if path.exists():
-                saved = json.loads(path.read_bytes())
+                saved = _load(path)
                 if saved.get("closed"):
                     raise OpenShellError("closed investigation cannot acquire a new sandbox")
                 sandbox = Sandbox(**saved["sandbox"])
@@ -450,10 +457,10 @@ class OpenShell(Execution, Transfer):
                     if dict(current.metadata.labels) != labels or not current.metadata.id:
                         raise OpenShellError("pending create cannot be reconciled")
                     sandbox = Sandbox(current.metadata.id, run_id, name, profile, slot)
-                    self._save(path, {"sandbox": asdict(sandbox), "closed": False})
+                    self._save(path, _ownership(sandbox))
             else:
                 sandbox = Sandbox("", run_id, name, profile, slot)
-                self._save(path, {"sandbox": asdict(sandbox), "closed": False}, exclusive=True)
+                self._save(path, _ownership(sandbox), exclusive=True)
 
                 async def provision() -> Sandbox:
                     response = await self._rpc("sandbox create", self._stub.CreateSandbox,
@@ -463,7 +470,7 @@ class OpenShell(Execution, Transfer):
                     owned = Sandbox(response.sandbox.metadata.id, run_id, name, profile, slot)
                     if not owned.id or dict(response.sandbox.metadata.labels) != labels:
                         raise OpenShellError("native create returned an invalid identity")
-                    self._save(path, {"sandbox": asdict(owned), "closed": False})
+                    self._save(path, _ownership(owned))
                     if self._fenced(run_id):
                         await self.close(owned)
                         raise OpenShellError("investigation closed during native create")
@@ -480,7 +487,7 @@ class OpenShell(Execution, Transfer):
                         await finish(task)
                     except Exception as error:
                         cancelled.add_note(f"cancelled native create failed: {type(error).__name__}")
-                    await self._close_owned(Sandbox(**json.loads(path.read_bytes())["sandbox"]),
+                    await self._close_owned(Sandbox(**_load(path)["sandbox"]),
                                             cancelled)
                     raise
             try:
@@ -555,7 +562,7 @@ class OpenShell(Execution, Transfer):
         if not initial:
             if not path.exists():
                 raise OpenShellError("sandbox qualification proof is missing")
-            saved = json.loads(path.read_bytes())
+            saved = _load(path)
             if saved.get("binding") != binding or not saved.get("workload"):
                 changed = _changed_paths(saved.get("binding"), binding)
                 raise OpenShellError("sandbox qualification binding changed or is incomplete: "
@@ -660,7 +667,7 @@ class OpenShell(Execution, Transfer):
     def _owned(self, sandbox: Sandbox) -> None:
         key = self._key(sandbox)
         path = self._record("sandboxes", key)
-        if not path.exists() or json.loads(path.read_bytes()) != {"sandbox": asdict(sandbox), "closed": False}:
+        if not path.exists() or _load(path) != _ownership(sandbox):
             raise OpenShellError("sandbox is not owned by this active investigation")
         if self._fenced(sandbox.run_id):
             raise OpenShellError("investigation has been closed")
@@ -758,7 +765,7 @@ class OpenShell(Execution, Transfer):
         path = self._record("sandboxes", key)
         if not path.exists():
             raise OpenShellError("cannot delete an unowned sandbox")
-        saved = json.loads(path.read_bytes())
+        saved: OwnershipRecord = _load(path)
         if saved["sandbox"] != asdict(sandbox):
             raise OpenShellError("sandbox deletion ownership mismatch")
         if saved.get("closed"):
@@ -774,7 +781,7 @@ class OpenShell(Execution, Transfer):
                     raise OpenShellError("pending creation ownership mismatch")
                 sandbox = Sandbox(current.metadata.id, sandbox.run_id, sandbox.name,
                                   sandbox.profile, sandbox.slot)
-                self._save(path, {"sandbox": asdict(sandbox), "closed": False})
+                self._save(path, _ownership(sandbox))
             if current.metadata.id != sandbox.id:
                 raise OpenShellError("sandbox name now belongs to another native id")
             await self._rpc("sandbox delete", self._client.delete, sandbox.name,
@@ -784,15 +791,15 @@ class OpenShell(Execution, Transfer):
         if not sandbox.id:
             raise ExecutionUnknown("pending native create cannot yet be confirmed absent")
         await self._inspect(sandbox, deleted=True)
-        self._save(path, {"sandbox": asdict(sandbox), "closed": True})
+        self._save(path, _ownership(sandbox, closed=True))
 
     async def close_run(self, run_id: str) -> None:
         self._save(self._record("closed-runs", run_id), {"run_id": run_id})
         # Persist the fence first; a create racing the scan observes it and
         # cleans up its own exact native ID before it can return a handle.
         failures = []
-        for path in (self.config.state_dir / "sandboxes").glob("*.json"):
-            saved = json.loads(path.read_bytes())
+        saved: OwnershipRecord
+        for saved in _records(self.config.state_dir, "sandboxes"):
             if saved["sandbox"]["run_id"] == run_id and not saved["closed"]:
                 try:
                     await self.close(Sandbox(**saved["sandbox"]))
