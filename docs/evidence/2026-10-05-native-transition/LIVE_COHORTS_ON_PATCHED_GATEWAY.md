@@ -28,12 +28,18 @@ was never modified.
 | 5 | `9b27b60` | 300k, 30, 120 | 26 / 25 | 7 | 3 | 0 | Slow `npm install` hit the gateway's ambiguous exit 124; six token-budget failures |
 | 6 | `4edf1c6` | 600k, 40, 120 | 25 / 25 | 2 | 9 | 0 | Exit 124 again: a killed child kept the exec pipes open |
 | 7 | `67ab5bc` | 600k, 40, 300 | 19 / 18 | 5 | 12 | 0 | Four provider `Request timed out` failures (5 s connect default) during an endpoint slowdown; then the operator edited source during the run and the identity guard refused, as designed |
+| 8 | `f7a751e` | 600k, 40, 300 | 30 / 30 | 6 | 0 | 0 | First run to attempt every case. Four external 502 `upstream_unreachable` from the inference backend; two token-budget exhaustions (`java-sqli-fixed` never applied the Maven recipe; `perl-sqli-vulnerable` printed observation values as 1/0, which the parser rejects) |
 
-Totals: 116 completed investigations, 112 correct, 0 unsafe negatives. Every completed
+Totals: 146 completed investigations, 142 correct, 0 unsafe negatives. Every completed
 `likely_not_exploitable` case was correct except `testonly` twice (before reachability guidance)
-and `ssrf-fixed` once (a resolver-patching DNS-rebinding argument). Typical cases cost 7 to 14
-model requests and 25 to 45 native operations. Read-only inspection after run 7 showed 6,385
-retained claims, so the session consumed about 5,400 of the 10,000-claim quota.
+and `ssrf-fixed` once (a resolver-patching DNS-rebinding argument). Run 8, on the rebuilt
+workspace (Perl `DBI`) and executor (request timeout) images, completed 30 of 36 with every
+verdict correct: an observed 83.3 percent success rate against the 75 percent threshold, but
+`complete_corpus` failed on the six failures, so the quality gates remain `not_checked`.
+Typical cases cost 7 to 14 model requests and 25 to 45 native operations; measured wall time
+in run 8 was a median of 2.2 minutes per case (1.2 to 4.6). Read-only inspection after run 7
+showed 6,385 retained claims; run 8 added 1,670, keeping the session near 7,100 of the
+10,000-claim quota.
 
 ## Defects found live and their fixes
 
@@ -60,9 +66,10 @@ retained claims, so the session consumed about 5,400 of the 10,000-claim quota.
 | Native workspace/probe lifecycle, reuse, cleanup | passed | `harness qualify` on every candidate since `449b575` |
 | Patched gateway deployment | passed | Hash-verified install, preflight, verified process swap, health, quota 10,000 |
 | Repeated model-sandbox reuse through a fresh adapter | passed | Live runs reuse one proof per sandbox across 7 to 34 model turns |
-| Full 36-case cohort | failed | Best run completed 26 of 36 |
-| Task-success threshold, unsafe negatives | not_checked | No complete cohort yet; observed 112 of 116 correct, 0 unsafe negatives |
+| Full 36-case cohort | failed | Run 8 attempted all 36 and completed 30; six failures (four external 502s, two budgets) |
+| Task-success threshold, unsafe negatives | not_checked | No complete cohort yet; observed 142 of 146 correct and 30 of 36 in run 8, 0 unsafe negatives |
 | Reliable clean-cache Maven build | not_checked | Java cases pass when the endpoint is responsive; the Maven recipe is in the environment skill |
 | Bedrock native provider | not_checked | Out of scope |
 
-Run 8 on the rebuilt images is the next step; see the next-session plan.
+Next: rerun the four 502 cases once the inference backend is stable, and address the two budget
+exhaustions (Java environment recipe adherence; Perl boolean encoding, now in the probe skill).
