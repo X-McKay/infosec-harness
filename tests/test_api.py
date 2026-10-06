@@ -515,7 +515,7 @@ async def test_report_listing_is_capped_and_survives_a_missing_directory(
 async def test_real_temporal_submit_query_and_cancellation(temporal_cli, tmp_path):
     import asyncio
 
-    from fakes import FakeOpenShell, runner
+    from fakes import FakeOpenShell
     from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
     from pydantic_ai.models.function import FunctionModel
     from temporalio.client import WorkflowFailureError
@@ -528,6 +528,7 @@ async def test_real_temporal_submit_query_and_cancellation(temporal_cli, tmp_pat
         InvestigationWorkflow,
         bind_investigator,
     )
+    from infosec_harness.workflows.worker import workflow_runner
 
     entered = asyncio.Event()
     shell = FakeOpenShell()
@@ -551,7 +552,7 @@ async def test_real_temporal_submit_query_and_cancellation(temporal_cli, tmp_pat
                 task_queue=api.get_settings().task_queue,
                 workflows=[InvestigationWorkflow],
                 activities=[activities.prepare, activities.finalize, activities.cleanup],
-                workflow_runner=runner(),
+                workflow_runner=workflow_runner(),
             ):
                 started = await request(
                     "POST",

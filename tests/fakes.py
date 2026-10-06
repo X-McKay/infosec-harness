@@ -3,7 +3,6 @@
 from types import SimpleNamespace
 
 from pydantic_ai.messages import ModelResponse, ToolCallPart
-from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 
 from infosec_harness.sandbox import CommandResult, Sandbox
 
@@ -64,12 +63,4 @@ def final_response(info, *, evidence_ids=None):
                 tool_call_id="verdict",
             )
         ]
-    )
-
-
-def runner():
-    return SandboxedWorkflowRunner(
-        restrictions=SandboxRestrictions.default.with_passthrough_modules(
-            "infosec_harness.workflows.investigation", "annotated_types", "typing_inspection"
-        )
     )

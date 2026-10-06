@@ -489,12 +489,12 @@ def owned_worker_factory(monkeypatch, tmp_path, shell, respond, identity, create
 
     A mocked model proves lifecycle and cleanup ordering only; it is never quality evidence.
     """
-    from fakes import runner
     from pydantic_ai.models.function import FunctionModel
     from temporalio.worker import Worker
 
     from infosec_harness.agents.investigator import build_agent
     from infosec_harness.workflows import investigation, worker
+    from infosec_harness.workflows.worker import workflow_runner
 
     def create(client, settings):
         investigation.bind_investigator(build_agent(shell, FunctionModel(respond)))
@@ -511,7 +511,7 @@ def owned_worker_factory(monkeypatch, tmp_path, shell, respond, identity, create
             task_queue=settings.task_queue,
             workflows=[investigation.InvestigationWorkflow],
             activities=[activities.prepare, activities.finalize, activities.cleanup],
-            workflow_runner=runner(),
+            workflow_runner=workflow_runner(),
         )
 
     monkeypatch.setattr(worker, "create_worker", create)

@@ -24,7 +24,7 @@ from infosec_harness.api import PREFIX, RPC_TIMEOUT, connect, execution_timeout,
 from infosec_harness.contracts import Finding, InvestigationResult, Limits
 from infosec_harness.sandbox import OpenShell, OpenShellConfig, native_operation_accounting
 from infosec_harness.sandbox.process import finish
-from infosec_harness.workflows.worker import worker_identity
+from infosec_harness.workflows.worker import worker_identity, workflow_runner
 
 # The harness checkout: src/infosec_harness/evals/ is three levels below it.
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -438,7 +438,6 @@ async def replay_history(run_id: str, settings, client=None) -> dict:
     import pydantic_ai.models
     from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
     from temporalio.worker import Replayer
-    from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 
     from infosec_harness.agents.inference import OpenShellModel
     from infosec_harness.agents.investigator import build_agent
@@ -456,17 +455,10 @@ async def replay_history(run_id: str, settings, client=None) -> dict:
     report = {"status": "passed", "workflow_id": run_id, "history_events": len(history.events),
               "history_sha256": hashlib.sha256(data.encode()).hexdigest(), "verdict": None}
     try:
-        # Same passthrough modules as create_worker's sandboxed workflow runner.
         await Replayer(
             workflows=[InvestigationWorkflow],
             plugins=[PydanticAIPlugin()],
-            workflow_runner=SandboxedWorkflowRunner(
-                restrictions=SandboxRestrictions.default.with_passthrough_modules(
-                    "infosec_harness.workflows.investigation",
-                    "annotated_types",
-                    "typing_inspection",
-                )
-            ),
+            workflow_runner=workflow_runner(),
         ).replay_workflow(history)
     except Exception as error:
         report.update(status="failed", failure_chain=failure_chain(error))
