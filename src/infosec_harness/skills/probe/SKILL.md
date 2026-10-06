@@ -20,6 +20,10 @@ preconditions.
   module search path, environment variables, working directory, installed packages or files
   the application does not take from the caller; a probe that does so is disqualified and
   must not be cited, and a later probe may not supersede an earlier one on that basis.
+- The untrusted input is what the finding names as attacker-controlled. Other parameters
+  (buffer sizes, configuration, handles, callbacks) belong to the trusted caller's contract;
+  a probe that varies them demonstrates caller misuse, not the reported vulnerability, unless
+  the finding or the code shows they come from the caller's untrusted data.
 
 ## Prepare and run
 
@@ -48,9 +52,8 @@ these five boolean fields and nothing else; print details on earlier lines:
 HARNESS_PROBE {"target_reached":true,"oracle_valid":true,"positive_control":true,"negative_control":true,"vulnerability_observed":false}
 ```
 
-The five values must be JSON booleans `true`/`false`: numbers such as `1`/`0`, strings, extra
-fields such as `details`, key=value pairs, or JSON on one line with a standalone `HARNESS_PROBE`
-on another are not parsed and count as no observation. Emit the line with a JSON encoder:
+The five values must be JSON booleans `true`/`false`; numbers, strings, extra fields, key=value
+pairs or the prefix on its own line count as no observation. Emit the line with a JSON encoder:
 
 - Python: `print('HARNESS_PROBE ' + json.dumps(observations))`
 - Perl: `use JSON::PP; print 'HARNESS_PROBE ', JSON::PP->new->canonical->encode({ target_reached => $t ? JSON::PP::true : JSON::PP::false, ... }), "\n";` (plain `1`/`0` encode as numbers and are rejected)
@@ -74,8 +77,7 @@ Never report a control you did not execute. Values are self-reported claims, not
 
 A `positive_control: false` means the oracle itself is broken, not that the target is safe:
 your deliberately-triggered case did not make the oracle fire, so the check cannot tell
-`vulnerability_observed: false` from a missed detection. **Stop after two attempts.** Do not
-spend the budget iterating payload variants against a check that cannot pass. Instead
+`vulnerability_observed: false` from a missed detection. **Stop after two attempts** and
 re-examine the oracle: confirm the marker/nonce you write is the exact string you search for
 (a fixed literal written but a random nonce searched is the classic bug), that the positive
 control is the simplest entity-resolving parser rather than one with hand-toggled flags, and

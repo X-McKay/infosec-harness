@@ -243,6 +243,26 @@ def test_probe_rules_from_run_12_are_stated_and_referenced():
         assert rule in text_of(name), name
 
 
+# Cohort 13 (2026-10-06): c-stackoverflow-fixed was called exploitable by a probe that passed
+# outcap = -1, the trusted caller's own buffer size, rather than varying the untrusted name.
+PROBE_SCOPE_RULE = (
+    "The untrusted input is what the finding names as attacker-controlled. Other parameters "
+    "(buffer sizes, configuration, handles, callbacks) belong to the trusted caller's contract; "
+    "a probe that varies them demonstrates caller misuse, not the reported vulnerability, unless "
+    "the finding or the code shows they come from the caller's untrusted data."
+)
+SCOPE_RULE_REFERENCES = ("investigate", "cwe-601-open-redirect", "cwe-787-out-of-bounds-write")
+
+
+def test_probe_scope_rule_from_cohort_13_is_stated_and_referenced():
+    _, body = split(SKILLS / "probe" / "SKILL.md")
+    assert PROBE_SCOPE_RULE in " ".join(section(body, "Real target, real inputs").split())
+    for name in SCOPE_RULE_REFERENCES:
+        text = text_of(name)
+        assert '`probe`, "Real target, real inputs"' in text, name
+        assert "caller misuse" in text, name
+
+
 def test_c_skill_checks_headers_first_and_names_the_limitation():
     """c-stackoverflow-vulnerable: gcc without headers, then an apt-get attempt."""
     _, body = split(SKILLS / "lang-c-cpp" / "SKILL.md")

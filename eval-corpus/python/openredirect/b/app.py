@@ -7,11 +7,14 @@ ALLOWED_HOSTS = frozenset({"app.example.com"})
 
 def redirect_target(next_url: str) -> str:
     """Choose the Location destination for the post-login redirect."""
-    parsed = urlparse(next_url)
-    if not parsed.scheme and not parsed.netloc and next_url.startswith("/") and not next_url.startswith("//"):
-        return next_url
+    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in next_url):
+        return "/"
+    candidate = next_url.replace("\\", "/")
+    parsed = urlparse(candidate)
+    if not parsed.scheme and not parsed.netloc and candidate.startswith("/") and not candidate.startswith("//"):
+        return candidate
     if parsed.scheme in ("http", "https") and parsed.hostname in ALLOWED_HOSTS:
-        return next_url
+        return candidate
     return "/"
 
 

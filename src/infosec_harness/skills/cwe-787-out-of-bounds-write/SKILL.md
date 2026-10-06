@@ -95,6 +95,10 @@ that bounds the copy is `target_reached: true, vulnerability_observed: false`.
   stack-protector on is not proof of safety — prefer ASan or sentinels.
 - `-O2` can optimize a sentinel check away; keep the detector in `volatile` storage or use ASan.
 - Never derive `vulnerability_observed` from the positive control; it tests the detector only.
+- Vary only the data the finding names as attacker-controlled (see `probe`, "Real target, real
+  inputs"). A negative, oversized or wrong capacity for the caller's own destination buffer
+  demonstrates caller misuse, not the reported overflow, unless the code shows that size comes
+  from untrusted data.
 
 ## Verdict guidance
 

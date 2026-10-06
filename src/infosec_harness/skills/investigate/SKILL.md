@@ -32,7 +32,9 @@ fails". This does not change the verdict rules below.
   real target as built (a reimplementation or stubbed runtime is a stand-in: `inconclusive`)
   and varies only caller-supplied inputs (see `probe`, "Real target, real inputs"). A probe
   that edits the module search path, environment or installed files is disqualified and
-  cannot supersede an earlier probe.
+  cannot supersede an earlier probe. The untrusted input is what the finding names as
+  attacker-controlled; varying a trusted caller's parameter (a buffer size, configuration,
+  handle or callback) shows caller misuse, not the reported vulnerability (same section).
 - `inconclusive` when prerequisites or evidence remain unresolved; say which.
 - A probe's `target_reached` means the real target entry point ran with the finding's input,
   including a guard rejecting it. It does not mean the sensitive sink ran or the attack
