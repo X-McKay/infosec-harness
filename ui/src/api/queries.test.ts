@@ -4,6 +4,7 @@ import { QueryClient } from "@tanstack/react-query";
 import { ApiError } from "./http.ts";
 import {
   ACTIVE_RUN_REFRESH_MS,
+  fetchHealth,
   mutations,
   queries,
   retryUnlessNotFound,
@@ -78,4 +79,25 @@ test("queries and mutations call only their documented endpoints", async () => {
   ]);
   assert.deepEqual(seen.methods, ["GET", "GET", "GET", "GET", "POST", "POST"]);
   client.clear();
+});
+
+// api.py health(): 503 with the Health body when Temporal is unreachable.
+test("a 503 health body is reported state; other failures stay errors", async () => {
+  const unavailable = {
+    status: "temporal_unavailable",
+    temporal: false,
+    runtime: "not_checked",
+    generation: "v11",
+    task_queue: "investigate-v11",
+  };
+  globalThis.fetch = async () => Response.json(unavailable, { status: 503 });
+  assert.deepEqual(await fetchHealth(), unavailable);
+  // A proxy 503 without the Health body, or a 500, is not a health answer.
+  globalThis.fetch = async () => new Response("Bad gateway", { status: 503 });
+  await assert.rejects(fetchHealth(), ApiError);
+  globalThis.fetch = async () =>
+    Response.json({ status: "control_plane_ready" }, { status: 503 });
+  await assert.rejects(fetchHealth(), ApiError);
+  globalThis.fetch = async () => Response.json(unavailable, { status: 500 });
+  await assert.rejects(fetchHealth(), ApiError);
 });

@@ -36,7 +36,7 @@ type Cohort = { summary: ReportSummary; report: CohortReport | null };
  */
 export function Metrics() {
   const list = useQuery(reportsQuery());
-  const summaries = (list.data ?? [])
+  const summaries = (list.data?.items ?? [])
     .filter((report) => report.kind === "model")
     .slice(0, MAX_COHORTS);
   const details = useQueries({

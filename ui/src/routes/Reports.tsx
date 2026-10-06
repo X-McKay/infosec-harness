@@ -31,7 +31,7 @@ const GATE_SHORT: Record<string, string> = {
 export function Reports() {
   const query = useQuery(reportsQuery());
   const [kind, setKind] = useState<ReportKind | "">("");
-  const reports = useMemo(() => query.data ?? [], [query.data]);
+  const reports = useMemo(() => query.data?.items ?? [], [query.data]);
   const counts = useMemo(() => {
     const result = new Map<ReportKind, number>();
     for (const report of reports)
@@ -96,6 +96,12 @@ export function Reports() {
               stale={query.isError}
             />
           </div>
+          {query.data.truncated && (
+            <p role="status" className="text-xs text-muted-foreground">
+              The API lists only the newest {integer(reports.length)} report
+              files; older reports are not shown.
+            </p>
+          )}
           <Card>
             <CardContent className="p-0">
               {shown.length ? (

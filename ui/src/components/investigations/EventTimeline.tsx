@@ -5,9 +5,9 @@ import { QueryState } from "@/components/QueryState";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { timestamp } from "@/lib/format";
-import { eventsUnavailable } from "@/lib/events";
+import { FAILURE_KINDS, eventKindLabel, eventsUnavailable } from "@/lib/events";
 
-/** Temporal history projection; hidden entirely when the API has no events endpoint. */
+/** Temporal history projection; hidden entirely when the API answers 404 for this run. */
 export function EventTimeline({
   runId,
   active,
@@ -49,12 +49,17 @@ export function EventTimeline({
                   />
                   <div className="min-w-0 space-y-1">
                     <p className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium">
-                        {event.name || event.kind}
+                      <span className="break-all font-medium">
+                        {event.name ?? eventKindLabel(event.kind)}
                       </span>
-                      {event.kind && event.name && (
-                        <Badge variant="outline" className="font-normal">
-                          {event.kind}
+                      {event.name && (
+                        <Badge
+                          variant={
+                            FAILURE_KINDS.has(event.kind) ? "failed" : "outline"
+                          }
+                          className="font-normal"
+                        >
+                          {eventKindLabel(event.kind)}
                         </Badge>
                       )}
                     </p>

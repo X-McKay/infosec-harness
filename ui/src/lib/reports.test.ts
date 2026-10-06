@@ -54,20 +54,26 @@ test("only current-prefix workflow IDs become run links", () => {
   assert.equal(runPath("javascript:alert(1)"), null);
 });
 
+// api.py reports() returns ReportList {items: ReportSummary[], truncated}.
 test("summaries drop rows without a name and treat unknown gates as not_checked", () => {
-  const rows = parseReportSummaries([
-    {
-      name: "model-2.json",
-      kind: "model",
-      gates: { complete_corpus: "passed", task_success_rate: "yes" },
-      planned: 36,
-      task_success_rate: "0.9",
-      bytes: 1200,
-    },
-    { kind: "model" },
-    "garbage",
-    { name: "odd.json", kind: "brokered" },
-  ]);
+  const { items: rows, truncated } = parseReportSummaries({
+    items: [
+      {
+        name: "model-2.json",
+        kind: "model",
+        bytes: 1200,
+        modified_at: "2026-10-06T00:00:00+00:00",
+        gates: { complete_corpus: "passed", task_success_rate: "yes" },
+        planned: 36,
+        task_success_rate: "0.9",
+      },
+      { kind: "model" },
+      "garbage",
+      { name: "odd.json", kind: "brokered" },
+    ],
+    truncated: true,
+  });
+  assert.equal(truncated, true);
   assert.equal(rows.length, 2);
   assert.equal(rows[0].gates.complete_corpus, "passed");
   // A gate state other than passed/failed is missing evidence, never success.
@@ -75,12 +81,19 @@ test("summaries drop rows without a name and treat unknown gates as not_checked"
   // A numeric field recorded as text is not coerced into a measurement.
   assert.equal(rows[0].task_success_rate, null);
   assert.equal(rows[0].planned, 36);
+  assert.equal(rows[0].bytes, 1200);
+  assert.equal(rows[0].modified_at, "2026-10-06T00:00:00+00:00");
+  // Fields the API omitted (a summary of an unreadable file) stay null.
   assert.equal(rows[1].kind, "unknown");
-  assert.deepEqual(
-    parseReportSummaries({ items: [{ name: "a.json" }] }).length,
-    1,
-  );
-  assert.deepEqual(parseReportSummaries(null), []);
+  assert.equal(rows[1].bytes, null);
+  assert.equal(rows[1].status, null);
+  assert.deepEqual(rows[1].gates, {});
+  // Anything but the ReportList wrapper lists nothing, and is never truncated.
+  for (const value of [null, [{ name: "a.json" }], { items: "x" }])
+    assert.deepEqual(parseReportSummaries(value), {
+      items: [],
+      truncated: false,
+    });
 });
 
 test("a freshly started cohort parses with every measurement unavailable", () => {

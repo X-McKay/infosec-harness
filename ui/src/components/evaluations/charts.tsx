@@ -5,9 +5,9 @@ import { integer, number, percent } from "@/lib/format";
 type Format = (value: number | null | undefined) => string;
 
 /**
- * Per-case distribution in the DistributionChart visual language (same card, axes, bar
- * marks, p50/p90 rules and accessible table), computed from report case records rather than
- * an API distribution. A case without the measurement is reported in coverage, never as zero.
+ * Per-case distribution (card, axes, bar marks, p50/p90 rules and an accessible table),
+ * computed from report case records rather than an API distribution. A case without the
+ * measurement is reported in coverage, never as zero.
  */
 export function CaseHistogram({
   title,

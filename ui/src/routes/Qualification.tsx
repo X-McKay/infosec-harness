@@ -14,7 +14,7 @@ import { reportPath } from "@/lib/reports";
  */
 export function Qualification() {
   const list = useQuery(reportsQuery());
-  const reports = (list.data ?? []).filter(
+  const reports = (list.data?.items ?? []).filter(
     (report) => report.kind === "openshell",
   );
   const latest = reports[0];

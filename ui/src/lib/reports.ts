@@ -2,19 +2,18 @@
  * Report documents written by `harness eval`, `harness qualify` and `harness replay`, as served
  * by `GET /api/reports` and `GET /api/reports/{name}`.
  *
- * Hand-typed until the API schema is regenerated; the integrator maps these to generated
- * `components["schemas"]` names. Every parser tolerates absent or malformed fields: a missing
- * measurement stays `null` (rendered "Unavailable") and a missing gate stays `not_checked`.
- * Every string here is untrusted report content and is rendered only as React text.
+ * The listing (`ReportList` of `ReportSummary`) is typed by the generated schema. The full
+ * documents are hand-typed here because the API serves them as an untyped JSON object. Every
+ * parser tolerates absent or malformed fields: a missing measurement stays `null` (rendered
+ * "Unavailable") and a missing or unknown gate state stays `not_checked`. Every string here is
+ * untrusted report content and is rendered only as React text.
  */
+import type { components } from "../api/schema";
 import { asRecord, isRecord, numeric, text, type JsonRecord } from "./json.ts";
 
-export type ReportKind =
-  | "model"
-  | "diagnostic"
-  | "openshell"
-  | "replay"
-  | "unknown";
+type ApiReportSummary = components["schemas"]["ReportSummary"];
+export type ReportList = components["schemas"]["ReportList"];
+export type ReportKind = ApiReportSummary["kind"];
 export const REPORT_KINDS: ReportKind[] = [
   "model",
   "diagnostic",
@@ -23,22 +22,20 @@ export const REPORT_KINDS: ReportKind[] = [
   "unknown",
 ];
 
-/** One row of `GET /api/reports` (newest first). */
-export type ReportSummary = {
-  name: string;
-  kind: ReportKind;
-  status: string | null;
-  started_at: string | null;
-  finished_at: string | null;
-  commit: string | null;
-  model: string | null;
-  planned: number | null;
-  completed: number | null;
-  task_success_rate: number | null;
-  unsafe_negatives: number | null;
-  gates: Record<string, GateStatus>;
-  bytes: number | null;
-};
+/** Every optional or malformed field resolved to its value or null. */
+type Resolved<T> = { [K in keyof T]-?: Exclude<T[K], undefined> | null };
+
+/**
+ * One row of `GET /api/reports` (newest first): the generated `ReportSummary` with every
+ * field present (null when not reported) and gates narrowed to the three gate states.
+ */
+export type ReportSummary = Pick<ApiReportSummary, "name" | "kind"> &
+  Resolved<Omit<ApiReportSummary, "name" | "kind" | "gates">> & {
+    gates: Record<string, GateStatus>;
+  };
+
+/** The parsed listing; `truncated` means the API listed only the newest files. */
+export type ReportSummaries = { items: ReportSummary[]; truncated: boolean };
 
 /** Release gates have exactly three states; anything else is missing evidence. */
 export type GateStatus = "passed" | "failed" | "not_checked";
@@ -288,19 +285,20 @@ export function parseReportSummary(value: unknown): ReportSummary | null {
     unsafe_negatives: numeric(record.unsafe_negatives),
     gates: gates(record.gates),
     bytes: numeric(record.bytes),
+    modified_at: text(record.modified_at),
   };
 }
 
-/** Malformed rows are dropped; the API's newest-first order is kept. */
-export function parseReportSummaries(value: unknown): ReportSummary[] {
-  const items = Array.isArray(value)
-    ? value
-    : Array.isArray(asRecord(value).items)
-      ? (asRecord(value).items as unknown[])
-      : [];
-  return items
-    .map(parseReportSummary)
-    .filter((item): item is ReportSummary => item != null);
+/** `ReportList`: malformed rows are dropped; the API's newest-first order is kept. */
+export function parseReportSummaries(value: unknown): ReportSummaries {
+  const record = asRecord(value);
+  const items = Array.isArray(record.items) ? record.items : [];
+  return {
+    items: items
+      .map(parseReportSummary)
+      .filter((item): item is ReportSummary => item != null),
+    truncated: record.truncated === true,
+  };
 }
 
 export function parseWorkerIdentity(value: unknown): WorkerIdentity | null {

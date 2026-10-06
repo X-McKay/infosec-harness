@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ApiError } from "../api/http.ts";
-import { eventsPath, eventsUnavailable, normalizeEvents } from "./events.ts";
+import {
+  eventKindLabel,
+  eventsPath,
+  eventsUnavailable,
+  normalizeEvents,
+} from "./events.ts";
 
 test("only a 404 hides the timeline; other failures stay visible", () => {
   assert.equal(eventsUnavailable(new ApiError(404, "")), true);
@@ -22,21 +27,28 @@ test("the events path encodes the run id as one segment", () => {
   assert.equal(eventsPath("a/../b"), "/api/runs/a%2F..%2Fb/events");
 });
 
+// The shape api.py run_events() returns (contracts.RunEvents).
 test("well-formed events pass through in order", () => {
   const value = {
     run_id: "investigate-v11-abc",
     events: [
       {
-        at: "2026-10-06T00:00:00Z",
-        kind: "activity",
-        name: "prepare",
-        detail: "started",
+        at: "2026-10-06T00:00:00+00:00",
+        kind: "workflow_started" as const,
+        name: "InvestigationWorkflow",
+        detail: "",
       },
       {
-        at: "2026-10-06T00:00:05Z",
-        kind: "workflow",
-        name: "completed",
-        detail: "",
+        at: "2026-10-06T00:00:05+00:00",
+        kind: "activity_completed" as const,
+        name: "run_command",
+        detail: "exit_code=0",
+      },
+      {
+        at: "2026-10-06T00:00:06+00:00",
+        kind: "timer" as const,
+        name: null,
+        detail: "fired",
       },
     ],
     truncated: true,
@@ -44,25 +56,31 @@ test("well-formed events pass through in order", () => {
   assert.deepEqual(normalizeEvents(value), { ...value, dropped: 0 });
 });
 
-test("malformed entries are dropped and counted; non-text detail becomes text", () => {
+test("entries without a kind are dropped and counted; nothing is invented", () => {
   const result = normalizeEvents({
     run_id: 7,
     events: [
       null,
       "event",
       { at: "x" },
-      { kind: "activity", detail: { attempt: 2 } },
-      { name: "signal", at: 5, detail: null },
+      { name: "signal", detail: "x" },
+      // A kind the contract does not define is shown as "other", not guessed at.
+      { kind: "activity_paused", at: 5, name: "", detail: { attempt: 2 } },
+      { kind: "activity_failed", name: 3, detail: "ApplicationError" },
     ],
     truncated: "yes",
   });
   assert.equal(result.run_id, "");
   assert.equal(result.truncated, false);
-  assert.equal(result.dropped, 3);
+  assert.equal(result.dropped, 4);
   assert.deepEqual(result.events, [
-    { at: "", kind: "activity", name: "", detail: '{"attempt":2}' },
-    { at: "", kind: "", name: "signal", detail: "" },
+    { at: "", kind: "other", name: null, detail: "" },
+    { at: "", kind: "activity_failed", name: null, detail: "ApplicationError" },
   ]);
   for (const value of [null, [], "x", { events: "x" }])
     assert.deepEqual(normalizeEvents(value).events, []);
+});
+
+test("kind labels are readable", () => {
+  assert.equal(eventKindLabel("activity_timed_out"), "activity timed out");
 });

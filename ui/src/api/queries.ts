@@ -1,15 +1,15 @@
 /** Every request the UI makes: same-origin /api paths through req(). */
 import { queryOptions, type QueryClient } from "@tanstack/react-query";
 import { ApiError, req } from "./http.ts";
-import type { components, operations } from "./schema";
+import type { components } from "./schema";
 import { eventsPath, normalizeEvents } from "../lib/events.ts";
+import { isRecord } from "../lib/json.ts";
 import { runActive } from "../lib/status.ts";
 
 type Finding = components["schemas"]["Finding"];
 type RunState = components["schemas"]["RunState"];
 type RunPage = components["schemas"]["RunPage"];
-export type Health =
-  operations["health_api_health_get"]["responses"][200]["content"]["application/json"];
+export type Health = components["schemas"]["Health"];
 
 export const LIST_REFRESH_MS = 5000;
 export const ACTIVE_RUN_REFRESH_MS = 3000;
@@ -31,6 +31,29 @@ export function retryUnlessNotFound(failureCount: number, error: Error) {
   );
 }
 
+/**
+ * GET /api/health. The API answers 503 with the same Health body when Temporal is unreachable;
+ * that is a reported state, not a transport failure. Any other failure (including a 503 from a
+ * proxy without that body) stays an error.
+ */
+export async function fetchHealth(signal?: AbortSignal): Promise<Health> {
+  try {
+    return await req<Health>("/api/health", { signal });
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 503) {
+      let body: unknown;
+      try {
+        body = JSON.parse(error.body);
+      } catch {
+        throw error;
+      }
+      if (isRecord(body) && body.status === "temporal_unavailable")
+        return body as Health;
+    }
+    throw error;
+  }
+}
+
 export const queryKeys = {
   health: ["health"] as const,
   runs: (pageToken: string) => ["runs", pageToken] as const,
@@ -42,7 +65,7 @@ export const queries = {
   health: () =>
     queryOptions({
       queryKey: queryKeys.health,
-      queryFn: ({ signal }) => req<Health>("/api/health", { signal }),
+      queryFn: ({ signal }) => fetchHealth(signal),
       refetchInterval: HEALTH_REFRESH_MS,
     }),
   runs: (pageToken = "") =>

@@ -8,12 +8,11 @@ import type { components } from "../api/schema";
 import { STATUS_FILTERS, statusGroup, type StatusFilter } from "./status.ts";
 import { isVerdictLabel, type VerdictLabel } from "./verdict.ts";
 
-/** RunSummary plus the optional fields a newer API reports; absent fields stay absent. */
-export type RunListItem = components["schemas"]["RunSummary"] & {
-  verdict?: string | null;
-  cwe?: string | null;
-  repo_url?: string | null;
-};
+/**
+ * One row of GET /api/runs. `verdict` is null unless the API read the completed result in
+ * time; `cwe` and `repo_url` come from the recorded finding and may be absent.
+ */
+export type RunListItem = components["schemas"]["RunSummary"];
 
 export type InvestigationSearch = {
   q?: string;

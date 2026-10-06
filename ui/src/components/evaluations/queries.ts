@@ -4,17 +4,17 @@ import {
   parseReportSummaries,
   reportApiPath,
   type ReportDocument,
-  type ReportSummary,
+  type ReportSummaries,
 } from "@/lib/reports";
 
-/** `GET /api/reports`, newest first. */
+/** `GET /api/reports`: the newest report files first. */
 export const reportsQuery = () => ({
   queryKey: ["reports"] as const,
   queryFn: async ({
     signal,
   }: {
     signal: AbortSignal;
-  }): Promise<ReportSummary[]> =>
+  }): Promise<ReportSummaries> =>
     parseReportSummaries(await req<unknown>("/api/reports", { signal })),
   refetchInterval: 15_000,
 });

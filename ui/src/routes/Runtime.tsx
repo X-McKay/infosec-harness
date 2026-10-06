@@ -5,7 +5,12 @@ import { Freshness, QueryState } from "@/components/QueryState";
 import { ThemeSelect } from "@/components/ThemeProvider";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { apiBase, healthPresentation, readable } from "@/lib/runtime";
+import {
+  apiBase,
+  healthPresentation,
+  readable,
+  temporalLabel,
+} from "@/lib/runtime";
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -53,7 +58,11 @@ export function Runtime() {
             <CardContent>
               <dl className="grid gap-4 sm:grid-cols-2">
                 <Row label="Status">{readable(health.status)}</Row>
-                <Row label="Temporal">{readable(health.temporal)}</Row>
+                <Row label="Temporal">
+                  <Badge variant={health.temporal ? "outline" : "failed"}>
+                    {temporalLabel(health.temporal)}
+                  </Badge>
+                </Row>
                 <Row label="Generation">
                   <span className="font-mono">
                     {health.generation ?? "Not reported"}
@@ -73,11 +82,6 @@ export function Runtime() {
                     {readable(health.runtime)}
                   </Badge>
                 </Row>
-                {health.other.map(([key, value]) => (
-                  <Row key={key} label={key.replaceAll("_", " ")}>
-                    {value}
-                  </Row>
-                ))}
               </dl>
               <p className="mt-4 text-xs text-muted-foreground">
                 A healthy response confirms only that the API reached the
