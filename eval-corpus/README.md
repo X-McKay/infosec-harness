@@ -20,10 +20,12 @@ pair, so that a correct verdict comes from analysing the code and not from readi
 - Both findings of a pair share one title and one description, true of both variants; they
   differ only in `repo_url` and, where the code differs, `start_line`.
 
-`tests/evals/test_corpus_hygiene.py` enforces these rules. Fixture tests still demonstrate the
-behaviour of their own variant (a test that runs the code must assert what it does), so a
-fixture test's assertions remain evidence the agent may find and run, as it would in a real
-repository.
+- Fixtures ship no tests. A test that runs the code must assert what that variant does, which
+  is the answer, so every fixture test lives outside the snapshot under `verification/` (see
+  the maintainers' section). A fixture's test directory holds only a `.gitkeep`; the one
+  exception is `python/queryhelper`, whose finding is about the test helper itself.
+
+`tests/evals/test_corpus_hygiene.py` enforces these rules.
 
 ## Cases (82 total)
 
@@ -89,11 +91,33 @@ Skill-coverage additions (46), in manifest order:
 | `toctou-vulnerable`, `toctou-fixed` | python | CWE-362 | pip / pytest |
 | `nullderef-vulnerable`, `nullderef-fixed` | python | CWE-476 | pip / pytest |
 
-The C fixtures ship a `make test` target whose binary runs the same in-bounds and bounded
-boundary inputs against both variants: the vulnerable build aborts under AddressSanitizer
-and the fixed build exits 0. The `node --test` fixtures need no installed packages.
+The C fixtures ship a `make test` target; its test program is in `verification/` with the
+other fixture tests. The `node --test` fixtures need no installed packages.
 
-## Answer key (maintainers only)
+## Maintainers only
+
+Nothing in this section may be copied into a finding, prompt, skill, fixture or anything else
+an agent reads.
+
+### Fixture verification
+
+`verification/<lang>/<topic>/<a|b>/` holds the tests for that fixture, at the paths they would
+have inside it. They never enter a snapshot. To check that every fixture still behaves as its
+truth says:
+
+```bash
+.venv/bin/python scripts/corpus_verify.py [--node PATH] [--python PATH]
+```
+
+For each verification directory the script copies the fixture to a temporary directory,
+overlays the tests and runs `python -m pytest`, the pinned `node --test`, `prove -l t` or
+`make test CC=cc`, printing one line per fixture and exiting non-zero on any failure. Every
+runner must pass except `make test` on a C variant whose truth is `potentially_exploitable`,
+which must abort with an AddressSanitizer report. `--node` defaults to the pinned install under
+`.harness/mise`; `--python` defaults to the interpreter running the script and needs pytest.
+Java fixtures have no verification tests.
+
+### Answer key
 
 **This table is the answer key. Never copy it, or any mapping from a directory to a verdict,
 into a finding, prompt, skill, fixture or anything else an agent reads.** Directories are

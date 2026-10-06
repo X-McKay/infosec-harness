@@ -10,6 +10,7 @@ corpus defect, not something to allowlist away.
 import json
 import re
 from collections import defaultdict
+from fnmatch import fnmatch
 from pathlib import Path
 
 import pytest
@@ -20,8 +21,9 @@ from infosec_harness.workflows.snapshot import EXCLUDED
 CHECKOUT = Path(__file__).resolve().parents[2]
 CORPUS = CHECKOUT / "eval-corpus"
 MANIFEST = CORPUS / "manifest.json"
-# Maintainer-only files and historical datasets that never enter a snapshot.
-NOT_FIXTURES = {"README.md", "manifest.json", "external"}
+VERIFICATION = CORPUS / "verification"
+# Maintainer-only files, fixture tests and historical datasets that never enter a snapshot.
+NOT_FIXTURES = {"README.md", "manifest.json", "external", "verification"}
 
 _STEMS = ("vuln", "fixed", "insecure", "secure", "unsafe", "safe", "exploit", "patch",
           "mitigat", "sanitiz", "unsanitiz")
@@ -128,6 +130,58 @@ def test_paired_findings_differ_only_in_location():
         assert differing <= {"repo_url", "start_line"}, (topic, differing)
         verdicts = {case["truth"]["expected_verdict"] for case in cases}
         assert verdicts == {"potentially_exploitable", "likely_not_exploitable"}, topic
+
+
+def is_test_file(relative: Path) -> bool:
+    """A test by name or location, relative to its fixture root."""
+    name, parents = relative.name, relative.parts[:-1]
+    return (
+        fnmatch(name, "test_*")
+        or fnmatch(name, "*_test.*")
+        or fnmatch(name, "*.test.*")
+        or fnmatch(name, "*.spec.*")
+        or (parents[-1:] == ("t",) and name.endswith(".t"))
+        or "__tests__" in parents
+        or parents[:2] == ("src", "test")
+    )
+
+
+def test_fixtures_ship_no_tests():
+    # Fixture tests assert their own variant's behaviour, which is the answer. They live
+    # under eval-corpus/verification and run through scripts/corpus_verify.py.
+    subjects = set()
+    for case in manifest_cases():
+        repo = case["finding"]["repo_url"].removeprefix("eval-corpus/")
+        # A finding about a test helper names that file: it is the case's subject.
+        subjects.add(f"{repo}/{case['finding']['file_path']}")
+        subjects.add(f"{repo}/{case['truth']['sink_file']}")
+    tests = []
+    for path in fixture_files():
+        relative = path.relative_to(CORPUS)
+        inside = Path(*relative.parts[3:])
+        if path.name != ".gitkeep" and is_test_file(inside) and relative.as_posix() not in subjects:
+            tests.append(relative.as_posix())
+    assert not tests
+
+
+def test_verification_tests_map_to_fixtures_without_overwriting_them():
+    repos = {case["finding"]["repo_url"].removeprefix("eval-corpus/") for case in manifest_cases()}
+    directories = [path for path in VERIFICATION.glob("*/*/*") if path.is_dir()]
+    assert directories
+    stray = [
+        path.relative_to(VERIFICATION).as_posix()
+        for path in VERIFICATION.rglob("*")
+        if path.is_file() and len(path.relative_to(VERIFICATION).parts) < 4
+    ]
+    assert not stray
+    for directory in directories:
+        fixture = directory.relative_to(VERIFICATION).as_posix()
+        assert fixture in repos, fixture
+        for path in directory.rglob("*"):
+            if path.is_file():
+                inside = path.relative_to(directory)
+                assert is_test_file(inside), (fixture, inside)
+                assert not (CORPUS / fixture / inside).exists(), (fixture, inside)
 
 
 def test_label_pattern_catches_the_leaks_it_exists_for():
