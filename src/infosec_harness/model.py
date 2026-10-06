@@ -60,9 +60,11 @@ class OpenShellModel(Model):
         if len(encoded) > MAX_INVOCATION_BYTES:
             raise ValueError("Model invocation exceeds the durable payload budget")
         sandbox = await self.openshell.create(info.workflow_id, profile="model")
+        budget = max(self.timeout - 10, 1)
         result = await self.openshell.execute(
             sandbox,
-            ["python", "-I", "-m", "infosec_harness.model_executor"],
+            ["/usr/bin/timeout", "--preserve-status", "-s", "KILL", str(budget),
+             "python", "-I", "-m", "infosec_harness.model_executor"],
             operation_id=f"model:{info.activity_id}",
             timeout=self.timeout,
             stdin=encoded,
@@ -70,6 +72,8 @@ class OpenShellModel(Model):
         if result.exit_code != 0 or result.output_truncated:
             # A complete native receipt with a failed executor: terminal, never resent.
             detail = result.stderr.rstrip().rsplit("\n", 1)[-1][-300:] if result.stderr else ""
+            if result.exit_code == 137:
+                detail = f"killed at the {budget}s executor budget; provider outcome unknown. {detail}"
             raise ModelExecutorError(
                 f"OpenShell model executor returned no complete response "
                 f"(exit {result.exit_code}, truncated={result.output_truncated}): {detail}"

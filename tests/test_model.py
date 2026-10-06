@@ -59,7 +59,8 @@ async def test_transport_runs_only_in_separate_model_sandbox(monkeypatch):
     assert result.parts[0].content == "ok"
     sandbox, command, kwargs = shell.executions[0]
     assert sandbox.profile == "model"
-    assert command == ["python", "-I", "-m", "infosec_harness.model_executor"]
+    assert command == ["/usr/bin/timeout", "--preserve-status", "-s", "KILL", "110",
+                       "python", "-I", "-m", "infosec_harness.model_executor"]
     assert kwargs["operation_id"] == "model:7"
 
 

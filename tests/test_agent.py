@@ -107,10 +107,46 @@ async def test_native_tools_use_openshell_and_return_receipts():
     )
     assert result.output.evidence_ids == ["execute:1:cmd"]
     assert shell.executions[0][1] == [
+        "/usr/bin/timeout", "--preserve-status", "-s", "KILL", "110",
         "/bin/bash",
         "-lc",
         "cd /workspace/repo && pytest test_sink.py",
     ]
+
+
+async def test_command_killed_at_budget_is_a_completed_receipt_with_feedback():
+    """Live cohort 5 stopped on the gateway's ambiguous exit 124 after a slow command. The
+    in-sandbox wrapper kills first (exit 137), so the receipt is complete and the agent is told."""
+    shell = FakeOpenShell()
+    native_execute = shell.execute
+
+    async def execute(sandbox, command, **kwargs):
+        await native_execute(sandbox, command, **kwargs)
+        return CommandResult(137, "", "Killed")
+
+    shell.execute = execute
+
+    def respond(messages, info):
+        if not shell.executions:
+            return ModelResponse(parts=[ToolCallPart(
+                "execute", {"command": "npm ci"}, tool_call_id="slow")])
+        returned = [part.content for message in messages if isinstance(message, ModelRequest)
+                    for part in message.parts
+                    if isinstance(part, ToolReturnPart) and part.tool_name == "execute"][-1]
+        returned = returned.model_dump()
+        assert returned["exit_code"] == 137
+        assert "110s command budget" in returned["observations"]["timeout_feedback"]
+        assert "not retried" in returned["observations"]["timeout_feedback"]
+        return final_response(info)
+
+    request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
+    deps = InvestigationDeps(run_id="run", sandbox=await shell.create("run"),
+                             source_digest="digest", snapshot_path="/fixture", request=request)
+    result = await build_agent(shell, FunctionModel(respond)).run("Inspect", deps=deps)
+    assert result.output.label == "inconclusive"
+    _, command, operation, _ = shell.executions[0]
+    assert command[:5] == ["/usr/bin/timeout", "--preserve-status", "-s", "KILL", "110"]
+    assert operation == "execute:1:slow"
 
 
 async def test_probe_uses_fresh_offline_profile_and_cleans_up():
@@ -165,7 +201,7 @@ async def test_read_argument_is_data_in_sandbox_not_a_worker_shell():
         ),
     )
     _, command, _, stdin = shell.executions[0]
-    assert command[:3] == ["python", "-I", "-c"]
+    assert command[5:8] == ["python", "-I", "-c"]  # after the in-sandbox timeout wrapper
     assert json.loads(stdin)["path"] == "$(echo hostile)"
 
 

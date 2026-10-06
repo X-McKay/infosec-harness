@@ -13,7 +13,9 @@ such as `.harness-deps` and an external cache when a tool would rewrite tracked 
 Avoid dependency symlinks, including virtualenv links and npm bin links: the transfer accepts
 regular files and directories only (see `probe` for what transfers).
 
-Choose the smallest environment that exercises the actual target. These are starting points,
+Check what is already installed before planning any install, and stop after one failed
+install attempt per package: repeated installer variants cost the budget and never change the
+policy. Choose the smallest environment that exercises the actual target. These are starting points,
 not mandatory command templates:
 
 | Repository | Useful approach |
@@ -22,7 +24,7 @@ not mandatory command templates:
 | Node | Read package.json and its lockfile. Prefer existing dependencies; use declared runner binaries directly and install with `--no-bin-links` when appropriate. Installation scripts execute untrusted repository code and stay inside OpenShell. Avoid changing the original lockfile or package.json. |
 | Java/Maven | Inspect pom.xml, compiler level, and test provider. Put Maven's dependency cache inside the copied workspace; use offline mode for probes. JUnit 5 needs a compatible Surefire provider. Select the actual test class, not a source filename. |
 | Java/Gradle | Inspect wrapper/build settings and available JDK. Cache dependencies in the workspace. Force a real test execution when incremental tasks would otherwise be up-to-date; ensure test stdout is forwarded. |
-| Perl | Inspect Makefile.PL/cpanfile and actual imports. Prefer core modules where sufficient. Keep required libraries under the copied workspace; use verbose TAP output when diagnosing discovery. |
+| Perl | Inspect Makefile.PL/cpanfile and actual imports. Only core modules and what `perl -M<Module> -e 1` already finds are available: CPAN installs do not work here (no `cpan`, `cpanm`, `apt`, or `pip` route reaches an index), so do not try installers. If the target needs a missing module such as `DBI` or `DBD::SQLite`, say which one and return inconclusive. Use verbose TAP output when diagnosing discovery. |
 
 Native Java package downloads can need IPv4 sockets and the supervisor's public TLS CA.
 If Java reports `Permission denied` or a PKIX trust failure, inspect the runtime and the

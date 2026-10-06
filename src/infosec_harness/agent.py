@@ -198,6 +198,18 @@ def parse_probe_observations(stdout: str) -> dict[str, bool | str]:
         return {}
 
 
+# The pinned gateway reports its own timeout as an ambiguous exit 124, which the adapter
+# must treat as unknown. Killing the command inside the sandbox first (exit 137) keeps the
+# receipt complete, so a slow build becomes feedback instead of a lost investigation.
+TIMEOUT_MARGIN_SECONDS = 10
+KILLED_EXIT = 137
+
+
+def bounded(argv: list[str], timeout: int) -> list[str]:
+    budget = max(timeout - TIMEOUT_MARGIN_SECONDS, 1)
+    return ["/usr/bin/timeout", "--preserve-status", "-s", "KILL", str(budget), *argv]
+
+
 def operation_id(ctx: RunContext[InvestigationDeps], kind: str) -> str:
     # tool_call_id is replayed by PydanticAI and serialized into each native activity.
     if not ctx.tool_call_id:
@@ -292,11 +304,12 @@ def build_agent(openshell: OpenShell, model: Model) -> Agent[InvestigationDeps, 
     tools = FunctionToolset[InvestigationDeps](id="workspace", sequential=True)
 
     async def file_tool(ctx: RunContext[InvestigationDeps], action: str, **values) -> str:
+        timeout = ctx.deps.request.limits.command_timeout_seconds
         result = await openshell.execute(
             ctx.deps.sandbox,
-            ["python", "-I", "-c", _FILE_TOOL],
+            bounded(["python", "-I", "-c", _FILE_TOOL], timeout),
             operation_id=operation_id(ctx, action),
-            timeout=ctx.deps.request.limits.command_timeout_seconds,
+            timeout=timeout,
             stdin=json.dumps({"action": action, **values}).encode(),
         )
         if result.exit_code:
@@ -325,12 +338,20 @@ def build_agent(openshell: OpenShell, model: Model) -> Agent[InvestigationDeps, 
 
     async def command_tool(ctx, command: str, sandbox: Sandbox, kind: str) -> Evidence:
         identity = operation_id(ctx, kind)
+        timeout = ctx.deps.request.limits.command_timeout_seconds
         result = await openshell.execute(
             sandbox,
-            ["/bin/bash", "-lc", f"cd /workspace/repo && {command}"],
+            bounded(["/bin/bash", "-lc", f"cd /workspace/repo && {command}"], timeout),
             operation_id=identity,
-            timeout=ctx.deps.request.limits.command_timeout_seconds,
+            timeout=timeout,
         )
+        observations = parse_probe_observations(result.stdout) if kind == "probe" else {}
+        if result.exit_code == KILLED_EXIT:
+            observations["timeout_feedback"] = (
+                f"Killed (exit {KILLED_EXIT}) at the {timeout - TIMEOUT_MARGIN_SECONDS}s command "
+                "budget; it was not retried. Narrow the command, cache dependencies in the "
+                "workspace, or split the work."
+            )
         # Tool returns enter durable history; return bounded excerpts only.
         return Evidence(
             id=identity,
@@ -343,7 +364,7 @@ def build_agent(openshell: OpenShell, model: Model) -> Agent[InvestigationDeps, 
             output_truncated=result.output_truncated,
             sandbox_id=sandbox.id,
             source_digest=ctx.deps.source_digest,
-            observations=parse_probe_observations(result.stdout) if kind == "probe" else {},
+            observations=observations,
         ).excerpt()
 
     @tools.tool

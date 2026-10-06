@@ -28,6 +28,11 @@ behavior of the original source without a supported connection.
 - A probe's `target_reached` means the real target entry point ran with the finding's input,
   including a guard rejecting it. It does not mean the sensitive sink ran or the attack
   succeeded. A probe is an observation, not an independent oracle; it needs source support.
+- When the flagged code lives only under tests, fixtures, examples or a vendored copy and no
+  production entry point calls it, the blocking condition is reachability. Probe the real
+  production entry points (or show the import graph never reaches the sink) and report
+  `vulnerability_observed: false` with `target_reached: true`; name that boundary in the
+  summary rather than probing the test helper directly.
 - Keep the original finding's scope. Cite source paths with original line numbers and the
   exact full Evidence ids tools returned. Never invent ids or citations.
 
