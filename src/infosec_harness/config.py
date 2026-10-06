@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     temporal_api_key_file: Path | None = None
     openshell_config: Path = Path(".harness/openshell/runtime.json")
     workspace_dir: Path = Path(".harness/workspace")
+    # Qualification and evaluation reports; the API lists and serves them read-only.
+    reports_dir: Path = Path(".harness/reports")
     local_repo_roots: list[Path] = Field(default_factory=list)
     # Operator-owned read-only command whose last stdout line is JSON with `retained`,
     # `quota` and `read_only: true`; `harness eval` refuses to start without headroom.

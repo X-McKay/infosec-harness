@@ -14,7 +14,8 @@ observations and `agents/inference.py` carries model requests into the model san
 `workflows/investigation.py` prepares the workspace, runs the agent, validates its verdict
 against receipts and citations, and cleans up; `workflows/worker.py` builds the trusted worker
 and its identity guard. `contracts.py` contains strict inputs and results. `api.py` projects
-Temporal state; it does not maintain a second job ledger. `evals/` holds corpus evaluation,
+Temporal state, including a bounded label-only view of run history, and serves operator report
+files from `reports_dir` read-only; it does not maintain a second job ledger. `evals/` holds corpus evaluation,
 replay, native qualification and `release-policy.yaml`.
 
 OpenShell owns three native profiles:
