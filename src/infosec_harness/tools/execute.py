@@ -30,11 +30,20 @@ def command_budget(timeout: int) -> int:
     return max(timeout - TIMEOUT_MARGIN_SECONDS, 1)
 
 
+# A program name as a command word: bare, wrapper-relative (`./gradlew`) or a full path
+# (`/usr/bin/javac`), but not a directory or file that merely shares the name
+# (`node_modules/npm/`, `gradle.properties`).
+_PROGRAM_START = r"(?<![\w.-])(?:\S*/)?"
+_PROGRAM_END = r"(?![\w./-])"
 # Commands whose failure usually means missing environment setup, not a target behaviour.
-BUILD_TOOLS = re.compile(r"(?<![\w./-])(mvn|gradle|gradlew|npm|npx|yarn|pnpm|cpanm|cpan|javac|pip3?)(?![\w-])")
+BUILD_TOOLS = re.compile(
+    _PROGRAM_START
+    + r"(mvnw?|gradlew?|npm|npx|yarn|pnpm|cpanm|cpan|javac|pip3?)"
+    + _PROGRAM_END
+)
 # Maven specifically: its test phase and its log volume waste the token budget on probes.
-MVN = re.compile(r"(?<![\w./-])mvn(?![\w-])")
-MVN_TEST = re.compile(r"(?<![\w./-])mvn(?![\w-])(?:(?!\||&&|;).)*\btest\b")
+MVN = re.compile(_PROGRAM_START + r"mvnw?" + _PROGRAM_END)
+MVN_TEST = re.compile(_PROGRAM_START + r"mvnw?" + _PROGRAM_END + r"(?:(?!\||&&|;).)*\btest\b")
 LOCAL_REPO = re.compile(r"-Dmaven\.repo\.local")
 
 _MVN_FEEDBACK = (

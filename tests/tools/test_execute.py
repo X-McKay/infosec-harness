@@ -275,6 +275,18 @@ async def test_failed_build_tool_returns_environment_feedback_once():
         # A plain command is never a build, and the word "test" alone is not mvn test.
         ("ls -la src", 1, False, None),
         ("pytest test_sink.py", 0, False, None),
+        # Review of 2026-10-06: wrapper scripts and full paths never matched.
+        ("./gradlew test", 1, False, "build"),
+        ("cd app && ./gradlew --offline build", 1, False, "build"),
+        ("/usr/bin/javac -d out Foo.java", 1, False, "build"),
+        ("./mvnw test", 0, False, "mvn"),
+        ("/opt/maven/bin/mvn -q compile", 1, False, "mvn"),
+        ("./mvnw -o -Dmaven.repo.local=/workspace/repo/.m2 compile", 1, False, "build"),
+        # A directory or file named like a tool is not that tool.
+        ("ls node_modules/npm/bin", 1, False, None),
+        ("cat gradle.properties", 1, False, None),
+        ("./scripts/npm-check", 1, False, None),
+        ("cat src/mvn.txt", 1, False, None),
     ],
 )
 def test_environment_feedback_triggers(command, exit_code, truncated, expected):
