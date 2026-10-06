@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     openshell_config: Path = Path(".harness/openshell/runtime.json")
     workspace_dir: Path = Path(".harness/workspace")
     local_repo_roots: list[Path] = Field(default_factory=list)
+    # Operator-owned read-only command whose last stdout line is JSON with `retained`,
+    # `quota` and `read_only: true`; `harness eval` refuses to start without headroom.
+    native_occupancy_command: list[str] = Field(default_factory=list)
     model_name: str = "Qwen3.6-35B-A3B-NVFP4"
     model_provider: Literal["openai", "bedrock"] = "openai"
     model_base_url: str | None = None

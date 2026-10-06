@@ -14,3 +14,4 @@ research/
 
 # Per-developer Claude Code permission rules
 .claude/settings.local.json
+.claude/launch.json

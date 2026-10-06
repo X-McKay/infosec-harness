@@ -1,5 +1,6 @@
 import asyncio
 import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -7,7 +8,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from infosec_harness.config import get_settings
-from infosec_harness.contracts import Finding, InvestigationResult, Verdict
+from infosec_harness.contracts import Finding, InvestigationResult, Limits, Verdict
 from infosec_harness.evals import cohort
 
 # The checkout that holds this test file, found independently of the module under test.
@@ -608,3 +609,83 @@ async def test_owned_worker_stays_up_until_cancelled_run_cleans_up(
         assert persisted["cases"][1]["status"] == "unstarted"
         description = await env.client.get_workflow_handle(row["workflow_id"]).describe()
         assert description.status == WorkflowExecutionStatus.CANCELED
+
+
+def occupancy_command(output: str, exit_code: int = 0) -> list[str]:
+    return [sys.executable, "-c", f"import sys; print({output!r}); sys.exit({exit_code})"]
+
+
+def test_case_operation_ceiling_covers_the_largest_live_observation():
+    # Private run 8 (cohort-8.json): 1,670 receipts equalled the 1,670 ledger claims it added,
+    # and perl-sqli-vulnerable retained 96 at budget exhaustion under 40 requests / 100 calls.
+    assert cohort.case_operation_ceiling(Limits(max_requests=40, max_tool_calls=100)) >= 96
+    assert cohort.case_operation_ceiling(Limits()) == 30 + 100 + cohort.CASE_LIFECYCLE_OPERATIONS
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        occupancy_command(json.dumps({"retained": 1, "quota": 20000, "read_only": False})),
+        occupancy_command(json.dumps({"retained": 1, "quota": 20000})),
+        occupancy_command("not json"),
+        occupancy_command(json.dumps({"retained": 1, "quota": 20000, "read_only": True}), 1),
+        ["/nonexistent/occupancy-command"],
+    ],
+)
+def test_capacity_preflight_fails_closed_without_a_read_only_observation(monkeypatch, command):
+    settings = get_settings()
+    monkeypatch.setattr(settings, "native_occupancy_command", command)
+    report = cohort.native_capacity_preflight(settings, 36)
+    assert report["status"] == "failed"
+    assert "retained" not in report and "error_type" in report
+
+
+def test_capacity_preflight_is_unchecked_only_when_unconfigured(monkeypatch):
+    settings = get_settings()
+    monkeypatch.setattr(settings, "native_occupancy_command", [])
+    report = cohort.native_capacity_preflight(settings, 36)
+    assert report["status"] == "not_checked"
+    assert report["required_headroom"] == 36 * cohort.case_operation_ceiling(settings.limits)
+    monkeypatch.setattr(settings, "native_occupancy_command", occupancy_command(
+        json.dumps({"retained": 8344, "quota": 20000, "read_only": True, "observed_at_ms": 5})))
+    report = cohort.native_capacity_preflight(settings, 36)
+    assert report["status"] == "passed"
+    assert (report["retained"], report["quota"], report["headroom"]) == (8344, 20000, 11656)
+
+
+async def test_saturated_ledger_refuses_the_cohort_before_any_dispatch(tmp_path, monkeypatch):
+    finding = Finding(title="case", repo_url="repo")
+    monkeypatch.setattr(cohort, "source_identity", lambda: "commit")
+    monkeypatch.setattr(
+        cohort, "corpus_cases",
+        lambda path: [(finding, "inconclusive", "a"), (finding, "inconclusive", "b")],
+    )
+    settings = get_settings()
+    config = tmp_path / "runtime.json"
+    config.write_text("{}")
+    monkeypatch.setattr(settings, "openshell_config", config)
+    required = 2 * cohort.case_operation_ceiling(settings.limits)
+    monkeypatch.setattr(settings, "native_occupancy_command", occupancy_command(
+        json.dumps({"retained": 20000 - required + 1, "quota": 20000, "read_only": True})))
+    connect = AsyncMock(side_effect=AssertionError("the cohort must not connect"))
+    monkeypatch.setattr(cohort, "connect", connect)
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text("{}")
+    output = tmp_path / "report.json"
+    with pytest.raises(ValueError, match="capacity preflight failed"):
+        await cohort.evaluate_corpus(manifest, output, settings, owned_worker=True)
+    connect.assert_not_awaited()
+    persisted = json.loads(output.read_text())
+    budget = persisted["native_operation_budget"]
+    assert budget["status"] == "failed"
+    assert (budget["headroom"], budget["required_headroom"]) == (required - 1, required)
+    assert persisted["status"] == "failed"
+    assert persisted["gates"]["complete_corpus"] == "failed"
+    assert [case["status"] for case in persisted["cases"]] == ["unstarted", "unstarted"]
+    # One more claim of headroom starts the cohort (which then meets the unavailable client).
+    monkeypatch.setattr(settings, "native_occupancy_command", occupancy_command(
+        json.dumps({"retained": 20000 - required, "quota": 20000, "read_only": True})))
+    monkeypatch.setattr(cohort, "connect", AsyncMock(side_effect=RuntimeError("unavailable")))
+    with pytest.raises(RuntimeError, match="unavailable"):
+        await cohort.evaluate_corpus(manifest, tmp_path / "second.json", settings)
+    assert json.loads((tmp_path / "second.json").read_text())["native_operation_budget"]["status"] == "passed"

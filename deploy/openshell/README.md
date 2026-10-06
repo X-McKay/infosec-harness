@@ -164,7 +164,7 @@ name = "checkout-openshell"
 bind_address = "127.0.0.1"
 health_bind_address = "127.0.0.1"
 log_level = "info"
-max_mutation_admissions_per_caller = 10000   # patched binary only; see below
+max_mutation_admissions_per_caller = 20000   # patched binary only; see below
 compute_driver = "docker"
 disable_tls = false
 guest_tls_ca = "/var/lib/ih-openshell/<checkout-id>/certs/ca.crt"
@@ -346,12 +346,24 @@ NEW="/var/lib/ih-openshell/$CHECKOUT_ID/bin/openshell-gateway-<label>"
 gateway status
 gateway install --source "$PWD/$B/out/openshell-gateway" \
   --sha256 "<binary_sha256 from gateway-build.json>" --name openshell-gateway-<label>
-gateway set-quota --binary "$NEW" --quota 10000
+gateway set-quota --binary "$NEW" --quota 20000
 gateway restart --binary "$NEW"
 gateway status
 ```
 
 Requalify with `./dev qualify` after the swap.
+
+### Admission occupancy
+
+Successful admissions stay in the ledger for 24 hours, so a saturated quota refuses every
+mutation until claims expire. `scripts/openshell_admissions.py`, run as root in the guest,
+resolves the running gateway's database through the verified gateway process, opens it in
+SQLite read-only query mode and prints one JSON line of aggregate counts:
+`{"observed_at_ms": …, "retained": N, "quota": M, "read_only": true}`. Name that command as
+`native_occupancy_command` in the evaluation settings file so `harness eval` checks headroom
+before starting a cohort (the whole `limactl shell … sudo … python3 …` argument vector, with
+absolute paths). The quota is read from `gateway-conf/gateway.toml`, so run `gateway status`
+after a quota change to confirm the running process has it.
 
 ## Qualification and evaluation
 

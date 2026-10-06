@@ -73,9 +73,17 @@ used instead of every `HARNESS_*` variable, so it must also name the Temporal ad
   "openshell_config": "/absolute/path/to/runtime.json",
   "model_base_url": "https://your-model-host/v1",
   "local_repo_roots": ["/absolute/path/to/infosec-harness/eval-corpus"],
+  "native_occupancy_command": ["/path/to/read-only-occupancy-command"],
   "limits": {"total_tokens": 600000, "max_requests": 40, "command_timeout_seconds": 300}
 }
 ```
+
+`native_occupancy_command` names an operator-owned read-only command whose last stdout line
+is `{"retained": N, "quota": M, "read_only": true}` for the native admission ledger (see
+[admission occupancy](deploy/openshell/README.md#admission-occupancy)). `harness eval`
+records the observation as the report's `native_operation_budget` and refuses to start when
+the headroom is below `cases × (max_requests + max_tool_calls + 40)`. Without the command the
+budget stays `not_checked`.
 
 A `command_timeout_seconds` above the runtime's `max_timeout_seconds` (default 300) is capped
 for model requests but makes every tool command fail, so keep it within that maximum.

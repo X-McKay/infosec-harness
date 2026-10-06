@@ -11,6 +11,7 @@ import sys
 from contextlib import AsyncExitStack, suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Literal
 from uuid import uuid4
 
 import yaml
@@ -20,7 +21,7 @@ from temporalio.exceptions import ApplicationError
 
 from infosec_harness._io import write_json
 from infosec_harness.api import PREFIX, RPC_TIMEOUT, connect, execution_timeout, start_investigation
-from infosec_harness.contracts import Finding, InvestigationResult
+from infosec_harness.contracts import Finding, InvestigationResult, Limits
 from infosec_harness.sandbox import OpenShell, OpenShellConfig, native_operation_accounting
 from infosec_harness.sandbox.process import _finish
 from infosec_harness.workflows.worker import worker_identity
@@ -35,12 +36,74 @@ DRAIN = timedelta(minutes=30)
 # budget). Unknown dispatch (OpenShellError/ExecutionUnknown) is never in this set, and
 # `agent_level` also scans the embedded chain text for those markers and for cleanup.
 AGENT_FAILURES = frozenset({"UsageLimitExceeded", "UnexpectedModelBehavior", "ModelExecutorError"})
+# Native mutation admissions one case may retain beyond one exec per model request and per
+# tool call: sandbox creates, admission execs, captures and snapshot delivery parts (900 kB
+# each). Live run 8 retained at most 96 admissions per case under 40 requests / 100 calls.
+CASE_LIFECYCLE_OPERATIONS = 40
+OCCUPANCY_TIMEOUT = 60
 
 
 class ReleasePolicy(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     minimum_task_success_rate: float = Field(ge=0, le=1)
     maximum_unsafe_negatives: int = Field(ge=0)
+
+
+class Occupancy(BaseModel):
+    """One read-only observation of the native admission ledger, printed by an operator command."""
+
+    model_config = ConfigDict(extra="ignore")
+    retained: int = Field(ge=0)
+    quota: int = Field(ge=1)
+    read_only: Literal[True]
+    observed_at_ms: int | None = None
+
+
+def case_operation_ceiling(limits: Limits) -> int:
+    return limits.max_requests + limits.max_tool_calls + CASE_LIFECYCLE_OPERATIONS
+
+
+def native_capacity_preflight(settings, planned: int) -> dict:
+    """Refuse to start a cohort into a saturated admission ledger.
+
+    The operator names a read-only command (``native_occupancy_command``) whose last stdout
+    line is JSON with ``retained``, ``quota`` and ``read_only: true``; the harness never reads
+    the ledger itself. A failed, slow or non-read-only observation fails closed. Unconfigured,
+    the budget stays ``not_checked`` and the cohort proceeds as before.
+    """
+    ceiling = case_operation_ceiling(settings.limits)
+    report = {
+        "status": "not_checked",
+        "planned_cases": planned,
+        "per_case_ceiling": ceiling,
+        "required_headroom": planned * ceiling,
+        "limitations": [
+            "The ceiling allows about 27 MB of snapshot archive per case; larger sources need more delivery parts.",
+            "One ledger snapshot: other callers and 24 h retention expiry change occupancy during the run.",
+        ],
+    }
+    command = list(settings.native_occupancy_command)
+    if not command:
+        report["reason"] = "No read-only native occupancy command is configured."
+        return report
+    try:
+        completed = subprocess.run(command, capture_output=True, text=True, check=True,
+                                   stdin=subprocess.DEVNULL, timeout=OCCUPANCY_TIMEOUT)
+        observed = Occupancy.model_validate_json(completed.stdout.strip().splitlines()[-1])
+    except Exception as error:
+        report.update(status="failed", error_type=type(error).__name__,
+                      reason="The occupancy command did not return a read-only observation.")
+        return report
+    headroom = observed.quota - observed.retained
+    report.update(
+        status="passed" if headroom >= report["required_headroom"] else "failed",
+        retained=observed.retained, quota=observed.quota, headroom=headroom,
+        observed_at_ms=observed.observed_at_ms,
+        source="operator-configured read-only occupancy command",
+    )
+    if report["status"] == "failed":
+        report["reason"] = "Insufficient native admission headroom for the planned cases."
+    return report
 
 
 def release_policy() -> tuple[ReleasePolicy, str]:
@@ -228,8 +291,7 @@ async def evaluate_corpus(manifest: Path, output: Path, settings, *, names=(),
         "dataset_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
         "runtime_config_sha256": hashlib.sha256(settings.openshell_config.read_bytes()).hexdigest(),
         "limits": settings.limits.model_dump(),
-        "native_operation_budget": {"status": "not_checked", "limit": None,
-                                    "reason": "No native ledger capacity budget is configured or proven."},
+        "native_operation_budget": native_capacity_preflight(settings, len(cases)),
         "started_at": datetime.now(UTC).isoformat(),
         "status": "running",
         "gates": {
@@ -247,6 +309,12 @@ async def evaluate_corpus(manifest: Path, output: Path, settings, *, names=(),
     }
     output.parent.mkdir(parents=True, exist_ok=True)
     write_json(output, candidate, exclusive=True)
+    if candidate["native_operation_budget"]["status"] == "failed":
+        error = ValueError("Native admission capacity preflight failed; no case was started")
+        candidate.update(status="failed", error_type=type(error).__name__)
+        candidate["gates"]["complete_corpus"] = "failed"
+        write_json(output, candidate)
+        raise error
     async with AsyncExitStack() as stack:
         try:
             client = await connect(settings)
