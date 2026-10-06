@@ -49,6 +49,25 @@ configuration without `metadata.resource_version`, which routine status writes a
 an order-canonical digest of the outer fence (Docker returns mounts in varying order); a
 mismatch names the changed paths and closes owned work.
 
+Each boundary check is a named entry in a table, not an inline condition: the confinement
+proof's facts (uid, no-new-privileges, seccomp, capabilities, the `/dev/null` device numbers,
+the Landlock, network, socket and credential discriminators, CPU and memory against the
+profile), the outer-fence properties, policy admission and transfer bounds. A refusal names
+the checks that failed, never the observed values or workload output, and a missing fact
+fails its check.
+
+Failures are typed so callers classify them without parsing messages:
+
+| Type | Meaning |
+| --- | --- |
+| `OpenShellError` | A boundary could not be established or observed; the base of the adapter's errors |
+| `ExecutionUnknown` | Dispatch may have happened; the operation is never automatically resent |
+| `SourceRejected` | A trusted source tree was refused for transfer (unsafe file types or over a bound) |
+| `SourceChanged` | The workspace no longer holds the original source bytes; raised before a probe runs and returned to the agent as integrity feedback naming the file |
+| `UnsafeSnapshotMetadata` | A captured archive failed metadata admission |
+| `ModelExecutorError` | The model executor exited without a usable response under a complete receipt |
+| `WorkerIdentityMismatch` | A non-retryable activity refusal before any side effect: the worker is not the expected identity |
+
 Command delivery is an external effect. A durable local receipt fence is fsynced before
 sending it. Completed results can be reused; an interrupted dispatch with no terminal
 receipt is unknown and is never blindly resent. The receipt directory and source snapshots
@@ -122,11 +141,51 @@ re-run. `--owned-worker` (used by `./dev eval`) runs the worker in-process on a 
 `investigate-v11-eval-<hex>` queue recorded in the report and keeps it up until every owned
 workflow and its cleanup is terminal. Failed workflows carry the outermost meaningful failure
 type and a typed cause chain, which the report records. With `--keep-going` the cohort
-continues only past a terminal failure whose whole chain is agent-level (`UsageLimitExceeded`,
-`UnexpectedModelBehavior`, `ModelExecutorError`) and names no cleanup, unknown-execution or
-OpenShell error. `--case` selects a diagnostic subset whose gates stay `not_checked`.
-`harness replay` re-executes a recorded history against current workflow code with model
-requests and native dispatch disabled.
+continues only past a terminal failure classified from the raw, untruncated exception chain:
+the outermost cause must be agent-level (`UsageLimitExceeded`, `UnexpectedModelBehavior`,
+`ModelExecutorError`), every further link must be on an allowlist (those types, `ModelRetry`
+and Temporal's wrappers), and the chain text must name no cleanup, `ExecutionUnknown` or
+`OpenShellError`. Any other type, such as a timeout, RPC error or `WorkerIdentityMismatch`,
+stops the cohort. `--case` selects a diagnostic subset whose gates stay `not_checked`.
+
+`--parallel N` (1 to 8, default 1) runs up to N cases at once against the one owned worker,
+starting them in manifest order and keeping report rows in that order. A stopping failure sets
+a latch before its case releases its slot: in-flight cases finish and no new case starts. A
+parallel run records a limitation, since latency and executor failure rates are not comparable
+to a sequential baseline and peak in-flight native operations rise with concurrency; the
+capacity preflight (`native_occupancy_command`) bounds the cohort's total admissions, not its
+concurrency. `harness replay` re-executes a recorded history against current workflow code
+with model requests and native dispatch disabled; its report starts `not_checked`. Native
+qualification likewise lists each check per profile (`boundary`, `roundtrip`,
+`saved_operation`, `sandbox_reuse`, `cleanup`) as `not_checked` until it runs, with provenance
+and a bounded error for a failure.
+
+The server execution timeout of an investigation is its deadline plus `CLEANUP_RESERVE`
+(`workflows/investigation.py`): the time owned cleanup can need after the deadline fires, a
+waited `prepare` (10 min) plus three cleanup attempts (5 min each) with their retry backoff
+and a 5 min margin, about 30 minutes. When a cohort with an owned worker cancels a case, it
+waits up to the same reserve for that workflow to end. A server-ended run never executes its `finally`, so a timed-out or terminated case is
+recorded with `cleanup: unconfirmed` and the next step for the operator.
+
+Logs are one stderr handler at `Settings.log_level`, installed by `harness worker`, `api` and
+`eval`. Records are `event=<name> key=value` lines carrying run, sandbox and operation ids,
+error types and statuses, never commands, workload output, model text or credentials.
+Workflow and activity code logs through `workflow.logger` and `activity.logger`, so replay does
+not repeat workflow records.
+
+The investigator loads every packaged skill under `skills/` as a deferred capability: each
+model request carries one `- name: description` catalog line per skill, and a body is loaded on
+demand. `skills/README.md` is that catalog, generated by `scripts/skill_catalog.py`;
+`tests/agents/test_skill_catalog.py` bounds skill size, description length and the total
+catalog the model sees. Skills hold expertise only and grant no permission.
+
+The evaluation corpus is de-labelled: the investigator receives only a finding (title,
+description, file path, CWE) and a repository snapshot whose variant directories are named
+`a` and `b`, with no verdict words or explanatory comments and (with one documented
+exception) no tests in the fixture, and both findings of a pair share one description. Which variant is exploitable is recorded only in
+`eval-corpus/manifest.json` and the maintainers' answer key in `eval-corpus/README.md`;
+fixture tests live outside every snapshot under `eval-corpus/verification/`.
+`tests/evals/test_corpus_hygiene.py` enforces these rules.
 
 Investigations stop before scheduling another model or tool activity once native Temporal
 history reaches 32MiB. All tool calls, including deferred skill loading, execute sequentially

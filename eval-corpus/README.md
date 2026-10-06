@@ -29,7 +29,9 @@ pair, so that a correct verdict comes from analysing the code and not from readi
 
 ## Cases (82 total)
 
-Each case name is `[<lang>-]<cwe>-<variant>` (Python cases are unprefixed). The manifest is checked by `tests/evals/test_cohort.py`.
+Each case name is `[<lang>-]<cwe>-<variant>` (Python cases are unprefixed). Case names are
+maintainer labels and never reach the investigator. The manifest is checked by
+`tests/evals/test_cohort.py` and `tests/evals/test_corpus_hygiene.py`.
 
 | Language | Cases |
 |---|---|
@@ -213,10 +215,12 @@ their case: `insecuretemp-*` live under `python/tempfile`, `unreachable` under
 
 ## Run
 
-Configure the worker's approved local roots to include this directory, then run:
+The cohort resolves each fixture path against the checkout it runs from, so the worker's
+approved local roots must include that checkout's `eval-corpus/`. Without `--settings`,
+`./dev` sets exactly that root; a settings file must name it in `local_repo_roots`. Then run:
 
 ```bash
-./dev eval [--settings settings.json]   # owned worker; .harness/reports/model-<UTC time>.json
+./dev eval [--settings settings.json] [--parallel N]   # .harness/reports/model-<UTC time>.json
 ```
 
 `./dev eval` starts its own worker on a fresh task queue with the same configuration. A bare

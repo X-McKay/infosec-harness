@@ -237,7 +237,11 @@ def test_status_and_stop_manage_only_recorded_process_groups(checkouts):
 
 
 STUB_TOOL = """#!/usr/bin/env bash
-printf '%s\\n' "$(basename "$0") $*" >>"$STUB_LOG"
+call="$(basename "$0") $*"
+case "$call" in
+  "uv run --locked harness "*) call+=" [config=${HARNESS_OPENSHELL_CONFIG-unset}]" ;;
+esac
+printf '%s\\n' "$call" >>"$STUB_LOG"
 case "$(basename "$0") $*" in
   "temporal server start-dev"*|"uv run --locked harness api"*|"npm --prefix ui run dev"*)
     exec sleep 300 ;;
@@ -249,9 +253,8 @@ def recorded_pid(harness: Path, name: str) -> int:
     return int((harness / "run" / f"{name}.pid").read_text().split("\n", 1)[0])
 
 
-def test_start_runs_three_loopback_processes_and_stop_keeps_the_database(checkouts, tmp_path):
-    """Full start with stub tools: the real process supervision, ports and arguments."""
-    main, harness = checkouts["main"], checkouts["harness"]
+def stubbed_dev(main: Path, tmp_path: Path):
+    """./dev in ``main`` with every managed tool a logging stub; returns (run, call log)."""
     stubs = tmp_path / "stubs"
     stubs.mkdir()
     (stubs / "tool").write_text(STUB_TOOL)
@@ -259,17 +262,38 @@ def test_start_runs_three_loopback_processes_and_stop_keeps_the_database(checkou
     for name in ("python", "just", "temporal", "uv", "npm"):
         (stubs / name).symlink_to(stubs / "tool")
     log = tmp_path / "calls.log"
+    log.touch()
     environment = {key: value for key, value in os.environ.items()
                    if not key.startswith(("HARNESS_", "MISE_"))}
     environment |= {"PATH": f"{stubs}:{environment['PATH']}", "STUB_LOG": str(log)}
 
-    def run(*args: str) -> subprocess.CompletedProcess[str]:
+    def run(*args: str, **extra: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(["bash", str(main / "dev"), *args], capture_output=True,
-                              text=True, timeout=60, env=environment, check=False)
+                              text=True, timeout=60, env=environment | extra, check=False)
+
+    return run, log
+
+
+def private_config(harness: Path, name: str = "private/native-config.json") -> Path:
+    path = harness / "openshell" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{}")
+    return path
+
+
+def test_start_runs_three_loopback_processes_and_stop_keeps_the_database(checkouts, tmp_path):
+    """Full start with stub tools: the real process supervision, ports and arguments."""
+    main, harness = checkouts["main"], checkouts["harness"]
+    run, log = stubbed_dev(main, tmp_path)
 
     try:
+        # No private OpenShell configuration yet: the stack starts and qualification is
+        # reported not_checked, rather than `harness qualify` failing on a missing file.
         started = run()
         assert started.returncode == 0, started.stderr
+        assert "harness qualify" not in log.read_text()
+        assert "Native OpenShell qualification: not_checked" in started.stdout
+        assert "Traceback" not in started.stdout + started.stderr
         first = {name: recorded_pid(harness, name) for name in ("temporal", "api", "ui")}
         assert all(alive(pid) for pid in first.values())
         calls = log.read_text()
@@ -282,10 +306,12 @@ def test_start_runs_three_loopback_processes_and_stop_keeps_the_database(checkou
         assert "npm --prefix ui run dev -- --host 127.0.0.1 --port 8181 --strictPort" in calls
         assert ("python scripts/dev_setup.py ready --api-url http://127.0.0.1:8101 "
                 "--web-url http://127.0.0.1:8181 --temporal-ui-url http://127.0.0.1:8334") in calls
-        assert "uv run --locked harness qualify" in calls
 
+        config = private_config(harness)
         again = run("start")  # Temporal keeps running; the stateless API and UI restart.
         assert again.returncode == 0, again.stderr
+        assert f"uv run --locked harness qualify [config={config}]" in log.read_text()
+        assert "Control plane and OpenShell checked" in again.stdout
         assert recorded_pid(harness, "temporal") == first["temporal"]
         for name in ("api", "ui"):
             assert recorded_pid(harness, name) != first[name] and not alive(first[name])
@@ -348,3 +374,64 @@ def test_readiness_is_bounded_and_loopback_only(capsys):
     assert "UI document" in capsys.readouterr().err
     with pytest.raises(ValueError, match="loopback"):
         setup.readiness("http://example.com", closed, closed, deadline_seconds=0)
+
+
+@pytest.mark.parametrize("layout", ["explicit", "explicit-missing", "private", "runtime", "none"])
+def test_harness_commands_resolve_the_private_openshell_configuration(checkouts, tmp_path,
+                                                                      layout):
+    """An explicit HARNESS_OPENSHELL_CONFIG first, then the private layout, then runtime.json."""
+    run, log = stubbed_dev(checkouts["main"], tmp_path)
+    harness = checkouts["harness"]
+    explicit = tmp_path / "operator" / "explicit.json"
+    env = {}
+    if layout.startswith("explicit"):
+        env["HARNESS_OPENSHELL_CONFIG"] = str(explicit)
+        # Both defaults exist: an explicit setting still wins, and is never passed over.
+        private_config(harness, "runtime.json")
+        private_config(harness)
+    if layout == "explicit":
+        explicit.parent.mkdir()
+        explicit.write_text("{}")
+        expected = explicit
+    elif layout == "private":
+        private_config(harness, "runtime.json")
+        expected = private_config(harness)
+    elif layout == "runtime":
+        expected = private_config(harness, "runtime.json")
+    else:
+        expected = None
+
+    for verb in ("qualify", "eval", "replay"):
+        args = ("replay", "investigate-v11-x") if verb == "replay" else (verb,)
+        result = run(*args, **env)
+        call = f"uv run --locked harness {' '.join(args)}"
+        if expected is not None:
+            assert result.returncode == 0, result.stderr
+            assert f"OpenShell configuration: {expected}\n" in result.stderr
+            assert f"[config={expected}]" in log.read_text().split(call, 1)[1].split("\n", 1)[0]
+        elif verb == "replay":  # reads Temporal histories only; still runs
+            assert result.returncode == 0, result.stderr
+            assert call in log.read_text()
+        else:
+            assert result.returncode == 2
+            if layout == "explicit-missing":
+                assert f"HARNESS_OPENSHELL_CONFIG={explicit} does not exist" in result.stderr
+            else:
+                assert "HARNESS_OPENSHELL_CONFIG is unset" in result.stderr
+            assert "Traceback" not in result.stderr and call not in log.read_text()
+
+    # A frozen settings file names its own configuration; nothing is resolved or refused.
+    frozen = run("qualify", "--settings", "frozen.json")
+    assert frozen.returncode == 0, frozen.stderr
+    assert "openshell_config in frozen.json" in frozen.stderr
+    assert "harness --settings frozen.json qualify" in log.read_text()
+
+    # smoke (like start and doctor) qualifies only when a configuration exists.
+    smoke = run("smoke", **env)
+    assert smoke.returncode == 0, smoke.stderr
+    if expected is None:
+        assert "Native OpenShell qualification: not_checked" in smoke.stdout
+        assert "harness qualify" not in log.read_text()
+    else:
+        assert "not_checked" not in smoke.stdout
+        assert log.read_text().count(f"harness qualify [config={expected}]") == 2

@@ -145,7 +145,9 @@ everything the generated schema covers.
 
 ## Development
 
-Use `./dev` from the repository root for the managed stack. For frontend work against a
+`./dev` from the repository root runs this UI as its `ui` process: the Vite dev server on
+`127.0.0.1:$HARNESS_WEB_PORT` (`--strictPort`) with `VITE_API_URL` set to the local API, and
+restarts it on every `./dev` so it serves the current source. For frontend work against a
 separately running API, run from this directory (Node >= 22.6):
 
 ```bash
@@ -202,8 +204,9 @@ to `playwright-report/` and failure artifacts to `test-results/` (both ignored).
 
 ## Deployment
 
-The `Dockerfile` pins Node and nginx by version and index digest. `nginx.conf` proxies `/api/`
-to the API, falls back to `index.html` for client routes, and sets a same-origin
-Content-Security-Policy (no inline styles or scripts), `nosniff`, `frame-ancestors 'none'` and
-`no-store` for `/api/` and `index.html` at server level, so no location drops them; hashed
-`/assets/` are cached as immutable. `dist/`, `node_modules/` and `*.tsbuildinfo` are ignored.
+There is no UI image, nginx configuration or production deployment target (see
+`deploy/README.md`): the UI runs only under Vite, started by `./dev` and bound to loopback.
+The Vite dev server sets no Content-Security-Policy or other security headers, so the rules
+above are enforced by the code and its tests, not by the server. `npm run build` writes
+`dist/` for the checks and the end-to-end suite (`vite preview`) only. `dist/`,
+`node_modules/` and `*.tsbuildinfo` are ignored.
