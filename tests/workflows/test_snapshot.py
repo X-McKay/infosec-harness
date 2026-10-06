@@ -128,3 +128,68 @@ async def test_approved_source_ancestor_substitution_never_imports_external_byte
     with pytest.raises((ValueError, OSError)):
         await snapshot(finding, "run", settings)
     assert not list((settings.workspace_dir / "sources").glob("*/tree/secret"))
+
+
+def _commit(repo: Path, home: Path, content: str, message: str) -> str:
+    import os
+    import subprocess
+
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(home),
+           "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull, "LC_ALL": "C"}
+
+    def git(*args):
+        return subprocess.run(
+            ["git", "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid",
+             "-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main", *args],
+            cwd=repo, env=env, check=True, capture_output=True, text=True, timeout=30,
+        ).stdout.strip()
+
+    if not (repo / ".git").exists():
+        git("init", "-q")
+    (repo / "target.py").write_text(content)
+    git("add", "target.py")
+    git("commit", "-q", "-m", message)
+    return git("rev-parse", "HEAD")
+
+
+async def test_git_revision_captures_the_committed_tree_from_a_local_repository(tmp_path):
+    """The default source mode: a bounded clone and detached checkout, no repository code."""
+    repo = tmp_path / "repository"
+    repo.mkdir()
+    first = _commit(repo, tmp_path, "first = 1\n", "first")
+    _commit(repo, tmp_path, "second = 2\n", "second")
+    (repo / "target.py").write_text("uncommitted = 3\n")
+    (repo / "untracked.py").write_text("never captured\n")
+    settings = Settings(workspace_dir=tmp_path / "state", local_repo_roots=[repo])
+    finding = Finding(title="finding", repo_url=str(repo), revision=first)
+    assert finding.source_mode == "git_revision"
+    pinned = await snapshot(finding, "pinned", settings)
+    assert Path(pinned.path, "target.py").read_text() == "first = 1\n"
+    assert sorted(path.name for path in Path(pinned.path).iterdir()) == ["target.py"]
+    head = await snapshot(finding.model_copy(update={"revision": "HEAD"}), "head", settings)
+    assert Path(head.path, "target.py").read_text() == "second = 2\n"
+    assert head.digest != pinned.digest
+    # A retry of the same run reuses the published snapshot after re-hashing it.
+    assert await snapshot(finding, "pinned", settings) == pinned
+
+
+@pytest.mark.parametrize("revision", ["-c core.pager=x", "main\nother"])
+async def test_git_revision_refuses_option_or_multiline_revisions(tmp_path, revision):
+    repo = tmp_path / "repository"
+    repo.mkdir()
+    _commit(repo, tmp_path, "first = 1\n", "first")
+    settings = Settings(workspace_dir=tmp_path / "state", local_repo_roots=[repo])
+    finding = Finding(title="finding", repo_url=str(repo), revision=revision)
+    with pytest.raises(ValueError, match="invalid revision"):
+        await snapshot(finding, "run", settings)
+
+
+async def test_unknown_git_revision_fails_without_publishing(tmp_path):
+    repo = tmp_path / "repository"
+    repo.mkdir()
+    _commit(repo, tmp_path, "first = 1\n", "first")
+    settings = Settings(workspace_dir=tmp_path / "state", local_repo_roots=[repo])
+    finding = Finding(title="finding", repo_url=str(repo), revision="0" * 40)
+    with pytest.raises(RuntimeError, match="source checkout failed"):
+        await snapshot(finding, "run", settings)
+    assert not list((settings.workspace_dir / "sources").iterdir())
