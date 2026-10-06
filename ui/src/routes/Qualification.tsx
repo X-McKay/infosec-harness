@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { QualificationReportView } from "@/components/evaluations/QualificationReport";
 import { Section, StatusBadge } from "@/components/evaluations/common";
 import { EvalLink } from "@/components/evaluations/links";
-import { reportQuery, reportsQuery } from "@/components/evaluations/queries";
+import { reportQuery, reportsQuery } from "@/api/queries";
 import { timestamp } from "@/lib/format";
 import { reportPath } from "@/lib/reports";
 

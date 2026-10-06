@@ -10,7 +10,7 @@ import {
   Tile,
 } from "@/components/evaluations/common";
 import { EvalLink } from "@/components/evaluations/links";
-import { reportQuery, reportsQuery } from "@/components/evaluations/queries";
+import { reportQuery, reportsQuery } from "@/api/queries";
 import {
   cohortUnfinished,
   gateRows,

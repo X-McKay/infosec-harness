@@ -11,7 +11,7 @@ import {
   StatusBadge,
 } from "@/components/evaluations/common";
 import { EvalLink } from "@/components/evaluations/links";
-import { reportsQuery } from "@/components/evaluations/queries";
+import { reportsQuery } from "@/api/queries";
 import { integer, percent, timestamp } from "@/lib/format";
 import {
   REPORT_KINDS,

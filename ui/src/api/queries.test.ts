@@ -7,6 +7,8 @@ import {
   fetchHealth,
   mutations,
   queries,
+  reportQuery,
+  reportsQuery,
   retryUnlessNotFound,
   runPath,
   runRefreshInterval,
@@ -69,6 +71,12 @@ test("queries and mutations call only their documented endpoints", async () => {
     source_mode: "git_revision",
   });
   await mutations.cancel(client, "investigate-v11-1").mutationFn();
+  const reports = await client.fetchQuery(reportsQuery());
+  assert.deepEqual(reports, { items: [], truncated: false });
+  const report = await client.fetchQuery(reportQuery("model-1.json"));
+  assert.equal(report.document.shape, "unknown");
+  // A name that is not a report file name never reaches the network.
+  await assert.rejects(client.fetchQuery(reportQuery("../settings.json")));
   assert.deepEqual(seen.paths, [
     "/api/health",
     "/api/runs?page_token=tok",
@@ -76,8 +84,19 @@ test("queries and mutations call only their documented endpoints", async () => {
     "/api/runs/investigate-v11-1/events",
     "/api/runs",
     "/api/runs/investigate-v11-1/cancel",
+    "/api/reports",
+    "/api/reports/model-1.json",
   ]);
-  assert.deepEqual(seen.methods, ["GET", "GET", "GET", "GET", "POST", "POST"]);
+  assert.deepEqual(seen.methods, [
+    "GET",
+    "GET",
+    "GET",
+    "GET",
+    "POST",
+    "POST",
+    "GET",
+    "GET",
+  ]);
   client.clear();
 });
 
