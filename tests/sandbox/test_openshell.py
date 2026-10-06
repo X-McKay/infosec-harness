@@ -397,6 +397,76 @@ async def test_cancelled_create_finishes_ownership_record_and_native_cleanup(ada
     assert saved["closed"] and saved["sandbox"]["id"]
 
 
+async def cancel_repeatedly(task, times=3):
+    """Deliver several cancellation requests, as a Temporal worker shutdown can."""
+    for _ in range(times):
+        task.cancel()
+        await asyncio.sleep(0)
+
+
+async def test_repeatedly_cancelled_create_still_finishes_native_cleanup(adapter, monkeypatch):
+    boundary, native = adapter
+    original, original_delete = native.CreateSandbox, native.delete
+    entered, release, deleting, deleted = (threading.Event() for _ in range(4))
+
+    def delayed(request, timeout):
+        entered.set()
+        assert release.wait(3)
+        return original(request, timeout)
+
+    def slow_delete(name, **kwargs):
+        deleting.set()
+        assert deleted.wait(3)
+        original_delete(name, **kwargs)
+
+    monkeypatch.setattr(native, "CreateSandbox", delayed)
+    monkeypatch.setattr(native, "delete", slow_delete)
+    task = asyncio.create_task(boundary.create("run"))
+    assert await asyncio.to_thread(entered.wait, 3)
+    await cancel_repeatedly(task)
+    release.set()
+    assert await asyncio.to_thread(deleting.wait, 3)
+    await cancel_repeatedly(task)  # while the owned close is in flight
+    deleted.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert len(native.deleted) == 1 and not native.resources
+    saved = json.loads(next((boundary.config.state_dir / "sandboxes").glob("*.json")).read_bytes())
+    assert saved["closed"] and saved["sandbox"]["id"]
+
+
+async def test_repeatedly_cancelled_exec_still_closes_its_sandbox(adapter, monkeypatch):
+    boundary, native = adapter
+    sandbox = await boundary.create("run")
+    original, original_delete = native.ExecSandbox, native.delete
+    entered, release, deleting, deleted = (threading.Event() for _ in range(4))
+
+    def blocked(request, timeout):
+        entered.set()
+        assert release.wait(3)
+        return original(request, timeout)
+
+    def slow_delete(name, **kwargs):
+        deleting.set()
+        assert deleted.wait(3)
+        original_delete(name, **kwargs)
+
+    monkeypatch.setattr(native, "ExecSandbox", blocked)
+    monkeypatch.setattr(native, "delete", slow_delete)
+    task = asyncio.create_task(boundary.execute(sandbox, "true", operation_id="activity", timeout=3))
+    assert await asyncio.to_thread(entered.wait, 3)
+    await cancel_repeatedly(task)
+    release.set()
+    assert await asyncio.to_thread(deleting.wait, 3)
+    await cancel_repeatedly(task)
+    deleted.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert native.deleted == [sandbox.name]
+    saved = json.loads(next((boundary.config.state_dir / "sandboxes").glob("*.json")).read_bytes())
+    assert saved["closed"]
+
+
 @pytest.mark.asyncio
 async def test_unexpected_workspace_provider_is_rejected(adapter, monkeypatch):
     boundary, native = adapter

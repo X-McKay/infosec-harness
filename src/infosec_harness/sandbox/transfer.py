@@ -141,7 +141,7 @@ class Transfer:
                     self._save(record, {"source": asdict(source), "operation_id": operation_id,
                         "sha256": hashlib.sha256(raw).hexdigest(), "size": len(raw)})
                 except BaseException:
-                    await asyncio.shield(self.close(source))
+                    await self._close_owned(source)
                     raise
             # Parse metadata only. No archive member is ever extracted on the
             # worker; hardlinks, symlinks, devices and traversal are refused.

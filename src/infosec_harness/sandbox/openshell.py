@@ -15,6 +15,7 @@ import ipaddress
 import json
 import os
 import uuid
+from contextlib import suppress
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -35,7 +36,7 @@ from .execution import (
     _digest,
     _request_id,
 )
-from .process import run_bounded
+from .process import finish, run_bounded
 from .transfer import Transfer
 
 _OWNER = "infosec-harness.v3"
@@ -368,7 +369,7 @@ class OpenShell(Execution, Transfer):
                 if not initial:
                     saved = json.loads(path.read_bytes())
                     if not saved.get("closed"):
-                        await asyncio.shield(self.close(Sandbox(**saved["sandbox"])))
+                        await self._close_owned(Sandbox(**saved["sandbox"]))
                 raise
             if path.exists():
                 saved = json.loads(path.read_bytes())
@@ -405,9 +406,12 @@ class OpenShell(Execution, Transfer):
                 try:
                     sandbox = await asyncio.shield(task)
                 except asyncio.CancelledError:
-                    # Shield preserves the exact ownership record even when a
-                    # Temporal cancellation interrupts the waiting activity.
-                    await asyncio.shield(self.close(await task))
+                    # CreateSandbox may already have crossed the native boundary. Let it
+                    # finish, even under repeated cancellation, then close whatever the
+                    # ownership record names (a pending record reconciles by labels).
+                    with suppress(Exception):
+                        await finish(task)
+                    await self._close_owned(Sandbox(**json.loads(path.read_bytes())["sandbox"]))
                     raise
             try:
                 if self._fenced(run_id):
@@ -418,7 +422,7 @@ class OpenShell(Execution, Transfer):
                 if self._fenced(run_id):
                     raise OpenShellError("investigation closed during qualification")
             except BaseException:
-                await asyncio.shield(self.close(sandbox))
+                await self._close_owned(sandbox)
                 raise
             return sandbox
 
@@ -670,6 +674,10 @@ class OpenShell(Execution, Transfer):
                     "network_mode": host["NetworkMode"], "runtime": host["Runtime"]}
         except (ValueError, KeyError, TypeError, AttributeError, ZeroDivisionError):
             raise OpenShellError("container inspection was incomplete") from None
+
+    async def _close_owned(self, sandbox: Sandbox) -> None:
+        """Close an owned sandbox to completion, even while further cancellations arrive."""
+        await finish(asyncio.ensure_future(self.close(sandbox)))
 
     async def close(self, sandbox: Sandbox) -> None:
         key = self._key(sandbox)

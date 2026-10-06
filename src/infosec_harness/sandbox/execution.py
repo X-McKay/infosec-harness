@@ -149,10 +149,10 @@ class Execution:
                 result, _ = await asyncio.to_thread(self._stream, sandbox, args, timeout, stdin,
                     _request_id(key), self.config.max_output_bytes)
             except asyncio.CancelledError:
-                await asyncio.shield(self.close(sandbox))
+                await self._close_owned(sandbox)
                 raise
             except Exception as exc:
-                await self.close(sandbox)
+                await self._close_owned(sandbox)
                 raise ExecutionUnknown("native execution outcome unknown; sandbox closed") from exc
             self._save(path, {**receipt, "result": asdict(result)})
             return result
