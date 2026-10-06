@@ -451,12 +451,12 @@ async def test_refused_probe_after_original_source_change_is_feedback_not_failur
     pre-copy integrity check refused the probe, and the whole investigation failed. The refusal
     stays; it now returns bounded feedback the agent can act on, with no receipt to cite."""
 
-    from infosec_harness.sandbox import OpenShellError
+    from infosec_harness.sandbox import SourceChanged
 
     shell = FakeOpenShell()
 
     async def copy_workspace(workspace, probe, *, operation_id, expected_source):
-        raise OpenShellError("workspace changed or deleted original source: app.py")
+        raise SourceChanged("workspace changed or deleted original source: app.py")
 
     shell.copy_workspace = copy_workspace
     calls = 0

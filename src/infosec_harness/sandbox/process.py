@@ -38,7 +38,7 @@ class ProcessResult:
 
 
 class _Tail:
-    def __init__(self, limit: int):
+    def __init__(self, limit: int) -> None:
         self.limit, self.data, self.truncated = limit, bytearray(), False
 
     def add(self, chunk: bytes) -> None:
@@ -48,8 +48,12 @@ class _Tail:
             self.truncated = True
 
 
-async def finish(future: asyncio.Future):
-    """Await an owned operation to completion despite repeated cancellation requests."""
+async def finish[T](future: asyncio.Future[T]) -> T:
+    """Await an owned operation to completion despite repeated cancellation requests.
+
+    The caller's cancellation is not lost: it stays requested on the calling task, so a
+    caller that must still propagate it re-raises its own ``CancelledError`` afterwards.
+    """
     while not future.done():
         with suppress(asyncio.CancelledError):
             await asyncio.shield(future)
