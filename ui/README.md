@@ -3,7 +3,7 @@
 A single-page React + TypeScript app built with Vite and TanStack Query. It submits a finding,
 lists this generation's investigations and shows one investigation's verdict, limitations,
 source references and execution evidence. It holds no state of its own: every view is a
-projection of Temporal state served by `src/infosec_harness/web.py`.
+projection of Temporal state served by `src/infosec_harness/api.py`.
 
 | File | Role |
 | --- | --- |

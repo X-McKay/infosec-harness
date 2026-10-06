@@ -20,6 +20,16 @@ flowchart LR
     M --> Q[Explicit OpenAI-compatible or Bedrock provider]
 ```
 
+The runtime package `src/infosec_harness/` follows that path:
+
+- `api.py`, `cli.py`: the HTTP projection of Temporal state and the operator commands
+- `workflows/`: the durable investigation workflow, trusted worker and immutable source capture
+- `agents/`: the single investigator, its evidence feedback and model transport
+- `tools/`, `skills/`: the investigator's OpenShell tools and packaged expertise
+- `sandbox/`: the OpenShell adapter (lifecycle, receipts, transfers) and the model executor
+- `evals/`: corpus evaluation, history replay, native qualification and the release policy
+- `contracts.py`, `config.py`, `_io.py`: contracts, operator configuration and atomic writes
+
 ## Development
 
 Pins are recorded in `.mise.toml` and `.dev-tools/`. On macOS Apple Silicon or Linux x86-64:

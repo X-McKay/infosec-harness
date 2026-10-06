@@ -6,7 +6,7 @@ are submitted to the investigator; expected verdicts stay outside its sandbox.
 
 ## Cases (36 total)
 
-Each case name is `[<lang>-]<cwe>-<variant>` (Python cases are unprefixed). The manifest is checked by `tests/test_evaluation.py`.
+Each case name is `[<lang>-]<cwe>-<variant>` (Python cases are unprefixed). The manifest is checked by `tests/evals/test_cohort.py`.
 
 | Cases | Language | CWE | Toolchain |
 |---|---|---|---|
@@ -45,8 +45,9 @@ worker with identical settings. See
 [qualification and evaluation](../deploy/openshell/README.md#qualification-and-evaluation).
 
 The complete corpus runs through the normal Temporal/OpenShell investigation path, once
-per case. The report retains failures and unstarted cases. `release-policy.yaml` requires
-at least 75% correct verdicts and zero unsafe negative verdicts. Inconclusive is not a
+per case. The report retains failures and unstarted cases. The packaged release policy
+(`src/infosec_harness/evals/release-policy.yaml`) requires at least 75% correct verdicts and
+zero unsafe negative verdicts. Inconclusive is not a
 correct negative. Native runtime and live model evidence must be qualified independently.
 
 The two unpaired Python cases (`unreachable`, `testonly`) exercise claims whose context

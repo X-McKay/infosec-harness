@@ -3,8 +3,8 @@ name: harness-eval-experiment
 description: Run a controlled InfoSec Harness experiment on prompts, models, tools, skills or orchestration.
 ---
 
-Use this skill for measured behavior changes. Read `AGENTS.md`, `evaluation.py`, the
-packaged `release-policy.yaml` and the corpus manifest before running a comparison.
+Use this skill for measured behavior changes. Read `AGENTS.md`, `evals/cohort.py`, the
+packaged `evals/release-policy.yaml` and the corpus manifest before running a comparison.
 
 1. Record the hypothesis, frozen source identity, dataset, model, native runtime
    configuration, limits and authorized inference scope.

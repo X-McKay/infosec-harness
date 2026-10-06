@@ -71,11 +71,13 @@ layer because the runsc BuildKit overlay cannot create dpkg backup hardlinks to 
 files.
 
 Build the separate, minimal model executor from the current module and hash-locked dependency
-closure. The context generator copies only `model_executor.py`; choose a new output directory
-for each build. It contains no Temporal worker, controller, repository snapshot or credentials.
-Rebuild and reload it, and record the new image ID in the model profile, whenever
-`model_executor.py` changes. An older image silently ignores new `ModelInvocation` fields
-(for example `timeout_seconds`), because unknown fields are not rejected there.
+closure. The context generator copies only `src/infosec_harness/sandbox/executor.py` (with empty
+package markers); choose a new output directory for each build. The image runs
+`python -I -m infosec_harness.sandbox.executor` and contains no Temporal worker, controller,
+repository snapshot or credentials. Rebuild and reload it, and record the new image ID in the
+model profile, whenever `sandbox/executor.py` changes. An older image silently ignores new
+`ModelInvocation` fields (for example `timeout_seconds`), because unknown fields are not
+rejected there.
 
 ```bash
 .harness/bin/mise exec -- uv run --locked python deploy/openshell/build_context.py \
@@ -100,8 +102,10 @@ LIMA_HOME="$(cat .harness/runtime-home)" \
 ```
 
 Record the loaded image ID from the native daemon's load/inspect result in the model profile.
-The executor's provider-free startup/import check must pass in an actual native sandbox before
-configuring a provider. Image loading and import qualification dispatch no model request.
+The executor's provider-free startup/import check
+(`python -I -c 'import infosec_harness.sandbox.executor'`) must pass in an actual native
+sandbox before configuring a provider. Image loading and import qualification dispatch no
+model request.
 
 Keep gateway configuration, generated PKI, runtime JSON, policy files, logs and reports under
 `.harness/openshell/private/` with mode `0700` for the directory and `0600` for private files.

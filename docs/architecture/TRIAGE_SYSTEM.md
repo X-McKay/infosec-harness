@@ -5,10 +5,17 @@ records model and tool activity results and resumes the agent loop after worker 
 The investigator uses read/search/write/execute/run_probe tools and dynamically loaded skills;
 there is no hard-coded sequence of reconnaissance, planner, builder and verdict agents.
 
-`repository.py` captures approved source without executing its hooks. `agent.py` exposes
-a narrow toolbox. `workflow.py` prepares the workspace, runs the agent, validates its
-verdict against receipts and citations, and cleans up. `models.py` contains strict inputs
-and results. `web.py` projects Temporal state; it does not maintain a second job ledger.
+Paths below are relative to `src/infosec_harness/`. `workflows/snapshot.py` captures
+approved source without executing its hooks. `agents/investigator.py` defines the
+investigator over the narrow toolbox in `tools/` (`workspace.py` for confined
+read/search/write, `execute.py` for execute and run_probe); `agents/evidence.py` parses probe
+observations and `agents/inference.py` carries model requests into the model sandbox.
+`agents/` holds exactly one investigator; the directory introduces no parallel orchestration.
+`workflows/investigation.py` prepares the workspace, runs the agent, validates its verdict
+against receipts and citations, and cleans up; `workflows/worker.py` builds the trusted worker
+and its identity guard. `contracts.py` contains strict inputs and results. `api.py` projects
+Temporal state; it does not maintain a second job ledger. `evals/` holds corpus evaluation,
+replay, native qualification and `release-policy.yaml`.
 
 OpenShell owns three native profiles:
 
@@ -28,9 +35,12 @@ whole-request provider timeout, including connect, and an in-sandbox kill enforc
 executor that exits without a complete response raises a terminal `ModelExecutorError`; the
 request's provider outcome is unknown and it is never resent.
 
-`openshell.py` validates native policy and provider admission, pins images and verifies
-actual workload properties. OpenShell v0.1.2's API does not expose all outer isolation
-properties, so a dedicated-daemon Docker inspector reads the exact native-owned containers.
+`sandbox/openshell.py` validates native policy and provider admission, pins images and
+verifies actual workload properties; `sandbox/execution.py` owns exec receipts and replay
+fences, `sandbox/transfer.py` bounded uploads and snapshot capture, and `sandbox/executor.py`
+is the only package module shipped into the model image. OpenShell v0.1.2's API does not
+expose all outer isolation properties, so a dedicated-daemon Docker inspector reads the exact
+native-owned containers.
 It cannot serve as an execution fallback. The checks include namespaces, mounts, non-root
 identity, capability removal, seccomp, no-new-privileges, network and cgroup limits.
 Confinement is audited once per sandbox lifecycle. Reuse compares the native identity and

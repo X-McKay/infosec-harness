@@ -7,15 +7,19 @@ or execution evidence is absent. A configured name is not execution evidence.
 
 ## Sources of truth
 
-- Runtime code lives in `src/infosec_harness/`. One investigator (`agent.py`) chooses tools
-  and packaged `skills/`; `workflow.py` uses PydanticAI's Temporal integration. Do not add
+- Runtime code lives in `src/infosec_harness/`: `agents/` holds exactly one investigator
+  (`investigator.py`, which chooses tools and skills, plus its evidence parser and model
+  transport; the directory adds no parallel orchestration), `tools/` its OpenShell tools,
+  `skills/` packaged investigation expertise,
+  `workflows/` the PydanticAI Temporal workflow, trusted worker and source capture, `sandbox/`
+  the OpenShell adapter and model executor, `evals/` corpus evaluation and qualification.
+  Top level: `cli.py` entry points, `config.py` operator configuration, `contracts.py`
+  contracts, `api.py` the Temporal projection behind the UI, `_io.py` atomic writes. Do not add
   parallel orchestration, application persistence, custom provider brokers or fallback runtimes.
-- `openshell.py` owns sandbox lifecycle and bounded command receipts. Native OpenShell owns
+- `sandbox/` owns sandbox lifecycle and bounded command receipts. Native OpenShell owns
   execution, policy and provider credentials. Docker inspection is read-only evidence of
-  the native outer fence, never an execution route.
-- `models.py` owns contracts; `config.py` owns operator configuration. `web.py` projects
-  Temporal state into the lightweight UI. Skills contain investigation expertise, not permissions.
-- `release-policy.yaml` is the single live evaluation policy. Missing evidence is
+  the native outer fence, never an execution route. Skills contain expertise, not permissions.
+- `evals/release-policy.yaml` is the single live evaluation policy. Missing evidence is
   `not_checked`, never `passed`. `eval-corpus/manifest.json` is independent ground truth.
 - Development skills are canonical in `dev-skills/`, copied to `.claude/skills/` by
   `just generated-sync`; `.agents/skills` links to that copy. Edit only the canonical source.
