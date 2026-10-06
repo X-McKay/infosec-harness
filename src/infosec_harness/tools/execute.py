@@ -84,7 +84,7 @@ def environment_feedback(command: str, exit_code: int | None, output_truncated: 
 
 
 def bounded(argv: list[str], timeout: int) -> list[str]:
-    """Kill ``argv`` inside the sandbox before the native timeout; shared by every exec."""
+    """Kill ``argv`` inside the sandbox before the native timeout; every non-shell exec."""
     return ["/usr/bin/timeout", "--preserve-status", "-s", "KILL", str(command_budget(timeout)), *argv]
 
 
@@ -109,6 +109,9 @@ _SHELL_WRAPPER = (
     f"then printf '\\n%s\\n' '{TRUNCATION_MARKER}' >&2; fi; "
     'rm -f "$out" "$err"; exit "$code"'
 )
+# The most the wrapper ever prints (both streams cut, plus the marker line). The native
+# `max_output_bytes` must be at least this, or a large command becomes an unknown execution.
+WRAPPER_OUTPUT_BYTES = STDOUT_LIMIT + STDERR_LIMIT + len(f"\n{TRUNCATION_MARKER}\n".encode())
 
 
 def unwrap_output(result: CommandResult) -> CommandResult:
@@ -120,6 +123,7 @@ def unwrap_output(result: CommandResult) -> CommandResult:
 
 
 def bounded_shell(command: str, timeout: int) -> list[str]:
+    """Run ``command`` under the shell wrapper: its own in-sandbox kill and file-backed capture."""
     return ["/bin/bash", "-c", _SHELL_WRAPPER, "ih-wrapper", str(command_budget(timeout)), command]
 
 
@@ -160,7 +164,8 @@ async def command_tool(
             observations["environment_feedback"] = feedback
     if result.exit_code == KILLED_EXIT:
         observations["timeout_feedback"] = (
-            f"Killed (exit {KILLED_EXIT}) at the {command_budget(timeout)}s command "
+            # An out-of-memory kill also exits 137, so the budget is the usual cause, not proof.
+            f"Killed (exit {KILLED_EXIT}), normally at the {command_budget(timeout)}s command "
             "budget; it was not retried. Narrow the command, cache dependencies in the "
             "workspace, or split the work."
         )

@@ -113,6 +113,20 @@ def run_wrapper(tmp_path, command):
     )
 
 
+def test_wrapper_output_bound_is_exact_and_below_the_default_native_bound(tmp_path):
+    """WRAPPER_OUTPUT_BYTES is what a worker compares with `max_output_bytes`."""
+    from infosec_harness.sandbox.openshell import OpenShellConfig
+    from infosec_harness.tools.execute import STDERR_LIMIT, STDOUT_LIMIT, WRAPPER_OUTPUT_BYTES
+
+    both = run_wrapper(
+        tmp_path,
+        f"head -c {STDOUT_LIMIT + 1} /dev/zero; head -c {STDERR_LIMIT + 1} /dev/zero >&2",
+    )
+    assert len(both.stdout.encode()) + len(both.stderr.encode()) == WRAPPER_OUTPUT_BYTES
+    native_default = OpenShellConfig.model_fields["max_output_bytes"].default
+    assert native_default > WRAPPER_OUTPUT_BYTES
+
+
 @pytest.mark.parametrize("stream", ["stdout", "stderr"])
 def test_wrapper_cut_is_reported_as_truncation(tmp_path, stream):
     """The wrapper cuts printed output at fixed sizes inside the sandbox. A cut must reach
