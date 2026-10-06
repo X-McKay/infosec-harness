@@ -3,7 +3,8 @@ import re
 
 from typer.testing import CliRunner
 
-from infosec_harness import cli, config, evaluation
+from infosec_harness import cli, config
+from infosec_harness.evals import cohort
 
 
 def test_settings_file_is_exact_and_reports_are_timestamped(tmp_path, monkeypatch):
@@ -21,7 +22,7 @@ def test_settings_file_is_exact_and_reports_are_timestamped(tmp_path, monkeypatc
         calls.append((output, settings, options))
         return {"status": "completed"}
 
-    monkeypatch.setattr(evaluation, "evaluate_corpus", evaluate)
+    monkeypatch.setattr(cohort, "evaluate_corpus", evaluate)
     invoked = CliRunner().invoke(cli.app, [
         "--settings", str(frozen), "eval", "--allow-inference", "--case", "a", "--case", "b",
         "--keep-going", "--owned-worker",

@@ -8,7 +8,7 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, Tool
 from pydantic_ai.models.function import FunctionModel
 
 from infosec_harness.agents.investigator import InvestigationDeps, build_agent
-from infosec_harness.models import Finding, InvestigationRequest
+from infosec_harness.contracts import Finding, InvestigationRequest
 from infosec_harness.sandbox import CommandResult, Sandbox
 
 
@@ -464,7 +464,7 @@ async def test_validator_lets_a_newer_cited_probe_supersede_an_older_flawed_one(
     from pydantic_ai import ModelRetry
 
     from infosec_harness.agents.investigator import validate_verdict
-    from infosec_harness.models import Evidence, Verdict
+    from infosec_harness.contracts import Evidence, Verdict
 
     def probe(identity, observed):
         return Evidence(
@@ -515,7 +515,7 @@ async def test_verdict_validator_requires_complete_matching_offline_evidence(fai
     from pydantic_ai import ModelRetry
 
     from infosec_harness.agents.investigator import validate_verdict
-    from infosec_harness.models import Evidence, Verdict
+    from infosec_harness.contracts import Evidence, Verdict
 
     observations = dict(
         workspace_digest="workspace",
@@ -1155,7 +1155,7 @@ async def test_tool_return_evidence_keeps_history_shape_and_bounds():
 
 
 def test_definitive_support_requires_citations_cited_match_and_no_contrary():
-    from infosec_harness.models import Citation, Evidence, Verdict, definitive_support
+    from infosec_harness.contracts import Citation, Evidence, Verdict, definitive_support
 
     def probe(identity, observed, **changes):
         return Evidence(

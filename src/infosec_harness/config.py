@@ -7,7 +7,7 @@ from typing import Literal
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from infosec_harness.models import Limits
+from infosec_harness.contracts import Limits
 
 
 class Settings(BaseSettings):

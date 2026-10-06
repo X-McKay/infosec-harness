@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from infosec_harness.config import Settings
-from infosec_harness.models import Citation, Finding
+from infosec_harness.contracts import Citation, Finding
 from infosec_harness.workflows.snapshot import snapshot, validate_citation
 
 

@@ -12,7 +12,7 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
 from infosec_harness.config import Settings, get_settings
-from infosec_harness.models import Citation, Finding
+from infosec_harness.contracts import Citation, Finding
 from infosec_harness.sandbox.process import run_bounded
 
 EXCLUDED = frozenset({".git", ".venv", "venv", "node_modules", "__pycache__"})

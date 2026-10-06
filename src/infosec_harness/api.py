@@ -1,4 +1,8 @@
-"""Small HTTP projection of Temporal investigations; no duplicate job database."""
+"""Small HTTP projection of Temporal investigations; no duplicate job database.
+
+Also the Temporal client connection shared by the API, the CLI and workers; connection
+options never enter workflow history.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +10,7 @@ import base64
 import binascii
 from contextlib import asynccontextmanager
 from datetime import timedelta
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query
@@ -14,10 +18,10 @@ from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
 from temporalio.api.workflowservice.v1 import GetSystemInfoRequest
 from temporalio.client import Client, WorkflowExecutionStatus
 from temporalio.common import WorkflowIDReusePolicy
-from temporalio.service import RPCError, RPCStatusCode
+from temporalio.service import RPCError, RPCStatusCode, TLSConfig
 
-from infosec_harness.config import get_settings
-from infosec_harness.models import (
+from infosec_harness.config import Settings, get_settings
+from infosec_harness.contracts import (
     Finding,
     InvestigationRequest,
     InvestigationResult,
@@ -26,7 +30,6 @@ from infosec_harness.models import (
     RunState,
     RunSummary,
 )
-from infosec_harness.services import temporal_connection_options
 
 WORKFLOW = "InvestigationWorkflow"
 PREFIX = "investigate-v11-"
@@ -36,6 +39,40 @@ RPC_TIMEOUT = timedelta(seconds=10)
 def execution_timeout(limits: Limits) -> timedelta:
     # Starts at submission, including time queued without a worker. Reserve cleanup time.
     return timedelta(seconds=limits.timeout_seconds + 600)
+
+
+def temporal_connection_options(settings: Settings) -> dict[str, Any]:
+    options: dict[str, Any] = {}
+    if settings.temporal_tls:
+        if any(
+            (
+                settings.temporal_tls_ca_file,
+                settings.temporal_tls_client_cert,
+                settings.temporal_tls_server_name,
+            )
+        ):
+            options["tls"] = TLSConfig(
+                server_root_ca_cert=settings.temporal_tls_ca_file.read_bytes()
+                if settings.temporal_tls_ca_file
+                else None,
+                client_cert=settings.temporal_tls_client_cert.read_bytes()
+                if settings.temporal_tls_client_cert
+                else None,
+                client_private_key=settings.temporal_tls_client_key.read_bytes()
+                if settings.temporal_tls_client_key
+                else None,
+                domain=settings.temporal_tls_server_name,
+            )
+        else:
+            options["tls"] = True
+    key = settings.temporal_api_key
+    if settings.temporal_api_key_file:
+        key = settings.temporal_api_key_file.read_text().strip()
+        if not key:
+            raise ValueError("Temporal API key file is empty")
+    if key:
+        options["api_key"] = key
+    return options
 
 
 async def connect(settings=None) -> Client:

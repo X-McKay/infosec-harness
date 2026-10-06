@@ -6,15 +6,18 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from infosec_harness import evaluation
 from infosec_harness.config import get_settings
-from infosec_harness.models import Finding, InvestigationResult, Verdict
+from infosec_harness.contracts import Finding, InvestigationResult, Verdict
+from infosec_harness.evals import cohort
+
+# The checkout that holds this test file, found independently of the module under test.
+CHECKOUT = Path(__file__).resolve().parents[1]
 
 
 def test_real_corpus_labels_and_sources_are_preserved():
     path = Path("eval-corpus/manifest.json")
     original = json.loads(path.read_text())["cases"]
-    cases = evaluation.corpus_cases(path)
+    cases = cohort.corpus_cases(path)
     assert len(cases) == len(original) > 0
     assert [expected for _, expected, _ in cases] == [
         case["truth"]["expected_verdict"] for case in original
@@ -24,9 +27,9 @@ def test_real_corpus_labels_and_sources_are_preserved():
 
 async def test_failed_external_effect_is_not_retried_or_hidden(tmp_path, monkeypatch):
     finding = Finding(title="case", repo_url="repo")
-    monkeypatch.setattr(evaluation, "source_identity", lambda: "commit")
+    monkeypatch.setattr(cohort, "source_identity", lambda: "commit")
     monkeypatch.setattr(
-        evaluation,
+        cohort,
         "corpus_cases",
         lambda path: [
             (finding, "potentially_exploitable", "a"),
@@ -38,29 +41,29 @@ async def test_failed_external_effect_is_not_retried_or_hidden(tmp_path, monkeyp
     settings = get_settings()
     settings.openshell_config = config
     client = SimpleNamespace(start_workflow=AsyncMock(side_effect=RuntimeError("unknown effect")))
-    monkeypatch.setattr(evaluation, "connect", AsyncMock(return_value=client))
+    monkeypatch.setattr(cohort, "connect", AsyncMock(return_value=client))
     manifest = tmp_path / "manifest.json"
     manifest.write_text("{}")
     report = tmp_path / "report.json"
-    result = await evaluation.evaluate_corpus(manifest, report, get_settings())
+    result = await cohort.evaluate_corpus(manifest, report, get_settings())
     assert result["status"] == "failed"
     assert [case["status"] for case in result["cases"]] == ["failed", "unstarted"]
     client.start_workflow.assert_awaited_once()
     assert client.start_workflow.call_args.kwargs[
         "execution_timeout"
-    ] == evaluation.execution_timeout(settings.limits)
+    ] == cohort.execution_timeout(settings.limits)
     with pytest.raises(ValueError, match="preserve"):
-        await evaluation.evaluate_corpus(manifest, report, get_settings())
+        await cohort.evaluate_corpus(manifest, report, get_settings())
 
 
 async def test_false_negative_blocks_release_even_above_accuracy_threshold(
     tmp_path, monkeypatch, fixture_worker_identity
 ):
     finding = Finding(title="case", repo_url="repo")
-    monkeypatch.setattr(evaluation, "source_identity", lambda: "commit")
+    monkeypatch.setattr(cohort, "source_identity", lambda: "commit")
     cases = [(finding, "likely_not_exploitable", str(i)) for i in range(4)]
     cases[-1] = (finding, "potentially_exploitable", "3")
-    monkeypatch.setattr(evaluation, "corpus_cases", lambda path: cases)
+    monkeypatch.setattr(cohort, "corpus_cases", lambda path: cases)
     config = tmp_path / "runtime.json"
     config.write_text("{}")
     get_settings().openshell_config = config
@@ -77,10 +80,10 @@ async def test_false_negative_blocks_release_even_above_accuracy_threshold(
             return_value=SimpleNamespace(result=AsyncMock(return_value=result))
         )
     )
-    monkeypatch.setattr(evaluation, "connect", AsyncMock(return_value=client))
+    monkeypatch.setattr(cohort, "connect", AsyncMock(return_value=client))
     manifest = tmp_path / "manifest.json"
     manifest.write_text("{}")
-    report = await evaluation.evaluate_corpus(manifest, tmp_path / "report.json", get_settings())
+    report = await cohort.evaluate_corpus(manifest, tmp_path / "report.json", get_settings())
     assert report["task_success_rate"] == 0.75 and report["unsafe_negatives"] == 1
     assert report["status"] == "failed"
 
@@ -89,9 +92,9 @@ async def test_cancellation_preserves_report_and_cancels_owned_workflow(tmp_path
     import asyncio
 
     finding = Finding(title="case", repo_url="repo")
-    monkeypatch.setattr(evaluation, "source_identity", lambda: "commit")
+    monkeypatch.setattr(cohort, "source_identity", lambda: "commit")
     monkeypatch.setattr(
-        evaluation, "corpus_cases", lambda path: [(finding, "inconclusive", "case")]
+        cohort, "corpus_cases", lambda path: [(finding, "inconclusive", "case")]
     )
     config = tmp_path / "runtime.json"
     config.write_text("{}")
@@ -102,12 +105,12 @@ async def test_cancellation_preserves_report_and_cancels_owned_workflow(tmp_path
     client = SimpleNamespace(
         start_workflow=AsyncMock(return_value=handle), get_workflow_handle=lambda run_id: handle
     )
-    monkeypatch.setattr(evaluation, "connect", AsyncMock(return_value=client))
+    monkeypatch.setattr(cohort, "connect", AsyncMock(return_value=client))
     manifest = tmp_path / "manifest.json"
     manifest.write_text("{}")
     output = tmp_path / "report.json"
     with pytest.raises(asyncio.CancelledError):
-        await evaluation.evaluate_corpus(manifest, output, get_settings())
+        await cohort.evaluate_corpus(manifest, output, get_settings())
     persisted = json.loads(output.read_text())
     assert persisted["status"] == "failed"
     assert persisted["cases"][0]["cancellation"] == "requested"
@@ -124,18 +127,17 @@ def test_source_identity_ignores_caller_directory_and_ambient_git_configuration(
     def read(argv, **kwargs):
         calls.append((argv, kwargs))
         if "--show-toplevel" in argv:
-            return str(Path(evaluation.__file__).resolve().parents[2]) + "\n"
+            return str(CHECKOUT) + "\n"
         if "status" in argv:
             return ""
         return "commit\n"
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
-    monkeypatch.setattr(evaluation.subprocess, "check_output", read)
-    assert evaluation.source_identity() == "commit"
-    assert all(
-        kwargs["cwd"] == Path(evaluation.__file__).resolve().parents[2] for _, kwargs in calls
-    )
+    monkeypatch.setattr(cohort.subprocess, "check_output", read)
+    assert cohort.source_identity() == "commit"
+    assert cohort.REPOSITORY_ROOT == CHECKOUT
+    assert all(kwargs["cwd"] == CHECKOUT for _, kwargs in calls)
     assert all("GIT_CONFIG_COUNT" not in kwargs["env"] for _, kwargs in calls)
     assert all("core.fsmonitor=false" in argv for argv, _ in calls)
 
@@ -143,13 +145,13 @@ def test_source_identity_ignores_caller_directory_and_ambient_git_configuration(
 def test_release_policy_preserves_existing_gates_and_has_content_identity():
     import hashlib
 
-    policy, digest = evaluation.release_policy()
+    policy, digest = cohort.release_policy()
     assert policy.minimum_task_success_rate == 0.75
     assert policy.maximum_unsafe_negatives == 0
     assert (
         digest
         == hashlib.sha256(
-            Path(evaluation.__file__).with_name("release-policy.yaml").read_bytes()
+            Path(cohort.__file__).with_name("release-policy.yaml").read_bytes()
         ).hexdigest()
     )
 
@@ -158,19 +160,19 @@ async def test_unavailable_temporal_preserves_failed_cohort_and_unchecked_qualit
     tmp_path, monkeypatch
 ):
     finding = Finding(title="case", repo_url="repo")
-    monkeypatch.setattr(evaluation, "source_identity", lambda: "commit")
+    monkeypatch.setattr(cohort, "source_identity", lambda: "commit")
     monkeypatch.setattr(
-        evaluation, "corpus_cases", lambda path: [(finding, "inconclusive", "case")]
+        cohort, "corpus_cases", lambda path: [(finding, "inconclusive", "case")]
     )
     config = tmp_path / "runtime.json"
     config.write_text("{}")
     get_settings().openshell_config = config
-    monkeypatch.setattr(evaluation, "connect", AsyncMock(side_effect=RuntimeError("unavailable")))
+    monkeypatch.setattr(cohort, "connect", AsyncMock(side_effect=RuntimeError("unavailable")))
     manifest = tmp_path / "manifest.json"
     manifest.write_text("{}")
     output = tmp_path / "report.json"
     with pytest.raises(RuntimeError, match="unavailable"):
-        await evaluation.evaluate_corpus(manifest, output, get_settings())
+        await cohort.evaluate_corpus(manifest, output, get_settings())
     persisted = json.loads(output.read_text())
     assert persisted["status"] == "failed"
     assert persisted["cases"][0]["status"] == "unstarted"
@@ -183,7 +185,7 @@ async def test_unavailable_temporal_preserves_failed_cohort_and_unchecked_qualit
 
 @pytest.fixture(autouse=True)
 def fixture_worker_identity(monkeypatch):
-    from infosec_harness.models import WorkerIdentity
+    from infosec_harness.contracts import WorkerIdentity
 
     identity = WorkerIdentity(
         fingerprint="a" * 64,
@@ -191,7 +193,7 @@ def fixture_worker_identity(monkeypatch):
         config_sha256="c" * 64,
         dependencies={"fixture": "1"},
     )
-    monkeypatch.setattr(evaluation, "worker_identity", lambda settings: identity)
+    monkeypatch.setattr(cohort, "worker_identity", lambda settings: identity)
     return identity
 
 
@@ -200,8 +202,8 @@ async def test_mismatched_worker_cannot_qualify_candidate(
     tmp_path, monkeypatch, fixture_worker_identity, mismatch
 ):
     finding = Finding(title="case", repo_url="repo")
-    monkeypatch.setattr(evaluation, "source_identity", lambda: "commit")
-    monkeypatch.setattr(evaluation, "corpus_cases", lambda path: [(finding, "inconclusive", "a")])
+    monkeypatch.setattr(cohort, "source_identity", lambda: "commit")
+    monkeypatch.setattr(cohort, "corpus_cases", lambda path: [(finding, "inconclusive", "a")])
     config = tmp_path / "runtime.json"
     config.write_text("{}")
     settings = get_settings()
@@ -219,10 +221,10 @@ async def test_mismatched_worker_cannot_qualify_candidate(
             return_value=SimpleNamespace(result=AsyncMock(return_value=result))
         )
     )
-    monkeypatch.setattr(evaluation, "connect", AsyncMock(return_value=client))
+    monkeypatch.setattr(cohort, "connect", AsyncMock(return_value=client))
     manifest = tmp_path / "manifest.json"
     manifest.write_text("{}")
-    report = await evaluation.evaluate_corpus(manifest, tmp_path / "report.json", get_settings())
+    report = await cohort.evaluate_corpus(manifest, tmp_path / "report.json", get_settings())
     assert report["status"] == "failed"
     assert report["cases"][0]["error_type"] == "ValueError"
     assert report["gates"]["task_success_rate"] == "not_checked"
@@ -240,14 +242,14 @@ async def test_result_transport_outage_is_bounded_and_cancelled_once(
     from datetime import timedelta
 
     finding = Finding(title="case", repo_url="repo")
-    monkeypatch.setattr(evaluation, "source_identity", lambda: "commit")
+    monkeypatch.setattr(cohort, "source_identity", lambda: "commit")
     monkeypatch.setattr(
-        evaluation,
+        cohort,
         "corpus_cases",
         lambda path: [(finding, "inconclusive", "first"), (finding, "inconclusive", "second")],
     )
-    monkeypatch.setattr(evaluation, "execution_timeout", lambda limits: timedelta(seconds=0.02))
-    monkeypatch.setattr(evaluation, "RPC_TIMEOUT", timedelta(seconds=0.01))
+    monkeypatch.setattr(cohort, "execution_timeout", lambda limits: timedelta(seconds=0.02))
+    monkeypatch.setattr(cohort, "RPC_TIMEOUT", timedelta(seconds=0.01))
     config = tmp_path / "runtime.json"
     config.write_text("{}")
     get_settings().openshell_config = config
@@ -269,11 +271,11 @@ async def test_result_transport_outage_is_bounded_and_cancelled_once(
     client = SimpleNamespace(
         start_workflow=AsyncMock(return_value=handle), get_workflow_handle=lambda run_id: handle
     )
-    monkeypatch.setattr(evaluation, "connect", AsyncMock(return_value=client))
+    monkeypatch.setattr(cohort, "connect", AsyncMock(return_value=client))
     manifest = tmp_path / "manifest.json"
     manifest.write_text("{}")
     output = tmp_path / "report.json"
-    report = await asyncio.wait_for(evaluation.evaluate_corpus(manifest, output, get_settings()), 1)
+    report = await asyncio.wait_for(cohort.evaluate_corpus(manifest, output, get_settings()), 1)
     assert result_wait_stopped.is_set()
     assert report == json.loads(output.read_text())
     assert report["status"] == "failed"
@@ -321,17 +323,17 @@ def test_cohort_estimate_preserves_failed_observations_and_uses_completed_sample
 
     rows = [row("completed", 4, 0), row("completed", 6, 1),
             row("failed", 30, 2), {"status": "unstarted"}]
-    estimate = evaluation.cohort_operation_estimate(rows)
+    estimate = cohort.cohort_operation_estimate(rows)
     assert estimate["observed_totals"] == {"completed": 40, "unknown": 3}
     assert estimate["observed_attempt_range_per_case"] == [4, 7]
     assert estimate["estimated_cohort_attempt_range"] == [47, 50]
     assert estimate["native_capacity"] == "not_checked"
-    assert evaluation.cohort_operation_estimate([row("failed", 2, 1)])["status"] == "not_checked"
+    assert cohort.cohort_operation_estimate([row("failed", 2, 1)])["status"] == "not_checked"
 
 
 def prepared_cohort(tmp_path, monkeypatch, cases):
-    monkeypatch.setattr(evaluation, "source_identity", lambda: "commit")
-    monkeypatch.setattr(evaluation, "corpus_cases", lambda path: cases)
+    monkeypatch.setattr(cohort, "source_identity", lambda: "commit")
+    monkeypatch.setattr(cohort, "corpus_cases", lambda path: cases)
     config = tmp_path / "runtime.json"
     config.write_text("{}")
     get_settings().openshell_config = config
@@ -353,14 +355,14 @@ def workflow_failure(*links):
 def test_keep_going_continues_only_after_terminal_agent_level_failure():
     from temporalio.service import RPCError, RPCStatusCode
 
-    assert evaluation.agent_level(workflow_failure(("UsageLimitExceeded", "budget")))
-    assert evaluation.agent_level(workflow_failure(("UnexpectedModelBehavior", "bad output")))
+    assert cohort.agent_level(workflow_failure(("UsageLimitExceeded", "budget")))
+    assert cohort.agent_level(workflow_failure(("UnexpectedModelBehavior", "bad output")))
     # Observed live 2026-10-05: the executor exited 1 on a sandbox DNS failure before any
     # request was sent; its receipt is complete, so the next fresh case may proceed.
-    assert evaluation.agent_level(workflow_failure(
+    assert cohort.agent_level(workflow_failure(
         ("ModelExecutorError", "OpenShell model executor returned no complete response (exit 1")))
     # Live cohort 2, case 7: output corrections exhausted; the workflow names the outer type.
-    assert evaluation.agent_level(workflow_failure(
+    assert cohort.agent_level(workflow_failure(
         ("UnexpectedModelBehavior", "UnexpectedModelBehavior: Exceeded maximum output retries (2) "
          "<- ModelRetry: Complete probes probe:8 contradict potentially_exploitable")))
     for stop in (
@@ -376,11 +378,11 @@ def test_keep_going_continues_only_after_terminal_agent_level_failure():
         RPCError("unavailable", RPCStatusCode.UNAVAILABLE, b""),
         ValueError("Evaluation result does not match the requested worker/model identity"),
     ):
-        assert not evaluation.agent_level(stop), stop
+        assert not cohort.agent_level(stop), stop
     deep = workflow_failure(*[("UsageLimitExceeded", "x" * 900)] * 12)
-    chain = evaluation.failure_chain(deep)
+    chain = cohort.failure_chain(deep)
     assert len(chain) == 5 and all(len(link["message"]) <= 500 for link in chain)
-    assert not evaluation.agent_level(deep)
+    assert not cohort.agent_level(deep)
 
 
 @pytest.mark.parametrize("keep_going", [False, True])
@@ -406,13 +408,13 @@ async def test_keep_going_never_reruns_and_cannot_pass_incomplete_cohort(
     client = SimpleNamespace(start_workflow=AsyncMock(side_effect=[
         SimpleNamespace(result=AsyncMock(side_effect=[outcome])) for outcome in outcomes
     ]))
-    monkeypatch.setattr(evaluation, "connect", AsyncMock(return_value=client))
+    monkeypatch.setattr(cohort, "connect", AsyncMock(return_value=client))
     receipt = SimpleNamespace(operation_id="execute:1", result=SimpleNamespace(
         exit_code=2, output_truncated=True))
-    monkeypatch.setattr(evaluation, "OpenShellConfig", SimpleNamespace(load=lambda path: path))
-    monkeypatch.setattr(evaluation, "OpenShell", lambda config: SimpleNamespace(
+    monkeypatch.setattr(cohort, "OpenShellConfig", SimpleNamespace(load=lambda path: path))
+    monkeypatch.setattr(cohort, "OpenShell", lambda config: SimpleNamespace(
         receipts=lambda run_id: [receipt]))
-    report = await evaluation.evaluate_corpus(
+    report = await cohort.evaluate_corpus(
         manifest, tmp_path / "report.json", get_settings(), keep_going=keep_going
     )
     statuses = [row["status"] for row in report["cases"]]
@@ -465,11 +467,11 @@ async def test_named_cases_are_a_diagnostic_that_never_qualifies(
     )
     client = SimpleNamespace(start_workflow=AsyncMock(
         return_value=SimpleNamespace(result=AsyncMock(return_value=result))))
-    monkeypatch.setattr(evaluation, "connect", AsyncMock(return_value=client))
+    monkeypatch.setattr(cohort, "connect", AsyncMock(return_value=client))
     with pytest.raises(ValueError, match="Unknown corpus case: z"):
-        await evaluation.evaluate_corpus(manifest, tmp_path / "x.json", get_settings(),
+        await cohort.evaluate_corpus(manifest, tmp_path / "x.json", get_settings(),
                                          names=("z",))
-    report = await evaluation.evaluate_corpus(
+    report = await cohort.evaluate_corpus(
         manifest, tmp_path / "report.json", get_settings(), names=("b",)
     )
     assert report["kind"] == "diagnostic"
@@ -524,7 +526,7 @@ async def test_owned_worker_keeps_going_after_agent_failure_and_replays(
     from temporalio.testing import WorkflowEnvironment
     from test_agent import FakeOpenShell, final_response
 
-    from infosec_harness.models import Limits
+    from infosec_harness.contracts import Limits
 
     shell = FakeOpenShell()
     created = []
@@ -545,8 +547,8 @@ async def test_owned_worker_keeps_going_after_agent_failure_and_replays(
     async with await WorkflowEnvironment.start_local(
         dev_server_existing_path=temporal_cli, plugins=[PydanticAIPlugin()]
     ) as env:
-        monkeypatch.setattr(evaluation, "connect", AsyncMock(return_value=env.client))
-        report = await asyncio.wait_for(evaluation.evaluate_corpus(
+        monkeypatch.setattr(cohort, "connect", AsyncMock(return_value=env.client))
+        report = await asyncio.wait_for(cohort.evaluate_corpus(
             manifest, tmp_path / "report.json", settings, owned_worker=True, keep_going=True
         ), 60)
         first, second = report["cases"]
@@ -558,7 +560,7 @@ async def test_owned_worker_keeps_going_after_agent_failure_and_replays(
         assert shell.closed == [first["workflow_id"], second["workflow_id"]]
         assert report["status"] == "failed" and report["gates"]["complete_corpus"] == "failed"
         executions = list(shell.executions)
-        replayed = await evaluation.replay_history(second["workflow_id"], settings, env.client)
+        replayed = await cohort.replay_history(second["workflow_id"], settings, env.client)
         assert replayed["status"] == "passed" and replayed["verdict"] == "inconclusive"
         assert replayed["history_events"] > 0 and len(replayed["history_sha256"]) == 64
         assert shell.executions == executions
@@ -591,8 +593,8 @@ async def test_owned_worker_stays_up_until_cancelled_run_cleans_up(
     async with await WorkflowEnvironment.start_local(
         dev_server_existing_path=temporal_cli, plugins=[PydanticAIPlugin()]
     ) as env:
-        monkeypatch.setattr(evaluation, "connect", AsyncMock(return_value=env.client))
-        task = asyncio.create_task(evaluation.evaluate_corpus(
+        monkeypatch.setattr(cohort, "connect", AsyncMock(return_value=env.client))
+        task = asyncio.create_task(cohort.evaluate_corpus(
             manifest, output, get_settings(), owned_worker=True))
         await asyncio.wait_for(entered.wait(), 30)
         task.cancel()

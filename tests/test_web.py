@@ -6,21 +6,21 @@ import httpx
 import pytest
 from temporalio.client import WorkflowExecutionStatus
 
-from infosec_harness import web
-from infosec_harness.models import Finding, InvestigationResult, Verdict
+from infosec_harness import api
+from infosec_harness.contracts import Finding, InvestigationResult, Verdict
 
 
 @pytest.fixture
 def client():
     backend = SimpleNamespace(start_workflow=AsyncMock())
-    web.app.dependency_overrides[web.temporal] = lambda: backend
+    api.app.dependency_overrides[api.temporal] = lambda: backend
     yield backend
-    web.app.dependency_overrides.clear()
+    api.app.dependency_overrides.clear()
 
 
 async def request(method, path, **kwargs):
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=web.app), base_url="http://test"
+        transport=httpx.ASGITransport(app=api.app), base_url="http://test"
     ) as client:
         return await client.request(method, path, **kwargs)
 
@@ -140,11 +140,11 @@ async def test_real_temporal_submit_query_and_cancellation(temporal_cli, tmp_pat
     async with await WorkflowEnvironment.start_local(
         dev_server_existing_path=temporal_cli, plugins=[PydanticAIPlugin()]
     ) as env:
-        web.app.dependency_overrides[web.temporal] = lambda: env.client
+        api.app.dependency_overrides[api.temporal] = lambda: env.client
         try:
             async with Worker(
                 env.client,
-                task_queue=web.get_settings().task_queue,
+                task_queue=api.get_settings().task_queue,
                 workflows=[InvestigationWorkflow],
                 activities=[activities.prepare, activities.finalize, activities.cleanup],
                 workflow_runner=runner(),
@@ -170,7 +170,7 @@ async def test_real_temporal_submit_query_and_cancellation(temporal_cli, tmp_pat
                 assert final.json()["status"] == "cancelled"
                 assert shell.closed == [run_id]
         finally:
-            web.app.dependency_overrides.clear()
+            api.app.dependency_overrides.clear()
 
 
 @pytest.mark.requires_temporal
@@ -181,11 +181,11 @@ async def test_queued_run_has_server_deadline_without_a_worker(temporal_cli, mon
     from temporalio.client import WorkflowFailureError
     from temporalio.testing import WorkflowEnvironment
 
-    monkeypatch.setattr(web, "execution_timeout", lambda limits: timedelta(seconds=1))
+    monkeypatch.setattr(api, "execution_timeout", lambda limits: timedelta(seconds=1))
     async with await WorkflowEnvironment.start_local(
         dev_server_existing_path=temporal_cli, plugins=[PydanticAIPlugin()]
     ) as env:
-        web.app.dependency_overrides[web.temporal] = lambda: env.client
+        api.app.dependency_overrides[api.temporal] = lambda: env.client
         try:
             submitted = await request(
                 "POST", "/api/runs", json={"title": "Queued", "repo_url": "fixture"}
@@ -199,4 +199,4 @@ async def test_queued_run_has_server_deadline_without_a_worker(temporal_cli, mon
             assert state["status"] == "failed"
             assert state["error"] == "timed_out"
         finally:
-            web.app.dependency_overrides.clear()
+            api.app.dependency_overrides.clear()

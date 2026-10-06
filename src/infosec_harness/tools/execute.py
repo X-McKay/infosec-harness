@@ -9,7 +9,7 @@ from pydantic_ai.toolsets import FunctionToolset
 
 from infosec_harness.agents.evidence import final_probe_line, parse_probe_observations
 from infosec_harness.agents.investigator import InvestigationDeps
-from infosec_harness.models import Evidence
+from infosec_harness.contracts import Evidence
 from infosec_harness.sandbox import (
     CommandResult,
     OpenShell,

@@ -14,7 +14,7 @@ from infosec_harness.agents.investigator import (
     InvestigationDeps,
     build_agent,
 )
-from infosec_harness.models import WorkerIdentity
+from infosec_harness.contracts import WorkerIdentity
 from infosec_harness.sandbox import OpenShell, OpenShellConfig
 
 from .investigation import InvestigationActivities, InvestigationWorkflow, bind_investigator

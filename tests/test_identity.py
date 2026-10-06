@@ -2,7 +2,7 @@ import pytest
 from test_agent import FakeOpenShell
 
 from infosec_harness.config import Settings
-from infosec_harness.models import Finding, InvestigationRequest, WorkerIdentity
+from infosec_harness.contracts import Finding, InvestigationRequest, WorkerIdentity
 from infosec_harness.workflows.investigation import CleanupInvestigation, InvestigationActivities
 from infosec_harness.workflows.worker import worker_identity
 

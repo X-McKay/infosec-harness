@@ -2,7 +2,7 @@
 
 import json
 
-from infosec_harness.models import Evidence, Verdict
+from infosec_harness.contracts import Evidence, Verdict
 
 
 def final_probe_line(stdout: str) -> str | None:

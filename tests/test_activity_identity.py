@@ -25,7 +25,7 @@ from infosec_harness.agents.investigator import (
     InvestigationDeps,
     build_agent,
 )
-from infosec_harness.models import Finding, InvestigationRequest, WorkerIdentity
+from infosec_harness.contracts import Finding, InvestigationRequest, WorkerIdentity
 from infosec_harness.sandbox import Sandbox
 from infosec_harness.workflows.investigation import (
     CleanupInvestigation,

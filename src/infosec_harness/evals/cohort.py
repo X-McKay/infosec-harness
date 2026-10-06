@@ -19,12 +19,14 @@ from temporalio.client import WorkflowExecutionStatus, WorkflowFailureError
 from temporalio.exceptions import ApplicationError
 
 from infosec_harness._io import write_json
-from infosec_harness.models import Finding, InvestigationResult
+from infosec_harness.api import PREFIX, RPC_TIMEOUT, connect, execution_timeout, start_investigation
+from infosec_harness.contracts import Finding, InvestigationResult
 from infosec_harness.sandbox import OpenShell, OpenShellConfig, native_operation_accounting
 from infosec_harness.sandbox.process import _finish
-from infosec_harness.web import PREFIX, RPC_TIMEOUT, connect, execution_timeout, start_investigation
 from infosec_harness.workflows.worker import worker_identity
 
+# The harness checkout: src/infosec_harness/evals/ is three levels below it.
+REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 # Covers prepare's waited cancellation and three bounded cleanup attempts of an owned run.
 DRAIN = timedelta(minutes=30)
 # Terminal agent-level failures that --keep-going may continue past: budgets and invalid model
@@ -48,7 +50,7 @@ def release_policy() -> tuple[ReleasePolicy, str]:
 
 def source_identity() -> str:
     # Qualification is checkout-owned. Caller directories and Git configuration are untrusted.
-    root = Path(__file__).resolve().parents[2]
+    root = REPOSITORY_ROOT
     env = {
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
         "HOME": os.devnull,
@@ -69,7 +71,7 @@ def source_identity() -> str:
 
 
 def corpus_cases(manifest: Path) -> list[tuple[Finding, str, str]]:
-    root = Path(__file__).resolve().parents[2]
+    root = REPOSITORY_ROOT
     allowed = manifest.resolve().parent
     document = json.loads(manifest.read_text())
     cases = []

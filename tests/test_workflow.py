@@ -16,7 +16,7 @@ from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxR
 from test_agent import FakeOpenShell, final_response
 
 from infosec_harness.agents.investigator import InvestigationDeps, build_agent
-from infosec_harness.models import Citation, Finding, InvestigationRequest, Limits, Verdict
+from infosec_harness.contracts import Citation, Finding, InvestigationRequest, Limits, Verdict
 from infosec_harness.sandbox import Sandbox
 from infosec_harness.workflows.investigation import (
     FinalizeInvestigation,

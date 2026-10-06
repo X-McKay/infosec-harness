@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from infosec_harness import qualification
+from infosec_harness.evals import qualification
 
 
 async def test_runtime_qualification_uses_actual_directory_upload_contract(tmp_path, monkeypatch):

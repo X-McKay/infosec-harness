@@ -16,7 +16,7 @@ from pydantic_core import to_json
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 
-from infosec_harness.models import (
+from infosec_harness.contracts import (
     Evidence,
     InvestigationRequest,
     Verdict,

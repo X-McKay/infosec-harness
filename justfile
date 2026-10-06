@@ -18,7 +18,7 @@ generated-sync:
     uv run --locked python scripts/generated.py
 
 regenerate: generated-sync
-    uv run --locked python -c "import json; from pathlib import Path; from infosec_harness.web import app; Path('ui/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n')"
+    uv run --locked python -c "import json; from pathlib import Path; from infosec_harness.api import app; Path('ui/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n')"
     cd ui && npm run gen:api
 
 test *args:

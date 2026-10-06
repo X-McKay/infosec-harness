@@ -20,7 +20,7 @@ with workflow.unsafe.imports_passed_through():
 
     from infosec_harness.agents.evidence import parse_probe_observations
     from infosec_harness.agents.investigator import InvestigationDeps
-    from infosec_harness.models import (
+    from infosec_harness.contracts import (
         Evidence,
         InvestigationRequest,
         InvestigationResult,

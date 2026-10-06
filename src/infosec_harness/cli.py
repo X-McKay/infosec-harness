@@ -33,7 +33,7 @@ def api(host: str = "127.0.0.1", port: int = 8000):
     """Serve the lightweight HTTP API."""
     import uvicorn
 
-    uvicorn.run("infosec_harness.web:app", host=host, port=port)
+    uvicorn.run("infosec_harness.api:app", host=host, port=port)
 
 
 @app.command()
@@ -43,7 +43,7 @@ def worker(
     ),
 ):
     """Run the Temporal worker with native PydanticAI model/tool activities."""
-    from infosec_harness.web import connect
+    from infosec_harness.api import connect
     from infosec_harness.workflows.worker import create_worker
 
     settings = get_settings()
@@ -60,9 +60,9 @@ def worker(
 @app.command()
 def submit(path: Path):
     """Submit one Finding JSON document to Temporal."""
-    from infosec_harness.models import Finding
-    from infosec_harness.web import connect
-    from infosec_harness.web import submit as start
+    from infosec_harness.api import connect
+    from infosec_harness.api import submit as start
+    from infosec_harness.contracts import Finding
 
     async def send():
         return await start(Finding.model_validate_json(path.read_text()), await connect())
@@ -73,7 +73,7 @@ def submit(path: Path):
 @app.command()
 def report(run_id: str):
     """Read an investigation's current status and validated result."""
-    from infosec_harness.web import connect, run
+    from infosec_harness.api import connect, run
 
     async def read():
         return await run(run_id, await connect())
@@ -107,7 +107,7 @@ def evaluate(
     """Run the paired corpus (or a diagnostic subset) once, preserving failures and unstarted cases."""
     if not allow_inference:
         raise typer.BadParameter("Live evaluation requires --allow-inference")
-    from infosec_harness.evaluation import evaluate_corpus
+    from infosec_harness.evals.cohort import evaluate_corpus
 
     output = output or new_report("diagnostic" if case else "model")
     result = asyncio.run(evaluate_corpus(
@@ -125,7 +125,7 @@ def qualify(
     ),
 ):
     """Exercise actual native workspace/probe boundaries, without model calls."""
-    from infosec_harness.qualification import qualify_runtime
+    from infosec_harness.evals.qualification import qualify_runtime
 
     result = asyncio.run(qualify_runtime(output or new_report("openshell")))
     typer.echo(json.dumps(result, indent=2))
@@ -141,7 +141,7 @@ def replay(
 ):
     """Replay one recorded workflow history with no native or model dispatch."""
     from infosec_harness._io import write_json
-    from infosec_harness.evaluation import replay_history
+    from infosec_harness.evals.cohort import replay_history
 
     result = asyncio.run(replay_history(run_id, get_settings()))
     if output:

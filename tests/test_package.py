@@ -79,7 +79,7 @@ def test_installed_wheel_executor_imports_with_only_native_provider_dependencies
     with zipfile.ZipFile(wheel) as artifact:
         names = set(artifact.namelist())
         assert "infosec_harness/skills/investigate/SKILL.md" in names
-        assert "infosec_harness/release-policy.yaml" in names
+        assert "infosec_harness/evals/release-policy.yaml" in names
         assert "infosec_harness/sandbox/executor.py" in names
     environment = tmp_path / "environment"
     run(uv, "venv", "--python", sys.executable, environment)
