@@ -3,6 +3,8 @@
 import json
 
 import httpx
+import pytest
+from pydantic import ValidationError
 from openai import AsyncOpenAI
 from pydantic_ai.messages import (
     ModelRequest,
@@ -14,7 +16,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.usage import RequestUsage
 
-from infosec_harness.sandbox.executor import RESPONSE, ModelInvocation, execute
+from infosec_harness.sandbox.executor import RESPONSE, ModelInvocation, execute, provider_model
 
 
 def test_reasoning_usage_extensions_survive_next_turn_transport():
@@ -102,3 +104,27 @@ async def test_compatible_chat_preserves_instructions_with_one_leading_system(mo
         response = RESPONSE.validate_json(await execute(invocation))
     assert response.parts[0].content == "ok"
     assert len(seen) == 1
+
+
+def invocation_fields(**overrides):
+    fields = {"provider": "bedrock", "model_name": "model", "region": "us-west-2",
+              "timeout_seconds": 37, "messages": [], "settings": None,
+              "parameters": ModelRequestParameters()}
+    return {**fields, **overrides}
+
+
+def test_unknown_invocation_field_is_refused_not_ignored():
+    """A stale executor image must fail on a field it does not know, never drop a budget."""
+    with pytest.raises(ValidationError, match="unknown model invocation fields"):
+        ModelInvocation.model_validate(invocation_fields(future_budget=5))
+    encoded = json.dumps({**invocation_fields(), "parameters": {}, "future_budget": 5})
+    with pytest.raises(ValidationError, match=r"\['future_budget'\]"):
+        ModelInvocation.model_validate_json(encoded)
+
+
+def test_bedrock_client_is_bounded_by_the_invocation_budget(monkeypatch):
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "native-placeholder")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "native-placeholder")
+    config = provider_model(ModelInvocation(**invocation_fields())).client.meta.config
+    assert (config.connect_timeout, config.read_timeout) == (37, 37)
+    assert config.retries["total_max_attempts"] == 1
