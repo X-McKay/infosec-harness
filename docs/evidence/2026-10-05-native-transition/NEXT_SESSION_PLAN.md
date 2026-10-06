@@ -69,6 +69,11 @@ it as a guaranteed capacity budget.
 
 ## OpenShell change — patch tracked, artifact not built or deployed
 
+> Superseded on 2026-10-06 by [the live cohort record](LIVE_COHORTS_ON_PATCHED_GATEWAY.md): the
+> patched gateway was built on `rust:1.95.0-trixie` (bookworm's GCC 12 could not build Z3) with
+> `deploy/openshell/build_gateway.sh` and deployed with `scripts/openshell_gateway.py`, quota
+> 10,000. The section below is the plan as written before that.
+
 The quota patch is implemented and committed as
 `deploy/openshell/patches/0001-configurable-mutation-admission-quota.patch` (config key
 `openshell.gateway.max_mutation_admissions_per_caller`, default 1000, range 1..=1,000,000;
@@ -145,8 +150,9 @@ Operator commands now exist for each step: `./dev qualify`, `./dev eval --case <
 4. Run a bounded new investigation of `pathtraversal-fixed`, then representative actual
    investigations, with sufficient native headroom. Preserve failures and unknowns.
 5. Run the unchanged full 36-case cohort through ordinary Temporal investigation using
-   `harness eval --allow-inference --output <new-file>`. Keep original ground truth, release
-   thresholds and budgets. Do not silently resume or replace failed/unstarted cases.
+   `harness eval --allow-inference --output <new-file>` (superseded: use
+   `./dev eval [--settings FILE]`, an owned worker on a fresh queue). Keep original ground
+   truth, release thresholds and budgets. Do not silently resume or replace failed/unstarted cases.
 6. Resolve reliable clean-cache Maven builds without weakening policy/TLS/source boundaries.
    Complete affected UI checks. Report each gate as passed, failed, not_checked or justified
    not_applicable. Commit/push progress and update the existing PR. No promotion without

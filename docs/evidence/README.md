@@ -3,8 +3,10 @@
 Each folder is one dated, point-in-time record: what was measured, on which commit, and with
 which result. Its README says in one paragraph what it proves and what it does not. Records are
 not rewritten to match later code (endpoint names and workstation paths were redacted on
-2026-10-04, with no measurement changed); a new measurement gets a new folder. How to add one is
-in [release evidence](../evaluation/RELEASE_EVIDENCE.md#writing-an-evidence-folder).
+2026-10-04, with no measurement changed); a new measurement gets a new folder or a new dated
+file in the current one. To add a folder, name it `YYYY-MM-DD-topic`, state the commit,
+configuration and each gate as `passed`, `failed`, `not_checked` or justified
+`not_applicable`, keep private reports under `.harness/`, and add a row below.
 
 | Folder | Record |
 | --- | --- |
@@ -19,3 +21,4 @@ in [release evidence](../evaluation/RELEASE_EVIDENCE.md#writing-an-evidence-fold
 | [2026-10-04-broker-qualification-checkpoint](2026-10-04-broker-qualification-checkpoint/README.md) | Latest assembled broker qualification measurements |
 | [2026-10-04-ui-qualification-dashboard](2026-10-04-ui-qualification-dashboard/README.md) | Qualification dashboard validation |
 | [2026-10-05-astra-simplification](2026-10-05-astra-simplification/README.md) | Simplification review, behavioral changes, recovery and deterministic validation |
+| [2026-10-05-native-transition](2026-10-05-native-transition/README.md) | Native OpenShell, PydanticAI and Temporal transition: checkpoints, failed live candidates, the gateway quota patch and live cohorts on the patched gateway |
