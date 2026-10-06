@@ -17,9 +17,6 @@ generated-check:
 generated-sync:
     uv run --locked python scripts/generated.py
 
-dev-skills-check:
-    uv run --locked python scripts/generated.py --check
-
 regenerate: generated-sync
     uv run --locked python -c "import json; from pathlib import Path; from infosec_harness.web import app; Path('ui/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n')"
     cd ui && npm run gen:api

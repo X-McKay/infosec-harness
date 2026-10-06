@@ -34,8 +34,7 @@ or execution evidence is absent. A configured name is not execution evidence.
 just check                    # lint and compile
 just test                     # deterministic tests; no model network calls
 just test-network             # installed-package checks using package downloads
-just generated-check          # API and instruction drift
-just dev-skills-check         # development instruction drift
+just generated-check          # API schema, CLAUDE.md and development-skill copy drift
 just ui-check                 # formatting, generated types, tests and production build
 ```
 

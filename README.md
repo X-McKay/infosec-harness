@@ -109,20 +109,21 @@ Health proves control-plane connectivity only; it does not qualify sandbox or mo
 just check
 just test
 just test-network
-just generated-check
-just dev-skills-check
+just generated-check          # API schema, CLAUDE.md and copied development skills
 just ui-check
 ./dev qualify                 # native boundaries, no model calls
 ./dev eval                    # live corpus with an owned worker on a fresh task queue
 ./dev eval --case NAME        # one-case diagnostic; never qualifies
-./dev replay RUN_ID          # zero-dispatch history replay
+./dev replay RUN_ID           # zero-dispatch history replay
 ```
 
 Evaluation uses the unchanged paired corpus and packaged release policy. It requires a
-clean source identity, the native runtime and model endpoint; `--settings FILE` pins one exact
-configuration. Each report gets a new timestamped path under `.harness/reports/`; failures
-and unstarted cases remain visible. See [OpenShell setup](deploy/openshell/README.md#qualification-and-evaluation)
-for draining an interrupted owned worker and `--keep-going`. Live runs consume inference
+clean source identity, the native runtime and model endpoint; `--settings FILE`, accepted
+anywhere among a `./dev` verb's arguments, pins one exact configuration. Each qualify and
+eval report gets a new timestamped path under `.harness/reports/`; failures and unstarted
+cases remain visible. See
+[OpenShell setup](deploy/openshell/README.md#qualification-and-evaluation) for draining an
+interrupted owned worker and `--keep-going`. Live runs consume inference
 resources and never happen as part of ordinary setup or deterministic tests.
 
 A definitive verdict requires source citations and a successful, complete offline probe

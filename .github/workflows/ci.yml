@@ -32,7 +32,6 @@ jobs:
       - run: just bootstrap
       - run: just check
       - run: just generated-check
-      - run: just dev-skills-check
       - run: just test
       # Network-marked tests (wheel build and install from PyPI), run explicitly.
       - run: just test-network

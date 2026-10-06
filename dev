@@ -85,7 +85,7 @@ bootstrap_mise() {
 
 if [[ "$COMMAND" == --help || "$COMMAND" == -h || "$COMMAND" == help ]]; then
   echo "Usage: ./dev [--profile full|offline] [start|check|test|worker|status|logs|doctor|smoke|stop]"
-  echo "       ./dev qualify|eval|replay|worker [--settings FILE] [harness options]"
+  echo "       ./dev qualify|eval|replay|worker [harness options] (--settings FILE anywhere)"
   echo "Full mode requires explicit OpenShell configuration; see deploy/openshell/README.md."
   echo "eval runs live inference on the corpus with an owned worker on a fresh task queue."
   echo "stop preserves volumes and the VM; no implicit reset or paid inference."
@@ -107,11 +107,23 @@ compose() {
     --project-name "$COMPOSE_PROJECT_NAME" --env-file "$ENV_FILE" "$@"
 }
 harness() {
-  local command=$1 settings=()
+  # --settings is a global harness option; accept it anywhere among the verb's arguments.
+  local command=$1 settings=() args=()
   shift
-  if [[ "${1:-}" == --settings ]]; then settings=(--settings "${2:?settings file required}"); shift 2; fi
+  while (($#)); do
+    case "$1" in
+      --settings|--settings=*)
+        ((${#settings[@]} == 0)) || { echo "--settings given more than once" >&2; return 2; }
+        if [[ "$1" == --settings ]]; then
+          settings=(--settings "${2:?settings file required}"); shift 2
+        else
+          settings=(--settings "${1#--settings=}"); shift
+        fi ;;
+      *) args+=("$1"); shift ;;
+    esac
+  done
   load_env
-  managed uv run --locked harness ${settings[@]+"${settings[@]}"} "$command" "$@"
+  managed uv run --locked harness ${settings[@]+"${settings[@]}"} "$command" ${args[@]+"${args[@]}"}
 }
 qualify() { harness qualify "$@"; }
 control_plane() {
