@@ -134,6 +134,13 @@ normalised path); the vulnerable variant is unchanged, the fixed variant's sink 
 22 to 25, and both variants gained verification tests (the fixed one covers backslash,
 control-character, protocol-relative and absolute payloads).
 
+In the same cohort the investigator called `c-stackoverflow-fixed` exploitable by passing
+`outcap = -1`, which converts to a huge `size_t` and writes past `out`. `outcap` is the trusted
+caller's own buffer size, not the untrusted `name` the finding names, so this was a probe-scope
+error and the ground truth stands. Both C variants now type the capacity `size_t outcap` so the
+contract is explicit (line numbers unchanged), and the `probe` skill states that a probe varies
+only what the finding names as attacker-controlled.
+
 ### Answer key
 
 **This table is the answer key. Never copy it, or any mapping from a directory to a verdict,
