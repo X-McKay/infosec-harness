@@ -32,10 +32,14 @@ these five boolean fields and nothing else; print details on earlier lines:
 HARNESS_PROBE {"target_reached":true,"oracle_valid":true,"positive_control":true,"negative_control":true,"vulnerability_observed":false}
 ```
 
-In Python, after deriving `observations` from checks the probe actually ran:
-`print('HARNESS_PROBE '+json.dumps(observations))`. JSON on one line and a standalone
-`HARNESS_PROBE` on another, key=value pairs, extra fields such as `details`, or string values
-are not parsed and count as no observation.
+The five values must be JSON booleans `true`/`false`: numbers such as `1`/`0`, strings, extra
+fields such as `details`, key=value pairs, or JSON on one line with a standalone `HARNESS_PROBE`
+on another are not parsed and count as no observation. Emit the line with a JSON encoder:
+
+- Python: `print('HARNESS_PROBE ' + json.dumps(observations))`
+- Perl: `use JSON::PP; print 'HARNESS_PROBE ', JSON::PP->new->canonical->encode({ target_reached => $t ? JSON::PP::true : JSON::PP::false, ... }), "\n";` (plain `1`/`0` encode as numbers and are rejected)
+- JavaScript: `console.log('HARNESS_PROBE ' + JSON.stringify(observations))` with boolean values
+- Java: build the string by hand with the literal words `true`/`false`
 
 - `target_reached`: the finding-shaped input invoked the real target entry point, including its
   validation or containment checks. A security rejection by the real target is still `true`
