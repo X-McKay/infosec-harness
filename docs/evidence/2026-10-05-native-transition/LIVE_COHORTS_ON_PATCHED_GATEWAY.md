@@ -37,6 +37,7 @@ before run 10 passed with 11,656 claims of headroom against 6,480 required.
 | 8 | `f7a751e` | 600k, 40, 300 | 30 / 30 | 6 | 0 | 0 | First run to attempt every case. Four external 502 `upstream_unreachable` from the inference backend; two token-budget exhaustions (`java-sqli-fixed` never applied the Maven recipe; `perl-sqli-vulnerable` printed observation values as 1/0, which the parser rejects) |
 | 9 | `32610fe` | 600k, 40, 300 | 0 / 0 | 13 | 23 | 0 | Inference backend returned 503 `no available server` from the first case; stopped by the operator after 13 agent-level failures (`ModelExecutorError`), cleanup confirmed: 0 containers, 0 unknown operations |
 | 10 | `590128f` | 600k, 40, 300 | 33 / 30 | 3 | 2 | 0 | Operator error: the launching shell had a 2 h limit and was killed with case 34 in flight; the drain worker on the recorded queue let the orphaned tool activity time out, the workflow failed closed without retrying, and cleanup left 0 containers. Failures: `java-xxe-vulnerable` and `java-xxe-fixed` on the token budget (a broken nonce oracle, since fixed in the skills), `javascript-cmdi-fixed` on a backend connection error at the first request |
+| 12 | `f734f3f` | 600k, 40, 300; parallel 3; 82 de-labelled cases | 69 / 67 | 5 | 8 | 0 | First independent accuracy measurement. Failures: three token budgets (`ssrf-fixed`, `perl-sqli-vulnerable`, `javascript-arginjection-fixed`), one backend 502 at the first request (`java-sqli-fixed`), and one harness defect (`c-intoverflow-vulnerable`: a citation of a probe-written file raised `FileNotFoundError` in finalize; non-agent-level, so the stop latch left 8 memory-group cases unstarted). Wrong: `fileinclusion-fixed` (false positive from a probe that altered `sys.path`). Inconclusive: `c-stackoverflow-vulnerable` (no C headers in the image; correct refusal). Two C negatives rest on stand-ins and should be discounted |
 
 Totals: 146 completed investigations, 142 correct, 0 unsafe negatives. Every completed
 `likely_not_exploitable` case was correct except `testonly` twice (before reachability guidance)
@@ -98,6 +99,46 @@ Live steps on that head, in order:
   detached worktree, with `--parallel 3`, the frozen `settings-82.json` (600k tokens, 40
   requests, 300 s commands), capacity pre-flight passed (29,891 of headroom against 14,760
   required). It is the first independent accuracy measurement; its report is `cohort-12.json`.
+
+### Run 12 in detail
+
+Run 12 (`cohort-12.json`, 13:37 to 15:45 UTC, 2 h 7 min of wall time for 74 attempted cases with
+three in flight) is the first run whose accuracy figures are independent evidence: the corpus
+had been de-labelled (neutral `a`/`b` directories, no label comments, neutral titles, fixture
+tests moved out of the snapshot) and the hygiene test enforces it.
+
+| Measure | Value |
+| --- | --- |
+| Completed / correct | 69 / 67 (original 36 cases: 33 completed, 33 correct; new 46: 36 completed, 34 correct) |
+| Unsafe negatives | 0 |
+| Task-success rate as the policy computes it (correct over planned) | 67 / 82 = 0.817, but `complete_corpus` failed, so the quality gates stay `not_checked` |
+| Failed | 5: three token budgets, one backend 502, one harness defect |
+| Unstarted | 8 (stop latch after the harness defect; run afterwards as `diagnostic-12-remainder.json`) |
+| Duration per attempted case | median 243 s, p90 495 s, max 1,685 s |
+| Model requests per completed case | median 10, max 28; 8.8 M tokens in total |
+| Native operations | 3,034 completed, 0 unknown (41 per attempted case) |
+| Capacity pre-flight | passed: 29,891 claims of headroom against 14,760 required |
+
+Findings and their fixes (all in `claude/run12-fixes`, pending at the time of writing):
+
+- **Citation of a probe-written file ends the investigation as a harness error.** Citations are
+  validated only in `finalize`, with a strict path resolution that raised `FileNotFoundError` for
+  a file the agent had created in the sandbox. Fix: validate citations in the agent's output
+  validator with retry feedback naming the path, and make the confinement check raise a typed
+  validation error that the keep-going classifier treats as agent-level.
+- **Probe that alters the interpreter environment produces a false positive.** On
+  `fileinclusion-fixed` the agent's first probe was correct, the verdict rule blocked a positive
+  verdict, and the agent then prepended a temp directory to `sys.path`, planted a module named
+  like the allow-listed one and superseded the correct probe. Fix: a probe skill rule that a
+  probe varies only inputs the sink receives from a caller, never the search path, environment,
+  working directory or files the application does not take from the caller.
+- **Stand-in oracles pass as negatives.** Both C fixed cases reached `likely_not_exploitable`
+  through stand-ins (a hand-written libc stub with `-nostdlib`; a Python reimplementation) because
+  the workspace image has gcc but no C headers. The verdicts scored as correct and are discounted
+  here. Fix: `libc6-dev` in the workspace image (rebuild and requalify), and a probe skill rule
+  that reimplementations, stubs and simulations never carry a definitive label.
+- **Budget exhaustions** on three cases (624k, 618k and 629k tokens of 600k): targeted skill
+  guidance from their histories; the limits are unchanged.
 
 ## Defects found live and their fixes
 
