@@ -45,6 +45,7 @@ async def test_transport_runs_only_in_separate_model_sandbox(monkeypatch):
         invocation = ModelInvocation.model_validate_json(kwargs["stdin"])
         assert invocation.provider == "openai"
         assert invocation.base_url == "https://configured.example/v1"
+        assert invocation.timeout_seconds == 110  # the in-sandbox kill budget, not a default
         return CommandResult(
             0, RESPONSE.dump_json(ModelResponse(parts=[TextPart("ok")])).decode(), ""
         )
@@ -101,6 +102,11 @@ def test_provider_has_no_sdk_retries(monkeypatch):
     )
     model = model_executor.provider_model(invocation)
     assert model.provider.client.max_retries == 0
+    # Live 2026-10-06: the OpenAI default connect timeout of 5 s failed four Java cases on a
+    # slow but healthy endpoint. The whole-request timeout follows the invocation budget.
+    assert model.provider.client.timeout == 110.0
+    custom = model_executor.provider_model(invocation.model_copy(update={"timeout_seconds": 290}))
+    assert custom.provider.client.timeout == 290.0
 
 
 def test_no_ambient_bedrock_credentials_fallback(monkeypatch):

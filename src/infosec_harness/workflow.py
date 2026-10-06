@@ -376,6 +376,8 @@ def create_worker(client, settings):
         provider=settings.model_provider,
         base_url=settings.model_base_url,
         region=settings.model_region,
+        # One operator knob bounds every sandbox command, including inference.
+        timeout=min(settings.limits.command_timeout_seconds, openshell.config.max_timeout_seconds),
     )
     agent = build_agent(openshell, model)
     bind_investigator(agent)

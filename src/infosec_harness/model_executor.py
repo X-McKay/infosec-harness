@@ -22,6 +22,9 @@ class ModelInvocation(BaseModel):
     model_name: str
     base_url: str | None = None
     region: str = "us-east-1"
+    # Whole-request budget for the provider call, including connect; the default OpenAI
+    # client connect timeout of 5 s turned a slow but healthy endpoint into failures.
+    timeout_seconds: int = 110
     messages: list[ModelMessage]
     settings: dict[str, Any] | None
     parameters: ModelRequestParameters
@@ -51,6 +54,7 @@ def provider_model(invocation: ModelInvocation) -> Model:
             api_key=os.environ.get("OPENAI_API_KEY", "openshell"),
             base_url=invocation.base_url,
             max_retries=0,
+            timeout=float(invocation.timeout_seconds),
         )
         return OpenAIChatModel(
             invocation.model_name,

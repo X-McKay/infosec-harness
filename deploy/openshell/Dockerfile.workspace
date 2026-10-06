@@ -12,6 +12,8 @@ import tempfile
 packages = [
     "ca-certificates", "nodejs", "npm", "default-jdk-headless", "maven",
     "perl", "cpanminus", "gcc", "make",
+    # CPAN cannot be reached from the workspace egress policy; the corpus needs these.
+    "libdbi-perl", "libdbd-sqlite3-perl",
 ]
 simulation = subprocess.run(
     ["apt-get", "-s", "install", "--no-install-recommends", *packages],

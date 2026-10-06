@@ -47,11 +47,13 @@ class OpenShellModel(Model):
         # Native PydanticAI durability owns this activity's stable identity and history.
         # Production inference without Temporal is deliberately unavailable.
         info = activity.info()
+        budget = max(self.timeout - 10, 1)
         invocation = ModelInvocation(
             provider=self.provider_name,
             model_name=self.model_name,
             base_url=self._base_url,
             region=self.region,
+            timeout_seconds=budget,
             messages=messages,
             settings=model_settings,
             parameters=model_request_parameters,
@@ -60,7 +62,6 @@ class OpenShellModel(Model):
         if len(encoded) > MAX_INVOCATION_BYTES:
             raise ValueError("Model invocation exceeds the durable payload budget")
         sandbox = await self.openshell.create(info.workflow_id, profile="model")
-        budget = max(self.timeout - 10, 1)
         result = await self.openshell.execute(
             sandbox,
             ["/usr/bin/timeout", "--preserve-status", "-s", "KILL", str(budget),
