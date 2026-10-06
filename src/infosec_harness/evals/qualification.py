@@ -11,6 +11,14 @@ from infosec_harness.config import get_settings
 from infosec_harness.sandbox import OpenShell, OpenShellConfig
 from infosec_harness.sandbox.process import finish
 
+# Read back the uploaded file; the identical second request must replay the saved receipt.
+_ROUNDTRIP = [
+    "python",
+    "-I",
+    "-c",
+    "from pathlib import Path;print(Path('/workspace/qualification/input.txt').read_text(),end='')",
+]
+
 
 async def qualify_runtime(output: Path) -> dict:
     if output.exists():
@@ -47,12 +55,7 @@ async def qualify_runtime(output: Path) -> dict:
                 await runtime.upload(sandbox, source, "/workspace/qualification")
                 result = await runtime.execute(
                     sandbox,
-                    [
-                        "python",
-                        "-I",
-                        "-c",
-                        "from pathlib import Path;print(Path('/workspace/qualification/input.txt').read_text(),end='')",
-                    ],
+                    _ROUNDTRIP,
                     operation_id=f"roundtrip:{profile}",
                     timeout=30,
                 )
@@ -65,12 +68,7 @@ async def qualify_runtime(output: Path) -> dict:
                 row["roundtrip"] = "passed"
                 again = await runtime.execute(
                     sandbox,
-                    [
-                        "python",
-                        "-I",
-                        "-c",
-                        "from pathlib import Path;print(Path('/workspace/qualification/input.txt').read_text(),end='')",
-                    ],
+                    _ROUNDTRIP,
                     operation_id=f"roundtrip:{profile}",
                     timeout=30,
                 )
