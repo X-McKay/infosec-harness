@@ -1361,3 +1361,17 @@ async def test_receipts_read_records_saved_by_an_earlier_v11_worker(adapter):
     assert receipt.command == ["/bin/sh", "-c", "run-tests"] and receipt.request_digest == "d" * 64
     assert receipt.result.stdout == "ok\n" and receipt.result.exit_code == 0
     assert receipt.workspace_digest == "a" * 64 and receipt.source_verified
+
+
+@pytest.mark.parametrize("name", ["create", "upload", "copy_workspace", "verify_source",
+                                  "execute", "receipts", "close", "close_run"])
+def test_fake_adapter_keeps_the_real_signatures(name):
+    """A call that works against the fake must work against the adapter, and back."""
+    import inspect
+
+    from fakes import FakeOpenShell
+
+    def shape(method):
+        return [(p.name, p.kind, p.default) for p in inspect.signature(method).parameters.values()]
+
+    assert shape(getattr(FakeOpenShell, name)) == shape(getattr(OpenShell, name))

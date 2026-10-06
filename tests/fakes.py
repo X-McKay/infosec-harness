@@ -6,23 +6,26 @@ from infosec_harness.sandbox import CommandResult, ExecutionReceipt, Sandbox
 
 
 class FakeOpenShell:
+    """The adapter's public surface with the real signatures (tests/sandbox checks them)."""
+
     def __init__(self):
         self.executions = []
         self.closed = []
         self._receipts = []
 
     async def create(self, run_id, *, profile="workspace", slot=""):
-        return Sandbox(id=f"{profile}-{slot}", run_id=run_id, name=profile, profile=profile)
+        return Sandbox(id=f"{profile}-{slot}", run_id=run_id, name=profile, profile=profile,
+                       slot=slot)
 
     async def upload(self, sandbox, source, destination):
         pass
 
-    async def copy_workspace(self, workspace, probe, *, operation_id, expected_source):
-        assert workspace.profile == "workspace" and probe.profile == "probe"
+    async def copy_workspace(self, source, probe, *, operation_id, expected_source):
+        assert source.profile == "workspace" and probe.profile == "probe"
         return "workspace-digest"
 
-    async def verify_source(self, sandbox, *, expected_source, operation_id):
-        assert sandbox.profile == "probe"
+    async def verify_source(self, probe, expected_source, *, operation_id):
+        assert probe.profile == "probe"
 
     async def execute(self, sandbox, command, *, operation_id, timeout, stdin=None):
         self.executions.append((sandbox, command, operation_id, stdin))
