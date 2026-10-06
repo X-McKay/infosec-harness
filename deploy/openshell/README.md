@@ -18,6 +18,10 @@ runtime and live inference `not_checked`.
 ./dev
 ```
 
+Without the runtime JSON, full `./dev` still starts the control plane but reports native
+qualification `not_checked`; see [configuration contract](#configuration-contract) for where
+`./dev` looks for it.
+
 Download release archives only through the manifest-checking helper. It validates SHA-256
 before publishing files beneath `.harness/openshell/artifacts/`; the separate official-image
 OCI digests remain in the same manifest. The release `gateway-linux-arm64` is the base
@@ -31,7 +35,8 @@ done
 
 Build trusted workload images on the managed VM's original Docker daemon (plain `runc`,
 ordinary egress for package downloads) through the checkout's `.harness/bin/docker` shim, never
-on host Docker. That daemon runs no investigation workload: each build is saved to a tar and
+on host Docker: a plain `docker build` and `docker save`, with no builder selection or proxy
+build arguments. That daemon runs no investigation workload: each build is saved to a tar and
 streamed into the dedicated guest daemon without selecting a host Docker context. Every base
 image stays pinned by digest in its Dockerfile. Do not commit the resulting log or tar.
 
@@ -134,7 +139,8 @@ committed. VM state itself lives under `~/.cache/ih/<checkout-id>/`.
 | `openshell/artifacts/` | Hash-verified OpenShell release archives |
 | `openshell/*.tar`, `openshell/executor-context/` | Workspace and executor image build outputs |
 | `openshell/gateway-build/` | Patched-gateway `src/`, `vendor/` and `out/` |
-| `openshell/private/` | Gateway config, PKI, runtime JSON, policies, logs and private reports; `0700`/`0600` |
+| `openshell/private/` | Gateway config, PKI, runtime JSON (`native-config.json`), policies, logs and private reports; `0700`/`0600` |
+| `openshell/runtime.json` | Earlier runtime JSON location, read only when `openshell/private/native-config.json` is absent |
 | `openshell/private/live-eval-*/` | One cohort's frozen `settings.json`, reports, logs and diagnostics |
 | `workspace/` | Worker source snapshots (`HARNESS_WORKSPACE_DIR`) |
 | `reports/` | Timestamped `openshell-*` (qualify) and `model-*` (eval) reports |
@@ -235,9 +241,14 @@ Four optional runtime JSON bounds have defaults: `max_output_bytes` (262144),
 `max_transfer_bytes` (16777216), `max_timeout_seconds` (300) and `ready_timeout_seconds`
 (120). Keep `max_output_bytes` at the default or higher: the shell wrapper can emit about
 260 kB, and larger output becomes unknown execution. `command_timeout_seconds` in the worker's
-limits must not exceed `max_timeout_seconds`. `HARNESS_OPENSHELL_CONFIG` defaults to
-`.harness/openshell/runtime.json`; point it, or `openshell_config` in a settings file, at the
-private runtime JSON.
+limits must not exceed `max_timeout_seconds`.
+
+Without `--settings`, `./dev worker|qualify|eval|replay` read
+`.harness/openshell/private/native-config.json`, else `.harness/openshell/runtime.json` (both
+in the main checkout), else the file an explicit `HARNESS_OPENSHELL_CONFIG` names, and print
+the path they chose; worker, qualify and eval refuse when none exists. A settings file
+names the runtime JSON in `openshell_config`. Invoked directly, `harness` reads
+`HARNESS_OPENSHELL_CONFIG`, defaulting to `.harness/openshell/runtime.json`.
 
 Policies are authored operator configuration, not execution evidence. This minimal example
 permits only the two exact Python package hosts; add other exact hosts and observed client
@@ -358,8 +369,8 @@ after a quota change to confirm the running process has it.
 
 ## Qualification and evaluation
 
-Full `./dev` runs native qualification. The direct command is useful after changing a policy,
-image, adapter or runtime configuration:
+Full `./dev` runs native qualification when the runtime JSON exists. The direct command is
+useful after changing a policy, image, adapter or runtime configuration:
 
 ```bash
 ./dev qualify                 # writes .harness/reports/openshell-<UTC time>.json

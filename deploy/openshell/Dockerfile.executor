@@ -1,8 +1,7 @@
-# Build through the existing qualified runsc build-egress builder. Context is generated
-# from uv.lock; worker sources and credentials are excluded.
+# Built with a plain `docker build` on the managed VM's Docker daemon (see
+# deploy/openshell/README.md). build_context.py generates the context from uv.lock; worker
+# sources and credentials are excluded.
 FROM python@sha256:f77ac9e44ae96ef2c90b8053ea08c31f8be030f824196b0ae4db6d462c84e51f
-ARG HTTP_PROXY
-ARG HTTPS_PROXY
 COPY requirements.txt /tmp/requirements.txt
 RUN python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r /tmp/requirements.txt \
     && rm /tmp/requirements.txt
