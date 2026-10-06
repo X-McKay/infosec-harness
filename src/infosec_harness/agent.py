@@ -205,9 +205,14 @@ TIMEOUT_MARGIN_SECONDS = 10
 KILLED_EXIT = 137
 
 
+def command_budget(timeout: int) -> int:
+    """The in-sandbox kill budget for a native execution bounded by ``timeout``."""
+    return max(timeout - TIMEOUT_MARGIN_SECONDS, 1)
+
+
 def bounded(argv: list[str], timeout: int) -> list[str]:
-    budget = max(timeout - TIMEOUT_MARGIN_SECONDS, 1)
-    return ["/usr/bin/timeout", "--preserve-status", "-s", "KILL", str(budget), *argv]
+    """Kill ``argv`` inside the sandbox before the native timeout; shared by every exec."""
+    return ["/usr/bin/timeout", "--preserve-status", "-s", "KILL", str(command_budget(timeout)), *argv]
 
 
 # Shell commands spawn children (npm, Maven, test runners). A killed child that still holds
@@ -223,8 +228,7 @@ _SHELL_WRAPPER = (
 
 
 def bounded_shell(command: str, timeout: int) -> list[str]:
-    budget = max(timeout - TIMEOUT_MARGIN_SECONDS, 1)
-    return ["/bin/bash", "-c", _SHELL_WRAPPER, "ih-wrapper", str(budget), command]
+    return ["/bin/bash", "-c", _SHELL_WRAPPER, "ih-wrapper", str(command_budget(timeout)), command]
 
 
 def operation_id(ctx: RunContext[InvestigationDeps], kind: str) -> str:
@@ -365,7 +369,7 @@ def build_agent(openshell: OpenShell, model: Model) -> Agent[InvestigationDeps, 
         observations = parse_probe_observations(result.stdout) if kind == "probe" else {}
         if result.exit_code == KILLED_EXIT:
             observations["timeout_feedback"] = (
-                f"Killed (exit {KILLED_EXIT}) at the {timeout - TIMEOUT_MARGIN_SECONDS}s command "
+                f"Killed (exit {KILLED_EXIT}) at the {command_budget(timeout)}s command "
                 "budget; it was not retried. Narrow the command, cache dependencies in the "
                 "workspace, or split the work."
             )

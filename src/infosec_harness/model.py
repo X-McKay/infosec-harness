@@ -6,6 +6,7 @@ from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import Model
 from temporalio import activity
 
+from .agent import KILLED_EXIT, bounded, command_budget
 from .model_executor import MAX_INVOCATION_BYTES, MAX_RESPONSE_BYTES, RESPONSE, ModelInvocation
 from .openshell import OpenShell
 
@@ -47,7 +48,7 @@ class OpenShellModel(Model):
         # Native PydanticAI durability owns this activity's stable identity and history.
         # Production inference without Temporal is deliberately unavailable.
         info = activity.info()
-        budget = max(self.timeout - 10, 1)
+        budget = command_budget(self.timeout)
         invocation = ModelInvocation(
             provider=self.provider_name,
             model_name=self.model_name,
@@ -64,8 +65,7 @@ class OpenShellModel(Model):
         sandbox = await self.openshell.create(info.workflow_id, profile="model")
         result = await self.openshell.execute(
             sandbox,
-            ["/usr/bin/timeout", "--preserve-status", "-s", "KILL", str(budget),
-             "python", "-I", "-m", "infosec_harness.model_executor"],
+            bounded(["python", "-I", "-m", "infosec_harness.model_executor"], self.timeout),
             operation_id=f"model:{info.activity_id}",
             timeout=self.timeout,
             stdin=encoded,
@@ -73,7 +73,7 @@ class OpenShellModel(Model):
         if result.exit_code != 0 or result.output_truncated:
             # A complete native receipt with a failed executor: terminal, never resent.
             detail = result.stderr.rstrip().rsplit("\n", 1)[-1][-300:] if result.stderr else ""
-            if result.exit_code == 137:
+            if result.exit_code == KILLED_EXIT:
                 detail = f"killed at the {budget}s executor budget; provider outcome unknown. {detail}"
             raise ModelExecutorError(
                 f"OpenShell model executor returned no complete response "
