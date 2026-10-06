@@ -93,7 +93,9 @@ stack is still running. Do this once, in the main checkout, with no `./dev worke
    `--project-name`.
 
 6. Start the new stack. `./dev` keeps the checkout's ports, drops the retired keys from
-   `dev.env`, starts Temporal, the API and the UI, checks readiness and requalifies OpenShell:
+   `dev.env`, starts Temporal, the API and the UI, checks readiness and requalifies OpenShell
+   (with the runtime JSON at `.harness/openshell/private/native-config.json` or
+   `.harness/openshell/runtime.json`, or named by `HARNESS_OPENSHELL_CONFIG`):
 
    ```bash
    ./dev
