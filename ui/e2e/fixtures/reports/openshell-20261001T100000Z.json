@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "status": "failed",
+  "run_id": "qualify-20261001-1000",
+  "config_sha256": "630da741eb852fc9630da741eb852fc9630da741eb852fc9630da741eb852fc9",
+  "model_calls": 0,
+  "model_quality": "not_checked",
+  "cleanup": "failed",
+  "error_type": "OpenShellError",
+  "cleanup_error_type": "TimeoutError",
+  "profiles": {
+    "workspace": {
+      "boundary": "passed",
+      "roundtrip": "failed",
+      "saved_operation": "not_checked",
+      "sandbox_reuse": "not_checked",
+      "cleanup": "not_checked"
+    }
+  }
+}

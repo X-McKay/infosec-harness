@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "status": "passed",
+  "run_id": "qualify-20261005-1000",
+  "config_sha256": "fc9630da741eb852fc9630da741eb852fc9630da741eb852fc9630da741eb852",
+  "model_calls": 0,
+  "model_quality": "not_checked",
+  "cleanup": "passed",
+  "profiles": {
+    "workspace": {
+      "boundary": "passed",
+      "roundtrip": "passed",
+      "saved_operation": "passed",
+      "sandbox_reuse": "passed",
+      "cleanup": "passed"
+    },
+    "probe": {
+      "boundary": "passed",
+      "roundtrip": "passed",
+      "saved_operation": "passed",
+      "sandbox_reuse": "passed",
+      "cleanup": "passed"
+    }
+  }
+}

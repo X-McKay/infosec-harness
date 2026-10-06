@@ -1,0 +1,79 @@
+{
+  "id": "investigate-v11-fixed-0002",
+  "status": "completed",
+  "phase": "finished",
+  "finding": {
+    "title": "SQL injection in report search (fixed revision)",
+    "description": "The search endpoint may interpolate the query string into SQL.",
+    "repo_url": "https://git.example.test/acme/reports.git",
+    "revision": "9b8a7c6",
+    "source_mode": "git_revision",
+    "file_path": "reports/search.py",
+    "cwe": "CWE-89"
+  },
+  "result": {
+    "finding": {
+      "title": "SQL injection in report search (fixed revision)",
+      "description": "The search endpoint may interpolate the query string into SQL.",
+      "repo_url": "https://git.example.test/acme/reports.git",
+      "revision": "9b8a7c6",
+      "source_mode": "git_revision",
+      "file_path": "reports/search.py",
+      "cwe": "CWE-89"
+    },
+    "verdict": {
+      "label": "likely_not_exploitable",
+      "summary": "The first probe used the wrong module and is disowned. The corrected probe reached the parameterized query and the injected quote was treated as data.",
+      "evidence_ids": ["probe-sqli-2"],
+      "citations": [{ "path": "reports/search.py", "start_line": 20, "end_line": 27 }],
+      "superseded_evidence_ids": ["probe-sqli-1"]
+    },
+    "evidence": [
+      {
+        "id": "probe-sqli-1",
+        "kind": "probe",
+        "command": "python probes/sqli_probe.py --module reports.legacy",
+        "exit_code": 1,
+        "stdout": "ModuleNotFoundError: reports.legacy\n",
+        "stderr": "Traceback (most recent call last):\n  File \"probes/sqli_probe.py\", line 3\n",
+        "timed_out": false,
+        "output_truncated": false,
+        "sandbox_id": "sbx-probe-0b2c",
+        "source_digest": "sha256:9b8a7c6d5e4f30219b8a7c6d5e4f30219b8a7c6d5e4f30219b8a7c6d5e4f3021",
+        "observations": {
+          "origin": "self_reported",
+          "source_verified": true,
+          "workspace_digest": "sha256:bb22cc33dd44ee55ff66aa11bb22cc33dd44ee55ff66aa11bb22cc33dd44ee55"
+        }
+      },
+      {
+        "id": "probe-sqli-2",
+        "kind": "probe",
+        "command": "python probes/sqli_probe.py --module reports.search",
+        "exit_code": 0,
+        "stdout": "HARNESS_PROBE {\"target_reached\": true, \"oracle_valid\": true, \"positive_control\": true, \"negative_control\": true, \"vulnerability_observed\": false}\n",
+        "stderr": "",
+        "timed_out": false,
+        "output_truncated": false,
+        "sandbox_id": "sbx-probe-0b2d",
+        "source_digest": "sha256:9b8a7c6d5e4f30219b8a7c6d5e4f30219b8a7c6d5e4f30219b8a7c6d5e4f3021",
+        "observations": {
+          "target_reached": true,
+          "oracle_valid": true,
+          "positive_control": true,
+          "negative_control": true,
+          "vulnerability_observed": false,
+          "origin": "self_reported",
+          "source_verified": true,
+          "workspace_digest": "sha256:cc33dd44ee55ff66aa11bb22cc33dd44ee55ff66aa11bb22cc33dd44ee55ff66"
+        }
+      }
+    ],
+    "source_digest": "sha256:9b8a7c6d5e4f30219b8a7c6d5e4f30219b8a7c6d5e4f30219b8a7c6d5e4f3021",
+    "model": "example-model-2026-09",
+    "worker_identity": null,
+    "usage": { "requests": 9, "tool_calls": 15, "input_tokens": 30100, "output_tokens": 1200 },
+    "limitations": []
+  },
+  "error": null
+}

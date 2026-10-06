@@ -1,0 +1,65 @@
+{
+  "items": [
+    {
+      "id": "investigate-v11-running-0003",
+      "title": "Path traversal in static file route",
+      "status": "running",
+      "started_at": "2026-10-05T11:55:00+00:00",
+      "closed_at": null,
+      "verdict": null,
+      "cwe": "CWE-22",
+      "repo_url": "https://git.example.test/acme/portal.git"
+    },
+    {
+      "id": "investigate-v11-untrusted-0005",
+      "title": "<script>window.__e2ePwned=1</script><img src=x onerror=\"window.__e2ePwned=2\"> stored XSS",
+      "status": "completed",
+      "started_at": "2026-10-05T10:30:00+00:00",
+      "closed_at": "2026-10-05T10:41:30+00:00",
+      "verdict": "inconclusive",
+      "cwe": "CWE-79",
+      "repo_url": "javascript:window.__e2ePwned=5"
+    },
+    {
+      "id": "investigate-v11-failed-0004",
+      "title": "XML external entity in invoice import",
+      "status": "failed",
+      "started_at": "2026-10-05T09:00:00+00:00",
+      "closed_at": "2026-10-05T09:02:05+00:00",
+      "verdict": null,
+      "cwe": "CWE-611",
+      "repo_url": "https://git.example.test/acme/billing.git"
+    },
+    {
+      "id": "investigate-v11-fixed-0002",
+      "title": "SQL injection in report search (fixed revision)",
+      "status": "completed",
+      "started_at": "2026-10-05T08:00:00+00:00",
+      "closed_at": "2026-10-05T08:12:00+00:00",
+      "verdict": "likely_not_exploitable",
+      "cwe": "CWE-89",
+      "repo_url": "https://git.example.test/acme/reports.git"
+    },
+    {
+      "id": "investigate-v11-exploitable-0001",
+      "title": "Command injection in archive extraction handler",
+      "status": "completed",
+      "started_at": "2026-10-05T07:00:00+00:00",
+      "closed_at": "2026-10-05T07:09:45+00:00",
+      "verdict": "potentially_exploitable",
+      "cwe": "CWE-78",
+      "repo_url": "https://git.example.test/acme/archiver.git"
+    },
+    {
+      "id": "investigate-v11-cancelled-0006",
+      "title": "Server-side request forgery in webhook preview",
+      "status": "canceled",
+      "started_at": "2026-10-05T06:00:00+00:00",
+      "closed_at": "2026-10-05T06:01:00+00:00",
+      "verdict": null,
+      "cwe": "CWE-918",
+      "repo_url": "https://git.example.test/acme/hooks.git"
+    }
+  ],
+  "next_page_token": "tok-page-2"
+}

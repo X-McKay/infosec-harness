@@ -1,0 +1,16 @@
+{
+  "id": "investigate-v11-running-0003",
+  "status": "running",
+  "phase": "investigating",
+  "finding": {
+    "title": "Path traversal in static file route",
+    "description": "The static route joins the request path onto the asset root.",
+    "repo_url": "https://git.example.test/acme/portal.git",
+    "revision": "HEAD",
+    "source_mode": "git_revision",
+    "file_path": null,
+    "cwe": "CWE-22"
+  },
+  "result": null,
+  "error": null
+}
