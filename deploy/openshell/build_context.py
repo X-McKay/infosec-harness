@@ -1,7 +1,8 @@
 """Generate an isolated executor context from the current immutable dependency lock.
 
-Run using the checkout's pinned Python environment, then build the output with the
-existing runsc build-egress builder. No deployment or credentials are provisioned.
+Run using the checkout's pinned Python environment, then build the output with a plain
+`docker build` on the managed VM's Docker daemon (deploy/openshell/README.md). No deployment
+or credentials are provisioned.
 """
 
 from __future__ import annotations

@@ -19,7 +19,7 @@ or execution evidence is absent. A configured name is not execution evidence.
 - `sandbox/` owns sandbox lifecycle and bounded command receipts. Native OpenShell owns
   execution, policy and provider credentials. Docker inspection is read-only evidence of
   the native outer fence, never an execution route. Skills contain expertise, not permissions.
-- `evals/release-policy.yaml` is the single live evaluation policy. Missing evidence is
+- `src/infosec_harness/evals/release-policy.yaml` is the single live evaluation policy. Missing evidence is
   `not_checked`, never `passed`. `eval-corpus/manifest.json` is independent ground truth.
 - Development skills are canonical in `dev-skills/`, copied to `.claude/skills/` by
   `just generated-sync`; `.agents/skills` links to that copy. Edit only the canonical source.
@@ -31,27 +31,34 @@ or execution evidence is absent. A configured name is not execution evidence.
 ## Commands
 
 ```bash
-./dev                         # pinned tools, managed control plane, native OpenShell checks
+./dev                         # pinned tools, local Temporal/API/UI, native OpenShell checks
 ./dev --profile offline       # deterministic component and real local Temporal tests
 ./dev worker                  # trusted worker using explicit native OpenShell configuration
 ./dev doctor | status | logs | smoke | stop
 ./dev qualify                 # native boundaries; no model calls
-./dev eval [--case NAME]      # live corpus, owned worker on a fresh queue; --case never qualifies
+./dev eval [--case NAME] [--parallel N]  # live corpus, owned worker on a fresh queue
 ./dev replay RUN_ID           # zero-dispatch history replay
+./dev export-history RUN_ID   # read-only history JSON under .harness/histories/; no overwrite
+./dev env                     # shell lines putting the managed tools on PATH
 just check                    # lint and compile
 just test                     # deterministic tests; no model network calls
 just test-network             # installed-package checks using package downloads
-just generated-check          # API schema, CLAUDE.md and development-skill copy drift
+just generated-check          # API schema, CLAUDE.md, skill copies and runtime skill catalog
 just ui-check                 # formatting, generated types, tests and production build
 ```
 
 Full setup requires the explicit OpenShell configuration described in
-`deploy/openshell/README.md`. There is no default model endpoint or public fallback.
-The managed Lima VM and runsc builder provision trusted workload images; agent execution
-always uses OpenShell. Never weaken a boundary to get setup or qualification to pass.
-Offline mode leaves native OpenShell and live inference `not_checked`.
-`--settings FILE` on `./dev qualify|eval|replay|worker` freezes one configuration (no `HARNESS_*`).
-`./dev eval --parallel N` runs up to N cases at once and records that as a report limitation.
+`deploy/openshell/README.md`; `./dev` reads an explicit `HARNESS_OPENSHELL_CONFIG`, else
+`.harness/openshell/private/native-config.json`, else `.harness/openshell/runtime.json`, and
+without one reports native qualification `not_checked`. There is no default model endpoint or public
+fallback. The managed Lima VM's Docker daemon (plain runc) builds trusted workload images;
+agent execution always uses OpenShell. Never weaken a boundary to get setup or qualification
+to pass. Offline mode leaves native OpenShell and live inference `not_checked`.
+`--settings FILE` on `./dev worker|qualify|eval|replay|export-history` freezes one
+configuration (no `HARNESS_*`). `./dev eval --case NAME` never qualifies; `--parallel N`
+(1 to 8) runs up to N cases at once and records that as a report limitation. From a git
+worktree, `./dev` uses the main checkout's `.harness`; a full start runs only from the main
+checkout.
 Never edit `src/infosec_harness/` (code, YAML or skill Markdown) while an owned evaluation
 worker runs: the worker identity covers those files and its guard ends the cohort.
 
