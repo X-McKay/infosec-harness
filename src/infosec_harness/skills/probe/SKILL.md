@@ -57,8 +57,13 @@ Never report a control you did not execute. Values are self-reported claims, not
   matches the label supports a definitive verdict, and any complete probe contradicting it
   blocks that verdict. Failed, incomplete or unverified probes support only `inconclusive`;
   workspace `execute` runs and earlier exploratory probes cannot substitute.
-- To correct a cited run, fix the probe, run a new `run_probe` and cite its new id. Never
-  relabel or reinterpret an old receipt; nothing is retried for you.
+- Derive `vulnerability_observed` only from the real target call with the finding-shaped
+  input (for example a trace of the statements the target actually executed). Never derive
+  it from the positive control: that reports the oracle, not the target.
+- To correct a flawed complete probe, fix it, run a new `run_probe`, cite the new id, and list
+  the flawed probe's id in the verdict's `superseded_evidence_ids`, explaining the flaw in the
+  summary. Only probes older than the cited one can be superseded. Never relabel or
+  reinterpret an old receipt; nothing is retried for you.
 - Cite the exact full returned Evidence.id, including its tool-call suffix, plus the source
   lines the probe exercises.
 - A hostile probe can mutate and restore files; do not claim independent attestation of

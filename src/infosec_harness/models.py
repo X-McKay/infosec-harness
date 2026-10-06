@@ -60,6 +60,9 @@ class Verdict(Contract):
     summary: str = Field(min_length=1, max_length=12_000)
     evidence_ids: list[str] = Field(default_factory=list, max_length=10)
     citations: list[Citation] = Field(default_factory=list, max_length=30)
+    # Earlier complete probes the investigator disowns as flawed; each must predate the
+    # cited probe and the summary must explain the flaw. They stay in the report.
+    superseded_evidence_ids: list[str] = Field(default_factory=list, max_length=10)
 
 
 class Evidence(Contract):
@@ -122,15 +125,34 @@ def definitive_support(
     """
     expected = verdict.label == "potentially_exploitable"
     qualified = [item for item in evidence if item.complete_verified_probe]
-    corroborated = bool(verdict.citations) and any(
-        item.id in verdict.evidence_ids
-        and item.observations["vulnerability_observed"] is expected
+    cited = [
+        item
         for item in qualified
-    )
+        if item.id in verdict.evidence_ids
+        and item.observations["vulnerability_observed"] is expected
+    ]
+    corroborated = bool(verdict.citations) and bool(cited)
+    # A flawed earlier probe may be superseded only by a newer cited one: a contrary probe
+    # that ran after the citation can never be disowned.
+    latest_cited = max((probe_step(item.id) for item in cited), default=-1)
+    superseded = {
+        identity
+        for identity in verdict.superseded_evidence_ids
+        if -1 < probe_step(identity) < latest_cited
+    }
     contrary = [
-        item for item in qualified if item.observations["vulnerability_observed"] is not expected
+        item
+        for item in qualified
+        if item.observations["vulnerability_observed"] is not expected
+        and item.id not in superseded
     ]
     return corroborated, contrary
+
+
+def probe_step(identity: str) -> int:
+    """The agent run step from a ``kind:<step>:<tool-call>`` evidence id; -1 when unknown."""
+    parts = identity.split(":")
+    return int(parts[1]) if len(parts) >= 3 and parts[1].isdigit() else -1
 
 
 class InvestigationResult(Contract):

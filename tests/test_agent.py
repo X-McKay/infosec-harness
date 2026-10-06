@@ -293,6 +293,46 @@ async def test_output_feedback_repairs_exact_id_or_failed_probe_without_reexecut
     assert len(shell.executions) == 1
 
 
+@pytest.mark.asyncio
+async def test_validator_lets_a_newer_cited_probe_supersede_an_older_flawed_one():
+    """Live case 'unreachable' (2026-10-05): an early buggy probe reported vulnerability_observed
+    true, three corrected later probes reported false, and the verdict could never be admitted.
+    The agent may disown only probes older than the cited one, and must name them."""
+    from pydantic_ai import ModelRetry
+
+    from infosec_harness.agent import validate_verdict
+    from infosec_harness.models import Evidence, Verdict
+
+    def probe(identity, observed):
+        return Evidence(
+            id=identity, kind="probe", command="python probe.py", exit_code=0,
+            source_digest="digest", sandbox_id="offline",
+            observations=dict(workspace_digest="w", origin="self_reported", source_verified=True,
+                              target_reached=True, oracle_valid=True, positive_control=True,
+                              negative_control=True, vulnerability_observed=observed),
+        )
+
+    flawed, corrected, later = probe("probe:6:a", True), probe("probe:9:b", False), probe("probe:12:c", True)
+    ctx = SimpleNamespace(
+        deps=SimpleNamespace(source_digest="digest"),
+        messages=[ModelRequest(parts=[
+            ToolReturnPart("run_probe", item.model_dump(), tool_call_id=item.id.split(":")[-1])
+            for item in (flawed, corrected, later)])],
+    )
+    base = dict(label="likely_not_exploitable", summary="fixed query, flawed probe explained",
+                evidence_ids=[corrected.id], citations=[dict(path="app.py", start_line=1, end_line=1)])
+    # A later contrary probe blocks the verdict even when listed as superseded.
+    with pytest.raises(ModelRetry, match="probe:12:c contradict.*cannot be superseded"):
+        await validate_verdict(ctx, Verdict(**base, superseded_evidence_ids=[flawed.id, later.id]))
+    ctx.messages[0].parts.pop()  # without the later probe, the older flawed one can be superseded
+    with pytest.raises(ModelRetry, match="probe:6:a contradict"):
+        await validate_verdict(ctx, Verdict(**base))
+    accepted = Verdict(**base, superseded_evidence_ids=[flawed.id])
+    assert await validate_verdict(ctx, accepted) == accepted
+    with pytest.raises(ModelRetry, match="exact full Evidence.id"):
+        await validate_verdict(ctx, Verdict(**base, superseded_evidence_ids=["probe:1:unknown"]))
+
+
 @pytest.mark.parametrize(
     "failure",
     [

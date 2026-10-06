@@ -243,6 +243,8 @@ export interface components {
             evidence_ids?: string[];
             /** Citations */
             citations?: components["schemas"]["Citation"][];
+            /** Superseded Evidence Ids */
+            superseded_evidence_ids?: string[];
         };
         /** WorkerIdentity */
         WorkerIdentity: {

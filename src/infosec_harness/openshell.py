@@ -28,6 +28,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from infosec_harness._io import atomic_write_bytes
 
 ProfileName = Literal["workspace", "probe", "model"]
+# The pinned gateway decodes at most 1 MiB per gRPC message; archives travel in parts.
+_PART_BYTES = 900_000
 _OWNER = "infosec-harness.v3"
 _PYTHON = "/usr/local/bin/python"
 
@@ -848,12 +850,39 @@ class OpenShell:
                 if archive.tell() > self.config.max_transfer_bytes:
                     raise OpenShellError("source archive exceeds the transfer bound")
         data = archive.getvalue()
-        script = "import io,pathlib,sys,tarfile; p=pathlib.Path(sys.argv[1]); p.mkdir(parents=True,exist_ok=True); t=tarfile.open(fileobj=io.BytesIO(sys.stdin.buffer.read())); t.extractall(p,filter='data')"
-        result = await self.execute(sandbox, [_PYTHON, "-I", "-c", script, destination],
-            operation_id="upload:" + _digest([destination, hashlib.sha256(data).hexdigest()]),
-            timeout=60, stdin=data)
+        result = await self._deliver(sandbox, data, destination,
+            operation_id="upload:" + _digest([destination, hashlib.sha256(data).hexdigest()]))
         if result.exit_code:
             raise OpenShellError("source upload failed")
+
+    async def _deliver(self, sandbox: Sandbox, data: bytes, destination: str, *,
+                       operation_id: str) -> CommandResult:
+        """Extract an archive inside the sandbox, sending at most _PART_BYTES per request.
+
+        Each part is its own replayable receipt; the final extraction consumes the staged
+        file and removes it. Extraction always uses the data filter inside the sandbox.
+        """
+        extract = ("import io,pathlib,sys,tarfile; p=pathlib.Path(sys.argv[1]); "
+                   "p.mkdir(parents=True,exist_ok=True); "
+                   "t=tarfile.open(fileobj=io.BytesIO(sys.stdin.buffer.read())); "
+                   "t.extractall(p,filter='data')")
+        if len(data) <= _PART_BYTES:
+            return await self.execute(sandbox, [_PYTHON, "-I", "-c", extract, destination],
+                                      operation_id=operation_id, timeout=60, stdin=data)
+        staged = "/workspace/.ih-stage-" + hashlib.sha256(data).hexdigest()[:16]
+        append = ("import pathlib,sys; "
+                  "pathlib.Path(sys.argv[1]).open('ab').write(sys.stdin.buffer.read())")
+        for index, offset in enumerate(range(0, len(data), _PART_BYTES)):
+            result = await self.execute(sandbox, [_PYTHON, "-I", "-c", append, staged],
+                operation_id=f"{operation_id}:part{index}", timeout=60,
+                stdin=data[offset:offset + _PART_BYTES])
+            if result.exit_code:
+                return result
+        unpack = ("import pathlib,sys,tarfile; p=pathlib.Path(sys.argv[1]); "
+                  "p.mkdir(parents=True,exist_ok=True); s=pathlib.Path(sys.argv[2]); "
+                  "t=tarfile.open(s); t.extractall(p,filter='data'); s.unlink()")
+        return await self.execute(sandbox, [_PYTHON, "-I", "-c", unpack, destination, staged],
+                                  operation_id=operation_id, timeout=60)
 
     async def _snapshot(self, source: Sandbox, *, operation_id: str,
                         expected_source: Path | None) -> tuple[bytes, Path, str | None]:
@@ -938,9 +967,8 @@ class OpenShell:
             raise OpenShellError("source snapshots may only enter this investigation's offline probe")
         raw, record, original_digest = await self._snapshot(source, operation_id=operation_id,
                                                           expected_source=expected_source)
-        script = "import io,pathlib,sys,tarfile; p=pathlib.Path('/workspace/repo'); p.mkdir(exist_ok=True); t=tarfile.open(fileobj=io.BytesIO(sys.stdin.buffer.read())); t.extractall(p,filter='data')"
-        result = await self.execute(probe, [_PYTHON, "-I", "-c", script],
-            operation_id=operation_id + ":restore", timeout=60, stdin=raw)
+        result = await self._deliver(probe, raw, "/workspace/repo",
+                                     operation_id=operation_id + ":restore")
         if result.exit_code:
             raise OpenShellError("offline probe source restore failed")
         archive_digest = hashlib.sha256(raw).hexdigest()

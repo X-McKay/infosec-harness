@@ -661,6 +661,14 @@
             "type": "array",
             "maxItems": 30,
             "title": "Citations"
+          },
+          "superseded_evidence_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 10,
+            "title": "Superseded Evidence Ids"
           }
         },
         "additionalProperties": false,

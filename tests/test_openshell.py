@@ -488,6 +488,31 @@ def source_archive(content, *, include_original=True, mode=0o644):
 
 
 @pytest.mark.asyncio
+async def test_archive_over_one_gateway_message_is_restored_in_parts(adapter):
+    """Live 2026-10-05: a 2.6 MB Java workspace restore failed because the pinned gateway
+    decodes at most 1 MiB per gRPC message. Parts stay under that bound, each is its own
+    receipt, and the final extraction runs inside the sandbox from the staged file."""
+    from infosec_harness.openshell import _PART_BYTES
+
+    boundary, native = adapter
+    source = await boundary.create("run")
+    probe = await boundary.create("run", profile="probe", slot="activity")
+    member = tarfile.TarInfo("vendor.jar")
+    member.size = 2 * _PART_BYTES + 1
+    native.archive = archive(member)
+    await boundary.copy_workspace(source, probe, operation_id="copy-activity")
+    parts = [r for r in native.execs if "open('ab')" in " ".join(r.command)]
+    unpack = [r for r in native.execs if "extractall" in " ".join(r.command)]
+    assert len(parts) == 3 and all(len(r.stdin) <= _PART_BYTES for r in parts)
+    assert b"".join(r.stdin for r in parts) == native.archive
+    assert len(unpack) == 1 and unpack[0].stdin == b"" and "unlink" in " ".join(unpack[0].command)
+    assert all(r.sandbox == probe.name for r in parts + unpack)
+    before = len(native.execs)
+    await boundary.copy_workspace(source, probe, operation_id="copy-activity")
+    assert len(native.execs) == before  # every part and the extraction replay from receipts
+
+
+@pytest.mark.asyncio
 async def test_large_native_snapshot_enters_probe_without_host_extraction(adapter):
     boundary, native = adapter
     source = await boundary.create("run")

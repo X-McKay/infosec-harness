@@ -148,6 +148,22 @@ class InvestigationActivities:
         if verdict.label != "inconclusive":
             # Same admission rule as the validator, over receipt-rebuilt evidence only.
             corroborated, contrary = definitive_support(verdict, evidence)
+            blocked = {item.id for item in contrary}
+            superseded = [
+                item.id
+                for item in evidence
+                if item.id in verdict.superseded_evidence_ids and item.id not in blocked
+            ]
+            if superseded:
+                limitations.append(
+                    "The investigator superseded earlier complete probes whose observations "
+                    "contradicted the verdict: " + ", ".join(superseded)
+                    + ". Their excerpts are retained; the summary states the claimed flaw."
+                )
+                for identity in superseded:
+                    if len(report_ids) >= 10:
+                        break
+                    report_ids.add(identity)
             if contrary:
                 limitations.append(
                     "Successful source-verified offline probes reported contradictory observations: "

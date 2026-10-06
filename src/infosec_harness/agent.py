@@ -215,7 +215,10 @@ async def validate_verdict(ctx: RunContext[InvestigationDeps], verdict: Verdict)
             if isinstance(part, ToolReturnPart) and part.tool_name in ("execute", "run_probe"):
                 evidence.append(Evidence.model_validate(part.content))
     known = {item.id for item in evidence}
-    if any(identity not in known for identity in verdict.evidence_ids):
+    if any(
+        identity not in known
+        for identity in (*verdict.evidence_ids, *verdict.superseded_evidence_ids)
+    ):
         raise ModelRetry(
             "Copy exact full Evidence.id values from execute/run_probe tool returns, including "
             "the tool-call suffix. Available IDs: " + ", ".join(sorted(known))
@@ -228,7 +231,12 @@ async def validate_verdict(ctx: RunContext[InvestigationDeps], verdict: Verdict)
         reasons = retry_reasons(verdict, evidence)
         if contrary:
             ids = ", ".join(item.id for item in contrary)
-            reasons.append(f"Complete probes {ids} contradict {verdict.label}")
+            reasons.append(
+                f"Complete probes {ids} contradict {verdict.label}. If such a probe was flawed, "
+                "run a corrected newer probe, cite it, and list the flawed id in "
+                "superseded_evidence_ids with the flaw explained in the summary; a probe newer "
+                "than the cited one cannot be superseded"
+            )
         raise ModelRetry(
             "; ".join(reasons) + ". See the probe skill; run a new corrected probe and cite "
             "its exact id; do not relabel. Or return inconclusive."
