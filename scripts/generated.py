@@ -1,7 +1,9 @@
-"""Synchronize the small set of copied development instructions."""
+"""Synchronize the small set of copied development instructions and generated indexes."""
 
 import argparse
 from pathlib import Path
+
+import skill_catalog
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -10,13 +12,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
-    copies = [(ROOT / "AGENTS.md", ROOT / "CLAUDE.md")]
+    copies = [((ROOT / "AGENTS.md").read_bytes(), ROOT / "CLAUDE.md")]
     for source in sorted((ROOT / "dev-skills").glob("*/SKILL.md")):
         # .agents/skills links to .claude/skills; one write updates both clients.
-        copies.append((source, ROOT / ".claude/skills" / source.relative_to(ROOT / "dev-skills")))
+        target = ROOT / ".claude/skills" / source.relative_to(ROOT / "dev-skills")
+        copies.append((source.read_bytes(), target))
+    copies.append((skill_catalog.render().encode(), skill_catalog.README))
     stale = []
-    for source, target in copies:
-        content = source.read_bytes()
+    for content, target in copies:
         if target.exists() and target.read_bytes() == content:
             continue
         if args.check:
