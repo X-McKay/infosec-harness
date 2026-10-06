@@ -428,7 +428,8 @@ class OpenShell(Execution, Transfer):
 
     async def create(self, run_id: str, *, profile: ProfileName = "workspace", slot: str = "") -> Sandbox:
         if not run_id or len(run_id) > 512 or len(slot) > 1024:
-            raise OpenShellError("invalid run id")
+            raise OpenShellError("invalid run id: a run id of 1..512 characters and a slot of at "
+                                 f"most 1024 are required (got {len(run_id)} and {len(slot)})")
         if self._fenced(run_id):
             raise OpenShellError("investigation has been closed")
         key = self._key(Sandbox("", run_id, "", profile, slot))

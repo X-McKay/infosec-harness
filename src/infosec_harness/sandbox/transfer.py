@@ -27,6 +27,7 @@ from .execution import (
     TransferRecord,
     _digest,
     _load,
+    _operation_id,
     _records,
     _request_id,
     _sandbox_record,
@@ -34,6 +35,8 @@ from .execution import (
 
 # The pinned gateway decodes at most 1 MiB per gRPC message; archives travel in parts.
 _PART_BYTES = 900_000
+# Members of one source snapshot, captured or original.
+_MAX_FILES = 65536
 
 
 class UnsafeSnapshotMetadata(OpenShellError):
@@ -73,16 +76,22 @@ class Transfer:
                 if path.is_symlink() or not (path.is_file() or path.is_dir()):
                     raise SourceRejected("source archive cannot contain symlinks or special files")
                 total += path.stat().st_size if path.is_file() else 0
+                # Checked before the file enters the in-memory archive, and again after.
                 if total > self.config.max_transfer_bytes:
-                    raise SourceRejected("source archive exceeds the transfer bound")
+                    raise self._over_bound("source archive")
                 tar.add(path, arcname=str(path.relative_to(source)), recursive=False)
                 if archive.tell() > self.config.max_transfer_bytes:
-                    raise SourceRejected("source archive exceeds the transfer bound")
+                    raise self._over_bound("source archive")
         data = archive.getvalue()
         result = await self._deliver(sandbox, data, destination,
             operation_id="upload:" + _digest([destination, hashlib.sha256(data).hexdigest()]))
         if result.exit_code:
-            raise OpenShellError("source upload failed")
+            raise OpenShellError(f"source upload failed: extraction exit {result.exit_code}")
+
+    def _over_bound(self, what: str) -> SourceRejected:
+        return SourceRejected(f"{what} exceeds the transfer bound: more than "
+                              f"{self.config.max_transfer_bytes} bytes (max_transfer_bytes in the "
+                              "OpenShell runtime config)")
 
     async def _deliver(self, sandbox: Sandbox, data: bytes, destination: str, *,
                        operation_id: str) -> CommandResult:
@@ -124,8 +133,7 @@ class Transfer:
         self._owned(source)
         if source.profile not in ("workspace", "probe"):
             raise OpenShellError("model workload cannot provide a repository snapshot")
-        if not operation_id or len(operation_id) > 1024:
-            raise OpenShellError("stable copy operation_id is required")
+        _operation_id(operation_id)
         key = _digest([source.id, operation_id])
         record = self._record("transfers", key)
         archive = record.with_suffix(".tar")
@@ -148,7 +156,7 @@ class Transfer:
                         ["/usr/bin/tar", "-C", "/workspace/repo", "-cf", "-", "."],
                         60, None, _request_id(key), self.config.max_transfer_bytes, True)
                     if result.exit_code or result.output_truncated:
-                        raise OpenShellError("source snapshot capture failed")
+                        raise OpenShellError(f"source snapshot capture failed: tar exit {result.exit_code}")
                     atomic_write_bytes(archive, raw, sync_directory=True)
                     self._save(record, {**intent, "sha256": hashlib.sha256(raw).hexdigest(),
                                         "size": len(raw)})
@@ -167,12 +175,13 @@ class Transfer:
                         size += member.size
                         if (path.is_absolute() or ".." in path.parts or path in seen
                                 or not (member.isfile() or member.isdir())
-                                or count > 65536 or size > self.config.max_transfer_bytes):
+                                or count > _MAX_FILES or size > self.config.max_transfer_bytes):
                             raise UnsafeSnapshotMetadata("source snapshot contains unsafe archive metadata")
                         seen.add(path)
                         if member.isfile():
                             stream = tar.extractfile(member)
-                            assert stream is not None
+                            if stream is None:  # Never for a regular file; checked, not asserted.
+                                raise UnsafeSnapshotMetadata("source snapshot member is unreadable")
                             archived_files[path] = (_sha256(stream), member.mode & 0o111)
             except tarfile.TarError:
                 raise OpenShellError("source snapshot is not a valid archive") from None
@@ -185,8 +194,11 @@ class Transfer:
                     raise SourceRejected("original source snapshot contains unsafe file types")
                 if original.is_file():
                     total += original.stat().st_size
-                    if total > self.config.max_transfer_bytes or len(original_files) >= 65536:
-                        raise SourceRejected("original source snapshot exceeds bound")
+                    if total > self.config.max_transfer_bytes or len(original_files) >= _MAX_FILES:
+                        raise SourceRejected(
+                            f"original source snapshot exceeds bound: more than "
+                            f"{self.config.max_transfer_bytes} bytes (max_transfer_bytes) or "
+                            f"{_MAX_FILES} files")
                     with original.open("rb") as stream:
                         content_digest = _sha256(stream)
                     name = PurePosixPath(original.relative_to(expected_source).as_posix())
@@ -207,7 +219,7 @@ class Transfer:
         result = await self._deliver(probe, raw, "/workspace/repo",
                                      operation_id=operation_id + ":restore")
         if result.exit_code:
-            raise OpenShellError("offline probe source restore failed")
+            raise OpenShellError(f"offline probe source restore failed: extraction exit {result.exit_code}")
         archive_digest = hashlib.sha256(raw).hexdigest()
         restored: TransferRecord = {"source": _sandbox_record(source), "probe": _sandbox_record(probe),
             "operation_id": operation_id, "sha256": archive_digest, "size": len(raw),

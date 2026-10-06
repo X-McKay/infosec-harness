@@ -21,6 +21,10 @@ from typing import Any, Literal, NotRequired, TypedDict
 
 ProfileName = Literal["workspace", "probe", "model"]
 _PYTHON = "/usr/local/bin/python"
+# Input bounds of one native exec request.
+_MAX_ARGS = 256
+_MAX_COMMAND_BYTES = 65536
+_MAX_OPERATION_ID = 1024
 
 
 class OpenShellError(RuntimeError):
@@ -151,6 +155,12 @@ def _result_record(result: CommandResult) -> ResultRecord:
     return ResultRecord(**asdict(result))
 
 
+def _operation_id(operation_id: str) -> None:
+    if not operation_id or len(operation_id) > _MAX_OPERATION_ID:
+        raise OpenShellError(f"stable operation_id of 1..{_MAX_OPERATION_ID} characters is "
+                             f"required (got {len(operation_id)})")
+
+
 def _request_id(key: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, "infosec-harness:" + key))
 
@@ -215,17 +225,21 @@ class Execution:
 
     async def execute(self, sandbox: Sandbox, command: Sequence[str] | str, *,
                       operation_id: str, timeout: int, stdin: bytes | None = None) -> CommandResult:
-        if not operation_id or len(operation_id) > 1024:
-            raise OpenShellError("stable operation_id is required")
-        if not isinstance(timeout, int) or isinstance(timeout, bool) or not 0 < timeout <= self.config.max_timeout_seconds:
-            raise OpenShellError("execution timeout exceeds the configured bound")
+        _operation_id(operation_id)
+        bound = self.config.max_timeout_seconds
+        if not isinstance(timeout, int) or isinstance(timeout, bool) or not 0 < timeout <= bound:
+            raise OpenShellError(f"execution timeout {str(timeout)[:32]} is outside 1..{bound} "
+                                 "seconds (max_timeout_seconds in the OpenShell runtime config)")
         args = ["/bin/sh", "-c", command] if isinstance(command, str) else list(command)
         if not args or any(not isinstance(a, str) or "\x00" in a for a in args):
-            raise OpenShellError("invalid command")
-        if len(args) > 256 or sum(len(a.encode()) for a in args) > 65536:
-            raise OpenShellError("command exceeds its input bound")
+            raise OpenShellError("invalid command: a non-empty list of strings without NUL bytes is required")
+        size = sum(len(a.encode()) for a in args)
+        if len(args) > _MAX_ARGS or size > _MAX_COMMAND_BYTES:
+            raise OpenShellError(f"command exceeds its input bound: {len(args)} arguments and {size} "
+                                 f"bytes (max {_MAX_ARGS} and {_MAX_COMMAND_BYTES})")
         if stdin is not None and len(stdin) > self.config.max_transfer_bytes:
-            raise OpenShellError("stdin exceeds the transfer bound")
+            raise OpenShellError(f"stdin exceeds the transfer bound: {len(stdin)} bytes "
+                                 f"(max_transfer_bytes {self.config.max_transfer_bytes})")
         request_digest = _digest([asdict(sandbox), args, timeout,
                                   hashlib.sha256(stdin or b"").hexdigest()])
         key = _digest([sandbox.run_id, operation_id])
@@ -257,7 +271,8 @@ class Execution:
                 await self._close_owned(sandbox, cancelled)
                 raise
             except Exception as exc:
-                unknown = ExecutionUnknown("native execution outcome unknown; sandbox closed")
+                unknown = ExecutionUnknown(
+                    f"native execution outcome unknown; sandbox closed: operation {operation_id}")
                 await self._close_owned(sandbox, unknown)
                 raise unknown from exc
             self._save(path, {**receipt, "result": _result_record(result)})
