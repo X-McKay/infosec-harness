@@ -106,12 +106,9 @@ async def test_native_tools_use_openshell_and_return_receipts():
         ),
     )
     assert result.output.evidence_ids == ["execute:1:cmd"]
-    assert shell.executions[0][1] == [
-        "/usr/bin/timeout", "--preserve-status", "-s", "KILL", "110",
-        "/bin/bash",
-        "-lc",
-        "cd /workspace/repo && pytest test_sink.py",
-    ]
+    argv = shell.executions[0][1]
+    assert argv[:2] == ["/bin/bash", "-c"] and argv[3:] == ["ih-wrapper", "110", "pytest test_sink.py"]
+    assert "cd /workspace/repo && ( $2 )" in argv[2] and "timeout --preserve-status -s KILL" in argv[2]
 
 
 async def test_command_killed_at_budget_is_a_completed_receipt_with_feedback():
@@ -145,7 +142,7 @@ async def test_command_killed_at_budget_is_a_completed_receipt_with_feedback():
     result = await build_agent(shell, FunctionModel(respond)).run("Inspect", deps=deps)
     assert result.output.label == "inconclusive"
     _, command, operation, _ = shell.executions[0]
-    assert command[:5] == ["/usr/bin/timeout", "--preserve-status", "-s", "KILL", "110"]
+    assert command[3:] == ["ih-wrapper", "110", "npm ci"]
     assert operation == "execute:1:slow"
 
 

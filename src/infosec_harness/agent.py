@@ -210,6 +210,23 @@ def bounded(argv: list[str], timeout: int) -> list[str]:
     return ["/usr/bin/timeout", "--preserve-status", "-s", "KILL", str(budget), *argv]
 
 
+# Shell commands spawn children (npm, Maven, test runners). A killed child that still holds
+# the exec pipes keeps the gateway stream open until its own ambiguous timeout (observed
+# natively 2026-10-06), so the command writes to files inside the sandbox and this wrapper
+# prints them after the kill: the stream ends when the wrapper exits, whatever lingers.
+_SHELL_WRAPPER = (
+    'out=$(mktemp /tmp/ih-out.XXXXXX) && err=$(mktemp /tmp/ih-err.XXXXXX) || exit 125; '
+    '/usr/bin/timeout --preserve-status -s KILL "$1" /bin/bash -lc '
+    '"cd /workspace/repo && ( $2 ) >\"$out\" 2>\"$err\" </dev/null"; code=$?; '
+    'head -c 200000 "$out"; head -c 60000 "$err" >&2; rm -f "$out" "$err"; exit "$code"'
+)
+
+
+def bounded_shell(command: str, timeout: int) -> list[str]:
+    budget = max(timeout - TIMEOUT_MARGIN_SECONDS, 1)
+    return ["/bin/bash", "-c", _SHELL_WRAPPER, "ih-wrapper", str(budget), command]
+
+
 def operation_id(ctx: RunContext[InvestigationDeps], kind: str) -> str:
     # tool_call_id is replayed by PydanticAI and serialized into each native activity.
     if not ctx.tool_call_id:
@@ -341,7 +358,7 @@ def build_agent(openshell: OpenShell, model: Model) -> Agent[InvestigationDeps, 
         timeout = ctx.deps.request.limits.command_timeout_seconds
         result = await openshell.execute(
             sandbox,
-            bounded(["/bin/bash", "-lc", f"cd /workspace/repo && {command}"], timeout),
+            bounded_shell(command, timeout),
             operation_id=identity,
             timeout=timeout,
         )
