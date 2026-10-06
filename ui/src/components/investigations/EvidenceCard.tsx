@@ -3,7 +3,7 @@ import { useState } from "react";
 import type { components } from "@/api/schema";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { integer } from "@/lib/format";
+import { integer, lineCount } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import {
   claimOrigin,
@@ -36,7 +36,7 @@ export function OutputBlock({
         {label}: no output recorded
       </p>
     );
-  const lines = value.split("\n").length;
+  const lines = lineCount(value);
   return (
     <details
       open={open}

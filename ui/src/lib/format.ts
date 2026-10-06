@@ -30,6 +30,16 @@ export function duration(value: number | null | undefined): string {
 export const percent = (value: number | null | undefined, digits = 1) =>
   value == null ? UNAVAILABLE : `${(value * 100).toFixed(digits)}%`;
 
+/**
+ * Lines in recorded output as a reader counts them: a final line break ends the last line
+ * rather than starting an empty one, so "a\nb\n" is two lines. CRLF counts as one break.
+ */
+export function lineCount(text: string): number {
+  if (!text) return 0;
+  const breaks = text.match(/\r\n|\r|\n/g)?.length ?? 0;
+  return /[\r\n]$/.test(text) ? breaks : breaks + 1;
+}
+
 /** Missing or malformed recorded times never render as Invalid Date. */
 export function timestamp(
   value: string | number | null | undefined,

@@ -124,11 +124,6 @@ test.describe("run detail: potentially exploitable", () => {
   test("the stdout summary counts newline-terminated output's lines", async ({
     page,
   }) => {
-    test.fixme(
-      true,
-      "UI defect: OutputBlock counts value.split('\\n').length, so newline-terminated " +
-        "output (3 lines ending in '\\n') is summarized as '4 lines'.",
-    );
     const probe = evidenceCard(page, "probe-cmdi-1");
     await expect(probe.locator("summary", { hasText: "stdout" })).toContainText(
       "3 lines",
