@@ -1,10 +1,5 @@
 import type { Locator, Page } from "@playwright/test";
-import {
-  expect,
-  fixmeOnPhoneForCaseTableOverflow,
-  pwned,
-  test,
-} from "./support/test";
+import { expect, pwned, test } from "./support/test";
 
 const FAILED_COHORT = "model-20261005T090000Z.json";
 const PASSED_COHORT = "model-20261004T090000Z.json";
@@ -178,7 +173,6 @@ test.describe("cohort report detail", () => {
   });
 
   test("charts have accessible data tables", async ({ page }) => {
-    fixmeOnPhoneForCaseTableOverflow();
     for (const title of [
       "Duration per case",
       "Model requests per case",
@@ -201,7 +195,6 @@ test.describe("cohort report detail", () => {
   });
 
   test("case table sorts and filters", async ({ page }) => {
-    fixmeOnPhoneForCaseTableOverflow();
     const cases = section(page, "Cases");
     const table = cases.getByRole("table", { name: /Cohort cases/ });
     const names = () => table.getByRole("rowheader").allTextContents();
@@ -262,7 +255,6 @@ test.describe("cohort report detail", () => {
   });
 
   test("case details expand and a case links to its run", async ({ page }) => {
-    fixmeOnPhoneForCaseTableOverflow();
     const table = section(page, "Cases").getByRole("table", {
       name: /Cohort cases/,
     });
@@ -325,7 +317,6 @@ test.describe("cohort report detail", () => {
   });
 
   test("the recorded document is available as a tree", async ({ page }) => {
-    fixmeOnPhoneForCaseTableOverflow();
     const raw = section(page, "Recorded document (raw)");
     await raw.getByText("Show the recorded document").click();
     await expect(raw).toContainText("release_policy_sha256");

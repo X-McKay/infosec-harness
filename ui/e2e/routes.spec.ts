@@ -2,12 +2,7 @@
  * Every route: one h1, named controls, no console errors (enforced by the fixture guard) and
  * no horizontal page scroll, in every project (desktop, dark and phone width).
  */
-import {
-  CASE_TABLE_OVERFLOW,
-  expect,
-  horizontalOverflow,
-  test,
-} from "./support/test";
+import { expect, horizontalOverflow, test } from "./support/test";
 
 const ROUTES: [string, string][] = [
   ["/", "Investigations"],
@@ -44,14 +39,8 @@ const ROUTES: [string, string][] = [
   ["/no-such-route", "Page not found"],
 ];
 
-const OVERFLOW_DEFECTS: Record<string, string> = {
-  "/reports/model-20261005T090000Z.json": CASE_TABLE_OVERFLOW,
-  "/reports/diagnostic-20261005T150000Z.json": CASE_TABLE_OVERFLOW,
-};
-
 for (const [path, heading] of ROUTES) {
   test(`${path} has no horizontal page overflow`, async ({ page }) => {
-    test.fixme(!!OVERFLOW_DEFECTS[path], OVERFLOW_DEFECTS[path]);
     await page.goto(path);
     await expect(page.getByRole("heading", { level: 1 })).toContainText(
       heading,
