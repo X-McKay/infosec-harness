@@ -1,6 +1,6 @@
 /**
  * Opt-in smoke test against a real API: set E2E_LIVE_API_URL (for example
- * http://127.0.0.1:8000) and run `npm run e2e -- --project desktop live-smoke`.
+ * http://127.0.0.1:8000) and run `npm run e2e -- --project=desktop live-smoke`.
  *
  * The UI still loads from the local preview; its same-origin /api requests are forwarded to
  * E2E_LIVE_API_URL. Only GET is forwarded: any other method is aborted and fails the test, so
@@ -33,10 +33,16 @@ test.describe("live API smoke (GET only)", () => {
         return route.abort("blockedbyclient");
       }
       const url = new URL(request.url());
-      const response = await route.fetch({
-        url: `${LIVE}${url.pathname}${url.search}`,
-      });
-      await route.fulfill({ response });
+      try {
+        const response = await route.fetch({
+          url: `${LIVE}${url.pathname}${url.search}`,
+        });
+        await route.fulfill({ response });
+      } catch {
+        // A poll still in flight when the test ends finds its page closed. During the test an
+        // aborted request surfaces as a console error, which fails it below.
+        await route.abort("failed").catch(() => {});
+      }
     });
 
     const listed = page.waitForResponse(

@@ -187,10 +187,10 @@ the light and dark projects, measuring each text run against its composited back
 ```bash
 npx playwright install chromium   # once; downloads into the user's Playwright cache
 npm run e2e                       # type-check e2e/, then every project
-npm run e2e -- --project desktop run-detail # a subset; any Playwright arguments
+npm run e2e -- --project=desktop run-detail # a subset; any Playwright arguments
 npm run e2e:ui                    # interactive runner
 E2E_REUSE_SERVER=1 npm run e2e    # reuse a preview already serving this build on 4173
-E2E_LIVE_API_URL=http://127.0.0.1:8000 npm run e2e -- --project desktop live-smoke
+E2E_LIVE_API_URL=http://127.0.0.1:8000 npm run e2e -- --project=desktop live-smoke
 ```
 
 `just ui-e2e` runs the same from the repository root. The live smoke spec is skipped unless
