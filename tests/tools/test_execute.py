@@ -3,12 +3,11 @@
 import json
 
 import pytest
-from fakes import FakeOpenShell, final_response
-from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart
+from fakes import FakeOpenShell, final_response, make_deps, retry_feedback, tool_returns
+from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
-from infosec_harness.agents.investigator import InvestigationDeps, build_agent
-from infosec_harness.contracts import Finding, InvestigationRequest
+from infosec_harness.agents.investigator import build_agent
 from infosec_harness.sandbox import CommandResult
 
 
@@ -22,30 +21,10 @@ async def test_native_tools_use_openshell_and_return_receipts():
                     ToolCallPart("execute", {"command": "pytest test_sink.py"}, tool_call_id="cmd")
                 ]
             )
-        returns = [
-            part
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, ToolReturnPart) and part.tool_name == "execute"
-        ]
-        content = returns[0].content
-        identity = content.id if hasattr(content, "id") else content["id"]
-        return final_response(info, evidence_ids=[identity])
+        return final_response(info, evidence_ids=[tool_returns(messages, "execute")[0].id])
 
     agent = build_agent(shell, FunctionModel(respond))
-    request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
-    sandbox = await shell.create("run")
-    result = await agent.run(
-        "Inspect sink",
-        deps=InvestigationDeps(
-            run_id="run",
-            sandbox=sandbox,
-            source_digest="digest",
-            snapshot_path="/fixture",
-            request=request,
-        ),
-    )
+    result = await agent.run("Inspect sink", deps=await make_deps(shell))
     assert result.output.evidence_ids == ["execute:1:cmd"]
     argv = shell.executions[0][1]
     assert argv[:2] == ["/bin/bash", "-c"] and argv[3:] == ["ih-wrapper", "110", "pytest test_sink.py"]
@@ -68,18 +47,14 @@ async def test_command_killed_at_budget_is_a_completed_receipt_with_feedback():
         if not shell.executions:
             return ModelResponse(parts=[ToolCallPart(
                 "execute", {"command": "npm ci"}, tool_call_id="slow")])
-        returned = [part.content for message in messages if isinstance(message, ModelRequest)
-                    for part in message.parts
-                    if isinstance(part, ToolReturnPart) and part.tool_name == "execute"][-1]
+        returned = tool_returns(messages, "execute")[-1]
         returned = returned.model_dump()
         assert returned["exit_code"] == 137
         assert "110s command budget" in returned["observations"]["timeout_feedback"]
         assert "not retried" in returned["observations"]["timeout_feedback"]
         return final_response(info)
 
-    request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
-    deps = InvestigationDeps(run_id="run", sandbox=await shell.create("run"),
-                             source_digest="digest", snapshot_path="/fixture", request=request)
+    deps = await make_deps(shell)
     result = await build_agent(shell, FunctionModel(respond)).run("Inspect", deps=deps)
     assert result.output.label == "inconclusive"
     _, command, operation, _ = shell.executions[0]
@@ -211,14 +186,10 @@ async def test_cut_probe_output_is_truncated_evidence_and_never_qualifies():
         if not shell.executions:
             return ModelResponse(parts=[ToolCallPart(
                 "run_probe", {"command": "python probe.py"}, tool_call_id="cut")])
-        returned.extend(part.content for message in messages if isinstance(message, ModelRequest)
-                        for part in message.parts
-                        if isinstance(part, ToolReturnPart) and part.tool_name == "run_probe")
+        returned.extend(tool_returns(messages, "run_probe"))
         return final_response(info)
 
-    request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
-    deps = InvestigationDeps(run_id="run", sandbox=await shell.create("run"),
-                             source_digest="digest", snapshot_path="/fixture", request=request)
+    deps = await make_deps(shell)
     await build_agent(shell, FunctionModel(respond)).run("Probe", deps=deps)
     evidence = returned[0]
     assert evidence.output_truncated is True
@@ -245,21 +216,15 @@ async def test_failed_build_tool_returns_environment_feedback_once():
             return ModelResponse(parts=[ToolCallPart(
                 "execute", {"command": "mvn test -Dtest=Probe"}, tool_call_id="build")])
         if len(shell.executions) == 1:
-            returned = [part.content for message in messages if isinstance(message, ModelRequest)
-                        for part in message.parts
-                        if isinstance(part, ToolReturnPart) and part.tool_name == "execute"][-1]
+            returned = tool_returns(messages, "execute")[-1]
             seen["build"] = returned.model_dump()["observations"]
             return ModelResponse(parts=[ToolCallPart(
                 "execute", {"command": "ls -la src"}, tool_call_id="list")])
-        returned = [part.content for message in messages if isinstance(message, ModelRequest)
-                    for part in message.parts
-                    if isinstance(part, ToolReturnPart) and part.tool_name == "execute"][-1]
+        returned = tool_returns(messages, "execute")[-1]
         seen["list"] = returned.model_dump()["observations"]
         return final_response(info)
 
-    request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
-    deps = InvestigationDeps(run_id="run", sandbox=await shell.create("run"),
-                             source_digest="digest", snapshot_path="/fixture", request=request)
+    deps = await make_deps(shell)
     await build_agent(shell, FunctionModel(respond)).run("Inspect", deps=deps)
     # `mvn test` now routes to the Maven-specific pointer at the direct-javac recipe.
     assert "environment skill" in seen["build"]["environment_feedback"]
@@ -334,16 +299,9 @@ async def test_probe_uses_fresh_offline_profile_and_cleans_up():
         return final_response(info)
 
     agent = build_agent(shell, FunctionModel(respond))
-    request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
     result = await agent.run(
         "Probe",
-        deps=InvestigationDeps(
-            run_id="run",
-            sandbox=await shell.create("run"),
-            source_digest="digest",
-            snapshot_path="/fixture",
-            request=request,
-        ),
+        deps=await make_deps(shell),
     )
     assert result.output.label == "inconclusive"
     assert shell.executions[0][0].profile == "probe"
@@ -380,17 +338,10 @@ async def test_modified_source_refuses_probe_and_closes_offline_sandbox(tmp_path
         )
 
     agent = build_agent(shell, FunctionModel(respond))
-    request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
     with pytest.raises(OpenShellError, match="Original source was modified"):
         await agent.run(
             "Inspect source",
-            deps=InvestigationDeps(
-                run_id="run",
-                sandbox=await shell.create("run"),
-                source_digest="digest",
-                snapshot_path=str(tmp_path),
-                request=request,
-            ),
+            deps=await make_deps(shell, snapshot_path=str(tmp_path)),
         )
     assert len(shell.executions) == 1
     assert shell.executions[0][0].profile == "workspace"
@@ -440,21 +391,11 @@ async def test_post_probe_integrity_failure_recovery_is_narrow(failure):
         if calls == 1:
             return ModelResponse(
                 parts=[
-                    ToolCallPart(
-                        "run_probe",
-                        {"command": "python probe.py"},
-                        tool_call_id="unsafe" if calls == 1 else "corrected",
-                    )
+                    ToolCallPart("run_probe", {"command": "python probe.py"}, tool_call_id="unsafe")
                 ]
             )
         if calls == 2:
-            returned = [
-                part.content
-                for message in messages
-                if isinstance(message, ModelRequest)
-                for part in message.parts
-                if isinstance(part, ToolReturnPart) and part.tool_name == "run_probe"
-            ][-1]
+            returned = tool_returns(messages, "run_probe")[-1]
             returned = returned.model_dump()
             assert returned["id"] == "probe:1:unsafe"
             assert returned["exit_code"] == 0
@@ -463,15 +404,8 @@ async def test_post_probe_integrity_failure_recovery_is_narrow(failure):
             assert "not retried" in returned["observations"]["integrity_feedback"]
         if calls == 3:
             # The invalid probe cannot qualify even with matching claims and citations.
-            from pydantic_ai.messages import RetryPromptPart
 
-            feedback = [
-                part.content
-                for message in messages
-                if isinstance(message, ModelRequest)
-                for part in message.parts
-                if isinstance(part, RetryPromptPart)
-            ][-1]
+            feedback = retry_feedback(messages)[-1]
             assert "source-verified" in feedback
             return ModelResponse(
                 parts=[
@@ -491,14 +425,7 @@ async def test_post_probe_integrity_failure_recovery_is_narrow(failure):
         )
         return response
 
-    request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
-    deps = InvestigationDeps(
-        run_id="run",
-        sandbox=await shell.create("run"),
-        source_digest="digest",
-        snapshot_path="/fixture",
-        request=request,
-    )
+    deps = await make_deps(shell)
     agent = build_agent(shell, FunctionModel(respond))
     if failure == "unsafe":
         result = await agent.run("Inspect", deps=deps)
@@ -520,7 +447,6 @@ async def test_refused_probe_after_original_source_change_is_feedback_not_failur
     """Live cohort 4, case deserialization-fixed (2026-10-05): the agent overwrote app.py, the
     pre-copy integrity check refused the probe, and the whole investigation failed. The refusal
     stays; it now returns bounded feedback the agent can act on, with no receipt to cite."""
-    from pydantic_ai.messages import RetryPromptPart
 
     from infosec_harness.sandbox import OpenShellError
 
@@ -539,23 +465,18 @@ async def test_refused_probe_after_original_source_change_is_feedback_not_failur
             return ModelResponse(parts=[ToolCallPart(
                 "run_probe", {"command": "python probe.py"}, tool_call_id="refused")])
         if calls == 2:
-            returned = [part.content for message in messages if isinstance(message, ModelRequest)
-                        for part in message.parts
-                        if isinstance(part, ToolReturnPart) and part.tool_name == "run_probe"][-1]
+            returned = tool_returns(messages, "run_probe")[-1]
             returned = returned.model_dump()
             assert returned["id"] == "probe:1:refused" and returned["exit_code"] is None
             assert returned["observations"]["source_verified"] is False
             assert "app.py" in returned["observations"]["integrity_feedback"]
             assert "did not run" in returned["observations"]["integrity_feedback"]
             return final_response(info, evidence_ids=["probe:1:refused"])
-        feedback = [part.content for message in messages if isinstance(message, ModelRequest)
-                    for part in message.parts if isinstance(part, RetryPromptPart)][-1]
+        feedback = retry_feedback(messages)[-1]
         assert "exact full Evidence.id" in feedback  # a refused probe has no receipt to cite
         return final_response(info)
 
-    request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
-    deps = InvestigationDeps(run_id="run", sandbox=await shell.create("run"),
-                             source_digest="digest", snapshot_path="/fixture", request=request)
+    deps = await make_deps(shell)
     result = await build_agent(shell, FunctionModel(respond)).run("Inspect", deps=deps)
     assert result.output.label == "inconclusive" and result.output.evidence_ids == []
     assert shell.executions == [] and calls == 3
@@ -594,24 +515,12 @@ async def test_tool_return_evidence_keeps_history_shape_and_bounds():
             return ModelResponse(
                 parts=[ToolCallPart("run_probe", {"command": "python p.py"}, tool_call_id="p")]
             )
-        returned.extend(
-            part.content
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, ToolReturnPart)
-        )
+        returned.extend(tool_returns(messages))
         return final_response(info)
 
     await build_agent(shell, FunctionModel(respond)).run(
         "Inspect",
-        deps=InvestigationDeps(
-            run_id="run",
-            sandbox=await shell.create("run"),
-            source_digest="digest",
-            snapshot_path="/fixture",
-            request=InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture")),
-        ),
+        deps=await make_deps(shell),
     )
     output = {"exit_code": 0, "stdout": "x" + "é" * 2047, "stderr": "err", "timed_out": False}
     expected = [

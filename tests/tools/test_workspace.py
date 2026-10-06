@@ -5,12 +5,11 @@ import subprocess
 import sys
 
 import pytest
-from fakes import FakeOpenShell, final_response
-from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart
+from fakes import FakeOpenShell, final_response, make_deps, tool_returns
+from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
-from infosec_harness.agents.investigator import InvestigationDeps, build_agent
-from infosec_harness.contracts import Finding, InvestigationRequest
+from infosec_harness.agents.investigator import build_agent
 from infosec_harness.sandbox import CommandResult
 from infosec_harness.tools.workspace import (
     _FILE_TOOL,
@@ -31,16 +30,9 @@ async def test_read_argument_is_data_in_sandbox_not_a_worker_shell():
         return final_response(info)
 
     agent = build_agent(shell, FunctionModel(respond))
-    request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
     await agent.run(
         "Read",
-        deps=InvestigationDeps(
-            run_id="run",
-            sandbox=await shell.create("run"),
-            source_digest="digest",
-            snapshot_path="/fixture",
-            request=request,
-        ),
+        deps=await make_deps(shell),
     )
     _, command, _, stdin = shell.executions[0]
     assert command[5:8] == ["python", "-I", "-c"]  # after the in-sandbox timeout wrapper
@@ -64,23 +56,10 @@ async def test_file_tool_return_is_excerpted_on_success_and_failure(stream):
     def respond(messages, info):
         if not shell.executions:
             return ModelResponse(parts=[ToolCallPart("read", {"path": "a.py"}, tool_call_id="r")])
-        returned.extend(
-            part.content
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, ToolReturnPart) and part.tool_name == "read"
-        )
+        returned.extend(tool_returns(messages, "read"))
         return final_response(info)
 
-    request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
-    deps = InvestigationDeps(
-        run_id="run",
-        sandbox=await shell.create("run"),
-        source_digest="digest",
-        snapshot_path="/fixture",
-        request=request,
-    )
+    deps = await make_deps(shell)
     await build_agent(shell, FunctionModel(respond)).run("Read", deps=deps)
     prefix = "" if stream == "stdout" else "File tool failed (1): "
     assert returned == [prefix + "é" * (EXCERPT_BYTES // 2) + "\n[Output excerpted]"]
