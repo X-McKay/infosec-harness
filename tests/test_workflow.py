@@ -399,6 +399,55 @@ async def test_report_excerpts_do_not_invalidate_complete_native_probe(tmp_path)
     assert result.evidence[0].observations["report_excerpted"] is True
 
 
+async def test_finalize_detects_wrapper_cut_in_receipts(tmp_path):
+    """Finalization rebuilds Evidence from receipts, so it must see the wrapper's cut marker
+    exactly as the tool return did: a cut probe is truncated and cannot be definitive."""
+    import json
+
+    from infosec_harness.agent import TRUNCATION_MARKER
+    from infosec_harness.openshell import CommandResult
+
+    shell = FakeOpenShell()
+    request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
+    prepared = PreparedInvestigation(
+        deps=InvestigationDeps(
+            run_id="run",
+            sandbox=await shell.create("run"),
+            source_digest="digest",
+            snapshot_path=str(tmp_path),
+            request=request,
+        ),
+    )
+    (tmp_path / "sink.py").write_text("source\n")
+    marker = dict(target_reached=True, oracle_valid=True, positive_control=True,
+                  negative_control=True, vulnerability_observed=False)
+    shell._receipts.append(
+        SimpleNamespace(
+            sandbox=await shell.create("run", profile="probe"),
+            command=["probe"],
+            operation_id="probe:1:x",
+            workspace_digest="checked-digest",
+            source_verified=True,
+            result=CommandResult(
+                0, "HARNESS_PROBE " + json.dumps(marker), f"note\n{TRUNCATION_MARKER}\n"
+            ),
+        )
+    )
+    verdict = Verdict(
+        label="likely_not_exploitable",
+        summary="Guard blocked the tested payload.",
+        evidence_ids=["probe:1:x"],
+        citations=[Citation(path="sink.py", start_line=1, end_line=1)],
+    )
+    result = await InvestigationActivities(shell, None, "fixture").finalize(
+        FinalizeInvestigation(prepared=prepared, verdict=verdict, usage={})
+    )
+    assert result.verdict.label == "inconclusive"
+    assert result.evidence[0].output_truncated is True
+    assert result.evidence[0].stderr == "note"
+    assert any("truncated" in limitation for limitation in result.limitations)
+
+
 @pytest.mark.requires_temporal
 async def test_history_budget_fails_before_oversized_schedule_and_cleans_up(temporal_cli, tmp_path):
     from pydantic_ai.messages import ThinkingPart

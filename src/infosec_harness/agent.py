@@ -1,6 +1,7 @@
 """One investigator, packaged skills, and five small OpenShell tools."""
 
 import json
+from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 
@@ -27,7 +28,13 @@ from .models import (
     WorkerIdentity,
     definitive_support,
 )
-from .openshell import OpenShell, OpenShellError, Sandbox, UnsafeSnapshotMetadata
+from .openshell import (
+    CommandResult,
+    OpenShell,
+    OpenShellError,
+    Sandbox,
+    UnsafeSnapshotMetadata,
+)
 
 MAX_HISTORY_BYTES = 32 * 1024 * 1024
 AGENT_NAME = "investigator"
@@ -219,12 +226,29 @@ def bounded(argv: list[str], timeout: int) -> list[str]:
 # the exec pipes keeps the gateway stream open until its own ambiguous timeout (observed
 # natively 2026-10-06), so the command writes to files inside the sandbox and this wrapper
 # prints them after the kill: the stream ends when the wrapper exits, whatever lingers.
+# Printed output is cut at these sizes (together below the native output bound); a cut is
+# reported by one fixed marker line appended to stderr, which `unwrap_output` turns into
+# ``output_truncated``. A forged marker can only mark output truncated, never hide a cut.
+STDOUT_LIMIT = 200_000
+STDERR_LIMIT = 60_000
+TRUNCATION_MARKER = "[ih-wrapper] output exceeded the in-sandbox capture limit and was cut"
 _SHELL_WRAPPER = (
     'out=$(mktemp /tmp/ih-out.XXXXXX) && err=$(mktemp /tmp/ih-err.XXXXXX) || exit 125; '
     '/usr/bin/timeout --preserve-status -s KILL "$1" /bin/bash -lc '
     '"cd /workspace/repo && ( $2 ) >\"$out\" 2>\"$err\" </dev/null"; code=$?; '
-    'head -c 200000 "$out"; head -c 60000 "$err" >&2; rm -f "$out" "$err"; exit "$code"'
+    f'head -c {STDOUT_LIMIT} "$out"; head -c {STDERR_LIMIT} "$err" >&2; '
+    f'if (( $(wc -c <"$out") > {STDOUT_LIMIT} || $(wc -c <"$err") > {STDERR_LIMIT} )); '
+    f"then printf '\\n%s\\n' '{TRUNCATION_MARKER}' >&2; fi; "
+    'rm -f "$out" "$err"; exit "$code"'
 )
+
+
+def unwrap_output(result: CommandResult) -> CommandResult:
+    """Strip the wrapper's cut marker from stderr and record the cut as truncation."""
+    suffix = f"\n{TRUNCATION_MARKER}\n"
+    if not result.stderr.endswith(suffix):
+        return result
+    return replace(result, stderr=result.stderr[: -len(suffix)], output_truncated=True)
 
 
 def bounded_shell(command: str, timeout: int) -> list[str]:
@@ -360,11 +384,13 @@ def build_agent(openshell: OpenShell, model: Model) -> Agent[InvestigationDeps, 
     async def command_tool(ctx, command: str, sandbox: Sandbox, kind: str) -> Evidence:
         identity = operation_id(ctx, kind)
         timeout = ctx.deps.request.limits.command_timeout_seconds
-        result = await openshell.execute(
-            sandbox,
-            bounded_shell(command, timeout),
-            operation_id=identity,
-            timeout=timeout,
+        result = unwrap_output(
+            await openshell.execute(
+                sandbox,
+                bounded_shell(command, timeout),
+                operation_id=identity,
+                timeout=timeout,
+            )
         )
         observations = parse_probe_observations(result.stdout) if kind == "probe" else {}
         if result.exit_code == KILLED_EXIT:

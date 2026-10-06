@@ -146,6 +146,97 @@ async def test_command_killed_at_budget_is_a_completed_receipt_with_feedback():
     assert operation == "execute:1:slow"
 
 
+def run_wrapper(tmp_path, command):
+    """Run the real shell wrapper under local bash; only the timeout binary and the
+    sandbox repository path are substituted (neither exists on a development host)."""
+    import subprocess
+
+    from infosec_harness.agent import _SHELL_WRAPPER
+
+    fake_timeout = tmp_path / "timeout"
+    fake_timeout.write_text('#!/bin/bash\nshift 4\nexec "$@"\n')
+    fake_timeout.chmod(0o755)
+    assert _SHELL_WRAPPER.count("/usr/bin/timeout ") == 1
+    assert _SHELL_WRAPPER.count("cd /workspace/repo ") == 1
+    wrapper = _SHELL_WRAPPER.replace("/usr/bin/timeout ", f"{fake_timeout} ").replace(
+        "cd /workspace/repo ", f"cd {tmp_path} "
+    )
+    completed = subprocess.run(
+        ["/bin/bash", "-c", wrapper, "ih-wrapper", "5", command],
+        capture_output=True,
+        env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)},
+        timeout=60,
+    )
+    return CommandResult(
+        completed.returncode, completed.stdout.decode(), completed.stderr.decode()
+    )
+
+
+@pytest.mark.parametrize("stream", ["stdout", "stderr"])
+def test_wrapper_cut_is_reported_as_truncation(tmp_path, stream):
+    """The wrapper cuts printed output at fixed sizes inside the sandbox. A cut must reach
+    the receipt as output_truncated, or a definitive verdict's untruncated-output rule holds
+    vacuously (review of 2026-10-06)."""
+    from infosec_harness.agent import (
+        STDERR_LIMIT,
+        STDOUT_LIMIT,
+        TRUNCATION_MARKER,
+        unwrap_output,
+    )
+
+    limit = STDOUT_LIMIT if stream == "stdout" else STDERR_LIMIT
+    redirect = "" if stream == "stdout" else " >&2"
+    exact = run_wrapper(tmp_path, f"head -c {limit} /dev/zero | tr '\\0' x{redirect}; exit 3")
+    assert exact.exit_code == 3
+    assert unwrap_output(exact) == exact and TRUNCATION_MARKER not in exact.stderr
+    assert len(getattr(exact, stream)) == limit
+
+    cut = run_wrapper(tmp_path, f"head -c {limit + 1} /dev/zero | tr '\\0' x{redirect}; exit 3")
+    assert cut.exit_code == 3 and cut.output_truncated is False
+    unwrapped = unwrap_output(cut)
+    assert unwrapped.output_truncated is True
+    assert TRUNCATION_MARKER not in unwrapped.stderr
+    assert getattr(unwrapped, stream) == "x" * limit
+    assert unwrapped.exit_code == 3
+
+
+async def test_cut_probe_output_is_truncated_evidence_and_never_qualifies():
+    from infosec_harness.agent import TRUNCATION_MARKER
+
+    claims = dict(target_reached=True, oracle_valid=True, positive_control=True,
+                  negative_control=True, vulnerability_observed=True)
+    shell = FakeOpenShell()
+    native_execute = shell.execute
+
+    async def execute(sandbox, command, **kwargs):
+        await native_execute(sandbox, command, **kwargs)
+        # A cut at the exact limit can leave a non-final marker line looking final.
+        return CommandResult(0, "HARNESS_PROBE " + json.dumps(claims),
+                             f"warning\n{TRUNCATION_MARKER}\n")
+
+    shell.execute = execute
+    returned = []
+
+    def respond(messages, info):
+        if not shell.executions:
+            return ModelResponse(parts=[ToolCallPart(
+                "run_probe", {"command": "python probe.py"}, tool_call_id="cut")])
+        returned.extend(part.content for message in messages if isinstance(message, ModelRequest)
+                        for part in message.parts
+                        if isinstance(part, ToolReturnPart) and part.tool_name == "run_probe")
+        return final_response(info)
+
+    request = InvestigationRequest(finding=Finding(title="Sink", repo_url="fixture"))
+    deps = InvestigationDeps(run_id="run", sandbox=await shell.create("run"),
+                             source_digest="digest", snapshot_path="/fixture", request=request)
+    await build_agent(shell, FunctionModel(respond)).run("Probe", deps=deps)
+    evidence = returned[0]
+    assert evidence.output_truncated is True
+    assert evidence.stderr == "warning"
+    assert evidence.observations["vulnerability_observed"] is True
+    assert evidence.complete_verified_probe is False
+
+
 async def test_probe_uses_fresh_offline_profile_and_cleans_up():
     shell = FakeOpenShell()
 

@@ -19,7 +19,7 @@ with workflow.unsafe.imports_passed_through():
     from pydantic_ai.tool_manager import ToolManager
     from pydantic_ai.usage import UsageLimits
 
-    from .agent import InvestigationDeps, build_agent, parse_probe_observations
+    from .agent import InvestigationDeps, build_agent, parse_probe_observations, unwrap_output
     from .models import (
         Evidence,
         InvestigationRequest,
@@ -102,7 +102,8 @@ class InvestigationActivities:
             identity = receipt.operation_id
             if not identity.startswith(("execute:", "probe:")):
                 continue
-            result = receipt.result
+            # Same cut detection as the tool return: the receipt holds the wrapper's marker.
+            result = unwrap_output(receipt.result)
             observations = (
                 parse_probe_observations(result.stdout)
                 if receipt.sandbox.profile == "probe"
