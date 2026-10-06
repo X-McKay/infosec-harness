@@ -116,7 +116,7 @@ async def validate_verdict(ctx: RunContext[InvestigationDeps], verdict: Verdict)
     if verdict.label == "inconclusive":
         return verdict
     evidence = [item for item in evidence if item.source_digest == ctx.deps.source_digest]
-    corroborated, contrary = definitive_support(verdict, evidence)
+    corroborated, contrary, _superseded = definitive_support(verdict, evidence)
     if not corroborated or contrary:
         reasons = retry_reasons(verdict, evidence)
         if contrary:

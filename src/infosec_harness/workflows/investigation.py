@@ -150,7 +150,7 @@ class InvestigationActivities:
         report_ids = set(verdict.evidence_ids)
         if verdict.label != "inconclusive":
             # Same admission rule as the validator, over receipt-rebuilt evidence only.
-            corroborated, contrary = definitive_support(verdict, evidence)
+            corroborated, contrary, _superseded = definitive_support(verdict, evidence)
             blocked = {item.id for item in contrary}
             superseded = [
                 item.id

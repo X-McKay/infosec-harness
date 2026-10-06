@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -121,10 +122,19 @@ class Evidence(Contract):
         )
 
 
-def definitive_support(
-    verdict: Verdict, evidence: Iterable[Evidence]
-) -> tuple[bool, list[Evidence]]:
-    """Return ``(corroborated, contrary)`` for a definitive verdict.
+class Support(NamedTuple):
+    """The admission rule's decision for one definitive verdict."""
+
+    # Source citations plus a cited complete probe whose observation matches the label.
+    corroborated: bool
+    # Qualified probes that contradict the label and were not superseded; any one blocks it.
+    contrary: list[Evidence]
+    # Qualified contradicting probes the verdict superseded and the ordering rule excused.
+    superseded: list[Evidence]
+
+
+def definitive_support(verdict: Verdict, evidence: Iterable[Evidence]) -> Support:
+    """Decide whether the evidence admits a definitive verdict.
 
     Pure admission rule: source citations plus a cited complete source-verified probe whose
     ``vulnerability_observed`` matches the label; any contrary qualified probe blocks it.
@@ -142,24 +152,27 @@ def definitive_support(
     # A flawed earlier probe may be superseded only by a newer cited one: a contrary probe
     # that ran after the citation can never be disowned.
     latest_cited = max((probe_step(item.id) for item in cited), default=-1)
-    superseded = {
+    excused = {
         identity
         for identity in verdict.superseded_evidence_ids
         if -1 < probe_step(identity) < latest_cited
     }
-    contrary = [
-        item
-        for item in qualified
-        if item.observations["vulnerability_observed"] is not expected
-        and item.id not in superseded
-    ]
-    return corroborated, contrary
+    contrary: list[Evidence] = []
+    superseded: list[Evidence] = []
+    for item in qualified:
+        if item.observations["vulnerability_observed"] is not expected:
+            (superseded if item.id in excused else contrary).append(item)
+    return Support(corroborated, contrary, superseded)
+
+
+# Evidence ids are ``<kind>:<agent run step>:<tool call id>`` (built in tools/execute.py).
+EVIDENCE_ID = re.compile(r"[a-z]+:([0-9]{1,9}):.+", re.DOTALL)
 
 
 def probe_step(identity: str) -> int:
     """The agent run step from a ``kind:<step>:<tool-call>`` evidence id; -1 when unknown."""
-    parts = identity.split(":")
-    return int(parts[1]) if len(parts) >= 3 and parts[1].isdigit() else -1
+    match = EVIDENCE_ID.fullmatch(identity)
+    return int(match[1]) if match else -1
 
 
 class InvestigationResult(Contract):
