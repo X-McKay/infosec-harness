@@ -2,6 +2,7 @@
 
 import asyncio
 import copy
+import hashlib
 import io
 import json
 import tarfile
@@ -178,6 +179,12 @@ async def test_native_create_and_exec_receipt_replay(adapter):
     assert receipt.command == ["printf", "ok"] and receipt.sandbox.id == sandbox.id
     assert native.execs[0].sandbox == sandbox.name
     assert MessageToDict(native.creates[0].spec.template.resources) == {"limits": {"cpu": "1", "memory": "512Mi"}}
+    # Live native sandboxes carry these exact labels; close() of a pending create requires them.
+    assert dict(native.creates[0].labels) == {
+        "ih.owner": "infosec-harness.v3",
+        "ih.run": hashlib.sha256(b"run").hexdigest()[:32],
+        "ih.profile": "workspace",
+    }
 
 
 @pytest.mark.asyncio

@@ -342,6 +342,12 @@ class OpenShell(Execution, Transfer):
     def _key(self, sandbox: Sandbox) -> str:
         return _digest([self.config.workspace, sandbox.run_id, sandbox.profile, sandbox.slot])
 
+    @staticmethod
+    def _labels(run_id: str, profile: ProfileName) -> dict[str, str]:
+        """The native ownership labels a create sets and a pending-create close requires."""
+        return {"ih.owner": _OWNER, "ih.run": hashlib.sha256(run_id.encode()).hexdigest()[:32],
+                "ih.profile": profile}
+
     def _fenced(self, run_id: str) -> bool:
         return self._record("closed-runs", run_id).exists()
 
@@ -350,11 +356,10 @@ class OpenShell(Execution, Transfer):
             raise OpenShellError("invalid run id")
         if self._fenced(run_id):
             raise OpenShellError("investigation has been closed")
-        key = _digest([self.config.workspace, run_id, profile, slot])
+        key = self._key(Sandbox("", run_id, "", profile, slot))
         name = "ih-" + hashlib.sha256(key.encode()).hexdigest()[:16]
         path = self._record("sandboxes", key)
-        labels = {"ih.owner": _OWNER, "ih.run": hashlib.sha256(run_id.encode()).hexdigest()[:32],
-                  "ih.profile": profile}
+        labels = self._labels(run_id, profile)
         async with self._locks.setdefault(key, asyncio.Lock()):
             initial = not path.exists()
             try:
@@ -686,9 +691,7 @@ class OpenShell(Execution, Transfer):
                 raise
         else:
             if not sandbox.id:
-                expected = {"ih.owner": _OWNER,
-                    "ih.run": hashlib.sha256(sandbox.run_id.encode()).hexdigest()[:32],
-                    "ih.profile": sandbox.profile}
+                expected = self._labels(sandbox.run_id, sandbox.profile)
                 if dict(current.metadata.labels) != expected or not current.metadata.id:
                     raise OpenShellError("pending creation ownership mismatch")
                 sandbox = Sandbox(current.metadata.id, sandbox.run_id, sandbox.name,
